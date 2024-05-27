@@ -23,7 +23,7 @@ fn log_2_mantissa(x: f32) -> f32 {
         );
 }
 
-fn log_2(x: f32) -> f32 {
+pub fn log_2(x: f32) -> f32 {
     // log2(x*y) == log2(x)+log2(y)
     let mantissa = f32::from_bits(1_f32.to_bits() | (x.to_bits() & MANTISSA_MASK));
     let log2exponent = f32::from_bits(256_f32.to_bits() | ((x.to_bits() & EXPONENT_MASK) >> 8)) - 383.;
