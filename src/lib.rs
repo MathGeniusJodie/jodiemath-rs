@@ -6,6 +6,11 @@ fn fmaf(a: f32, b: f32, c: f32) -> f32 {
     return a.mul_add(b, c);
 }
 
+fn mulsign(x:f32, y:f32) -> f32 {
+    return f32::from_bits(x.to_bits() ^ (y.to_bits() & SIGN_MASK));
+}
+  
+
 fn log_2_mantissa(x: f32) -> f32 {
     let a = f32::from_bits(0x40153ebb);
     let b = f32::from_bits(0x413b8af9);
@@ -38,6 +43,28 @@ pub fn exp2(x: f32) -> f32 {
     let exp2int = f32::from_bits(((x + 383_f32).to_bits() << 8) & EXPONENT_MASK);
     let fract = x - x.floor();
     exp2int * exp2_fract(fract)
+}
+
+fn sinf_poly(x:f32) -> f32{
+    let a = f32::from_bits(0xb2cc0ff1);
+    let b = f32::from_bits(0x3638a80e);
+    let c = f32::from_bits(0xb9500b44);
+    let d = f32::from_bits(0x3c088883);
+    let e = f32::from_bits(0xbe2aaaaa);
+    let x2 = x * x;
+    fmaf(fmaf(fmaf(fmaf(fmaf(a, x2, b), x2, c), x2, d), x2, e), x2, 1.) * x
+}
+
+pub fn sin(x: f32) -> f32{
+    let tau = 6.28318530717958647692;
+    let taulo = f32::from_bits(0x343bbd2e);
+    let rtau = 0.15915494309189533576;
+    let pi = 3.14159265358979323846;
+    let pilo = f32::from_bits(0x33bbbd2e);
+    let rpi = 0.3183098861837907;
+    let z = x - (x * rtau).round() * tau + (x * rtau).round() * taulo;
+    let y = (x - (x * rpi).round() * pi + (x * rpi).round() * pilo).abs();
+    return sinf_poly(mulsign(y, z));
 }
 
 #[cfg(test)]
