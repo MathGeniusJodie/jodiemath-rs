@@ -109,6 +109,8 @@ pub fn cbrt(x: f32) -> f32 {
     // halleys method iteration
     let s3 = s * s * s;
     s -= s*(s3-x)/fmaf(2.,s3,x);
+    let s3 = s * s * s;
+    s -= s*(s3-x)/fmaf(2.,s3,x);
     return s;
 }
 
@@ -129,6 +131,26 @@ mod tests {
         for x in 1..1000 {
             let reference = (x as f32).cbrt();
             let result = cbrt(x as f32);
+            err += (result/reference - 1.).abs();
+        }
+        println!("total error: {}", err/1000.);
+    }
+    #[test]
+    fn exp2_precision() {
+        let mut err = 0.;
+        for x in -100..100 {
+            let reference = ((x as f32)*0.1).exp2();
+            let result = exp2((x as f32)*0.1);
+            err += (result/reference - 1.).abs();
+        }
+        println!("total error: {}", err/200.);
+    }
+    #[test]
+    fn log2_precision() {
+        let mut err = 0.;
+        for x in 2..1000 {
+            let reference = (x as f32).log2();
+            let result = log_2(x as f32);
             err += (result/reference - 1.).abs();
         }
         println!("total error: {}", err/1000.);
