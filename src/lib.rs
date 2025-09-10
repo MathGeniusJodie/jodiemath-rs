@@ -99,11 +99,11 @@ pub fn cos(x: f32) -> f32 {
 
 pub fn cbrt(x: f32) -> f32 {
     let mut s = f32::from_bits(
-        fmaf(
+        unsafe{fmaf(
             x.to_bits() as f32,
             0.33333333,
             709983100.
-        ) as u32
+        ).to_int_unchecked()}
     );
 
     // halleys method iteration
