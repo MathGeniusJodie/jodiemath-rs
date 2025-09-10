@@ -97,6 +97,21 @@ pub fn cos(x: f32) -> f32 {
     sinf_poly(x * s)
 }
 
+pub fn cbrt(x: f32) -> f32 {
+    let mut s = f32::from_bits(
+        fmaf(
+            x.to_bits() as f32,
+            0.33333333,
+            709983100.
+        ) as u32
+    );
+
+    // halleys method iteration
+    let s3 = s * s * s;
+    s -= s*(s3-x)/fmaf(2.,s3,x);
+    return s;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,5 +122,15 @@ mod tests {
         assert_eq!(log_2(2.0), 1.0);
         assert_eq!(log_2(4.0), 2.0);
         assert_eq!(log_2(8.0), 3.0);
+    }
+    #[test]
+    fn cbrt_precision() {
+        let mut err = 0.;
+        for x in 1..1000 {
+            let reference = (x as f32).cbrt();
+            let result = cbrt(x as f32);
+            err += (result/reference - 1.).abs();
+        }
+        println!("total error: {}", err/1000.);
     }
 }
