@@ -1,3 +1,7 @@
+use std::f32::consts::E;
+
+use plotters::data::Quartiles;
+
 const SIGN_MASK: u32 = 0x80000000;
 const EXPONENT_MASK: u32 = 0x7f800000;
 const MANTISSA_MASK: u32 = 0x007fffff;
@@ -154,5 +158,29 @@ mod tests {
             err += (result/reference - 1.).abs();
         }
         println!("total error: {}", err/1000.);
+    }
+    #[test]
+    fn cbrt_plot() {
+        use plotters::prelude::*;
+        let root = BitMapBackend::new("cbrt.png", (640, 480)).into_drawing_area();
+        root.fill(&WHITE).unwrap();
+        let mut chart = ChartBuilder::on(&root)
+            .caption("Cube Root", ("sans-serif", 50).into_font())
+            .margin(5)
+            .x_label_area_size(30)
+            .y_label_area_size(30)
+            .build_cartesian_2d(0f32..128f32, -0.5f32..0.5f32)
+            .unwrap();
+
+        chart.configure_mesh().draw().unwrap();
+
+        chart
+            .draw_series(LineSeries::new(
+                (0..1000).map(|x| x as f32).map(|x| (x, cbrt(x as f32)/(x as f32).cbrt()-1.0)),
+                &RED,
+            ))
+            .unwrap()
+            .label("std")
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &RED));
     }
 }
