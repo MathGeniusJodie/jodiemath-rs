@@ -109,12 +109,31 @@ pub fn cbrt(x: f32) -> f32 {
             709983100.
         ).to_int_unchecked()}
     );
+/* 
+    // slower and less accurate
+    let mut s = -f32::from_bits(
+        (((
+            fmaf(f32::from_bits(0x4380_0000 | (x.to_bits() >> 8))
+            ,(1./3.), - (383./3.-383.))
+            ))).to_bits() << 8
+    );
 
+    // not that much of a speedup, and less accurate
+    let xx = fmaf(x, 2.0, -s * s * s);
+    s = f32::from_bits(
+        unsafe{fmaf(
+            xx.to_bits() as f32,
+            0.33333333,
+            709983100.
+        ).to_int_unchecked()}
+    );
+*/
     // halleys method iteration
     let s3 = s * s * s;
-    s -= s*(s3-x)/fmaf(2.,s3,x);
+    //s -= s*(s3-x)/fmaf(2.,s3,x);
+    s = fmaf(s, (x-s3)/fmaf(2., s3, x), s);
     let s3 = s * s * s;
-    s -= s*(s3-x)/fmaf(2.,s3,x);
+    s = fmaf(s, (x-s3)/fmaf(2., s3, x), s);
     return s;
 }
 
@@ -169,7 +188,7 @@ mod tests {
             .margin(5)
             .x_label_area_size(30)
             .y_label_area_size(30)
-            .build_cartesian_2d(0f32..128f32, -0.5f32..0.5f32)
+            .build_cartesian_2d(0f32..128f32, -0.00005f32..0.00005f32)
             .unwrap();
 
         chart.configure_mesh().draw().unwrap();
