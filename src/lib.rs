@@ -145,14 +145,32 @@ pub fn cbrt(x: f32) -> f32 {
     let mut y = 
         f32::from_bits(
         unsafe{
-        fmaf(x.to_bits() as f32 , -0.33333333, 1419910442.0) // initial guess for inverse cube root
+        fmaf(x.to_bits() as f32 , -0.33333333, 1418472267.) // initial guess for inverse cube root
         .to_int_unchecked()});
 
-    y = fmaf((y*y)*(y*y), third_x, 1.3333333*y);
-    y = fmaf((y*y)*(y*y), third_x, 1.3333333*y);
+    let k1 = 1.752319676;
+    let k2 = -1.2509524245;
+    let k3 = 0.5093818292;
+    let a = x*(y*y);
+    y = fmaf((y*y)*a,fmaf(a,k3*y,k2),k1*y);
+
     y = fmaf((y*y)*(y*y), third_x, 1.3333333*y);
     x * y * y
 }
+
+/*
+1:  float InvCbrt21 (float x){
+
+5:     int i = *(int*) &x;
+6:     i = 0x548c2b4b − i/3;
+7:     float y = *(float*) &i;
+8:     float c = x*y*y*y;
+9:     y = y*(k1 − c*(k2 − k3*c));
+10:      c = 1.0f − x*y*y*y;//fmaf
+11:      y = y*(1.0f + 0.333333333333f*c);//fmaf
+12:      return y;
+13:  }
+ */
 
 
 #[cfg(test)]
@@ -206,14 +224,14 @@ mod tests {
             .margin(5)
             .x_label_area_size(30)
             .y_label_area_size(30)
-            .build_cartesian_2d(0f32..128f32, -0.00005f32..0.00005f32)
+            .build_cartesian_2d(0f32..128f32, -0.001f32..0.001f32)
             .unwrap();
 
         chart.configure_mesh().draw().unwrap();
 
         chart
             .draw_series(LineSeries::new(
-                (0..1000).map(|x| x as f32).map(|x| (x, cbrt(x as f32)/(x as f32).cbrt()-1.0)),
+                (0..1000).map(|x| x as f32).map(|x| (x, cbrt(x as f32)-1.0)),
                 &RED,
             ))
             .unwrap()
