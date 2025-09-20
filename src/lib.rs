@@ -100,7 +100,7 @@ pub fn cos(x: f32) -> f32 {
 
     sinf_poly(x * s)
 }
-/* 
+
 pub fn cbrt(x: f32) -> f32 {
     let mut s = f32::from_bits(
         unsafe{fmaf(
@@ -109,35 +109,28 @@ pub fn cbrt(x: f32) -> f32 {
             709983100.
         ).to_int_unchecked()}
     );
- 
-    // slower and less accurate
-    //let mut s = -f32::from_bits(
-    //    (((
-    //        fmaf(f32::from_bits(0x4380_0000 | (x.to_bits() >> 8))
-    //        ,(1./3.), - (383./3.-383.))
-    //        ))).to_bits() << 8
-    //);
-
-    // not that much of a speedup, and less accurate
-    //let xx = fmaf(x, 2.0, -s * s * s);
-    //s = f32::from_bits(
-    //    unsafe{fmaf(
-    //        xx.to_bits() as f32,
-    //        0.33333333,
-    //        709983100.
-     ///   ).to_int_unchecked()}
-    //);
-// 88+3/4 89+3/8  
-    // halleys method iteration
     let s3 = s * s * s;
-    //s -= s*(s3-x)/fmaf(2.,s3,x);
-    s = fmaf(s, (x-s3)/fmaf(2., s3, x), s);
-    let s3 = s * s * s;
-    s = fmaf(s, (x-s3)/fmaf(2., s3, x), s);
+    s -= (3.0*s*fmaf(2.0,s3,x)*(s3-x))
+        / fmaf(fmaf(10.0,s3,16.0*x),s3,x*x);
     return s;
 }
-    */
 
+
+
+
+//f0 = (s^3-x)
+//f1 = (3 s^2)
+//f2 = (6s)
+//f3 = 6
+//
+// (6.0*f0*f1*f1-3.0*f0*f0*f2) / (6.0*f1*f1*f1-6.0*f0*f1*f2+f0*f0*f3)
+// (3 s (2 s^3 + x) (s^3 - x))/(10 s^6 + 16 s^3 x + x^2)
+
+
+
+
+
+/*
 pub fn cbrt(x: f32) -> f32 {
 
     let third_x = x * -0.33333333;
@@ -156,7 +149,7 @@ pub fn cbrt(x: f32) -> f32 {
 
     y = fmaf((y*y)*(y*y), third_x, 1.3333333*y);
     x * y * y
-}
+}*/
 
 /*
 1:  float InvCbrt21 (float x){
