@@ -102,21 +102,14 @@ pub fn cos(x: f32) -> f32 {
 }
 
 pub fn cbrt(x: f32) -> f32 {
-    let mut s = f32::from_bits(
-        unsafe{fmaf(
-            x.to_bits() as f32,
-            0.33333333,
-            709983100.
-        ).to_int_unchecked()}
-    );
+    let mut s = f32::from_bits(x.to_bits()/3+709982000);
+    //let s3 = s * s * s;
+    //s -= fmaf(f32::from_bits(s3.to_bits()+(1f32).to_bits()-x.to_bits()),s*0.28,s*-0.28);
     let s3 = s * s * s;
-    s -= (3.0*s*fmaf(2.0,s3,x)*(s3-x))
-        / fmaf(fmaf(10.0,s3,16.0*x),s3,x*x);
+    s -= (s3-x)*s*fmaf(6.0,s3,3.0*x)
+        /fmaf(fmaf(10.0,s3,16.0*x),s3,x*x);
     return s;
 }
-
-
-
 
 //f0 = (s^3-x)
 //f1 = (3 s^2)
@@ -217,14 +210,14 @@ mod tests {
             .margin(5)
             .x_label_area_size(30)
             .y_label_area_size(30)
-            .build_cartesian_2d(0f32..128f32, -0.001f32..0.001f32)
+            .build_cartesian_2d(0f32..128f32, -0.1f32..0.1f32)
             .unwrap();
 
         chart.configure_mesh().draw().unwrap();
 
         chart
             .draw_series(LineSeries::new(
-                (0..1000).map(|x| x as f32).map(|x| (x, cbrt(x as f32)-1.0)),
+                (0..1000).map(|x| x as f32).map(|x| (x, cbrt(x as f32)/(x as f32).cbrt()-1.0)),
                 &RED,
             ))
             .unwrap()
