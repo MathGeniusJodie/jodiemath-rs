@@ -7,3 +7,4 @@ edition = "2021"
 
 [dependencies]
 plotters = "0.3"
+criterion = "0.7.0"

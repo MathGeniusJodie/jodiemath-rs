@@ -136,6 +136,8 @@ mod tests {
         }
         println!("total error: {}", (err as f32) / 1000.);
     }
+
+
     #[test]
     fn exp2_precision() {
         let mut err = 0;
