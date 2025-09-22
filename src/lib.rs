@@ -1,6 +1,4 @@
-use std::f32::consts::E;
 
-use plotters::data::Quartiles;
 
 const SIGN_MASK: u32 = 0x80000000;
 const EXPONENT_MASK: u32 = 0x7f800000;
@@ -82,7 +80,7 @@ pub fn cos(x: f32) -> f32 {
     let rtauh: f32 = rtau as f32;
     let rtaul: f32 = (rtau - (rtauh as f64)) as f32;
 
-    let m = (fma(x, (rtauh * 2f32), x * (rtaul * 2f32))).floor();
+    let m = (fma(x, rtauh * 2f32, x * (rtaul * 2f32))).floor();
     let s = (((m as i32) & 1) * 2 - 1) as f32;
 
     let high = fma(m, tauh / 2f32, tauh / 4f32);
