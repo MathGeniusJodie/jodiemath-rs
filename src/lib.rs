@@ -130,7 +130,7 @@ mod tests {
     fn cbrt_precision() {
         let mut err: u64 = 0;
         for x in 1..1000 {
-            let reference = (x as f32).cbrt();
+            let reference = (x as f64).cbrt() as f32;
             let result = cbrt(x as f32);
             err += reference.to_bits().abs_diff(result.to_bits()) as u64;
         }
@@ -150,7 +150,7 @@ mod tests {
     fn log2_precision() {
         let mut err = 0;
         for x in 2..1000 {
-            let reference = (x as f32).log2();
+            let reference = (x as f64).log2() as f32;
             let result = log_2(x as f32);
             err += reference.to_bits().abs_diff(result.to_bits());
         }
@@ -170,7 +170,7 @@ mod tests {
     fn cos_precision() {
         let mut err = 0;
         for x in -1000..1000 {
-            let reference = ((x as f32) * 0.1).cos();
+            let reference = ((x as f32) * 0.1f32).cos() as f32;
             let result = cos((x as f32) * 0.1);
             err += reference.to_bits().abs_diff(result.to_bits()) as u64;
         }
