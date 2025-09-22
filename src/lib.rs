@@ -6,7 +6,7 @@ const SIGN_MASK: u32 = 0x80000000;
 const EXPONENT_MASK: u32 = 0x7f800000;
 const MANTISSA_MASK: u32 = 0x007fffff;
 
-fn fmaf(a: f32, b: f32, c: f32) -> f32 {
+fn fma(a: f32, b: f32, c: f32) -> f32 {
     return a.mul_add(b, c);
 }
 
@@ -21,7 +21,7 @@ fn log_2_mantissa(x: f32) -> f32 {
     let d = f32::from_bits(0x3ecfca47);
     let e = f32::from_bits(0x409f8156);
     let f = f32::from_bits(0x40d76ca4);
-    return fmaf(fmaf(a, x, b), x, c) * (x - 1.) / fmaf(fmaf(fmaf(d, x, e), x, f), x, 1.);
+    return fma(fma(a, x, b), x, c) * (x - 1.) / fma(fma(fma(d, x, e), x, f), x, 1.);
 }
 
 pub fn log_2(x: f32) -> f32 {
@@ -38,7 +38,7 @@ fn exp2_fract(x: f32) -> f32 {
     let c = f32::from_bits(0x3d64b437);
     let d = f32::from_bits(0x3e75ea9e);
     let e = f32::from_bits(0x3f317271);
-    fmaf(fmaf(fmaf(fmaf(fmaf(a, x, b), x, c), x, d), x, e), x, 1_f32)
+    fma(fma(fma(fma(fma(a, x, b), x, c), x, d), x, e), x, 1_f32)
 }
 
 pub fn exp2(x: f32) -> f32 {
@@ -55,43 +55,39 @@ fn sinf_poly(x: f32) -> f32 {
     let d = f32::from_bits(0x3c088883);
     let e = f32::from_bits(0xbe2aaaaa);
     let x2 = x * x;
-    fmaf(
-        fmaf(fmaf(fmaf(fmaf(a, x2, b), x2, c), x2, d), x2, e),
-        x2,
-        1.,
-    ) * x
+    fma(fma(fma(fma(fma(a, x2, b), x2, c), x2, d), x2, e), x2, 1.) * x
 }
 
 pub fn sin(x: f32) -> f32 {
-    let tau = 6.28318530717958647692;
-    let taulo = f32::from_bits(0x343bbd2e);
-    let rtau = 0.15915494309189533576;
+    let tau: f64 = 6.2831853071795864769252867665590057683943387987502116419498891846;
+    let tauh: f32 = tau as f32;
+    let taul: f32 = (tau - (tauh as f64)) as f32;
+    let rtau: f64 = 0.1591549430918953357688837633725143620344596457404564487476673440;
+    let rtauh: f32 = rtau as f32;
+    let rtaul: f32 = (rtau - (rtauh as f64)) as f32;
     let pi = 3.14159265358979323846;
     let pilo = f32::from_bits(0x33bbbd2e);
     let rpi = 0.3183098861837907;
-    let z = x - (x * rtau).round() * tau + (x * rtau).round() * taulo;
+    let z = x - (x * rtauh).round() * tauh + (x * rtauh).round() * taul;
     let y = (x - (x * rpi).round() * pi + (x * rpi).round() * pilo).abs();
     return sinf_poly(mulsign(y, z));
 }
 
 // todo: make less convoluted
 pub fn cos(x: f32) -> f32 {
-    let tau: f32 = f32::from_bits(0x40C90FDB);
-    let taulo: f32 = f32::from_bits(0x50824525);
-    let rtau: f32 = f32::from_bits(0x3E22F983);
-    let rtaulo: f32 = f32::from_bits(0x31DC9C88);
-    let pi = tau / 2.;
-    let rpi = rtau * 2.;
-    let rpilo = rtaulo * 2.;
-    let hpi = tau / 4.;
-    let hpilo = taulo / 4.;
+    let tau: f64 = 6.2831853071795864769252867665590057683943387987502116419498891846;
+    let tauh: f32 = tau as f32;
+    let taul: f32 = (tau - (tauh as f64)) as f32;
+    let rtau: f64 = 0.1591549430918953357688837633725143620344596457404564487476673440;
+    let rtauh: f32 = rtau as f32;
+    let rtaul: f32 = (rtau - (rtauh as f64)) as f32;
 
-    let m = fmaf(x, rpi, x * rpilo).floor();
-    let s = (((m as u32) & 1) as f32) * 2. - 1.;
+    let m = (fma(x, (rtauh * 2f32), x * (rtaul * 2f32))).floor();
+    let s = (((m as i32) & 1) * 2 - 1) as f32;
 
-    let high = fmaf(m, pi, hpi);
-    let errorhigh = hpi + fmaf(m, pi, -high);
-    let low = fmaf(m, pi, hpilo);
+    let high = fma(m, tauh / 2f32, tauh / 4f32);
+    let errorhigh = tauh / 4f32 + fma(m, tauh / 2f32, -high);
+    let low = fma(m, taul / 2f32, taul / 4f32);
 
     let mut x = x;
     x -= high;
@@ -99,16 +95,6 @@ pub fn cos(x: f32) -> f32 {
     x -= low;
 
     sinf_poly(x * s)
-}
-
-pub fn cbrt(x: f32) -> f32 {
-    let mut s = f32::from_bits(x.to_bits()/3+709982000);
-    //let s3 = s * s * s;
-    //s -= fmaf(f32::from_bits(s3.to_bits()+(1f32).to_bits()-x.to_bits()),s*0.28,s*-0.28);
-    let s3 = s * s * s;
-    s -= (s3-x)*s*fmaf(6.0,s3,3.0*x)
-        /fmaf(fmaf(10.0,s3,16.0*x),s3,x*x);
-    return s;
 }
 
 //f0 = (s^3-x)
@@ -119,45 +105,15 @@ pub fn cbrt(x: f32) -> f32 {
 // (6.0*f0*f1*f1-3.0*f0*f0*f2) / (6.0*f1*f1*f1-6.0*f0*f1*f2+f0*f0*f3)
 // (3 s (2 s^3 + x) (s^3 - x))/(10 s^6 + 16 s^3 x + x^2)
 
-
-
-
-
-/*
 pub fn cbrt(x: f32) -> f32 {
-
-    let third_x = x * -0.33333333;
-
-    let mut y = 
-        f32::from_bits(
-        unsafe{
-        fmaf(x.to_bits() as f32 , -0.33333333, 1418472267.) // initial guess for inverse cube root
-        .to_int_unchecked()});
-
-    let k1 = 1.752319676;
-    let k2 = -1.2509524245;
-    let k3 = 0.5093818292;
-    let a = x*(y*y);
-    y = fmaf((y*y)*a,fmaf(a,k3*y,k2),k1*y);
-
-    y = fmaf((y*y)*(y*y), third_x, 1.3333333*y);
-    x * y * y
-}*/
-
-/*
-1:  float InvCbrt21 (float x){
-
-5:     int i = *(int*) &x;
-6:     i = 0x548c2b4b − i/3;
-7:     float y = *(float*) &i;
-8:     float c = x*y*y*y;
-9:     y = y*(k1 − c*(k2 − k3*c));
-10:      c = 1.0f − x*y*y*y;//fmaf
-11:      y = y*(1.0f + 0.333333333333f*c);//fmaf
-12:      return y;
-13:  }
- */
-
+    let s = f32::from_bits(x.to_bits() / 3 + 709982100);
+    let s3 = s * s * s;
+    fma(
+        fma(6., s3, 3. * x),
+        s * (x - s3) / fma(fma(10., s3, 16. * x), s3, x * x),
+        s,
+    )
+}
 
 #[cfg(test)]
 mod tests {
@@ -172,33 +128,53 @@ mod tests {
     }
     #[test]
     fn cbrt_precision() {
-        let mut err = 0.;
+        let mut err: u64 = 0;
         for x in 1..1000 {
             let reference = (x as f32).cbrt();
             let result = cbrt(x as f32);
-            err += (result/reference - 1.).abs();
+            err += reference.to_bits().abs_diff(result.to_bits()) as u64;
         }
-        println!("total error: {}", err/1000.);
+        println!("total error: {}", (err as f32) / 1000.);
     }
     #[test]
     fn exp2_precision() {
-        let mut err = 0.;
+        let mut err = 0;
         for x in -100..100 {
-            let reference = ((x as f32)*0.1).exp2();
-            let result = exp2((x as f32)*0.1);
-            err += (result/reference - 1.).abs();
+            let reference = ((x as f32) * 0.1).exp2();
+            let result = exp2((x as f32) * 0.1);
+            err += reference.to_bits().abs_diff(result.to_bits());
         }
-        println!("total error: {}", err/200.);
+        println!("total error: {}", (err as f32) / 200.);
     }
     #[test]
     fn log2_precision() {
-        let mut err = 0.;
+        let mut err = 0;
         for x in 2..1000 {
             let reference = (x as f32).log2();
             let result = log_2(x as f32);
-            err += (result/reference - 1.).abs();
+            err += reference.to_bits().abs_diff(result.to_bits());
         }
-        println!("total error: {}", err/1000.);
+        println!("total error: {}", (err as f32) / 1000.);
+    }
+    #[test]
+    fn sin_precision() {
+        let mut err = 0;
+        for x in -1000..1000 {
+            let reference = ((x as f32) * 0.1).sin();
+            let result = sin((x as f32) * 0.1);
+            err += reference.to_bits().abs_diff(result.to_bits());
+        }
+        println!("total error: {}", (err as f32) / 2000.);
+    }
+    #[test]
+    fn cos_precision() {
+        let mut err = 0;
+        for x in -1000..1000 {
+            let reference = ((x as f32) * 0.1).cos();
+            let result = cos((x as f32) * 0.1);
+            err += reference.to_bits().abs_diff(result.to_bits()) as u64;
+        }
+        println!("total error: {}", (err as f32) / 2000.);
     }
     #[test]
     fn cbrt_plot() {
@@ -217,11 +193,57 @@ mod tests {
 
         chart
             .draw_series(LineSeries::new(
-                (0..1000).map(|x| x as f32).map(|x| (x, cbrt(x as f32)/(x as f32).cbrt()-1.0)),
+                (0..1000)
+                    .map(|x| x as f32)
+                    .map(|x| (x, cbrt(x as f32) / (x as f32).cbrt() - 1.0)),
                 &RED,
             ))
             .unwrap()
             .label("std")
             .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &RED));
+    }
+
+    // plot cos and builtin cos in 2 different colors
+    #[test]
+    fn cos_plot() {
+        use plotters::prelude::*;
+        let root = BitMapBackend::new("cos.png", (640, 480)).into_drawing_area();
+        root.fill(&WHITE).unwrap();
+        let mut chart = ChartBuilder::on(&root)
+            .caption("Cosine", ("sans-serif", 50).into_font())
+            .margin(5)
+            .x_label_area_size(30)
+            .y_label_area_size(30)
+            .build_cartesian_2d(-20f32..20f32, -1.1f32..1.1f32)
+            .unwrap();
+        chart.configure_mesh().draw().unwrap();
+        chart
+            .draw_series(LineSeries::new(
+                (-200..200).map(|x| x as f32 * 0.1).map(|x| (x, cos(x))),
+                &RED,
+            ))
+            .unwrap()
+            .label("approx")
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &RED));
+        chart
+            .draw_series(LineSeries::new(
+                (-200..200).map(|x| x as f32 * 0.1).map(|x| (x, x.cos())),
+                &BLUE,
+            ))
+            .unwrap()
+            .label("std")
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &BLUE));
+        chart.configure_series_labels().draw().unwrap();
+        chart
+            .draw_series(LineSeries::new(
+                (-200..200).map(|x| x as f32 * 0.1).map(|x| (x, x.cos())),
+                &BLUE,
+            ))
+            .unwrap()
+            .label("std")
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &BLUE));
+        chart.configure_series_labels().draw().unwrap();
+
+        root.present().expect("Unable to write result to file, please make sure 'plotters' crate is in your Cargo.toml");
     }
 }
