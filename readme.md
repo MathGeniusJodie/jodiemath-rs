@@ -6,3 +6,5 @@ todo:
 - benchmarks against std
 - fix sin accuracy (broken rn)
 - less accurate but faster versions
+- add inverse trig functions
+- add tan()
