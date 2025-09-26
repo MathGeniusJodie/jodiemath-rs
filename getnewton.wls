@@ -12,7 +12,7 @@ Print["       Newton: ", FullSimplify[f[s]/f'[s]]]
 Print["       Halley: ", FullSimplify[2*f'[s]/f''[s]]]
 Print["Householder 3: ", FullSimplify[3*f''[s]/f'''[s]]]
 Print["Householder 4: ", FullSimplify[4*f'''[s]/f''''[s]]]
-Print["Householder 5: ", FullSimplify[4*f'''[s]/f''''[s]]]
+Print["Householder 5: ", FullSimplify[4*f''''[s]/f'''''[s]]]
 
 
 
