@@ -38,6 +38,8 @@ fn exp2_fract(x: f32) -> f32 {
     let d = f32::from_bits(0x3e75ea9e);
     let e = f32::from_bits(0x3f317271);
     fma(fma(fma(fma(fma(a, x, b), x, c), x, d), x, e), x, 1_f32)
+    //alternative for less latency
+    //fma(x*x,fma(fma(a,x,b),x*x,fma(c,x,d)),fma(e,x,1.))
 }
 #[inline(always)]
 pub fn exp2(x: f32) -> f32 {

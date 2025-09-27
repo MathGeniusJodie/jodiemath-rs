@@ -3,6 +3,26 @@ use std::hint::black_box;
 use jodiemath_rs::{cbrt, cos, exp2, log_2, sin};
 
 fn bench_cbrt(c: &mut Criterion) {
+    c.bench_function("jodie exp2", |b| b.iter(|| {
+        let input:[f32; 8] = black_box([12345.0; 8]);
+        let mut out:[f32; 8] = [0.0; 8];
+        for i in 0..8 {
+            out[i] = exp2(input[i]);
+        }
+        for i in 0..8 {
+            black_box(out[i]);
+        }
+    }));
+    c.bench_function("std exp2", |b| b.iter(|| {
+        let input:[f32; 8] = black_box([12345.0; 8]);
+        let mut out:[f32; 8] = [0.0; 8];
+        for i in 0..8 {
+            out[i] = input[i].exp2();
+        }
+        for i in 0..8 {
+            black_box(out[i]);
+        }
+    }));
     c.bench_function("jodie cbrt", |b| b.iter(|| {
         let input:[f32; 8] = black_box([12345.0; 8]);
         let mut out:[f32; 8] = [0.0; 8];
@@ -38,26 +58,6 @@ fn bench_cbrt(c: &mut Criterion) {
         let mut out:[f32; 8] = [0.0; 8];
         for i in 0..8 {
             out[i] = input[i].cos();
-        }
-        for i in 0..8 {
-            black_box(out[i]);
-        }
-    }));
-    c.bench_function("jodie exp2", |b| b.iter(|| {
-        let input:[f32; 8] = black_box([12345.0; 8]);
-        let mut out:[f32; 8] = [0.0; 8];
-        for i in 0..8 {
-            out[i] = exp2(input[i]);
-        }
-        for i in 0..8 {
-            black_box(out[i]);
-        }
-    }));
-    c.bench_function("std exp2", |b| b.iter(|| {
-        let input:[f32; 8] = black_box([12345.0; 8]);
-        let mut out:[f32; 8] = [0.0; 8];
-        for i in 0..8 {
-            out[i] = input[i].exp2();
         }
         for i in 0..8 {
             black_box(out[i]);

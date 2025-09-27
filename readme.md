@@ -17,7 +17,7 @@ jodie  cos error: 6.37
 jodie  sin error: 9.715
   std  sin error: 7.33
 
-jodie log2 error: 0.037
+jodie log2 error: 0.055
   std log2 error: 0
 ```
 
