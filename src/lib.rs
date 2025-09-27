@@ -5,14 +5,15 @@ const SIGN_MASK: u32 = 0x80000000;
 const EXPONENT_MASK: u32 = 0x7f800000;
 const MANTISSA_MASK: u32 = 0x007fffff;
 
+#[inline(always)]
 fn fma(a: f32, b: f32, c: f32) -> f32 {
     return a.mul_add(b, c);
 }
-
+#[inline(always)]
 fn mulsign(x: f32, y: f32) -> f32 {
     return f32::from_bits(x.to_bits() ^ (y.to_bits() & SIGN_MASK));
 }
-
+#[inline(always)]
 fn log_2_mantissa(x: f32) -> f32 {
     let a = f32::from_bits(0x40153ebb);
     let b = f32::from_bits(0x413b8af9);
@@ -22,7 +23,7 @@ fn log_2_mantissa(x: f32) -> f32 {
     let f = f32::from_bits(0x40d76ca4);
     return fma(fma(a, x, b), x, c) * (x - 1.) / fma(fma(fma(d, x, e), x, f), x, 1.);
 }
-
+#[inline(always)]
 pub fn log_2(x: f32) -> f32 {
     // log2(x*y) == log2(x)+log2(y)
     let mantissa = f32::from_bits(1_f32.to_bits() | (x.to_bits() & MANTISSA_MASK));
@@ -30,7 +31,7 @@ pub fn log_2(x: f32) -> f32 {
         f32::from_bits(256_f32.to_bits() | ((x.to_bits() & EXPONENT_MASK) >> 8)) - 383.;
     return log2exponent + log_2_mantissa(mantissa);
 }
-
+#[inline(always)]
 fn exp2_fract(x: f32) -> f32 {
     let a = f32::from_bits(0x3af71c15);
     let b = f32::from_bits(0x3c130514);
@@ -39,14 +40,14 @@ fn exp2_fract(x: f32) -> f32 {
     let e = f32::from_bits(0x3f317271);
     fma(fma(fma(fma(fma(a, x, b), x, c), x, d), x, e), x, 1_f32)
 }
-
+#[inline(always)]
 pub fn exp2(x: f32) -> f32 {
     // exp2(floor(x))*exp2(fract(x)) == exp2(x)
     let exp2int = f32::from_bits(((x + 383_f32).to_bits() << 8) & EXPONENT_MASK);
     let fract = x - x.floor();
     exp2int * exp2_fract(fract)
 }
-
+#[inline(always)]
 fn sinf_poly(x: f32) -> f32 {
     let a = f32::from_bits(0xb2cc0ff1);
     let b = f32::from_bits(0x3638a80e);
@@ -56,7 +57,7 @@ fn sinf_poly(x: f32) -> f32 {
     let x2 = x * x;
     fma(fma(fma(fma(fma(a, x2, b), x2, c), x2, d), x2, e), x2, 1.) * x
 }
-
+#[inline(always)]
 pub fn sin(x: f32) -> f32 {
     let tau: f64 = 6.2831853071795864769252867665590057683943387987502116419498891846;
     let tauh: f32 = tau as f32;
@@ -71,7 +72,7 @@ pub fn sin(x: f32) -> f32 {
     let y = (x - (x * rpi).round() * pi + (x * rpi).round() * pilo).abs();
     return sinf_poly(mulsign(y, z));
 }
-
+#[inline(always)]
 // todo: make less convoluted
 pub fn cos(x: f32) -> f32 {
     let tau: f64 = 6.2831853071795864769252867665590057683943387987502116419498891846;
@@ -103,7 +104,7 @@ pub fn cos(x: f32) -> f32 {
 //
 // (6.0*f0*f1*f1-3.0*f0*f0*f2) / (6.0*f1*f1*f1-6.0*f0*f1*f2+f0*f0*f3)
 // (3 s (2 s^3 + x) (s^3 - x))/(10 s^6 + 16 s^3 x + x^2)
-
+#[inline(always)]
 pub fn cbrt(x: f32) -> f32 {
     let s = f32::from_bits(x.to_bits() / 3 + 709982100);
     let s3 = s * s * s;
@@ -133,7 +134,14 @@ mod tests {
             let result = cbrt(x as f32);
             err += reference.to_bits().abs_diff(result.to_bits()) as u64;
         }
-        println!("total error: {}", (err as f32) / 1000.);
+        println!("jodie cbrt error: {}", (err as f32) / 1000.);
+        let mut err: u64 = 0;
+        for x in 1..1000 {
+            let reference = (x as f64).cbrt() as f32;
+            let result = (x as f32).cbrt();
+            err += reference.to_bits().abs_diff(result.to_bits()) as u64;
+        }
+        println!("std cbrt error: {}", (err as f32) / 1000.);
     }
 
 
@@ -141,11 +149,18 @@ mod tests {
     fn exp2_precision() {
         let mut err = 0;
         for x in -100..100 {
-            let reference = ((x as f32) * 0.1).exp2();
+            let reference = ((x as f64) * 0.1).exp2() as f32;
             let result = exp2((x as f32) * 0.1);
             err += reference.to_bits().abs_diff(result.to_bits());
         }
-        println!("total error: {}", (err as f32) / 200.);
+        println!("jodie exp2 error: {}", (err as f32) / 200.);
+        let mut err = 0;
+        for x in -100..100 {
+            let reference = ((x as f64) * 0.1).exp2() as f32;
+            let result = (x as f32 * 0.1).exp2();
+            err += reference.to_bits().abs_diff(result.to_bits());
+        }
+        println!("std exp2 error: {}", (err as f32) / 200.);
     }
     #[test]
     fn log2_precision() {
@@ -155,27 +170,48 @@ mod tests {
             let result = log_2(x as f32);
             err += reference.to_bits().abs_diff(result.to_bits());
         }
-        println!("total error: {}", (err as f32) / 1000.);
+        println!("jodie log2 error: {}", (err as f32) / 1000.);
+        let mut err = 0;
+        for x in 2..1000 {
+            let reference = (x as f64).log2() as f32;
+            let result = (x as f32).log2();
+            err += reference.to_bits().abs_diff(result.to_bits());
+        }
+        println!("std log2 error: {}", (err as f32) / 1000.);
     }
     #[test]
     fn sin_precision() {
         let mut err = 0;
-        for x in -1000..1000 {
-            let reference = ((x as f32) * 0.1).sin();
+        for x in -100..100 {
+            let reference = ((x as f64) * 0.1).sin() as f32;
             let result = sin((x as f32) * 0.1);
             err += reference.to_bits().abs_diff(result.to_bits());
         }
-        println!("total error: {}", (err as f32) / 2000.);
+        println!("jodie sin error: {}", (err as f32) / 200.);
+        let mut err = 0;
+        for x in -100..100 {
+            let reference = ((x as f64) * 0.1).sin() as f32;
+            let result = (x as f32 * 0.1).sin();
+            err += reference.to_bits().abs_diff(result.to_bits());
+        }
+        println!("std sin error: {}", (err as f32) / 200.);
     }
     #[test]
     fn cos_precision() {
         let mut err = 0;
-        for x in -1000..1000 {
-            let reference = ((x as f32) * 0.1f32).cos() as f32;
+        for x in -100..100 {
+            let reference = ((x as f64) * 0.1).cos() as f32;
             let result = cos((x as f32) * 0.1);
             err += reference.to_bits().abs_diff(result.to_bits()) as u64;
         }
-        println!("total error: {}", (err as f32) / 2000.);
+        println!("jodie cos error: {}", (err as f32) / 200.);
+        let mut err = 0;
+        for x in -100..100 {
+            let reference = ((x as f64) * 0.1).cos() as f32;
+            let result = (x as f32 * 0.1).cos();
+            err += reference.to_bits().abs_diff(result.to_bits()) as u64;
+        }
+        println!("std cos error: {}", (err as f32) / 200.);
     }
     #[test]
     fn cbrt_plot() {
