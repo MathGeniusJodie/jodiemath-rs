@@ -1,3 +1,5 @@
+use core::ops::{Add, Div, Mul, Sub};
+
 // godbolt flags -C opt-level=3 -C target_feature=+fma -C target-feature=+crt-static
 
 const SIGN_MASK: u32 = 0x80000000;
@@ -95,6 +97,39 @@ pub fn cos(x: f32) -> f32 {
     sinf_poly(x * s)
 }
 
+
+
+pub type Ff = (f32, f32);
+
+// Updated helpers using (f32,f32)
+
+#[inline(always)]
+fn mul_f32_f32_ff(a: f32, b: f32) -> Ff {
+    let p = a * b;
+    let e = fma(a, b, -p);
+    (p, e)
+}
+
+fn mul_ff_f32_ff(a: Ff, rhs: f32) -> Ff {
+    let p = a.0 * rhs;
+    let e = fma(a.0, rhs, -p);
+    (p, fma(a.1, rhs, e))
+}
+
+fn quick_add_ff_f32_ff(a: Ff, rhs: f32) -> Ff {
+    let s = a.0 + rhs;
+    let lo = a.1 + (rhs - (s - a.0));
+    (s, lo)
+}
+
+fn div_ff_ff_f32(a: Ff, rhs: Ff) -> f32 {
+    let rcp = 1.0 / rhs.0;
+    let q1 = a.0 * rcp;
+    let rh = fma(-q1, rhs.0, a.0) + fma(-q1, rhs.1, a.1);
+    fma(rh, rcp, q1)
+}
+
+
 //f0 = (s^3-x)
 //f1 = (3 s^2)
 //f2 = (6s)
@@ -102,14 +137,21 @@ pub fn cos(x: f32) -> f32 {
 //
 // (6.0*f0*f1*f1-3.0*f0*f0*f2) / (6.0*f1*f1*f1-6.0*f0*f1*f2+f0*f0*f3)
 // (3 s (2 s^3 + x) (s^3 - x))/(10 s^6 + 16 s^3 x + x^2)
+
 #[inline(always)]
 pub fn cbrt(x: f32) -> f32 {
     let s = f32::from_bits(x.to_bits() / 3 + 709982100);
     let s3 = s * s * s;
-    fma(
+    let s = fma(
         fma(6., s3, 3. * x),
         s * (x - s3) / fma(fma(10., s3, 16. * x), s3, x * x),
         s,
+    );
+
+    let s3: Ff = mul_ff_f32_ff(mul_f32_f32_ff(s,s),s*2.);
+    s*2f32 + div_ff_ff_f32(
+        mul_ff_f32_ff(mul_ff_f32_ff(s3,-1.5),s),
+        quick_add_ff_f32_ff(s3,x)
     )
 }
 
