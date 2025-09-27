@@ -1,4 +1,3 @@
-
 // godbolt flags -C opt-level=3 -C target_feature=+fma -C target-feature=+crt-static
 
 const SIGN_MASK: u32 = 0x80000000;
@@ -26,9 +25,7 @@ pub fn log_2(x: f32) -> f32 {
     let m = f32::from_bits(1_f32.to_bits() | (x.to_bits() & MANTISSA_MASK));
     let log2exponent =
         f32::from_bits(256_f32.to_bits() | ((x.to_bits() & EXPONENT_MASK) >> 8)) - 383.;
-    log2exponent + 
-    fma(m*m,fma(a,m,b),fma(g,m,c))/
-    fma(m*m,fma(d,m,e),fma(f,m,1.))
+    log2exponent + fma(m * m, fma(a, m, b), fma(g, m, c)) / fma(m * m, fma(d, m, e), fma(f, m, 1.))
 }
 #[inline(always)]
 fn exp2_fract(x: f32) -> f32 {
@@ -65,7 +62,7 @@ pub fn sin(x: f32) -> f32 {
     let taul: f32 = (tau - (tauh as f64)) as f32;
     let rtau: f64 = 0.1591549430918953357688837633725143620344596457404564487476673440;
     let rtauh: f32 = rtau as f32;
-    let rtaul: f32 = (rtau - (rtauh as f64)) as f32;
+    //let rtaul: f32 = (rtau - (rtauh as f64)) as f32;
     let pi = 3.14159265358979323846;
     let pilo = f32::from_bits(0x33bbbd2e);
     let rpi = 0.3183098861837907;
@@ -144,7 +141,6 @@ mod tests {
         }
         println!("std cbrt error: {}", (err as f32) / 1000.);
     }
-
 
     #[test]
     fn exp2_precision() {
