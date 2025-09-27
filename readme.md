@@ -33,8 +33,7 @@ log2|  8.7 ns | 15.0 ns | 1.7x
 ```
 
 # todo:
-- fix sin() performance
-- less accurate but faster versions
 - add inverse trig functions
 - add tan()
+- less accurate but faster versions
 - perfectly rounded versions
