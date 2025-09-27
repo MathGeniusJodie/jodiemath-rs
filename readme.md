@@ -28,8 +28,8 @@ jodie log2 error: 0.037
 cbrt| 11.5 ns | 60.3 ns | 5.2x
  cos| 21.2 ns | 27.0 ns | 1.3x
 exp2|  8.4 ns | 22.6 ns | 2.7x
-log2|  8.8 ns | 14.3 ns | 1.6x
- sin| 38.8 ns | 25.3 ns | 0.7x (slower)
+log2|  8.7 ns | 15.0 ns | 1.7x
+ sin| 20.5 ns | 25.0 ns | 1.2x
 ```
 
 # todo:

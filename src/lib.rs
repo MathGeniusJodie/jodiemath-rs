@@ -14,22 +14,21 @@ fn mulsign(x: f32, y: f32) -> f32 {
     return f32::from_bits(x.to_bits() ^ (y.to_bits() & SIGN_MASK));
 }
 #[inline(always)]
-fn log_2_mantissa(x: f32) -> f32 {
+pub fn log_2(x: f32) -> f32 {
     let a = f32::from_bits(0x40153ebb);
-    let b = f32::from_bits(0x413b8af9);
-    let c = f32::from_bits(0x409c1a68);
+    let b = f32::from_bits(0x41163b4a);
+    let c = f32::from_bits(0xc09c1a68);
     let d = f32::from_bits(0x3ecfca47);
     let e = f32::from_bits(0x409f8156);
     let f = f32::from_bits(0x40d76ca4);
-    return fma(fma(a, x, b), x, c) * (x - 1.) / fma(fma(fma(d, x, e), x, f), x, 1.);
-}
-#[inline(always)]
-pub fn log_2(x: f32) -> f32 {
+    let g = f32::from_bits(0xc0dafb8a);
     // log2(x*y) == log2(x)+log2(y)
-    let mantissa = f32::from_bits(1_f32.to_bits() | (x.to_bits() & MANTISSA_MASK));
+    let m = f32::from_bits(1_f32.to_bits() | (x.to_bits() & MANTISSA_MASK));
     let log2exponent =
         f32::from_bits(256_f32.to_bits() | ((x.to_bits() & EXPONENT_MASK) >> 8)) - 383.;
-    return log2exponent + log_2_mantissa(mantissa);
+    log2exponent + 
+    fma(m*m,fma(a,m,b),fma(g,m,c))/
+    fma(m*m,fma(d,m,e),fma(f,m,1.))
 }
 #[inline(always)]
 fn exp2_fract(x: f32) -> f32 {
