@@ -23,16 +23,28 @@ jodie log2 error: 0.055
 
 # benchmarks
 ```
-    | jodie   | std     | perf improvement
-----|---------|---------|-----------------
-cbrt| 11.5 ns | 60.3 ns | 5.2x
- cos| 21.2 ns | 27.0 ns | 1.3x
-exp2|  8.4 ns | 22.6 ns | 2.7x
-log2|  8.7 ns | 15.0 ns | 1.7x
- sin| 20.5 ns | 25.0 ns | 1.2x
+Latency (lower is better)
+    | jodie  | std    | perf improvement
+----|--------|--------|-----------------
+cbrt| 1.4 ns | 7.6 ns | 5.4x
+ cos| 2.9 ns | 3.3 ns | 1.1x
+exp2| 1.0 ns | 2.7 ns | 2.7x
+log2| 1.0 ns | 1.8 ns | 1.8x
+ sin| 2.7 ns | 3.3 ns | 1.2x
+
+Throughput (higher is better)
+    | jodie    | std      | perf improvement
+----|----------|----------|-----------------
+cbrt| 5.6 GB/s | 0.5 GB/s | 11.2x
+ cos| 2.5 GB/s | 1.1 GB/s | 2.3x
+exp2| 6.8 GB/s | 1.4 GB/s | 4.9x
+log2| 6.6 GB/s | 1.9 GB/s | 3.5x
+ sin| 5.0 GB/s | 1.1 GB/s | 4.5x
+
 ```
 
 # todo:
+- improve cos throughput
 - add inverse trig functions
 - add tan()
 - less accurate but faster versions
