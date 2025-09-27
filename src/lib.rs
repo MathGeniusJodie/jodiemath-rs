@@ -143,7 +143,9 @@ pub fn cbrt(x: f32) -> f32 {
 }
 #[inline(always)]
 pub fn cbrt_accurate(x: f32) -> f32 {
-    let s = cbrt(x);
+    let s = f32::from_bits(x.to_bits() / 3 + 709982100);
+    let s3 = s * s * s;
+    let s = fma(s3*s,-3./fma(2.,s3,x),s*2.);
     let s3: Ff = mul_ff_f32_ff(mul_f32_f32_ff(s, s), s * 2.);
     s * 2f32
         + div_ff_ff_f32(

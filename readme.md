@@ -30,7 +30,7 @@ Latency (lower is better)
               | jodie  | std    | perf improvement
 --------------|--------|--------|-----------------
          cbrt | 1.4 ns | 7.6 ns | 5.4x
-accurate cbrt | 4.8 ns | 7.6 ns | 1.6x
+accurate cbrt | 4.0 ns | 7.6 ns | 1.9x
           cos | 2.9 ns | 3.3 ns | 1.1x
          exp2 | 1.0 ns | 2.7 ns | 2.7x
          log2 | 1.0 ns | 1.8 ns | 1.8x
@@ -40,7 +40,7 @@ Throughput (higher is better) (single thread)
               | jodie    | std      | perf improvement
 --------------|----------|----------|-----------------
          cbrt | 5.6 GB/s | 0.5 GB/s | 11.2x
-accurate cbrt | 3.6 GB/s | 0.5 GB/s | 7.2x
+accurate cbrt | 3.8 GB/s | 0.5 GB/s | 7.6x
           cos | 2.5 GB/s | 1.1 GB/s | 2.3x
          exp2 | 6.8 GB/s | 1.4 GB/s | 4.9x
          log2 | 6.6 GB/s | 1.9 GB/s | 3.5x
