@@ -1,6 +1,4 @@
-use core::ops::{Add, Div, Mul, Sub};
-
-// godbolt flags -C opt-level=3 -C target_feature=+fma -C target-feature=+crt-static
+// godbolt flags -C opt-level=3 -C target_feature=+fma
 
 const SIGN_MASK: u32 = 0x80000000;
 const EXPONENT_MASK: u32 = 0x7f800000;
