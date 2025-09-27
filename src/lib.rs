@@ -104,22 +104,22 @@ fn mul_f32_f32_ff(a: f32, b: f32) -> Ff {
     (p, e)
 }
 #[inline(always)]
-fn mul_ff_f32_ff(a: Ff, rhs: f32) -> Ff {
-    let p = a.0 * rhs;
-    let e = fma(a.0, rhs, -p);
-    (p, fma(a.1, rhs, e))
+fn mul_ff_f32_ff(a: Ff, b: f32) -> Ff {
+    let p = a.0 * b;
+    let e = fma(a.0, b, -p);
+    (p, fma(a.1, b, e))
 }
 #[inline(always)]
-fn quick_add_ff_f32_ff(a: Ff, rhs: f32) -> Ff {
-    let s = a.0 + rhs;
-    let lo = a.1 + (rhs - (s - a.0));
+fn quick_add_ff_f32_ff(a: Ff, b: f32) -> Ff {
+    let s = a.0 + b;
+    let lo = a.1 + (b - (s - a.0));
     (s, lo)
 }
 #[inline(always)]
-fn div_ff_ff_f32(a: Ff, rhs: Ff) -> f32 {
-    let rcp = 1.0 / rhs.0;
+fn div_ff_ff_f32(a: Ff, b: Ff) -> f32 {
+    let rcp = 1.0 / b.0;
     let q1 = a.0 * rcp;
-    let rh = fma(-q1, rhs.0, a.0) + fma(-q1, rhs.1, a.1);
+    let rh = fma(-q1, b.0, a.0) + fma(-q1, b.1, a.1);
     fma(rh, rcp, q1)
 }
 
@@ -145,7 +145,7 @@ pub fn cbrt(x: f32) -> f32 {
 pub fn cbrt_accurate(x: f32) -> f32 {
     let s = f32::from_bits(x.to_bits() / 3 + 709982100);
     let s3 = s * s * s;
-    let s = fma(s3*s,-3./fma(2.,s3,x),s*2.);
+    let s = fma(s3 * s, -3. / fma(2., s3, x), s * 2.);
     let s3: Ff = mul_ff_f32_ff(mul_f32_f32_ff(s, s), s * 2.);
     s * 2f32
         + div_ff_ff_f32(
