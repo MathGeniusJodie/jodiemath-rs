@@ -23,6 +23,8 @@ jodie log2 error: 0.055
 
 # benchmarks
 ```
+Run on i7-12700H
+
 Latency (lower is better)
     | jodie  | std    | perf improvement
 ----|--------|--------|-----------------
@@ -32,7 +34,7 @@ exp2| 1.0 ns | 2.7 ns | 2.7x
 log2| 1.0 ns | 1.8 ns | 1.8x
  sin| 2.7 ns | 3.3 ns | 1.2x
 
-Throughput (higher is better)
+Throughput (higher is better) (single thread)
     | jodie    | std      | perf improvement
 ----|----------|----------|-----------------
 cbrt| 5.6 GB/s | 0.5 GB/s | 11.2x
