@@ -6,11 +6,11 @@ const MANTISSA_MASK: u32 = 0x007fffff;
 
 #[inline(always)]
 fn fma(a: f32, b: f32, c: f32) -> f32 {
-    return a.mul_add(b, c);
+    a.mul_add(b, c)
 }
 #[inline(always)]
 fn mulsign(x: f32, y: f32) -> f32 {
-    return f32::from_bits(x.to_bits() ^ (y.to_bits() & SIGN_MASK));
+    f32::from_bits(x.to_bits() ^ (y.to_bits() & SIGN_MASK))
 }
 #[inline(always)]
 pub fn log_2(x: f32) -> f32 {
@@ -57,26 +57,26 @@ fn sinf_poly(x: f32) -> f32 {
 }
 #[inline(always)]
 pub fn sin(x: f32) -> f32 {
-    let tau: f64 = 6.2831853071795864769252867665590057683943387987502116419498891846;
+    let tau: f64 = std::f64::consts::TAU;
     let tauh: f32 = tau as f32;
     let taul: f32 = (tau - (tauh as f64)) as f32;
-    let rtau: f64 = 0.1591549430918953357688837633725143620344596457404564487476673440;
+    let rtau: f64 = 0.159_154_943_091_895_35;
     let rtauh: f32 = rtau as f32;
     //let rtaul: f32 = (rtau - (rtauh as f64)) as f32;
-    let pi = 3.14159265358979323846;
+    let pi = std::f32::consts::PI;
     let pilo = f32::from_bits(0x33bbbd2e);
-    let rpi = 0.3183098861837907;
+    let rpi = 0.318_309_87;
     let z = x - (x * rtauh).round() * tauh + (x * rtauh).round() * taul;
     let y = (x - (x * rpi).round() * pi + (x * rpi).round() * pilo).abs();
-    return sinf_poly(mulsign(y, z));
+    sinf_poly(mulsign(y, z))
 }
 #[inline(always)]
 // todo: make less convoluted
 pub fn cos(x: f32) -> f32 {
-    let tau: f64 = 6.2831853071795864769252867665590057683943387987502116419498891846;
+    let tau: f64 = std::f64::consts::TAU;
     let tauh: f32 = tau as f32;
     let taul: f32 = (tau - (tauh as f64)) as f32;
-    let rtau: f64 = 0.1591549430918953357688837633725143620344596457404564487476673440;
+    let rtau: f64 = 0.159_154_943_091_895_35;
     let rtauh: f32 = rtau as f32;
     let rtaul: f32 = (rtau - (rtauh as f64)) as f32;
 
@@ -229,12 +229,12 @@ mod tests {
             .draw_series(LineSeries::new(
                 (0..1000)
                     .map(|x| x as f32)
-                    .map(|x| (x, cbrt(x as f32) / (x as f32).cbrt() - 1.0)),
+                    .map(|x| (x, cbrt(x) / x.cbrt() - 1.0)),
                 &RED,
             ))
             .unwrap()
             .label("std")
-            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &RED));
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
     }
 
     // plot cos and builtin cos in 2 different colors
@@ -258,7 +258,7 @@ mod tests {
             ))
             .unwrap()
             .label("approx")
-            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &RED));
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
         chart
             .draw_series(LineSeries::new(
                 (-200..200).map(|x| x as f32 * 0.1).map(|x| (x, x.cos())),
@@ -266,7 +266,7 @@ mod tests {
             ))
             .unwrap()
             .label("std")
-            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &BLUE));
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLUE));
         chart.configure_series_labels().draw().unwrap();
         chart
             .draw_series(LineSeries::new(
@@ -275,7 +275,7 @@ mod tests {
             ))
             .unwrap()
             .label("std")
-            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &BLUE));
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLUE));
         chart.configure_series_labels().draw().unwrap();
 
         root.present().expect("Unable to write result to file, please make sure 'plotters' crate is in your Cargo.toml");
