@@ -97,11 +97,7 @@ pub fn cos(x: f32) -> f32 {
     sinf_poly(x * s)
 }
 
-
-
 pub type Ff = (f32, f32);
-
-// Updated helpers using (f32,f32)
 
 #[inline(always)]
 fn mul_f32_f32_ff(a: f32, b: f32) -> Ff {
@@ -109,26 +105,25 @@ fn mul_f32_f32_ff(a: f32, b: f32) -> Ff {
     let e = fma(a, b, -p);
     (p, e)
 }
-
+#[inline(always)]
 fn mul_ff_f32_ff(a: Ff, rhs: f32) -> Ff {
     let p = a.0 * rhs;
     let e = fma(a.0, rhs, -p);
     (p, fma(a.1, rhs, e))
 }
-
+#[inline(always)]
 fn quick_add_ff_f32_ff(a: Ff, rhs: f32) -> Ff {
     let s = a.0 + rhs;
     let lo = a.1 + (rhs - (s - a.0));
     (s, lo)
 }
-
+#[inline(always)]
 fn div_ff_ff_f32(a: Ff, rhs: Ff) -> f32 {
     let rcp = 1.0 / rhs.0;
     let q1 = a.0 * rcp;
     let rh = fma(-q1, rhs.0, a.0) + fma(-q1, rhs.1, a.1);
     fma(rh, rcp, q1)
 }
-
 
 //f0 = (s^3-x)
 //f1 = (3 s^2)
@@ -142,17 +137,21 @@ fn div_ff_ff_f32(a: Ff, rhs: Ff) -> f32 {
 pub fn cbrt(x: f32) -> f32 {
     let s = f32::from_bits(x.to_bits() / 3 + 709982100);
     let s3 = s * s * s;
-    let s = fma(
+    fma(
         fma(6., s3, 3. * x),
         s * (x - s3) / fma(fma(10., s3, 16. * x), s3, x * x),
         s,
-    );
-
-    let s3: Ff = mul_ff_f32_ff(mul_f32_f32_ff(s,s),s*2.);
-    s*2f32 + div_ff_ff_f32(
-        mul_ff_f32_ff(mul_ff_f32_ff(s3,-1.5),s),
-        quick_add_ff_f32_ff(s3,x)
     )
+}
+#[inline(always)]
+pub fn cbrt_accurate(x: f32) -> f32 {
+    let s = cbrt(x);
+    let s3: Ff = mul_ff_f32_ff(mul_f32_f32_ff(s, s), s * 2.);
+    s * 2f32
+        + div_ff_ff_f32(
+            mul_ff_f32_ff(mul_ff_f32_ff(s3, -1.5), s),
+            quick_add_ff_f32_ff(s3, x),
+        )
 }
 
 #[cfg(test)]
@@ -172,6 +171,23 @@ mod tests {
         for x in 1..1000 {
             let reference = (x as f64).cbrt() as f32;
             let result = cbrt(x as f32);
+            err += reference.to_bits().abs_diff(result.to_bits()) as u64;
+        }
+        println!("jodie cbrt error: {}", (err as f32) / 1000.);
+        let mut err: u64 = 0;
+        for x in 1..1000 {
+            let reference = (x as f64).cbrt() as f32;
+            let result = (x as f32).cbrt();
+            err += reference.to_bits().abs_diff(result.to_bits()) as u64;
+        }
+        println!("std cbrt error: {}", (err as f32) / 1000.);
+    }
+    #[test]
+    fn cbrt_accurate_precision() {
+        let mut err: u64 = 0;
+        for x in 1..1000 {
+            let reference = (x as f64).cbrt() as f32;
+            let result = cbrt_accurate(x as f32);
             err += reference.to_bits().abs_diff(result.to_bits()) as u64;
         }
         println!("jodie cbrt error: {}", (err as f32) / 1000.);
