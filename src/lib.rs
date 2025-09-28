@@ -131,6 +131,43 @@ fn div_ff_ff_f32(a: Ff, b: Ff) -> f32 {
 // (6.0*f0*f1*f1-3.0*f0*f0*f2) / (6.0*f1*f1*f1-6.0*f0*f1*f2+f0*f0*f3)
 // (3 s (2 s^3 + x) (s^3 - x))/(10 s^6 + 16 s^3 x + x^2)
 
+/*
+1.3333333
+1.6666666
+1
+
+0.97915906
+1.0251871
+1.0236827
+ */
+
+// better latency but worse throughput
+/*
+pub fn cbrt_accurate(x: f32) -> f32 {
+    let y = (x.to_bits() & 0x7f800000) / 3;
+    let w = f32::from_bits((y & MANTISSA_MASK) | 0x3f800000);
+    let z = f32::from_bits((x.to_bits() & MANTISSA_MASK) | 0x3f800000);
+    let v = f32::from_bits(y + 0x2a500000);
+
+    let s =
+        v * fma(
+            fma(0.0228006, z, -0.161608),
+            z * z,
+            fma(0.585139, z, 0.553749),
+        ) * fma(
+            fma(-0.406224803572949, w, 1.08111587919155),
+            w,
+            0.301974119398903,
+        );
+
+    let s3: Ff = mul_ff_f32_ff(mul_f32_f32_ff(s, s), s * 2.);
+    s * 2f32
+        + div_ff_ff_f32(
+            mul_ff_f32_ff(mul_ff_f32_ff(s3, -1.5), s),
+            quick_add_ff_f32_ff(s3, x),
+        )
+}*/
+
 #[inline(always)]
 pub fn cbrt(x: f32) -> f32 {
     let s = f32::from_bits(x.to_bits() / 3 + 709982100);
@@ -141,6 +178,7 @@ pub fn cbrt(x: f32) -> f32 {
         s,
     )
 }
+
 #[inline(always)]
 pub fn cbrt_accurate(x: f32) -> f32 {
     let s = f32::from_bits(x.to_bits() / 3 + 709982100);
@@ -165,6 +203,7 @@ mod tests {
         assert_eq!(log_2(4.0), 2.0);
         assert_eq!(log_2(8.0), 3.0);
     }
+
     #[test]
     fn cbrt_precision() {
         let mut err: u64 = 0;
