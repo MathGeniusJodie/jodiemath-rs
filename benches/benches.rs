@@ -2,8 +2,8 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use jodiemath_rs::{cbrt, cbrt_accurate, cos, exp2, log_2, sin};
 use std::hint::black_box;
 
-//const N: usize = 262_144;
-const N: usize = 1;
+const N: usize = 262_144;
+//const N: usize = 1;
 
 fn bench_cbrt(c: &mut Criterion) {
     c.bench_function("jodie exp2", |b| {

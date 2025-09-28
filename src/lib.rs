@@ -136,28 +136,25 @@ fn div_ff_ff_f32(a: Ff, b: Ff) -> f32 {
 1.6666666
 1
 
-0.97915906
-1.0251871
-1.0236827
+0.9672176
+0.97486126
+1.0234907
  */
 
-// better latency but worse throughput
+// better latency but much worse throughput
 /*
 pub fn cbrt_accurate(x: f32) -> f32 {
     let y = (x.to_bits() & 0x7f800000) / 3;
     let w = f32::from_bits((y & MANTISSA_MASK) | 0x3f800000);
     let z = f32::from_bits((x.to_bits() & MANTISSA_MASK) | 0x3f800000);
-    let v = f32::from_bits(y + 0x2a500000);
+    let v = f32::from_bits(y);
 
-    let s =
-        v * fma(
+    let s = v * fma(w,fma(8.6287629292335e24,w,-2.5198358938652e25),4.7274316964847e25)*
+        //fma(fma(-5.9656528e-2,z,4.3746748e-1),z,6.2290063e-1)
+        fma(
             fma(0.0228006, z, -0.161608),
             z * z,
             fma(0.585139, z, 0.553749),
-        ) * fma(
-            fma(-0.406224803572949, w, 1.08111587919155),
-            w,
-            0.301974119398903,
         );
 
     let s3: Ff = mul_ff_f32_ff(mul_f32_f32_ff(s, s), s * 2.);
@@ -309,6 +306,10 @@ mod tests {
     }
     #[test]
     fn cbrt_plot() {
+        println!("{}", cbrt_accurate(9.0));
+        println!("{}", cbrt_accurate(17.0));
+        println!("{}", cbrt_accurate(33.0));
+        println!("{}", cbrt_accurate(65.0));
         use plotters::prelude::*;
         let root = BitMapBackend::new("cbrt.png", (640, 480)).into_drawing_area();
         root.fill(&WHITE).unwrap();
@@ -326,7 +327,7 @@ mod tests {
             .draw_series(LineSeries::new(
                 (0..1000)
                     .map(|x| x as f32)
-                    .map(|x| (x, cbrt(x) / x.cbrt() - 1.0)),
+                    .map(|x| (x, cbrt_accurate(x) / x.cbrt() - 1.0)),
                 &RED,
             ))
             .unwrap()
