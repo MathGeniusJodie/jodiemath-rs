@@ -224,7 +224,7 @@ mod tests {
             let result = cbrt_accurate(x as f32);
             err += reference.to_bits().abs_diff(result.to_bits()) as u64;
         }
-        println!("jodie cbrt error: {}", (err as f32) / 1000.);
+        println!("jodie accurate cbrt error: {}", (err as f32) / 1000.);
         let mut err: u64 = 0;
         for x in 1..1000 {
             let reference = (x as f64).cbrt() as f32;
