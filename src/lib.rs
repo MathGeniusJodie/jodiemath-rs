@@ -1,5 +1,8 @@
 // godbolt flags -C opt-level=3 -C target_feature=+fma
 
+mod doublefloat;
+use doublefloat::Df32;
+
 const SIGN_MASK: u32 = 0x80000000;
 const EXPONENT_MASK: u32 = 0x7f800000;
 const MANTISSA_MASK: u32 = 0x007fffff;
@@ -95,32 +98,6 @@ pub fn cos(x: f32) -> f32 {
     sinf_poly(x * s)
 }
 
-#[inline(always)]
-fn mul_f32_f32_ff(a: f32, b: f32) -> (f32, f32) {
-    let p = a * b;
-    let e = fma(a, b, -p);
-    (p, e)
-}
-#[inline(always)]
-fn mul_ff_f32_ff(a: (f32, f32), b: f32) -> (f32, f32) {
-    let p = a.0 * b;
-    let e = fma(a.0, b, -p);
-    (p, fma(a.1, b, e))
-}
-#[inline(always)]
-fn quick_add_ff_f32_ff(a: (f32, f32), b: f32) -> (f32, f32) {
-    let s = a.0 + b;
-    let lo = a.1 + (b - (s - a.0));
-    (s, lo)
-}
-#[inline(always)]
-fn div_ff_ff_f32(a: (f32, f32), b: (f32, f32)) -> f32 {
-    let rcp = 1.0 / b.0;
-    let q1 = a.0 * rcp;
-    let rh = fma(-q1, b.0, a.0) + fma(-q1, b.1, a.1);
-    fma(rh, rcp, q1)
-}
-
 //f0 = (s^3-x)
 //f1 = (3 s^2)
 //f2 = (6s)
@@ -177,16 +154,39 @@ pub fn cbrt(x: f32) -> f32 {
 #[inline(always)]
 pub fn cbrt_accurate(x: f32) -> f32 {
     let s = f32::from_bits(x.to_bits() / 3 + 709982100);
-    let s2 = s * s;
-    let s = fma(s2 * s2, -3. / fma(s * 2., s2, x), s * 2.);
-    let s3 = mul_ff_f32_ff(mul_f32_f32_ff(s, s), s * 2.);
-    s * 2f32
-        + div_ff_ff_f32(
-            mul_ff_f32_ff(mul_ff_f32_ff(s3, -1.5), s),
-            quick_add_ff_f32_ff(s3, x),
-        )
-}
+    let rs = f32::from_bits(0x54a223b4 - x.to_bits() / 3);
+    let s = fma(fma(s*s,-s,x),(1./3.)*rs*rs,s);
 
+    //let s2 = s * s;
+    //let s = fma(s2 * s2, -3. / fma(s * 2., s2, x), s * 2.);
+
+    // h2
+    // let s32 = Df32::from_mul(s,s) * (s*2.);
+    // s * 2f32 + ((s32*-1.5)*s).div_to_f32(s32.quick_add(x))
+
+    let s2 = Df32::from_mul(s,s);
+    let s3 = s2 * s;
+    let s3x = s3 * x;
+    let s6 = s3*s3;
+    let x2 = x*x;
+    // h3
+    (
+            Df32(fma(-2.,s6.0,s3x.0)+x2,-2.*s6.1+s3x.1) * s
+        ).div_to_f32(
+        Df32(
+            fma(s3x.0,16./3.,fma(s6.0,10./3.,x2*(1./3.))),
+            fma(s3x.1,16./3.,s6.1*(10./3.)))
+        )
+    //h4
+    /*
+    s - ((s3 - x)*(10.*s6 + Df32(s3x.0*16.,s3x.1*16.) + x2)).div_to_f32(
+        (15.*s6 + 15.*x2 + 51.*s3x)*s2
+    )*/
+}
+/*
+-1/3*((s^3 - x)*(10*s^6 + 16*s^3*x + x^2))/
+(s^2*(5*s^6 + 17*s^3*x + 5*x^2))
+*/
 #[cfg(test)]
 mod tests {
     use super::*;
