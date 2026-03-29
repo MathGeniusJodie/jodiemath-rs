@@ -170,13 +170,14 @@ pub fn cbrt_accurate(x: f32) -> f32 {
     let s6 = s3*s3;
     let x2 = x*x;
     // h3
-    (
-            Df32(fma(-2.,s6.0,s3x.0)+x2,-2.*s6.1+s3x.1) * s
+    fma(s,(
+            Df32(fma(-2.,s6.0,s3x.0)+x2,-2.*s6.1+s3x.1)
         ).div_to_f32(
         Df32(
             fma(s3x.0,16./3.,fma(s6.0,10./3.,x2*(1./3.))),
             fma(s3x.1,16./3.,s6.1*(10./3.)))
         )
+    ,s)
     //h4
     /*
     s - ((s3 - x)*(10.*s6 + Df32(s3x.0*16.,s3x.1*16.) + x2)).div_to_f32(
