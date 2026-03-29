@@ -2,7 +2,7 @@
 
 
 (* Define your function *)
-g[x_] := CubeRoot[x]
+g[x_] := 1/Sqrt[3]/CubeRoot[x]
 
 inv[x_] := FullSimplify[InverseFunction[g][x], Assumptions -> x > 0]
 

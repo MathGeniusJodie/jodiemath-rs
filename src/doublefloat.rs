@@ -94,6 +94,12 @@ impl Df32 {
         let lo = fma(self.0, self.1*2., e);
         Self(p, lo)
     }
+    #[inline(always)]
+    pub fn quick_add_df(self, rhs: Self) -> Self {
+        let (s, e) = quick_two_sum(self.0, rhs.0);
+        let (s, e) = quick_two_sum(s, e + self.1 + rhs.1);
+        Self(s,e)
+    }
 }
 
 impl From<f32> for Df32 {
