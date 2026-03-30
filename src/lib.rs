@@ -112,15 +112,15 @@ pub fn cbrt(x: f32) -> f32 {
 #[inline(always)]
 pub fn cbrt_accurate(x: f32) -> f32 {
     let s = f32::from_bits(
-        0x2a4dd970u32.wrapping_add(x.to_bits() / 3)
+        0x2a4f536eu32.wrapping_add(x.to_bits() / 3)
     );
     let r = f32::from_bits(
-        0x68ff2476u32.wrapping_sub((x.to_bits()/3)<<1)
+        0x69043c30u32.wrapping_sub((x.to_bits()/3)<<1)
     );
     let s = fma(fma(s*s,-s,x),r,s);
     let s = fma(fma(s*s,-s,x),r,s);
     let s32 = Df32::from_mul(s,s) * (s*2.);
-    s * 2f32 + ((s32*-1.5)*s).div_to_f32(s32.quick_add(x))
+    s * 2f32 - ((s32*1.5)*s).div_to_f32(s32.quick_add(x))
 }
 /*
 -1/3*((s^3 - x)*(10*s^6 + 16*s^3*x + x^2))/
@@ -142,21 +142,30 @@ pub fn cbrt_constant(x: f32, c:u32) -> f32 {
     s * 2f32 + ((s32*-1.5)*s).div_to_f32(s32.quick_add(x))
 }
 
+
 pub fn cbrt_constant_2(x: f32, c0:u32, c1:u32) -> f32 {
     let s = f32::from_bits(
         c0.wrapping_add(x.to_bits() / 3)
     );
-    let rs = f32::from_bits(
+    let r = f32::from_bits(
         c1.wrapping_sub((x.to_bits()/3)<<1)
     );
-    let s = fma(fma(s*s,-s,x),rs,s);
-    let s = fma(fma(s*s,-s,x),rs,s);
+    let s = fma(fma(s*s,-s,x),r,s);
+    let s = fma(fma(s*s,-s,x),r,s);
     //let s2 = s * s;
-    //let s = fma(s2 * s2, -3. / fma(s * 2., s2, x), s * 2.);
-    return s;
+    //let s = fma(s2*s2, -1.5 / fma(s, s2, x*0.5), s * 2.);
+    //return s;
     // h2
-    let s32 = Df32::from_mul(s,s) * (s*2.);
-    return s * 2f32 + ((s32*-1.5)*s).div_to_f32(s32.quick_add(x));
+    
+    let s3 = Df32::from_mul(s,s) * s;
+    let y = 1./(x*1.5);
+    let i = s3.quick_add(x*0.5);
+    //let y = y*(2.-i.0*y);
+    let y = Df32::from_mul(y,-y) * i + (y*2.);
+    let y = y*(Df32(2.,0.) - i*y);
+    //let y = y*(Df32(2.,0.) - i*y);
+    //return s * 2f32 - ((s3*1.5)*s).div_to_f32(s3.quick_add(x*0.5));
+    return s * 2f32 - f32::from(((s3*1.5)*s)*y);
 
     let s2 = Df32::from_mul(s,s);
     let s3 = s2 * s;
@@ -206,10 +215,10 @@ mod tests {
     
     #[test]
     fn descent2() {
-        let mut c0:u32 = 0x2a4dd813;
-        let mut c1:u32 = 0x68ff247b;
+        let mut c0:u32 = 0x2a4f536e;
+        let mut c1:u32 = 0x69043c30;
 
-        let iters = 10000_000;
+        let iters = 10_000_000;
 
         let mut best_err: u64 = 0;
         for x in 1..iters {
@@ -218,7 +227,7 @@ mod tests {
             let result = cbrt_constant_2(x as f32,c0,c1);
             best_err += reference.to_bits().abs_diff(result.to_bits()) as u64;
         }
-        println!("optimizing! starting error: {}",best_err);
+        println!("optimizing! starting error: {}",best_err as f64 / iters as f64);
         loop{
             let mut new_err: u64 = 0;
             let mut old_err: u64 = 0;
@@ -244,7 +253,6 @@ mod tests {
                     for x in 1..iters {
                         let x:f32 = rand::rng().random::<f32>().abs();
                         let reference = (((x as f32)) as f64).cbrt() as f32;
-                        let old_result = cbrt_constant_2((x as f32), c0,c1);
                         let new_result = cbrt_constant_2((x as f32), new_const0, new_const1);
                         new_err_nomul += reference.to_bits().abs_diff(new_result.to_bits()) as u64;
                     }

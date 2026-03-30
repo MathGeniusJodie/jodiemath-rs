@@ -102,6 +102,13 @@ impl Df32 {
     }
 }
 
+impl From<Df32> for f32 {
+    #[inline(always)]
+    fn from(d: Df32) -> f32 {
+        d.0+d.1
+    }
+}
+
 impl From<f32> for Df32 {
     #[inline(always)]
     fn from(v: f32) -> Self {
@@ -183,8 +190,8 @@ impl Mul for Df32 {
     fn mul(self, rhs: Self) -> Self {
         let p = self.0 * rhs.0;
         let e = fma(self.0, rhs.0, -p);
-        //let lo = fma(self.1, rhs.0, e) + fma(self.0, rhs.1, rhs.1 * self.1);
-        let lo = fma(self.1, rhs.0, fma(self.0, rhs.1, e));
+        let lo = fma(self.1, rhs.0, e) + fma(self.0, rhs.1, rhs.1 * self.1);
+        //let lo = fma(self.1, rhs.0, fma(self.0, rhs.1, e));
         Self(p, lo)
     }
 }
