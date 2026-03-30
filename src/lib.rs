@@ -150,11 +150,15 @@ pub fn cbrt_constant_2(x: f32, c0:u32, c1:u32) -> f32 {
     let r = f32::from_bits(
         c1.wrapping_sub((x.to_bits()/3)<<1)
     );
-    let s = fma(s*s,s*-r,fma(r,x,s));
-    let s = fma(s*s,s*-r,fma(r,x,s));
     //let s2 = s * s;
     //let s = fma(s2*s2, -1.5 / fma(s, s2, x*0.5), s * 2.);
-    //return s;
+    let s = fma(s*s,s*-r,fma(r,x,s));
+    //let s = s + 1.5*r*(x - s*s*(s + r*(-s*s*s + x)));
+    let s = fma(s*s,s*-r,fma(r,x,s));
+    //let s = fma(s*s,s*-r,fma(r,x,s));
+    //let s2 = s * s;
+    //let s = fma(s2*s2, -1.5 / fma(s, s2, x*0.5), s * 2.);
+    return s;
     let s3 = Df32::from_mul(s,s) * s;
     return s * 2f32 - ((s3*1.5)*s).div_to_f32(s3.quick_add(x*0.5));
 
@@ -206,10 +210,10 @@ mod tests {
     
     #[test]
     fn descent2() {
-        let mut c0:u32 = 0x2a4f536e;
-        let mut c1:u32 = 0x69043c30;
+        let mut c0:u32 = 0x2a4de43a;
+        let mut c1:u32 = 0x6900db7f;
 
-        let iters = 10_000_000;
+        let iters = 100_000;
 
         let mut best_err: u64 = 0;
         for x in 1..iters {
