@@ -40,7 +40,7 @@ Throughput (higher is better) (single thread)
               | jodie    | std      | perf improvement
 --------------|----------|----------|-----------------
          cbrt | 5.6 GB/s | 0.5 GB/s | 11.2x
-accurate cbrt | 3.8 GB/s | 0.5 GB/s | 7.6x
+accurate cbrt | 5.6 GB/s | 0.5 GB/s | 11.2x
           cos | 2.5 GB/s | 1.1 GB/s | 2.3x
          exp2 | 6.8 GB/s | 1.4 GB/s | 4.9x
          log2 | 6.6 GB/s | 1.9 GB/s | 3.5x
