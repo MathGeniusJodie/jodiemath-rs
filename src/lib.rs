@@ -117,9 +117,8 @@ pub fn cbrt_accurate(x: f32) -> f32 {
     let r = f32::from_bits(
         0x69043c30u32.wrapping_sub((x.to_bits()/3)<<1)
     );
-    let rx = r*x;
-    let s = fma(s*s,s*-r,rx+s);
-    let s = fma(s*s,s*-r,rx+s);
+    let s = fma(s*s,s*-r,fma(r,x,s));
+    let s = fma(s*s,s*-r,fma(r,x,s));
     let s3 = Df32::from_mul(s,s) * s;
     return s * 2f32 - ((s3*1.5)*s).div_to_f32(s3.quick_add(x*0.5));
 }
@@ -151,13 +150,11 @@ pub fn cbrt_constant_2(x: f32, c0:u32, c1:u32) -> f32 {
     let r = f32::from_bits(
         c1.wrapping_sub((x.to_bits()/3)<<1)
     );
-    let rx = r*x;
-    let s = fma(s*s,s*-r,rx+s);
-    let s = fma(s*s,s*-r,rx+s);
+    let s = fma(s*s,s*-r,fma(r,x,s));
+    let s = fma(s*s,s*-r,fma(r,x,s));
     //let s2 = s * s;
     //let s = fma(s2*s2, -1.5 / fma(s, s2, x*0.5), s * 2.);
     //return s;
-
     let s3 = Df32::from_mul(s,s) * s;
     return s * 2f32 - ((s3*1.5)*s).div_to_f32(s3.quick_add(x*0.5));
 
