@@ -30,23 +30,18 @@ pub fn log_2(x: f32) -> f32 {
         f32::from_bits(256_f32.to_bits() | ((x.to_bits() & EXPONENT_MASK) >> 8)) - 383.;
     log2exponent + fma(m * m, fma(a, m, b), fma(g, m, c)) / fma(m * m, fma(d, m, e), fma(f, m, 1.))
 }
+
 #[inline(always)]
-fn exp2_fract(x: f32) -> f32 {
+pub fn exp2(x: f32) -> f32 {
     let a = f32::from_bits(0x3af71c15);
     let b = f32::from_bits(0x3c130514);
     let c = f32::from_bits(0x3d64b437);
     let d = f32::from_bits(0x3e75ea9e);
     let e = f32::from_bits(0x3f317271);
-    fma(fma(fma(fma(fma(a, x, b), x, c), x, d), x, e), x, 1_f32)
-    //alternative for less latency
-    //fma(x*x,fma(fma(a,x,b),x*x,fma(c,x,d)),fma(e,x,1.))
-}
-#[inline(always)]
-pub fn exp2(x: f32) -> f32 {
     // exp2(floor(x))*exp2(fract(x)) == exp2(x)
     let exp2int = f32::from_bits(((x + 383_f32).to_bits() << 8) & EXPONENT_MASK);
     let fract = x - x.floor();
-    exp2int * exp2_fract(fract)
+    exp2int * fma(fma(fma(fma(fma(a, x, b), x, c), x, d), x, e), x, 1_f32)
 }
 #[inline(always)]
 fn sinf_poly(x: f32) -> f32 {
@@ -122,26 +117,6 @@ pub fn cbrt_accurate(x: f32) -> f32 {
     let s3 = Df32::from_mul(s,s) * s;
     return s * 2f32 - ((s3*1.5)*s).div_to_f32(s3.quick_add(x*0.5));
 }
-/*
--1/3*((s^3 - x)*(10*s^6 + 16*s^3*x + x^2))/
-(s^2*(5*s^6 + 17*s^3*x + 5*x^2))
-*/
-
-pub fn cbrt_constant(x: f32, c:u32) -> f32 {
-    let s = f32::from_bits(x.to_bits() / 3 + 
-    c
-    //710137493
-    );
-    let rs = f32::from_bits(
-        //c
-        1412840964
-         - x.to_bits() / 3);
-    let s = fma(fma(s*s,-s,x),rs*rs,s);
-
-    let s32 = Df32::from_mul(s,s) * (s*2.);
-    s * 2f32 + ((s32*-1.5)*s).div_to_f32(s32.quick_add(x))
-}
-
 
 pub fn cbrt_constant_2(x: f32, c0:u32, c1:u32) -> f32 {
     let s = f32::from_bits(x.to_bits() / 3 + c0);
@@ -210,68 +185,84 @@ pub fn cbrt_constant_2(x: f32, c0:u32, c1:u32) -> f32 {
     //s
 }
 
+#[inline(always)]
+pub fn exp2_const(x: f32,cnst: &[u32]) -> f32 {
+    let a = f32::from_bits(cnst[0]);
+    let b = f32::from_bits(cnst[1]);
+    let c = f32::from_bits(cnst[2]);
+    let d = f32::from_bits(cnst[3]);
+    let e = f32::from_bits(cnst[4]);
+    // exp2(floor(x))*exp2(fract(x)) == exp2(x)
+    let exp2int = f32::from_bits(((x + 383_f32).to_bits() << 8) & EXPONENT_MASK);
+    let fract = x - x.floor();
+    exp2int * fma(fma(fma(fma(fma(a, x, b), x, c), x, d), x, e), x, 1_f32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rand::Rng;
     use rand::RngExt;
     
-    #[test]
-    fn descent2() {
-        let mut c0:u32 = 0x2a509379;
-        let mut c1:u32 = 0x68ff7ef6;
-
-        let iters = 1000_000;
+    fn run_descent(f: impl Fn(f32, &[u32]) -> f32, reference: impl Fn(f32) -> f32, initial_consts: &[u32]) {
+        let mut consts: Vec<u32> = initial_consts.to_vec();
+        let iters = 100_000;
 
         let mut best_err: u64 = 0;
-        for x in 1..iters {
-            let x:f32 = rand::rng().random::<f32>().abs();
-            let reference = (x as f64).cbrt() as f32;
-            let result = cbrt_constant_2(x as f32,c0,c1);
-            best_err += reference.to_bits().abs_diff(result.to_bits()) as u64;
+        for _ in 1..iters {
+            let x: f32 = rand::rng().random::<f32>().abs();
+            let result = f(x, &consts);
+            best_err += reference(x).to_bits().abs_diff(result.to_bits()) as u64;
         }
-        println!("optimizing! starting error: {}",best_err as f64 / iters as f64);
-        loop{
+        println!("optimizing! starting error: {}", best_err as f64 / iters as f64);
+        loop {
             let mut new_err: u64 = 0;
             let mut old_err: u64 = 0;
-            let n0: u32 =  rand::rng().random();
-            let n1: u32 =  rand::rng().random();
-            let new_const0 = c0.wrapping_add(f32::from_bits(n0) as i32 as u32);
-            let new_const1 = c1.wrapping_add(f32::from_bits(n1) as i32 as u32);
-            for x in 1..iters {
-                let x:f32 = rand::rng().random::<f32>().abs();
-                let reference = (((x as f32)) as f64).cbrt() as f32;
-                let old_result = cbrt_constant_2((x as f32), c0,c1);
-                let new_result = cbrt_constant_2((x as f32), new_const0, new_const1);
-                new_err += reference.to_bits().abs_diff(new_result.to_bits()) as u64;
-                old_err += reference.to_bits().abs_diff(old_result.to_bits()) as u64;
+            let new_consts: Vec<u32> = consts.iter().map(|&c| {
+                let n: u32 = rand::rng().random();
+                c.wrapping_add(f32::from_bits(n) as i32 as u32)
+            }).collect();
+            for _ in 1..iters {
+                let x: f32 = rand::rng().random::<f32>().abs();
+                let ref_val = reference(x);
+                let old_result = f(x, &consts);
+                let new_result = f(x, &new_consts);
+                new_err += ref_val.to_bits().abs_diff(new_result.to_bits()) as u64;
+                old_err += ref_val.to_bits().abs_diff(old_result.to_bits()) as u64;
             }
-            if new_err <= old_err{
-                c0 = new_const0;
-                c1 = new_const1;
-                if new_err < best_err{
-
+            if new_err <= old_err {
+                consts = new_consts.clone();
+                if new_err < best_err {
                     let mut new_err_nomul: u64 = 0;
                     // no mul check
-                    for x in 1..iters {
-                        let x:f32 = rand::rng().random::<f32>().abs();
-                        let reference = (((x as f32)) as f64).cbrt() as f32;
-                        let new_result = cbrt_constant_2((x as f32), new_const0, new_const1);
-                        new_err_nomul += reference.to_bits().abs_diff(new_result.to_bits()) as u64;
+                    for _ in 1..iters {
+                        let x: f32 = rand::rng().random::<f32>().abs();
+                        let new_result = f(x, &new_consts);
+                        new_err_nomul += reference(x).to_bits().abs_diff(new_result.to_bits()) as u64;
                     }
-                    if new_err_nomul < best_err{
+                    if new_err_nomul < best_err {
                         best_err = new_err_nomul;
-                        println!("new best consts {:x} {:x} with error {} nomul: {}",c0,c1,new_err as f64/iters as f64, new_err_nomul as f64/iters as f64);
+                        let const_strs: Vec<String> = consts.iter().map(|c| format!("{:x}", c)).collect();
+                        println!("new best consts {} with error {} nomul: {}", const_strs.join(" "), new_err as f64 / iters as f64, new_err_nomul as f64 / iters as f64);
                     }
                 }
             }
-            if new_err == best_err{
+            if new_err == best_err {
                 best_err = new_err;
-                c0 = new_const0;
-                c1 = new_const1;
-                //print!(".");
+                consts = new_consts;
             }
         }
+    }
+
+    #[test]
+    fn descent2() {
+        run_descent(|x, consts| exp2_const(x, consts), |x| (x as f64).exp2() as f32, &[
+            0x3af71c15,
+            0x3c130514,
+            0x3d64b437,
+            0x3e75ea9e,
+            0x3f317271,
+        ]);
     }
 
     /*
