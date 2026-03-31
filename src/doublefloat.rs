@@ -81,12 +81,6 @@ impl Df32 {
         Self(s, lo)
     }
     #[inline(always)]
-    pub fn sloppy_add(self, rhs: Self) -> Self {
-        let (s, e) = two_sum(self.0, rhs.0);
-        let e = self.1 + rhs.1;
-        Self(s, e)
-    }
-    #[inline(always)]
     pub fn square(self) -> Self {
         let p = self.0 * self.0;
         let e = fma(self.0, self.0, -p);
