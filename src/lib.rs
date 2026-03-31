@@ -122,20 +122,14 @@ pub fn cbrt_accurate(x: f32) -> f32 {
         let lo = fma(s2.1, s*2., e);
         Df32(b, lo)
     };
-    let s4 = {
-        let p = s2.0 * s2.0;
-        let e = fma(s2.0, s2.0, -p);
-        let lo = fma(s2.0*2., s2.1, fma(s2.1,s2.1,e));
-        Df32(p, lo)
-    };
     let s2xps4 = {
+        let s40 = s2.0 * s2.0;
+        let e = fma(s2.0, s2.0, -s40);
+        let s41 = fma(s2.0*2., s2.1, fma(s2.1,s2.1,e));
         let p = s*2.*x;
         let e = fma(s*2., x, -p);
-        let (s, f) = {
-            let (s, f) = quick_two_sum(p, s4.0);
-            (s, f + e + s4.1)
-        };
-        Df32(s,f)
+        let s = p + s40;
+        Df32(s, s40 - (s - p) + e + s41)
     };
     return s2xps4.div_to_f32(s32x);
 }
