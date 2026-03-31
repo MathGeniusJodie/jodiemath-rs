@@ -114,19 +114,51 @@ pub fn cbrt_accurate(x: f32) -> f32 {
     );
     let s = fma(s*s,s*-r,fma(r,x,s));
     let s = fma(s*s,s*-r,fma(r,x,s));
-    let s3 = Df32::from_mul(s,s) * s;
-    return s * 2f32 - ((s3*1.5)*s).div_to_f32(s3.quick_add(x*0.5));
+    let s2 = Df32::from_mul(s,s);
+    let s32x = {
+        let b = fma(s2.0,s*2.,x);
+        let p = x-b;
+        let e = fma(s2.0, s*2.,p)-(p+b-x);
+        let lo = fma(s2.1, s*2., e);
+        Df32(b, lo)
+    };
+    let s4 = {
+        let p = s2.0 * s2.0;
+        let e = fma(s2.0, s2.0, -p);
+        let lo = fma(s2.0*2., s2.1, fma(s2.1,s2.1,e));
+        Df32(p, lo)
+    };
+    let s2xps4 = {
+        let p = s*2.*x;
+        let e = fma(s*2., x, -p);
+        let (s, f) = {
+            let (s, f) = quick_two_sum(p, s4.0);
+            (s, f + e + s4.1)
+        };
+        Df32(s,f)
+    };
+    return s2xps4.div_to_f32(s32x);
+}
+/*
+pub fn from_mul(a: f32, b: f32) -> Self {
+    let p = a * b;
+    let e = fma(a, b, -p);
+    Self(p, e)
+}
+pub fn quick_add_df(self, rhs: Self) -> Self {
+    let (s, e) = quick_two_sum(self.0, rhs.0);
+    let (s, e) = quick_two_sum(s, e + self.1 + rhs.1);
+    Self(s,e)
+}
+*/
+
+fn quick_two_sum(a: f32, b: f32) -> (f32, f32) {
+    let s = a + b;
+    let e = b - (s - a);
+    (s, e)
 }
 
 pub fn cbrt_constant_2(x: f32, c0:u32, c1:u32) -> f32 {
-    let s = f32::from_bits(x.to_bits() / 3 + c0);
-    let s2 = s * s;
-    return fma(
-        fma(0.6*s, s2, 0.3*x),
-        fma(s2, -s2, x*s) / fma(fma(s, s2, 1.6*x), s*s2, x*x*0.1),
-        s,
-    );
-
     let s = f32::from_bits(
         c0.wrapping_add(x.to_bits() / 3)
     );
@@ -142,8 +174,25 @@ pub fn cbrt_constant_2(x: f32, c0:u32, c1:u32) -> f32 {
     //let s2 = s * s;
     //let s = fma(s2*s2, -1.5 / fma(s, s2, x*0.5), s * 2.);
     //return s;
-    let s3 = Df32::from_mul(s,s) * s;
-    return s * 2f32 - ((s3*1.5)*s).div_to_f32(s3.quick_add(x*0.5));
+    let s2 = Df32::from_mul(s,s);
+    let s32x = {
+        let b = fma(s2.0,s*2.,x);
+        let p = x-b;
+        let e = fma(s2.0, s*2.,p)-(p+b-x);
+        let lo = fma(s2.1, s*2., e);
+        Df32(b, lo)
+    };
+    let s2xps4 = {
+        let s40 = s2.0 * s2.0;
+        let e = fma(s2.0, s2.0, -s40);
+        let s41 = fma(s2.0*2., s2.1, fma(s2.1,s2.1,e));
+        let p = s*2.*x;
+        let e = fma(s*2., x, -p);
+        let s = p + s40;
+        Df32(s, s40 - (s - p) + e + s41)
+    };
+
+    return s2xps4.div_to_f32(s32x);
 
     let s2 = Df32::from_mul(s,s);
     let s3 = s2 * s;
@@ -256,12 +305,17 @@ mod tests {
 
     #[test]
     fn descent2() {
+        /*
         run_descent(|x, consts| exp2_const(x, consts), |x| (x as f64).exp2() as f32, &[
             0x3af71c15,
             0x3c130514,
             0x3d64b437,
             0x3e75ea9e,
             0x3f317271,
+        ]);*/
+        run_descent(|x, consts| cbrt_constant_2(x, consts[0],consts[1]), |x| (x as f64).cbrt() as f32, &[
+            0x2a4f536eu32,
+            0x69043c30u32,
         ]);
     }
 
