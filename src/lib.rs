@@ -107,10 +107,10 @@ pub fn cbrt(x: f32) -> f32 {
 #[inline(always)]
 pub fn cbrt_accurate(x: f32) -> f32 {
     let s = f32::from_bits(
-        0x2a4f536eu32.wrapping_add(x.to_bits() / 3)
+        0x2a4ddef1u32.wrapping_add(x.to_bits() / 3)
     );
     let r = f32::from_bits(
-        0x69043c30u32.wrapping_sub((x.to_bits()/3)<<1)
+        0x68ff2381u32.wrapping_sub((x.to_bits()/3)<<1)
     );
     let s = fma(s*s,s*-r,fma(r,x,s));
     let s = fma(s*s,s*-r,fma(r,x,s));
@@ -152,13 +152,16 @@ fn quick_two_sum(a: f32, b: f32) -> (f32, f32) {
     (s, e)
 }
 
-pub fn cbrt_constant_2(x: f32, c0:u32, c1:u32) -> f32 {
+pub fn cbrt_constant(x: f32, c0:u32, c1:u32) -> f32 {
     let s = f32::from_bits(
         c0.wrapping_add(x.to_bits() / 3)
     );
     let r = f32::from_bits(
         c1.wrapping_sub((x.to_bits()/3)<<1)
     );
+    //let s = s.sqrt();
+    //let s = x*r*f32::from_bits(c0);
+    //return s;
     //let s2 = s * s;
     //let s = fma(s2*s2, -1.5 / fma(s, s2, x*0.5), s * 2.);
     //let s = fma(s*s,s*-r,fma(r,x,s));
@@ -249,7 +252,7 @@ mod tests {
     
     fn run_descent(f: impl Fn(f32, &[u32]) -> f32, reference: impl Fn(f32) -> f32, initial_consts: &[u32]) {
         let mut consts: Vec<u32> = initial_consts.to_vec();
-        let iters = 100_000;
+        let iters = 1000_000;
 
         let mut best_err: u64 = 0;
         for _ in 1..iters {
@@ -265,6 +268,9 @@ mod tests {
                 let n: u32 = rand::rng().random();
                 c.wrapping_add(f32::from_bits(n) as i32 as u32)
             }).collect();
+            if new_consts.iter().zip(consts.iter()).all(|(&x,&y)| x==y) {
+                continue;
+            }
             for _ in 1..iters {
                 let x: f32 = rand::rng().random::<f32>().abs();
                 let ref_val = reference(x);
@@ -285,7 +291,7 @@ mod tests {
                     }
                     if new_err_nomul < best_err {
                         best_err = new_err_nomul;
-                        let const_strs: Vec<String> = consts.iter().map(|c| format!("{:x}", c)).collect();
+                        let const_strs: Vec<String> = consts.iter().map(|c| format!("0x{:x}u32", c)).collect();
                         println!("new best consts {} with error {} nomul: {}", const_strs.join(" "), new_err as f64 / iters as f64, new_err_nomul as f64 / iters as f64);
                     }
                 }
@@ -307,9 +313,9 @@ mod tests {
             0x3e75ea9e,
             0x3f317271,
         ]);*/
-        run_descent(|x, consts| cbrt_constant_2(x, consts[0],consts[1]), |x| (x as f64).cbrt() as f32, &[
-            0x2a4f536eu32,
-            0x69043c30u32,
+        run_descent(|x, consts| cbrt_constant(x, consts[0],consts[1]), |x| (x as f64).cbrt() as f32, &[
+            0x2a4ddef1u32,
+            0x68ff2381u32,
         ]);
     }
 
