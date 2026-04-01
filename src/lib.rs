@@ -742,4 +742,154 @@ mod tests {
         chart.configure_series_labels().draw().unwrap();
         root.present().expect("Unable to write result to file");
     }
+
+    #[test]
+    fn log_2_error() {
+        use plotters::prelude::*;
+        let x_start = 1f32;
+        let x_end = 128f32;
+        let samples: Vec<(f32, f32)> = (0..1000)
+            .map(|i| x_start + (x_end - x_start) * i as f32 / 999.0)
+            .map(|x| (x, log_2(x) / (x as f64).log2() as f32 - 1.0))
+            .filter(|&(_, y)| y.is_finite())
+            .collect();
+        let y_min = samples.iter().map(|&(_, y)| y).fold(f32::INFINITY, f32::min);
+        let y_max = samples.iter().map(|&(_, y)| y).fold(f32::NEG_INFINITY, f32::max);
+        let root = BitMapBackend::new("log_2_error.png", (480, 480)).into_drawing_area();
+        root.fill(&WHITE).unwrap();
+        let mut chart = ChartBuilder::on(&root)
+            .margin(5)
+            .x_label_area_size(30)
+            .y_label_area_size(50)
+            .build_cartesian_2d(x_start..x_end, y_min..y_max)
+            .unwrap();
+        chart.configure_mesh().y_label_formatter(&|y| format!("{:.2e}", y)).draw().unwrap();
+        chart.draw_series(LineSeries::new(samples, &BLACK)).unwrap();
+        root.present().expect("Unable to write result to file");
+    }
+
+    #[test]
+    fn exp2_error() {
+        use plotters::prelude::*;
+        let x_start = 0f32;
+        let x_end = 10f32;
+        let samples: Vec<(f32, f32)> = (0..1000)
+            .map(|i| x_start + (x_end - x_start) * i as f32 / 999.0)
+            .map(|x| (x, exp2(x) / (x as f64).exp2() as f32 - 1.0))
+            .filter(|&(_, y)| y.is_finite())
+            .collect();
+        let y_min = samples.iter().map(|&(_, y)| y).fold(f32::INFINITY, f32::min);
+        let y_max = samples.iter().map(|&(_, y)| y).fold(f32::NEG_INFINITY, f32::max);
+        let root = BitMapBackend::new("exp2_error.png", (480, 480)).into_drawing_area();
+        root.fill(&WHITE).unwrap();
+        let mut chart = ChartBuilder::on(&root)
+            .margin(5)
+            .x_label_area_size(30)
+            .y_label_area_size(50)
+            .build_cartesian_2d(x_start..x_end, y_min..y_max)
+            .unwrap();
+        chart.configure_mesh().y_label_formatter(&|y| format!("{:.2e}", y)).draw().unwrap();
+        chart.draw_series(LineSeries::new(samples, &BLACK)).unwrap();
+        root.present().expect("Unable to write result to file");
+    }
+
+    #[test]
+    fn sin_error() {
+        use plotters::prelude::*;
+        let x_start = -20f32;
+        let x_end = 20f32;
+        let samples: Vec<(f32, f32)> = (0..1000)
+            .map(|i| x_start + (x_end - x_start) * i as f32 / 999.0)
+            .map(|x| (x, sin(x) / (x as f64).sin() as f32 - 1.0))
+            .filter(|&(_, y)| y.is_finite())
+            .collect();
+        let y_min = samples.iter().map(|&(_, y)| y).fold(f32::INFINITY, f32::min);
+        let y_max = samples.iter().map(|&(_, y)| y).fold(f32::NEG_INFINITY, f32::max);
+        let root = BitMapBackend::new("sin_error.png", (480, 480)).into_drawing_area();
+        root.fill(&WHITE).unwrap();
+        let mut chart = ChartBuilder::on(&root)
+            .margin(5)
+            .x_label_area_size(30)
+            .y_label_area_size(50)
+            .build_cartesian_2d(x_start..x_end, y_min..y_max)
+            .unwrap();
+        chart.configure_mesh().y_label_formatter(&|y| format!("{:.2e}", y)).draw().unwrap();
+        chart.draw_series(LineSeries::new(samples, &BLACK)).unwrap();
+        root.present().expect("Unable to write result to file");
+    }
+
+    #[test]
+    fn cos_error() {
+        use plotters::prelude::*;
+        let x_start = -20f32;
+        let x_end = 20f32;
+        let samples: Vec<(f32, f32)> = (0..1000)
+            .map(|i| x_start + (x_end - x_start) * i as f32 / 999.0)
+            .map(|x| (x, cos(x) / (x as f64).cos() as f32 - 1.0))
+            .filter(|&(_, y)| y.is_finite())
+            .collect();
+        let y_min = samples.iter().map(|&(_, y)| y).fold(f32::INFINITY, f32::min);
+        let y_max = samples.iter().map(|&(_, y)| y).fold(f32::NEG_INFINITY, f32::max);
+        let root = BitMapBackend::new("cos_error.png", (480, 480)).into_drawing_area();
+        root.fill(&WHITE).unwrap();
+        let mut chart = ChartBuilder::on(&root)
+            .margin(5)
+            .x_label_area_size(30)
+            .y_label_area_size(50)
+            .build_cartesian_2d(x_start..x_end, y_min..y_max)
+            .unwrap();
+        chart.configure_mesh().y_label_formatter(&|y| format!("{:.2e}", y)).draw().unwrap();
+        chart.draw_series(LineSeries::new(samples, &BLACK)).unwrap();
+        root.present().expect("Unable to write result to file");
+    }
+
+    #[test]
+    fn cbrt_error() {
+        use plotters::prelude::*;
+        let x_start = 1f32;
+        let x_end = 128f32;
+        let samples: Vec<(f32, f32)> = (0..1000)
+            .map(|i| x_start + (x_end - x_start) * i as f32 / 999.0)
+            .map(|x| (x, cbrt(x) / (x as f64).cbrt() as f32 - 1.0))
+            .filter(|&(_, y)| y.is_finite())
+            .collect();
+        let y_min = samples.iter().map(|&(_, y)| y).fold(f32::INFINITY, f32::min);
+        let y_max = samples.iter().map(|&(_, y)| y).fold(f32::NEG_INFINITY, f32::max);
+        let root = BitMapBackend::new("cbrt_error.png", (480, 480)).into_drawing_area();
+        root.fill(&WHITE).unwrap();
+        let mut chart = ChartBuilder::on(&root)
+            .margin(5)
+            .x_label_area_size(30)
+            .y_label_area_size(50)
+            .build_cartesian_2d(x_start..x_end, y_min..y_max)
+            .unwrap();
+        chart.configure_mesh().y_label_formatter(&|y| format!("{:.2e}", y)).draw().unwrap();
+        chart.draw_series(LineSeries::new(samples, &BLACK)).unwrap();
+        root.present().expect("Unable to write result to file");
+    }
+
+    #[test]
+    fn cbrt_accurate_error() {
+        use plotters::prelude::*;
+        let x_start = 1f32;
+        let x_end = 128f32;
+        let samples: Vec<(f32, f32)> = (0..1000)
+            .map(|i| x_start + (x_end - x_start) * i as f32 / 999.0)
+            .map(|x| (x, cbrt_accurate(x) / (x as f64).cbrt() as f32 - 1.0))
+            .filter(|&(_, y)| y.is_finite())
+            .collect();
+        let y_min = samples.iter().map(|&(_, y)| y).fold(f32::INFINITY, f32::min);
+        let y_max = samples.iter().map(|&(_, y)| y).fold(f32::NEG_INFINITY, f32::max);
+        let root = BitMapBackend::new("cbrt_accurate_error.png", (480, 480)).into_drawing_area();
+        root.fill(&WHITE).unwrap();
+        let mut chart = ChartBuilder::on(&root)
+            .margin(5)
+            .x_label_area_size(30)
+            .y_label_area_size(50)
+            .build_cartesian_2d(x_start..x_end, y_min..y_max)
+            .unwrap();
+        chart.configure_mesh().y_label_formatter(&|y| format!("{:.2e}", y)).draw().unwrap();
+        chart.draw_series(LineSeries::new(samples, &BLACK)).unwrap();
+        root.present().expect("Unable to write result to file");
+    }
 }
