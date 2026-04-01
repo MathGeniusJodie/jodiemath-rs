@@ -1,4 +1,4 @@
-use std::ops::{Add, Sub, Mul, Div, Neg};
+use std::ops::{Add, Div, Mul, Neg, Sub};
 
 /// Double-float: an unevaluated sum (.0, .1) where |.1| <= ulp(.0)/2.
 /// Provides ~2× f32 precision (~14 decimal digits) using pairs of f32s.
@@ -52,7 +52,7 @@ impl Df32 {
         let (s, e) = two_sum(a, b);
         Self(s, e)
     }
-    
+
     #[inline(always)]
     pub fn from_quick_add(a: f32, b: f32) -> Self {
         let (s, e) = quick_two_sum(a, b);
@@ -85,7 +85,7 @@ impl Df32 {
         let p = self.0 * self.0;
         let e = fma(self.0, self.0, -p);
         //let lo = fma(self.1, self.0, e) + fma(self.0, self.1, self.1 * self.1);
-        let lo = fma(self.0, self.1*2., e);
+        let lo = fma(self.0, self.1 * 2., e);
         Self(p, lo)
     }
     #[inline(always)]
@@ -100,7 +100,7 @@ impl Df32 {
 impl From<Df32> for f32 {
     #[inline(always)]
     fn from(d: Df32) -> f32 {
-        d.0+d.1
+        d.0 + d.1
     }
 }
 
@@ -277,7 +277,10 @@ mod tests {
         let sum = a + tiny;
         let result = sum.0 as f64 + sum.1 as f64;
         let expected = 1.0_f64 + 1e-10_f64;
-        assert!((result - expected).abs() < 1e-14, "got {result}, expected {expected}");
+        assert!(
+            (result - expected).abs() < 1e-14,
+            "got {result}, expected {expected}"
+        );
     }
 
     #[test]
