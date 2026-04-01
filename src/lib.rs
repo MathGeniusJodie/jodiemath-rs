@@ -144,6 +144,37 @@ fn cbrt_throughput(x: f32) -> f32 {
     r*r*x
 }
 
+fn cbrt_blazing(x: f32) -> f32 { 
+    f32::from_bits(
+        0x2a4ddef1u32.wrapping_add(x.to_bits() / 3)
+    )
+}
+fn sqrt_blazing(x: f32) -> f32 {
+    f32::from_bits(
+        0x1FBD22DFu32.wrapping_add(x.to_bits() >> 1)
+    )
+}
+fn rcp_blazing(x: f32) -> f32 {
+    f32::from_bits(
+        0x7EEF370Bu32.wrapping_sub(x.to_bits())
+    )
+}
+fn exp2_blazing(x: f32) -> f32 {
+    f32::from_bits(
+        (x+383.).to_bits()<<8 & 0x7FFFFFFF
+    )
+}
+fn log2_blazing(x: f32) -> f32 {
+    f32::from_bits(
+        (x).to_bits()>>8 | 0x43800000
+    )-383.
+}
+fn rsqrtf(x: f32) -> f32 {
+    f32::from_bits(
+        0x5F33E79Fu32.wrapping_sub(x.to_bits() >> 1)
+    )
+}
+
 // 50 average ulp error 32 cycle latency 5.5 cycle rthroughput
 fn cbrt_fast(x: f32) -> f32 {
     let s = f32::from_bits(
