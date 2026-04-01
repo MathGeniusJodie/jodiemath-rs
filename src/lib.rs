@@ -169,7 +169,7 @@ fn log2_blazing(x: f32) -> f32 {
         (x).to_bits()>>8 | 0x43800000
     )-383.
 }
-fn rsqrtf(x: f32) -> f32 {
+fn rsqrt_blazing(x: f32) -> f32 {
     f32::from_bits(
         0x5F33E79Fu32.wrapping_sub(x.to_bits() >> 1)
     )
@@ -467,7 +467,7 @@ mod tests {
                 &RED,
             ))
             .unwrap()
-            .label("std")
+            .label("ground truth")
             .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
     }
 
@@ -513,5 +513,233 @@ mod tests {
         chart.configure_series_labels().draw().unwrap();
 
         root.present().expect("Unable to write result to file, please make sure 'plotters' crate is in your Cargo.toml");
+    }
+
+    #[test]
+    fn cbrt_blazing_plot() {
+        use plotters::prelude::*;
+        let x_start = 1f32;
+        let x_end = 128f32;
+        let y_vals = [cbrt_blazing(x_start), cbrt_blazing(x_end), x_start.cbrt(), x_end.cbrt()];
+        let y_min = y_vals.iter().cloned().fold(f32::INFINITY, f32::min);
+        let y_max = y_vals.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let root = BitMapBackend::new("cbrt_blazing.png", (480, 480)).into_drawing_area();
+        root.fill(&WHITE).unwrap();
+        let mut chart = ChartBuilder::on(&root)
+
+            .margin(5)
+            .x_label_area_size(30)
+            .y_label_area_size(30)
+            .build_cartesian_2d(x_start..x_end, y_min..y_max)
+            .unwrap();
+        chart.configure_mesh().draw().unwrap();
+        chart
+            .draw_series(LineSeries::new(
+                (0..1000).map(|i| x_start + (x_end - x_start) * i as f32 / 999.0).map(|x| (x, cbrt_blazing(x))),
+                &BLACK,
+            ))
+            .unwrap()
+            .label("integer approx")
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLACK));
+        chart
+            .draw_series(LineSeries::new(
+                (0..1000).map(|i| x_start + (x_end - x_start) * i as f32 / 999.0).map(|x| (x, x.cbrt())),
+                &RED,
+            ))
+            .unwrap()
+            .label("ground truth")
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
+        chart.configure_series_labels().draw().unwrap();
+        root.present().expect("Unable to write result to file");
+    }
+
+    #[test]
+    fn sqrt_blazing_plot() {
+        use plotters::prelude::*;
+        let x_start = 1f32;
+        let x_end = 128f32;
+        let y_vals = [sqrt_blazing(x_start), sqrt_blazing(x_end), x_start.sqrt(), x_end.sqrt()];
+        let y_min = y_vals.iter().cloned().fold(f32::INFINITY, f32::min);
+        let y_max = y_vals.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let root = BitMapBackend::new("sqrt_blazing.png", (480, 480)).into_drawing_area();
+        root.fill(&WHITE).unwrap();
+        let mut chart = ChartBuilder::on(&root)
+
+            .margin(5)
+            .x_label_area_size(30)
+            .y_label_area_size(30)
+            .build_cartesian_2d(x_start..x_end, y_min..y_max)
+            .unwrap();
+        chart.configure_mesh().draw().unwrap();
+        chart
+            .draw_series(LineSeries::new(
+                (0..1000).map(|i| x_start + (x_end - x_start) * i as f32 / 999.0).map(|x| (x, sqrt_blazing(x))),
+                &BLACK,
+            ))
+            .unwrap()
+            .label("integer approx")
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLACK));
+        chart
+            .draw_series(LineSeries::new(
+                (0..1000).map(|i| x_start + (x_end - x_start) * i as f32 / 999.0).map(|x| (x, x.sqrt())),
+                &RED,
+            ))
+            .unwrap()
+            .label("ground truth")
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
+        chart.configure_series_labels().draw().unwrap();
+        root.present().expect("Unable to write result to file");
+    }
+
+    #[test]
+    fn rcp_blazing_plot() {
+        use plotters::prelude::*;
+        let x_start = 1f32;
+        let x_end = 10f32;
+        let y_vals = [rcp_blazing(x_start), rcp_blazing(x_end), 1.0 / x_start, 1.0 / x_end];
+        let y_min = y_vals.iter().cloned().fold(f32::INFINITY, f32::min);
+        let y_max = y_vals.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let root = BitMapBackend::new("rcp_blazing.png", (480, 480)).into_drawing_area();
+        root.fill(&WHITE).unwrap();
+        let mut chart = ChartBuilder::on(&root)
+
+            .margin(5)
+            .x_label_area_size(30)
+            .y_label_area_size(30)
+            .build_cartesian_2d(x_start..x_end, y_min..y_max)
+            .unwrap();
+        chart.configure_mesh().draw().unwrap();
+        chart
+            .draw_series(LineSeries::new(
+                (0..1000).map(|i| x_start + (x_end - x_start) * i as f32 / 999.0).map(|x| (x, rcp_blazing(x))),
+                &BLACK,
+            ))
+            .unwrap()
+            .label("integer approx")
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLACK));
+        chart
+            .draw_series(LineSeries::new(
+                (0..1000).map(|i| x_start + (x_end - x_start) * i as f32 / 999.0).map(|x| (x, 1.0 / x)),
+                &RED,
+            ))
+            .unwrap()
+            .label("ground truth")
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
+        chart.configure_series_labels().draw().unwrap();
+        root.present().expect("Unable to write result to file");
+    }
+
+    #[test]
+    fn exp2_blazing_plot() {
+        use plotters::prelude::*;
+        let x_start = 0f32;
+        let x_end = 10f32;
+        let y_vals = [exp2_blazing(x_start), exp2_blazing(x_end), x_start.exp2(), x_end.exp2()];
+        let y_min = y_vals.iter().cloned().fold(f32::INFINITY, f32::min);
+        let y_max = y_vals.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let root = BitMapBackend::new("exp2_blazing.png", (480, 480)).into_drawing_area();
+        root.fill(&WHITE).unwrap();
+        let mut chart = ChartBuilder::on(&root)
+
+            .margin(5)
+            .x_label_area_size(30)
+            .y_label_area_size(30)
+            .build_cartesian_2d(x_start..x_end, y_min..y_max)
+            .unwrap();
+        chart.configure_mesh().draw().unwrap();
+        chart
+            .draw_series(LineSeries::new(
+                (0..1000).map(|i| x_start + (x_end - x_start) * i as f32 / 999.0).map(|x| (x, exp2_blazing(x))),
+                &BLACK,
+            ))
+            .unwrap()
+            .label("integer approx")
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLACK));
+        chart
+            .draw_series(LineSeries::new(
+                (0..1000).map(|i| x_start + (x_end - x_start) * i as f32 / 999.0).map(|x| (x, x.exp2())),
+                &RED,
+            ))
+            .unwrap()
+            .label("ground truth")
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
+        chart.configure_series_labels().draw().unwrap();
+        root.present().expect("Unable to write result to file");
+    }
+
+    #[test]
+    fn log2_blazing_plot() {
+        use plotters::prelude::*;
+        let x_start = 1f32;
+        let x_end = 128f32;
+        let y_vals = [log2_blazing(x_start), log2_blazing(x_end), x_start.log2(), x_end.log2()];
+        let y_min = y_vals.iter().cloned().fold(f32::INFINITY, f32::min);
+        let y_max = y_vals.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let root = BitMapBackend::new("log2_blazing.png", (480, 480)).into_drawing_area();
+        root.fill(&WHITE).unwrap();
+        let mut chart = ChartBuilder::on(&root)
+
+            .margin(5)
+            .x_label_area_size(30)
+            .y_label_area_size(30)
+            .build_cartesian_2d(x_start..x_end, y_min..y_max)
+            .unwrap();
+        chart.configure_mesh().draw().unwrap();
+        chart
+            .draw_series(LineSeries::new(
+                (0..1000).map(|i| x_start + (x_end - x_start) * i as f32 / 999.0).map(|x| (x, log2_blazing(x))),
+                &BLACK,
+            ))
+            .unwrap()
+            .label("integer approx")
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLACK));
+        chart
+            .draw_series(LineSeries::new(
+                (0..1000).map(|i| x_start + (x_end - x_start) * i as f32 / 999.0).map(|x| (x, x.log2())),
+                &RED,
+            ))
+            .unwrap()
+            .label("ground truth")
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
+        chart.configure_series_labels().draw().unwrap();
+        root.present().expect("Unable to write result to file");
+    }
+
+    #[test]
+    fn rsqrt_blazing_plot() {
+        use plotters::prelude::*;
+        let x_start = 1f32;
+        let x_end = 128f32;
+        let y_vals = [rsqrt_blazing(x_start), rsqrt_blazing(x_end), 1.0 / x_start.sqrt(), 1.0 / x_end.sqrt()];
+        let y_min = y_vals.iter().cloned().fold(f32::INFINITY, f32::min);
+        let y_max = y_vals.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let root = BitMapBackend::new("rsqrt_blazing.png", (480, 480)).into_drawing_area();
+        root.fill(&WHITE).unwrap();
+        let mut chart = ChartBuilder::on(&root)
+
+            .margin(5)
+            .x_label_area_size(30)
+            .y_label_area_size(30)
+            .build_cartesian_2d(x_start..x_end, y_min..y_max)
+            .unwrap();
+        chart.configure_mesh().draw().unwrap();
+        chart
+            .draw_series(LineSeries::new(
+                (0..1000).map(|i| x_start + (x_end - x_start) * i as f32 / 999.0).map(|x| (x, rsqrt_blazing(x))),
+                &BLACK,
+            ))
+            .unwrap()
+            .label("integer approx")
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLACK));
+        chart
+            .draw_series(LineSeries::new(
+                (0..1000).map(|i| x_start + (x_end - x_start) * i as f32 / 999.0).map(|x| (x, 1.0 / x.sqrt())),
+                &RED,
+            ))
+            .unwrap()
+            .label("ground truth")
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
+        chart.configure_series_labels().draw().unwrap();
+        root.present().expect("Unable to write result to file");
     }
 }
