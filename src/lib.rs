@@ -324,8 +324,7 @@ mod tests {
     #[test]
     fn descent2() {
         run_descent(|x, consts| cbrt_constant(x, consts), |x| (x as f64).cbrt() as f32, &[
-            0x2a4ddef1u32,
-            0x68ff2381u32
+            0x2a4dc461u32, 0x6900943cu32
         ]);
     }
 
@@ -516,253 +515,40 @@ mod tests {
         std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "cos.png"]).status().unwrap();
     }
 
-    #[test]
-    fn cbrt_approx_plot() {
+    fn plot_approx(path: &str, x_start: f32, x_end: f32, approx: impl Fn(f32) -> f32, truth: impl Fn(f32) -> f32) {
         use plotters::prelude::*;
-        let x_start = 1f32;
-        let x_end = 128f32;
-        let y_vals = [cbrt_blazing(x_start), cbrt_blazing(x_end), x_start.cbrt(), x_end.cbrt()];
+        let y_vals = [approx(x_start), approx(x_end), truth(x_start), truth(x_end)];
         let y_min = y_vals.iter().cloned().fold(f32::INFINITY, f32::min);
         let y_max = y_vals.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let root = BitMapBackend::new("cbrt_approx.png", (480, 480)).into_drawing_area();
+        let root = BitMapBackend::new(path, (480, 480)).into_drawing_area();
         root.fill(&WHITE).unwrap();
         let mut chart = ChartBuilder::on(&root)
-
             .margin(5)
             .x_label_area_size(30)
             .y_label_area_size(30)
             .build_cartesian_2d(x_start..x_end, y_min..y_max)
             .unwrap();
         chart.configure_mesh().draw().unwrap();
-        chart
-            .draw_series(LineSeries::new(
-                (0..1000).map(|i| x_start + (x_end - x_start) * i as f32 / 999.0).map(|x| (x, cbrt_blazing(x))),
-                &BLACK,
-            ))
-            .unwrap()
-            .label("integer approx")
-            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLACK));
-        chart
-            .draw_series(LineSeries::new(
-                (0..1000).map(|i| x_start + (x_end - x_start) * i as f32 / 999.0).map(|x| (x, x.cbrt())),
-                &RED,
-            ))
-            .unwrap()
-            .label("ground truth")
-            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
+        let xs: Vec<f32> = (0..1000).map(|i| x_start + (x_end - x_start) * i as f32 / 999.0).collect();
+        chart.draw_series(LineSeries::new(xs.iter().map(|&x| (x, approx(x))), &BLACK))
+            .unwrap().label("integer approx").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLACK));
+        chart.draw_series(LineSeries::new(xs.iter().map(|&x| (x, truth(x))), &RED))
+            .unwrap().label("ground truth").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
         chart.configure_series_labels().draw().unwrap();
         root.present().expect("Unable to write result to file");
-        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "cbrt_approx.png"]).status().unwrap();
+        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", path]).status().unwrap();
     }
 
-    #[test]
-    fn sqrt_approx_plot() {
+    fn plot_error(path: &str, x_start: f32, x_end: f32, f: impl Fn(f32) -> f32) {
         use plotters::prelude::*;
-        let x_start = 1f32;
-        let x_end = 128f32;
-        let y_vals = [sqrt_blazing(x_start), sqrt_blazing(x_end), x_start.sqrt(), x_end.sqrt()];
-        let y_min = y_vals.iter().cloned().fold(f32::INFINITY, f32::min);
-        let y_max = y_vals.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let root = BitMapBackend::new("sqrt_approx.png", (480, 480)).into_drawing_area();
-        root.fill(&WHITE).unwrap();
-        let mut chart = ChartBuilder::on(&root)
-
-            .margin(5)
-            .x_label_area_size(30)
-            .y_label_area_size(30)
-            .build_cartesian_2d(x_start..x_end, y_min..y_max)
-            .unwrap();
-        chart.configure_mesh().draw().unwrap();
-        chart
-            .draw_series(LineSeries::new(
-                (0..1000).map(|i| x_start + (x_end - x_start) * i as f32 / 999.0).map(|x| (x, sqrt_blazing(x))),
-                &BLACK,
-            ))
-            .unwrap()
-            .label("integer approx")
-            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLACK));
-        chart
-            .draw_series(LineSeries::new(
-                (0..1000).map(|i| x_start + (x_end - x_start) * i as f32 / 999.0).map(|x| (x, x.sqrt())),
-                &RED,
-            ))
-            .unwrap()
-            .label("ground truth")
-            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
-        chart.configure_series_labels().draw().unwrap();
-        root.present().expect("Unable to write result to file");
-        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "sqrt_approx.png"]).status().unwrap();
-    }
-
-    #[test]
-    fn rcp_approx_plot() {
-        use plotters::prelude::*;
-        let x_start = 1f32;
-        let x_end = 10f32;
-        let y_vals = [rcp_blazing(x_start), rcp_blazing(x_end), 1.0 / x_start, 1.0 / x_end];
-        let y_min = y_vals.iter().cloned().fold(f32::INFINITY, f32::min);
-        let y_max = y_vals.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let root = BitMapBackend::new("rcp_approx.png", (480, 480)).into_drawing_area();
-        root.fill(&WHITE).unwrap();
-        let mut chart = ChartBuilder::on(&root)
-
-            .margin(5)
-            .x_label_area_size(30)
-            .y_label_area_size(30)
-            .build_cartesian_2d(x_start..x_end, y_min..y_max)
-            .unwrap();
-        chart.configure_mesh().draw().unwrap();
-        chart
-            .draw_series(LineSeries::new(
-                (0..1000).map(|i| x_start + (x_end - x_start) * i as f32 / 999.0).map(|x| (x, rcp_blazing(x))),
-                &BLACK,
-            ))
-            .unwrap()
-            .label("integer approx")
-            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLACK));
-        chart
-            .draw_series(LineSeries::new(
-                (0..1000).map(|i| x_start + (x_end - x_start) * i as f32 / 999.0).map(|x| (x, 1.0 / x)),
-                &RED,
-            ))
-            .unwrap()
-            .label("ground truth")
-            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
-        chart.configure_series_labels().draw().unwrap();
-        root.present().expect("Unable to write result to file");
-        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "rcp_approx.png"]).status().unwrap();
-    }
-
-    #[test]
-    fn exp2_approx_plot() {
-        use plotters::prelude::*;
-        let x_start = 0f32;
-        let x_end = 10f32;
-        let y_vals = [exp2_blazing(x_start), exp2_blazing(x_end), x_start.exp2(), x_end.exp2()];
-        let y_min = y_vals.iter().cloned().fold(f32::INFINITY, f32::min);
-        let y_max = y_vals.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let root = BitMapBackend::new("exp2_approx.png", (480, 480)).into_drawing_area();
-        root.fill(&WHITE).unwrap();
-        let mut chart = ChartBuilder::on(&root)
-
-            .margin(5)
-            .x_label_area_size(30)
-            .y_label_area_size(30)
-            .build_cartesian_2d(x_start..x_end, y_min..y_max)
-            .unwrap();
-        chart.configure_mesh().draw().unwrap();
-        chart
-            .draw_series(LineSeries::new(
-                (0..1000).map(|i| x_start + (x_end - x_start) * i as f32 / 999.0).map(|x| (x, exp2_blazing(x))),
-                &BLACK,
-            ))
-            .unwrap()
-            .label("integer approx")
-            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLACK));
-        chart
-            .draw_series(LineSeries::new(
-                (0..1000).map(|i| x_start + (x_end - x_start) * i as f32 / 999.0).map(|x| (x, x.exp2())),
-                &RED,
-            ))
-            .unwrap()
-            .label("ground truth")
-            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
-        chart.configure_series_labels().draw().unwrap();
-        root.present().expect("Unable to write result to file");
-        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "exp2_approx.png"]).status().unwrap();
-    }
-
-    #[test]
-    fn log2_approx_plot() {
-        use plotters::prelude::*;
-        let x_start = 1f32;
-        let x_end = 128f32;
-        let y_vals = [log2_blazing(x_start), log2_blazing(x_end), x_start.log2(), x_end.log2()];
-        let y_min = y_vals.iter().cloned().fold(f32::INFINITY, f32::min);
-        let y_max = y_vals.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let root = BitMapBackend::new("log2_approx.png", (480, 480)).into_drawing_area();
-        root.fill(&WHITE).unwrap();
-        let mut chart = ChartBuilder::on(&root)
-
-            .margin(5)
-            .x_label_area_size(30)
-            .y_label_area_size(30)
-            .build_cartesian_2d(x_start..x_end, y_min..y_max)
-            .unwrap();
-        chart.configure_mesh().draw().unwrap();
-        chart
-            .draw_series(LineSeries::new(
-                (0..1000).map(|i| x_start + (x_end - x_start) * i as f32 / 999.0).map(|x| (x, log2_blazing(x))),
-                &BLACK,
-            ))
-            .unwrap()
-            .label("integer approx")
-            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLACK));
-        chart
-            .draw_series(LineSeries::new(
-                (0..1000).map(|i| x_start + (x_end - x_start) * i as f32 / 999.0).map(|x| (x, x.log2())),
-                &RED,
-            ))
-            .unwrap()
-            .label("ground truth")
-            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
-        chart.configure_series_labels().draw().unwrap();
-        root.present().expect("Unable to write result to file");
-        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "log2_approx.png"]).status().unwrap();
-    }
-
-    #[test]
-    fn rsqrt_approx_plot() {
-        use plotters::prelude::*;
-        let x_start = 1f32;
-        let x_end = 128f32;
-        let y_vals = [rsqrt_blazing(x_start), rsqrt_blazing(x_end), 1.0 / x_start.sqrt(), 1.0 / x_end.sqrt()];
-        let y_min = y_vals.iter().cloned().fold(f32::INFINITY, f32::min);
-        let y_max = y_vals.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let root = BitMapBackend::new("rsqrt_approx.png", (480, 480)).into_drawing_area();
-        root.fill(&WHITE).unwrap();
-        let mut chart = ChartBuilder::on(&root)
-
-            .margin(5)
-            .x_label_area_size(30)
-            .y_label_area_size(30)
-            .build_cartesian_2d(x_start..x_end, y_min..y_max)
-            .unwrap();
-        chart.configure_mesh().draw().unwrap();
-        chart
-            .draw_series(LineSeries::new(
-                (0..1000).map(|i| x_start + (x_end - x_start) * i as f32 / 999.0).map(|x| (x, rsqrt_blazing(x))),
-                &BLACK,
-            ))
-            .unwrap()
-            .label("integer approx")
-            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLACK));
-        chart
-            .draw_series(LineSeries::new(
-                (0..1000).map(|i| x_start + (x_end - x_start) * i as f32 / 999.0).map(|x| (x, 1.0 / x.sqrt())),
-                &RED,
-            ))
-            .unwrap()
-            .label("ground truth")
-            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
-        chart.configure_series_labels().draw().unwrap();
-        root.present().expect("Unable to write result to file");
-        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "rsqrt_approx.png"]).status().unwrap();
-    }
-
-    #[test]
-    fn log_2_error() {
-        use plotters::prelude::*;
-        let x_start = 1f32;
-        let x_end = 128f32;
         let samples: Vec<(f32, f32)> = (0..1000)
             .map(|i| x_start + (x_end - x_start) * i as f32 / 999.0)
-            .map(|x| (x, log_2(x) / (x as f64).log2() as f32 - 1.0))
+            .map(|x| (x, f(x)))
             .filter(|&(_, y)| y.is_finite())
             .collect();
         let y_min = samples.iter().map(|&(_, y)| y).fold(f32::INFINITY, f32::min);
         let y_max = samples.iter().map(|&(_, y)| y).fold(f32::NEG_INFINITY, f32::max);
-        let root = BitMapBackend::new("log_2_error.png", (480, 480)).into_drawing_area();
+        let root = BitMapBackend::new(path, (480, 480)).into_drawing_area();
         root.fill(&WHITE).unwrap();
         let mut chart = ChartBuilder::on(&root)
             .margin(5)
@@ -773,136 +559,20 @@ mod tests {
         chart.configure_mesh().y_label_formatter(&|y| format!("{:.2e}", y)).draw().unwrap();
         chart.draw_series(LineSeries::new(samples, &BLACK)).unwrap();
         root.present().expect("Unable to write result to file");
-        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "log_2_error.png"]).status().unwrap();
+        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", path]).status().unwrap();
     }
 
-    #[test]
-    fn exp2_error() {
-        use plotters::prelude::*;
-        let x_start = 0f32;
-        let x_end = 10f32;
-        let samples: Vec<(f32, f32)> = (0..1000)
-            .map(|i| x_start + (x_end - x_start) * i as f32 / 999.0)
-            .map(|x| (x, exp2(x) / (x as f64).exp2() as f32 - 1.0))
-            .filter(|&(_, y)| y.is_finite())
-            .collect();
-        let y_min = samples.iter().map(|&(_, y)| y).fold(f32::INFINITY, f32::min);
-        let y_max = samples.iter().map(|&(_, y)| y).fold(f32::NEG_INFINITY, f32::max);
-        let root = BitMapBackend::new("exp2_error.png", (480, 480)).into_drawing_area();
-        root.fill(&WHITE).unwrap();
-        let mut chart = ChartBuilder::on(&root)
-            .margin(5)
-            .x_label_area_size(30)
-            .y_label_area_size(50)
-            .build_cartesian_2d(x_start..x_end, y_min..y_max)
-            .unwrap();
-        chart.configure_mesh().y_label_formatter(&|y| format!("{:.2e}", y)).draw().unwrap();
-        chart.draw_series(LineSeries::new(samples, &BLACK)).unwrap();
-        root.present().expect("Unable to write result to file");
-        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "exp2_error.png"]).status().unwrap();
-    }
+    #[test] fn cbrt_approx_plot()  { plot_approx("cbrt_approx.png",  1., 128., cbrt_blazing,  |x| x.cbrt()); }
+    #[test] fn sqrt_approx_plot()  { plot_approx("sqrt_approx.png",  1., 128., sqrt_blazing,  |x| x.sqrt()); }
+    #[test] fn rcp_approx_plot()   { plot_approx("rcp_approx.png",   1.,  10., rcp_blazing,   |x| 1.0 / x); }
+    #[test] fn exp2_approx_plot()  { plot_approx("exp2_approx.png",  0.,  10., exp2_blazing,  |x| x.exp2()); }
+    #[test] fn log2_approx_plot()  { plot_approx("log2_approx.png",  1., 128., log2_blazing,  |x| x.log2()); }
+    #[test] fn rsqrt_approx_plot() { plot_approx("rsqrt_approx.png", 1., 128., rsqrt_blazing, |x| 1.0 / x.sqrt()); }
 
-    #[test]
-    fn sin_error() {
-        use plotters::prelude::*;
-        let x_start = -20f32;
-        let x_end = 20f32;
-        let samples: Vec<(f32, f32)> = (0..1000)
-            .map(|i| x_start + (x_end - x_start) * i as f32 / 999.0)
-            .map(|x| (x, sin(x) / (x as f64).sin() as f32 - 1.0))
-            .filter(|&(_, y)| y.is_finite())
-            .collect();
-        let y_min = samples.iter().map(|&(_, y)| y).fold(f32::INFINITY, f32::min);
-        let y_max = samples.iter().map(|&(_, y)| y).fold(f32::NEG_INFINITY, f32::max);
-        let root = BitMapBackend::new("sin_error.png", (480, 480)).into_drawing_area();
-        root.fill(&WHITE).unwrap();
-        let mut chart = ChartBuilder::on(&root)
-            .margin(5)
-            .x_label_area_size(30)
-            .y_label_area_size(50)
-            .build_cartesian_2d(x_start..x_end, y_min..y_max)
-            .unwrap();
-        chart.configure_mesh().y_label_formatter(&|y| format!("{:.2e}", y)).draw().unwrap();
-        chart.draw_series(LineSeries::new(samples, &BLACK)).unwrap();
-        root.present().expect("Unable to write result to file");
-        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "sin_error.png"]).status().unwrap();
-    }
-
-    #[test]
-    fn cos_error() {
-        use plotters::prelude::*;
-        let x_start = -20f32;
-        let x_end = 20f32;
-        let samples: Vec<(f32, f32)> = (0..1000)
-            .map(|i| x_start + (x_end - x_start) * i as f32 / 999.0)
-            .map(|x| (x, cos(x) / (x as f64).cos() as f32 - 1.0))
-            .filter(|&(_, y)| y.is_finite())
-            .collect();
-        let y_min = samples.iter().map(|&(_, y)| y).fold(f32::INFINITY, f32::min);
-        let y_max = samples.iter().map(|&(_, y)| y).fold(f32::NEG_INFINITY, f32::max);
-        let root = BitMapBackend::new("cos_error.png", (480, 480)).into_drawing_area();
-        root.fill(&WHITE).unwrap();
-        let mut chart = ChartBuilder::on(&root)
-            .margin(5)
-            .x_label_area_size(30)
-            .y_label_area_size(50)
-            .build_cartesian_2d(x_start..x_end, y_min..y_max)
-            .unwrap();
-        chart.configure_mesh().y_label_formatter(&|y| format!("{:.2e}", y)).draw().unwrap();
-        chart.draw_series(LineSeries::new(samples, &BLACK)).unwrap();
-        root.present().expect("Unable to write result to file");
-        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "cos_error.png"]).status().unwrap();
-    }
-
-    #[test]
-    fn cbrt_error() {
-        use plotters::prelude::*;
-        let x_start = 1f32;
-        let x_end = 128f32;
-        let samples: Vec<(f32, f32)> = (0..1000)
-            .map(|i| x_start + (x_end - x_start) * i as f32 / 999.0)
-            .map(|x| (x, cbrt(x) / (x as f64).cbrt() as f32 - 1.0))
-            .filter(|&(_, y)| y.is_finite())
-            .collect();
-        let y_min = samples.iter().map(|&(_, y)| y).fold(f32::INFINITY, f32::min);
-        let y_max = samples.iter().map(|&(_, y)| y).fold(f32::NEG_INFINITY, f32::max);
-        let root = BitMapBackend::new("cbrt_error.png", (480, 480)).into_drawing_area();
-        root.fill(&WHITE).unwrap();
-        let mut chart = ChartBuilder::on(&root)
-            .margin(5)
-            .x_label_area_size(30)
-            .y_label_area_size(50)
-            .build_cartesian_2d(x_start..x_end, y_min..y_max)
-            .unwrap();
-        chart.configure_mesh().y_label_formatter(&|y| format!("{:.2e}", y)).draw().unwrap();
-        chart.draw_series(LineSeries::new(samples, &BLACK)).unwrap();
-        root.present().expect("Unable to write result to file");
-        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "cbrt_error.png"]).status().unwrap();
-    }
-
-    #[test]
-    fn cbrt_accurate_error() {
-        use plotters::prelude::*;
-        let x_start = 1f32;
-        let x_end = 128f32;
-        let samples: Vec<(f32, f32)> = (0..1000)
-            .map(|i| x_start + (x_end - x_start) * i as f32 / 999.0)
-            .map(|x| (x, cbrt_accurate(x) / (x as f64).cbrt() as f32 - 1.0))
-            .filter(|&(_, y)| y.is_finite())
-            .collect();
-        let y_min = samples.iter().map(|&(_, y)| y).fold(f32::INFINITY, f32::min);
-        let y_max = samples.iter().map(|&(_, y)| y).fold(f32::NEG_INFINITY, f32::max);
-        let root = BitMapBackend::new("cbrt_accurate_error.png", (480, 480)).into_drawing_area();
-        root.fill(&WHITE).unwrap();
-        let mut chart = ChartBuilder::on(&root)
-            .margin(5)
-            .x_label_area_size(30)
-            .y_label_area_size(50)
-            .build_cartesian_2d(x_start..x_end, y_min..y_max)
-            .unwrap();
-        chart.configure_mesh().y_label_formatter(&|y| format!("{:.2e}", y)).draw().unwrap();
-        chart.draw_series(LineSeries::new(samples, &BLACK)).unwrap();
-        root.present().expect("Unable to write result to file");
-        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "cbrt_accurate_error.png"]).status().unwrap();
-    }
+    #[test] fn log_2_error()        { plot_error("log_2_error.png",        1., 128., |x| log_2(x)        / (x as f64).log2()  as f32 - 1.0); }
+    #[test] fn exp2_error()         { plot_error("exp2_error.png",         0.,  10., |x| exp2(x)         / (x as f64).exp2()  as f32 - 1.0); }
+    #[test] fn sin_error()          { plot_error("sin_error.png",        -20.,  20., |x| sin(x)          / (x as f64).sin()   as f32 - 1.0); }
+    #[test] fn cos_error()          { plot_error("cos_error.png",        -20.,  20., |x| cos(x)          / (x as f64).cos()   as f32 - 1.0); }
+    #[test] fn cbrt_error()         { plot_error("cbrt_error.png",         1., 128., |x| cbrt(x)         / (x as f64).cbrt()  as f32 - 1.0); }
+    #[test] fn cbrt_accurate_error(){ plot_error("cbrt_accurate_error.png",1., 128., |x| cbrt_accurate(x)/ (x as f64).cbrt()  as f32 - 1.0); }
 }
