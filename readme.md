@@ -5,7 +5,7 @@ Currently only the cbrt and exp2 functions are significantly faster, but I have 
 
 # precision (average ulp)
 ```
-         jodie cbrt error: 0.642
+         jodie cbrt error: 0.574
            std cbrt error: 0.094
 jodie accurate cbrt error: 0
 

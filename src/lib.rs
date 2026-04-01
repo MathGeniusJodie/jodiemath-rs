@@ -95,7 +95,7 @@ pub fn cos(x: f32) -> f32 {
 
 #[inline(always)]
 pub fn cbrt(x: f32) -> f32 {
-    let s = f32::from_bits(x.to_bits() / 3 + 709982100);
+    let s = f32::from_bits(x.to_bits() / 3 + 0x2a509a07u32);
     let s2 = s * s;
     fma(
         fma(0.6*s, s2, 0.3*x),
@@ -133,63 +133,37 @@ pub fn cbrt_accurate(x: f32) -> f32 {
     };
     return s2xps4.div_to_f32(s32x);
 }
-/*
-pub fn from_mul(a: f32, b: f32) -> Self {
-    let p = a * b;
-    let e = fma(a, b, -p);
-    Self(p, e)
-}
-pub fn quick_add_df(self, rhs: Self) -> Self {
-    let (s, e) = quick_two_sum(self.0, rhs.0);
-    let (s, e) = quick_two_sum(s, e + self.1 + rhs.1);
-    Self(s,e)
-}
-*/
 
-fn quick_two_sum(a: f32, b: f32) -> (f32, f32) {
-    let s = a + b;
-    let e = b - (s - a);
-    (s, e)
+// higher throughput cbrt experiment, 7 ulp average error
+fn cbrt_throughput(x: f32) -> f32 {
+    let r = f32::from_bits(
+        0xd461ff81u32.wrapping_sub(x.to_bits()/3)
+    );
+    let r = fma((r*r),(r*r)*x,r*f32::from_bits(0x3fb6e3d7));
+    let r = fma((r*r),(r*r)*x,r*f32::from_bits(0x3fe09c2a));
+    r*r*x
 }
 
-pub fn cbrt_constant(x: f32, c0:u32, c1:u32) -> f32 {
+// 50 average ulp error 32 cycle latency 5.5 cycle rthroughput
+fn cbrt_fast(x: f32) -> f32 {
     let s = f32::from_bits(
-        c0.wrapping_add(x.to_bits() / 3)
+        0x2a4ddef1u32.wrapping_add(x.to_bits() / 3)
     );
     let r = f32::from_bits(
-        c1.wrapping_sub((x.to_bits()/3)<<1)
+        0x68ff2381u32.wrapping_sub((x.to_bits()/3)<<1)
     );
-    //let s = s.sqrt();
-    //let s = x*r*f32::from_bits(c0);
-    //return s;
-    //let s2 = s * s;
-    //let s = fma(s2*s2, -1.5 / fma(s, s2, x*0.5), s * 2.);
-    //let s = fma(s*s,s*-r,fma(r,x,s));
-    //let s = s + 1.5*r*(x - s*s*(s + r*(-s*s*s + x)));
     let s = fma(s*s,s*-r,fma(r,x,s));
-    let s = fma(s*s,s*-r,fma(r,x,s));
-    //let s2 = s * s;
-    //let s = fma(s2*s2, -1.5 / fma(s, s2, x*0.5), s * 2.);
-    //return s;
-    let s2 = Df32::from_mul(s,s);
-    let s32x = {
-        let b = fma(s2.0,s*2.,x);
-        let p = x-b;
-        let e = fma(s2.0, s*2.,p)-(p+b-x);
-        let lo = fma(s2.1, s*2., e);
-        Df32(b, lo)
-    };
-    let s2xps4 = {
-        let s40 = s2.0 * s2.0;
-        let e = fma(s2.0, s2.0, -s40);
-        let s41 = fma(s2.0*2., s2.1, fma(s2.1,s2.1,e));
-        let p = s*2.*x;
-        let e = fma(s*2., x, -p);
-        let s = p + s40;
-        Df32(s, s40 - (s - p) + e + s41)
-    };
+    fma(s*s,s*-r,fma(r,x,s))
+}
 
-    return s2xps4.div_to_f32(s32x);
+pub fn cbrt_constant(x: f32, c:&[u32]) -> f32 {
+    let s = f32::from_bits(
+        c[0].wrapping_add(x.to_bits() / 3)
+    );
+    let r = f32::from_bits(
+        c[1].wrapping_sub((x.to_bits()/3)<<1)
+    );
+    return fma(s*s,s*-r,fma(r,x,s));
 
     let s2 = Df32::from_mul(s,s);
     let s3 = s2 * s;
@@ -231,19 +205,6 @@ pub fn cbrt_constant(x: f32, c0:u32, c1:u32) -> f32 {
     //s
 }
 
-#[inline(always)]
-pub fn exp2_const(x: f32,cnst: &[u32]) -> f32 {
-    let a = f32::from_bits(cnst[0]);
-    let b = f32::from_bits(cnst[1]);
-    let c = f32::from_bits(cnst[2]);
-    let d = f32::from_bits(cnst[3]);
-    let e = f32::from_bits(cnst[4]);
-    // exp2(floor(x))*exp2(fract(x)) == exp2(x)
-    let exp2int = f32::from_bits(((x + 383_f32).to_bits() << 8) & EXPONENT_MASK);
-    let fract = x - x.floor();
-    exp2int * fma(fma(fma(fma(fma(a, x, b), x, c), x, d), x, e), x, 1_f32)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -252,21 +213,42 @@ mod tests {
     
     fn run_descent(f: impl Fn(f32, &[u32]) -> f32, reference: impl Fn(f32) -> f32, initial_consts: &[u32]) {
         let mut consts: Vec<u32> = initial_consts.to_vec();
-        let iters = 1000_000;
+        let iters = 100;
 
         let mut best_err: u64 = 0;
+        let mut steps: u64 = 0;
         for _ in 1..iters {
             let x: f32 = rand::rng().random::<f32>().abs();
             let result = f(x, &consts);
             best_err += reference(x).to_bits().abs_diff(result.to_bits()) as u64;
         }
+        let mut tryagain = false;
         println!("optimizing! starting error: {}", best_err as f64 / iters as f64);
+        let mut deltas: Vec<u32> = consts.iter().map(|&_| {
+            let n: u32 = rand::rng().random();
+            f32::from_bits(n) as i32 as u32
+        }).collect();
         loop {
             let mut new_err: u64 = 0;
             let mut old_err: u64 = 0;
-            let new_consts: Vec<u32> = consts.iter().map(|&c| {
-                let n: u32 = rand::rng().random();
-                c.wrapping_add(f32::from_bits(n) as i32 as u32)
+            if !tryagain {
+                deltas = consts.iter().map(|&_| {
+                    let n: u32 = rand::rng().random();
+                    return f32::from_bits(n) as i32 as u32;
+                    if steps<10 {
+                        n
+                    } else {
+                        if steps&1==0{
+                            n
+                        } else {
+                            f32::from_bits(n) as i32 as u32
+                        }
+                    }
+                }).collect();
+            }
+            steps+=1;
+            let new_consts: Vec<u32> = consts.iter().zip(deltas.iter()).map(|(&c,&d)| {
+                c.wrapping_add(d)
             }).collect();
             if new_consts.iter().zip(consts.iter()).all(|(&x,&y)| x==y) {
                 continue;
@@ -292,9 +274,14 @@ mod tests {
                     if new_err_nomul < best_err {
                         best_err = new_err_nomul;
                         let const_strs: Vec<String> = consts.iter().map(|c| format!("0x{:x}u32", c)).collect();
-                        println!("new best consts {} with error {} nomul: {}", const_strs.join(" "), new_err as f64 / iters as f64, new_err_nomul as f64 / iters as f64);
+                        println!("new best consts {} with error {} nomul: {} step:{}", const_strs.join(", "), new_err as f64 / iters as f64, new_err_nomul as f64 / iters as f64,steps);
                     }
+                    tryagain = true;
+                }else{
+                    tryagain = false;
                 }
+            }else{
+                tryagain = false;
             }
             if new_err == best_err {
                 best_err = new_err;
@@ -305,70 +292,11 @@ mod tests {
 
     #[test]
     fn descent2() {
-        /*
-        run_descent(|x, consts| exp2_const(x, consts), |x| (x as f64).exp2() as f32, &[
-            0x3af71c15,
-            0x3c130514,
-            0x3d64b437,
-            0x3e75ea9e,
-            0x3f317271,
-        ]);*/
-        run_descent(|x, consts| cbrt_constant(x, consts[0],consts[1]), |x| (x as f64).cbrt() as f32, &[
+        run_descent(|x, consts| cbrt_constant(x, consts), |x| (x as f64).cbrt() as f32, &[
             0x2a4ddef1u32,
-            0x68ff2381u32,
+            0x68ff2381u32
         ]);
     }
-
-    /*
-    #[test]
-    fn descent() {
-        let mut c = 709982101;
-        let mut step = 1;
-
-        let mut best_err: u64 = 0;
-        for x in 1..1000 {
-            let reference = (x as f64).cbrt() as f32;
-            let result = cbrt_constant(x as f32,c);
-            best_err += reference.to_bits().abs_diff(result.to_bits()) as u64;
-        }
-        println!("optimizing! starting error: {}",best_err);
-        let mut u = c;
-        let mut d = c; 
-        loop{
-            u += step;
-            d -= step;
-
-            let mut u_err: u64 = 0;
-            let mut d_err: u64 = 0;
-            for x in 1..1000 {
-                let reference = (x as f64).cbrt() as f32;
-                let u_result = cbrt_constant(x as f32, u);
-                let d_result = cbrt_constant(x as f32, d);
-                u_err += reference.to_bits().abs_diff(u_result.to_bits()) as u64;
-                d_err += reference.to_bits().abs_diff(d_result.to_bits()) as u64;
-            }
-            if u_err > best_err && d_err > best_err {
-                println!("new best const {} with error {}",c,best_err);
-                break;
-            }
-            if d_err < best_err{
-                best_err = d_err;
-                c = d;
-                u = d;
-                //println!("new best const {} with error {}",c,best_err);
-            }
-            if u_err < best_err{
-                best_err = u_err;
-                c = u;
-                d = u;
-                //println!("new best const {} with error {}",c,best_err);
-            }
-            if u_err >= best_err || d_err >= best_err {
-                //println!("step {} too small, increasing",step);
-                //step+=1;
-            }
-        }
-    }*/
 
     #[test]
     fn it_works() {
