@@ -513,17 +513,18 @@ mod tests {
         chart.configure_series_labels().draw().unwrap();
 
         root.present().expect("Unable to write result to file, please make sure 'plotters' crate is in your Cargo.toml");
+        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "cos.png"]).status().unwrap();
     }
 
     #[test]
-    fn cbrt_blazing_plot() {
+    fn cbrt_approx_plot() {
         use plotters::prelude::*;
         let x_start = 1f32;
         let x_end = 128f32;
         let y_vals = [cbrt_blazing(x_start), cbrt_blazing(x_end), x_start.cbrt(), x_end.cbrt()];
         let y_min = y_vals.iter().cloned().fold(f32::INFINITY, f32::min);
         let y_max = y_vals.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let root = BitMapBackend::new("cbrt_blazing.png", (480, 480)).into_drawing_area();
+        let root = BitMapBackend::new("cbrt_approx.png", (480, 480)).into_drawing_area();
         root.fill(&WHITE).unwrap();
         let mut chart = ChartBuilder::on(&root)
 
@@ -551,17 +552,18 @@ mod tests {
             .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
         chart.configure_series_labels().draw().unwrap();
         root.present().expect("Unable to write result to file");
+        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "cbrt_approx.png"]).status().unwrap();
     }
 
     #[test]
-    fn sqrt_blazing_plot() {
+    fn sqrt_approx_plot() {
         use plotters::prelude::*;
         let x_start = 1f32;
         let x_end = 128f32;
         let y_vals = [sqrt_blazing(x_start), sqrt_blazing(x_end), x_start.sqrt(), x_end.sqrt()];
         let y_min = y_vals.iter().cloned().fold(f32::INFINITY, f32::min);
         let y_max = y_vals.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let root = BitMapBackend::new("sqrt_blazing.png", (480, 480)).into_drawing_area();
+        let root = BitMapBackend::new("sqrt_approx.png", (480, 480)).into_drawing_area();
         root.fill(&WHITE).unwrap();
         let mut chart = ChartBuilder::on(&root)
 
@@ -589,17 +591,18 @@ mod tests {
             .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
         chart.configure_series_labels().draw().unwrap();
         root.present().expect("Unable to write result to file");
+        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "sqrt_approx.png"]).status().unwrap();
     }
 
     #[test]
-    fn rcp_blazing_plot() {
+    fn rcp_approx_plot() {
         use plotters::prelude::*;
         let x_start = 1f32;
         let x_end = 10f32;
         let y_vals = [rcp_blazing(x_start), rcp_blazing(x_end), 1.0 / x_start, 1.0 / x_end];
         let y_min = y_vals.iter().cloned().fold(f32::INFINITY, f32::min);
         let y_max = y_vals.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let root = BitMapBackend::new("rcp_blazing.png", (480, 480)).into_drawing_area();
+        let root = BitMapBackend::new("rcp_approx.png", (480, 480)).into_drawing_area();
         root.fill(&WHITE).unwrap();
         let mut chart = ChartBuilder::on(&root)
 
@@ -627,17 +630,18 @@ mod tests {
             .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
         chart.configure_series_labels().draw().unwrap();
         root.present().expect("Unable to write result to file");
+        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "rcp_approx.png"]).status().unwrap();
     }
 
     #[test]
-    fn exp2_blazing_plot() {
+    fn exp2_approx_plot() {
         use plotters::prelude::*;
         let x_start = 0f32;
         let x_end = 10f32;
         let y_vals = [exp2_blazing(x_start), exp2_blazing(x_end), x_start.exp2(), x_end.exp2()];
         let y_min = y_vals.iter().cloned().fold(f32::INFINITY, f32::min);
         let y_max = y_vals.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let root = BitMapBackend::new("exp2_blazing.png", (480, 480)).into_drawing_area();
+        let root = BitMapBackend::new("exp2_approx.png", (480, 480)).into_drawing_area();
         root.fill(&WHITE).unwrap();
         let mut chart = ChartBuilder::on(&root)
 
@@ -665,17 +669,18 @@ mod tests {
             .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
         chart.configure_series_labels().draw().unwrap();
         root.present().expect("Unable to write result to file");
+        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "exp2_approx.png"]).status().unwrap();
     }
 
     #[test]
-    fn log2_blazing_plot() {
+    fn log2_approx_plot() {
         use plotters::prelude::*;
         let x_start = 1f32;
         let x_end = 128f32;
         let y_vals = [log2_blazing(x_start), log2_blazing(x_end), x_start.log2(), x_end.log2()];
         let y_min = y_vals.iter().cloned().fold(f32::INFINITY, f32::min);
         let y_max = y_vals.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let root = BitMapBackend::new("log2_blazing.png", (480, 480)).into_drawing_area();
+        let root = BitMapBackend::new("log2_approx.png", (480, 480)).into_drawing_area();
         root.fill(&WHITE).unwrap();
         let mut chart = ChartBuilder::on(&root)
 
@@ -703,17 +708,18 @@ mod tests {
             .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
         chart.configure_series_labels().draw().unwrap();
         root.present().expect("Unable to write result to file");
+        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "log2_approx.png"]).status().unwrap();
     }
 
     #[test]
-    fn rsqrt_blazing_plot() {
+    fn rsqrt_approx_plot() {
         use plotters::prelude::*;
         let x_start = 1f32;
         let x_end = 128f32;
         let y_vals = [rsqrt_blazing(x_start), rsqrt_blazing(x_end), 1.0 / x_start.sqrt(), 1.0 / x_end.sqrt()];
         let y_min = y_vals.iter().cloned().fold(f32::INFINITY, f32::min);
         let y_max = y_vals.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let root = BitMapBackend::new("rsqrt_blazing.png", (480, 480)).into_drawing_area();
+        let root = BitMapBackend::new("rsqrt_approx.png", (480, 480)).into_drawing_area();
         root.fill(&WHITE).unwrap();
         let mut chart = ChartBuilder::on(&root)
 
@@ -741,6 +747,7 @@ mod tests {
             .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
         chart.configure_series_labels().draw().unwrap();
         root.present().expect("Unable to write result to file");
+        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "rsqrt_approx.png"]).status().unwrap();
     }
 
     #[test]
@@ -766,6 +773,7 @@ mod tests {
         chart.configure_mesh().y_label_formatter(&|y| format!("{:.2e}", y)).draw().unwrap();
         chart.draw_series(LineSeries::new(samples, &BLACK)).unwrap();
         root.present().expect("Unable to write result to file");
+        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "log_2_error.png"]).status().unwrap();
     }
 
     #[test]
@@ -791,6 +799,7 @@ mod tests {
         chart.configure_mesh().y_label_formatter(&|y| format!("{:.2e}", y)).draw().unwrap();
         chart.draw_series(LineSeries::new(samples, &BLACK)).unwrap();
         root.present().expect("Unable to write result to file");
+        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "exp2_error.png"]).status().unwrap();
     }
 
     #[test]
@@ -816,6 +825,7 @@ mod tests {
         chart.configure_mesh().y_label_formatter(&|y| format!("{:.2e}", y)).draw().unwrap();
         chart.draw_series(LineSeries::new(samples, &BLACK)).unwrap();
         root.present().expect("Unable to write result to file");
+        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "sin_error.png"]).status().unwrap();
     }
 
     #[test]
@@ -841,6 +851,7 @@ mod tests {
         chart.configure_mesh().y_label_formatter(&|y| format!("{:.2e}", y)).draw().unwrap();
         chart.draw_series(LineSeries::new(samples, &BLACK)).unwrap();
         root.present().expect("Unable to write result to file");
+        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "cos_error.png"]).status().unwrap();
     }
 
     #[test]
@@ -866,6 +877,7 @@ mod tests {
         chart.configure_mesh().y_label_formatter(&|y| format!("{:.2e}", y)).draw().unwrap();
         chart.draw_series(LineSeries::new(samples, &BLACK)).unwrap();
         root.present().expect("Unable to write result to file");
+        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "cbrt_error.png"]).status().unwrap();
     }
 
     #[test]
@@ -891,5 +903,6 @@ mod tests {
         chart.configure_mesh().y_label_formatter(&|y| format!("{:.2e}", y)).draw().unwrap();
         chart.draw_series(LineSeries::new(samples, &BLACK)).unwrap();
         root.present().expect("Unable to write result to file");
+        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "cbrt_accurate_error.png"]).status().unwrap();
     }
 }
