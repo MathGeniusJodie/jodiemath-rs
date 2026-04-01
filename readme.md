@@ -49,6 +49,7 @@ accurate cbrt | 5.6 GB/s | 0.5 GB/s | 11.2x
 ```
 
 # todo:
+- sin() accuracy edge cases
 - improve cos throughput
 - add inverse trig functions
 - add tan()

@@ -40,8 +40,8 @@ pub fn exp2(x: f32) -> f32 {
     let e = f32::from_bits(0x3f317271);
     // exp2(floor(x))*exp2(fract(x)) == exp2(x)
     let exp2int = f32::from_bits(((x + 383_f32).to_bits() << 8) & EXPONENT_MASK);
-    let fract = x - x.floor();
-    exp2int * fma(fma(fma(fma(fma(a, x, b), x, c), x, d), x, e), x, 1_f32)
+    let f = x - x.floor();
+    exp2int * fma(fma(fma(fma(fma(a, f, b), f, c), f, d), f, e), f, 1_f32)
 }
 #[inline(always)]
 fn sinf_poly(x: f32) -> f32 {
@@ -336,183 +336,45 @@ mod tests {
         assert_eq!(log_2(8.0), 3.0);
     }
 
+    fn ulp_error(range: std::ops::Range<i32>, scale: f64, f: impl Fn(f32) -> f32, reference: impl Fn(f64) -> f64) -> f32 {
+        let count = (range.end - range.start) as f64;
+        let err: u64 = range.map(|x| {
+            let xf = x as f64 * scale;
+            let ref_val = reference(xf) as f32;
+            ref_val.to_bits().abs_diff(f(xf as f32).to_bits()) as u64
+        }).sum();
+        err as f32 / count as f32
+    }
+
     #[test]
     fn cbrt_precision() {
-        let mut err: u64 = 0;
-        for x in 1..1000 {
-            let reference = (x as f64).cbrt() as f32;
-            let result = cbrt(x as f32);
-            err += reference.to_bits().abs_diff(result.to_bits()) as u64;
-        }
-        println!("jodie cbrt error: {}", (err as f32) / 1000.);
-        let mut err: u64 = 0;
-        for x in 1..1000 {
-            let reference = (x as f64).cbrt() as f32;
-            let result = (x as f32).cbrt();
-            err += reference.to_bits().abs_diff(result.to_bits()) as u64;
-        }
-        println!("std cbrt error: {}", (err as f32) / 1000.);
+        println!("jodie cbrt error: {}",          ulp_error(1..1000, 1.0, cbrt,          |x| x.cbrt()));
+        println!("std   cbrt error: {}",          ulp_error(1..1000, 1.0, |x| x.cbrt(),  |x| x.cbrt()));
     }
     #[test]
     fn cbrt_accurate_precision() {
-        let mut err: u64 = 0;
-        for x in 1..1000 {
-            let reference = (x as f64).cbrt() as f32;
-            let result = cbrt_accurate(x as f32);
-            err += reference.to_bits().abs_diff(result.to_bits()) as u64;
-        }
-        println!("jodie accurate cbrt error: {}", (err as f32) / 1000.);
-        let mut err: u64 = 0;
-        for x in 1..1000 {
-            let reference = (x as f64).cbrt() as f32;
-            let result = (x as f32).cbrt();
-            err += reference.to_bits().abs_diff(result.to_bits()) as u64;
-        }
-        println!("std cbrt error: {}", (err as f32) / 1000.);
+        println!("jodie cbrt accurate error: {}",  ulp_error(1..1000, 1.0, cbrt_accurate,  |x| x.cbrt()));
+        println!("std   cbrt error: {}",           ulp_error(1..1000, 1.0, |x| x.cbrt(),  |x| x.cbrt()));
     }
-
     #[test]
     fn exp2_precision() {
-        let mut err = 0;
-        for x in -100..100 {
-            let reference = ((x as f64) * 0.1).exp2() as f32;
-            let result = exp2((x as f32) * 0.1);
-            err += reference.to_bits().abs_diff(result.to_bits());
-        }
-        println!("jodie exp2 error: {}", (err as f32) / 200.);
-        let mut err = 0;
-        for x in -100..100 {
-            let reference = ((x as f64) * 0.1).exp2() as f32;
-            let result = (x as f32 * 0.1).exp2();
-            err += reference.to_bits().abs_diff(result.to_bits());
-        }
-        println!("std exp2 error: {}", (err as f32) / 200.);
+        println!("jodie exp2 error: {}", ulp_error(-100..100, 0.1, exp2,          |x| x.exp2()));
+        println!("std   exp2 error: {}", ulp_error(-100..100, 0.1, |x| x.exp2(),  |x| x.exp2()));
     }
     #[test]
     fn log2_precision() {
-        let mut err = 0;
-        for x in 2..1000 {
-            let reference = (x as f64).log2() as f32;
-            let result = log_2(x as f32);
-            err += reference.to_bits().abs_diff(result.to_bits());
-        }
-        println!("jodie log2 error: {}", (err as f32) / 1000.);
-        let mut err = 0;
-        for x in 2..1000 {
-            let reference = (x as f64).log2() as f32;
-            let result = (x as f32).log2();
-            err += reference.to_bits().abs_diff(result.to_bits());
-        }
-        println!("std log2 error: {}", (err as f32) / 1000.);
+        println!("jodie log2 error: {}", ulp_error(2..1000, 1.0, log_2,          |x| x.log2()));
+        println!("std   log2 error: {}", ulp_error(2..1000, 1.0, |x| x.log2(),   |x| x.log2()));
     }
     #[test]
     fn sin_precision() {
-        let mut err = 0;
-        for x in -100..100 {
-            let reference = ((x as f64) * 0.1).sin() as f32;
-            let result = sin((x as f32) * 0.1);
-            err += reference.to_bits().abs_diff(result.to_bits());
-        }
-        println!("jodie sin error: {}", (err as f32) / 200.);
-        let mut err = 0;
-        for x in -100..100 {
-            let reference = ((x as f64) * 0.1).sin() as f32;
-            let result = (x as f32 * 0.1).sin();
-            err += reference.to_bits().abs_diff(result.to_bits());
-        }
-        println!("std sin error: {}", (err as f32) / 200.);
+        println!("jodie sin error: {}", ulp_error(-100..100, 0.1, sin,          |x| x.sin()));
+        println!("std   sin error: {}", ulp_error(-100..100, 0.1, |x| x.sin(),  |x| x.sin()));
     }
     #[test]
     fn cos_precision() {
-        let mut err = 0;
-        for x in -100..100 {
-            let reference = ((x as f64) * 0.1).cos() as f32;
-            let result = cos((x as f32) * 0.1);
-            err += reference.to_bits().abs_diff(result.to_bits()) as u64;
-        }
-        println!("jodie cos error: {}", (err as f32) / 200.);
-        let mut err = 0;
-        for x in -100..100 {
-            let reference = ((x as f64) * 0.1).cos() as f32;
-            let result = (x as f32 * 0.1).cos();
-            err += reference.to_bits().abs_diff(result.to_bits()) as u64;
-        }
-        println!("std cos error: {}", (err as f32) / 200.);
-    }
-    #[test]
-    fn cbrt_plot() {
-        println!("{}", cbrt_accurate(9.0));
-        println!("{}", cbrt_accurate(17.0));
-        println!("{}", cbrt_accurate(33.0));
-        println!("{}", cbrt_accurate(65.0));
-        use plotters::prelude::*;
-        let root = BitMapBackend::new("cbrt.png", (640, 480)).into_drawing_area();
-        root.fill(&WHITE).unwrap();
-        let mut chart = ChartBuilder::on(&root)
-            .caption("Cube Root", ("sans-serif", 50).into_font())
-            .margin(5)
-            .x_label_area_size(30)
-            .y_label_area_size(30)
-            .build_cartesian_2d(0f32..128f32, -0.1f32..0.1f32)
-            .unwrap();
-
-        chart.configure_mesh().draw().unwrap();
-
-        chart
-            .draw_series(LineSeries::new(
-                (0..1000)
-                    .map(|x| x as f32)
-                    .map(|x| (x, cbrt_accurate(x) / x.cbrt() - 1.0)),
-                &RED,
-            ))
-            .unwrap()
-            .label("ground truth")
-            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
-    }
-
-    // plot cos and builtin cos in 2 different colors
-    #[test]
-    fn cos_plot() {
-        use plotters::prelude::*;
-        let root = BitMapBackend::new("cos.png", (640, 480)).into_drawing_area();
-        root.fill(&WHITE).unwrap();
-        let mut chart = ChartBuilder::on(&root)
-            .caption("Cosine", ("sans-serif", 50).into_font())
-            .margin(5)
-            .x_label_area_size(30)
-            .y_label_area_size(30)
-            .build_cartesian_2d(-20f32..20f32, -1.1f32..1.1f32)
-            .unwrap();
-        chart.configure_mesh().draw().unwrap();
-        chart
-            .draw_series(LineSeries::new(
-                (-200..200).map(|x| x as f32 * 0.1).map(|x| (x, cos(x))),
-                &RED,
-            ))
-            .unwrap()
-            .label("approx")
-            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
-        chart
-            .draw_series(LineSeries::new(
-                (-200..200).map(|x| x as f32 * 0.1).map(|x| (x, x.cos())),
-                &BLUE,
-            ))
-            .unwrap()
-            .label("std")
-            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLUE));
-        chart.configure_series_labels().draw().unwrap();
-        chart
-            .draw_series(LineSeries::new(
-                (-200..200).map(|x| x as f32 * 0.1).map(|x| (x, x.cos())),
-                &BLUE,
-            ))
-            .unwrap()
-            .label("std")
-            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLUE));
-        chart.configure_series_labels().draw().unwrap();
-
-        root.present().expect("Unable to write result to file, please make sure 'plotters' crate is in your Cargo.toml");
-        std::process::Command::new("pngquant").args(["--force", "--ext", ".png", "16", "--", "cos.png"]).status().unwrap();
+        println!("jodie cos error: {}", ulp_error(-100..100, 0.1, cos,          |x| x.cos()));
+        println!("std   cos error: {}", ulp_error(-100..100, 0.1, |x| x.cos(),  |x| x.cos()));
     }
 
     fn plot_approx(path: &str, x_start: f32, x_end: f32, approx: impl Fn(f32) -> f32, truth: impl Fn(f32) -> f32) {
