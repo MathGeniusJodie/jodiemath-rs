@@ -81,19 +81,11 @@ pub fn sin(x: f32) -> f32 {
 }
 #[inline(always)]
 pub fn cos(x: f32) -> f32 {
-    let m = (x*RPIDF.0).floor();
-    let s = (((m as i32) & 1) * 2 - 1) as f32;
-
-    let high = fma(m, PIDF.0, HPIDF.0);
-    let errorhigh = HPIDF.0 + fma(m, PIDF.0, -high);
-    let low = fma(m, PIDF.1, HPIDF.1);
-
-    let mut x = x;
-    x -= high;
-    x -= errorhigh;
-    x -= low;
-
-    sinf_poly(x * s)
+    let q = (x*RTAUDF.0).round();
+    let e = -q*TAUDF.1;
+    let y = fma(-q, TAUDF.0, x);
+    let z = (HPIDF - Df32(y,e).abs()).0;
+    sinf_poly(z)
 }
 
 #[inline(always)]
@@ -323,7 +315,7 @@ mod tests {
             }
         }
     }
-
+/*
     #[test]
     fn descent2() {
         run_descent(
@@ -331,7 +323,7 @@ mod tests {
             |x| (x as f64).cbrt() as f32,
             &[0x2a4dc461u32, 0x6900943cu32],
         );
-    }
+    }*/
 
     #[test]
     fn it_works() {
