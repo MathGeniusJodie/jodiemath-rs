@@ -8,14 +8,14 @@ const EXPONENT_MASK: u32 = 0x7f800000;
 const MANTISSA_MASK: u32 = 0x007fffff;
 use std::f32::consts::TAU as TAU32;
 use std::f64::consts::TAU as TAU64;
-const TAUDF: Df32 = Df32(TAU32,(TAU64 - (TAU32 as f64)) as f32);
-const RTAUDF:Df32 = Df32(
-    (1./TAU64) as f32,
-    ((1./TAU64) - (((1./TAU64) as f32) as f64)) as f32
+const TAUDF: Df32 = Df32(TAU32, (TAU64 - (TAU32 as f64)) as f32);
+const RTAUDF: Df32 = Df32(
+    (1. / TAU64) as f32,
+    ((1. / TAU64) - (((1. / TAU64) as f32) as f64)) as f32,
 );
-const RPIDF:Df32 = Df32(RTAUDF.0*2.,RTAUDF.1*2.);
-const HPIDF: Df32 = Df32(TAUDF.0/4.,TAUDF.1/4.);
-const PIDF: Df32 = Df32(TAUDF.0/2.,TAUDF.1/2.);
+const RPIDF: Df32 = Df32(RTAUDF.0 * 2., RTAUDF.1 * 2.);
+const HPIDF: Df32 = Df32(TAUDF.0 / 4., TAUDF.1 / 4.);
+const PIDF: Df32 = Df32(TAUDF.0 / 2., TAUDF.1 / 2.);
 
 #[inline(always)]
 fn fma(a: f32, b: f32, c: f32) -> f32 {
@@ -66,20 +66,20 @@ fn sinf_poly(x: f32) -> f32 {
 }
 #[inline(always)]
 pub fn sin(x: f32) -> f32 {
-    let q = fma(x,RTAUDF.0,0.25).round();
+    let q = fma(x, RTAUDF.0, 0.25).round();
     let high = fma(-q, TAUDF.0, HPIDF.0);
     let errorhigh = HPIDF.0 + fma(-q, TAUDF.0, -high);
     let low = fma(-q, TAUDF.1, HPIDF.1);
     let y = x + high;
-    let z = (-HPIDF).quick_add_to_f32(Df32(y,errorhigh+low).abs());
+    let z = (-HPIDF).quick_add_to_f32(Df32(y, errorhigh + low).abs());
     sinf_poly(z)
 }
 #[inline(always)]
 pub fn cos(x: f32) -> f32 {
-    let q = (x*RTAUDF.0).round();
-    let e = q*TAUDF.1;
+    let q = (x * RTAUDF.0).round();
+    let e = q * TAUDF.1;
     let y = fma(q, TAUDF.0, -x);
-    let z = HPIDF.quick_add_to_f32(-Df32(y,e).abs());
+    let z = HPIDF.quick_add_to_f32(-Df32(y, e).abs());
     sinf_poly(z)
 }
 
@@ -310,7 +310,7 @@ mod tests {
             }
         }
     }
-/*
+    /*
     #[test]
     fn descent2() {
         run_descent(
@@ -424,8 +424,16 @@ mod tests {
             .map(|i| x_start + (x_end - x_start) * i as f32 / 999.0)
             .collect();
         let all_y: Vec<f32> = xs.iter().flat_map(|&x| [approx(x), truth(x)]).collect();
-        let y_min = all_y.iter().cloned().filter(|y| y.is_finite()).fold(f32::INFINITY, f32::min);
-        let y_max = all_y.iter().cloned().filter(|y| y.is_finite()).fold(f32::NEG_INFINITY, f32::max);
+        let y_min = all_y
+            .iter()
+            .cloned()
+            .filter(|y| y.is_finite())
+            .fold(f32::INFINITY, f32::min);
+        let y_max = all_y
+            .iter()
+            .cloned()
+            .filter(|y| y.is_finite())
+            .fold(f32::NEG_INFINITY, f32::max);
         let root = BitMapBackend::new(path, (480, 480)).into_drawing_area();
         root.fill(&WHITE).unwrap();
         let mut chart = ChartBuilder::on(&root)
