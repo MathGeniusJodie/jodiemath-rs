@@ -67,24 +67,19 @@ fn sinf_poly(x: f32) -> f32 {
 #[inline(always)]
 pub fn sin(x: f32) -> f32 {
     let q = fma(x,RTAUDF.0,0.25).round();
-    //let y = x + HPIDF - TAUDF * q;
-    //let z = f32::from(y.abs()-HPIDF);
-
     let high = fma(-q, TAUDF.0, HPIDF.0);
     let errorhigh = HPIDF.0 + fma(-q, TAUDF.0, -high);
     let low = fma(-q, TAUDF.1, HPIDF.1);
-
     let y = x + high;
-    let z = (Df32(y,errorhigh+low).abs()-HPIDF).0;
-
+    let z = (-HPIDF).quick_add_to_f32(Df32(y,errorhigh+low).abs());
     sinf_poly(z)
 }
 #[inline(always)]
 pub fn cos(x: f32) -> f32 {
     let q = (x*RTAUDF.0).round();
-    let e = -q*TAUDF.1;
-    let y = fma(-q, TAUDF.0, x);
-    let z = (HPIDF - Df32(y,e).abs()).0;
+    let e = q*TAUDF.1;
+    let y = fma(q, TAUDF.0, -x);
+    let z = HPIDF.quick_add_to_f32(-Df32(y,e).abs());
     sinf_poly(z)
 }
 
@@ -128,8 +123,8 @@ pub fn cbrt_accurate(x: f32) -> f32 {
 // higher throughput cbrt experiment, 7 ulp average error
 fn cbrt_throughput(x: f32) -> f32 {
     let r = f32::from_bits(0xd461ff81u32.wrapping_sub(x.to_bits() / 3));
-    let r = fma((r * r), (r * r) * x, r * f32::from_bits(0x3fb6e3d7));
-    let r = fma((r * r), (r * r) * x, r * f32::from_bits(0x3fe09c2a));
+    let r = fma(r * r, (r * r) * x, r * f32::from_bits(0x3fb6e3d7));
+    let r = fma(r * r, (r * r) * x, r * f32::from_bits(0x3fe09c2a));
     r * r * x
 }
 
