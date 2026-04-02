@@ -49,8 +49,8 @@ accurate cbrt | 5.6 GB/s | 0.5 GB/s | 11.2x
 ```
 
 # todo:
-- optimize sin()
-- improve cos throughput
+- optimize cos() to be the same speed as sin()
+- update stale benchmarks
 - add inverse trig functions
 - add tan()
 - less accurate but faster versions
