@@ -67,11 +67,9 @@ fn sinf_poly(x: f32) -> f32 {
 #[inline(always)]
 pub fn sin(x: f32) -> f32 {
     let q = fma(x, RTAUDF.0, 0.25).round();
-    let high = fma(-q, TAUDF.0, HPIDF.0);
-    let errorhigh = HPIDF.0 + fma(-q, TAUDF.0, -high);
-    let low = fma(-q, TAUDF.1, HPIDF.1);
-    let y = x + high;
-    let z = (-HPIDF).quick_add_to_f32(Df32(y, errorhigh + low).abs());
+    let low = (0.25 - q) * TAUDF.1;
+    let y = Df32::from_mul(0.25 - q, TAUDF.0) + x;
+    let z = (-HPIDF).quick_add_to_f32(Df32(y.0, y.1 + low).abs());
     sinf_poly(z)
 }
 #[inline(always)]
