@@ -6,6 +6,16 @@ use doublefloat::Df32;
 const SIGN_MASK: u32 = 0x80000000;
 const EXPONENT_MASK: u32 = 0x7f800000;
 const MANTISSA_MASK: u32 = 0x007fffff;
+use std::f32::consts::TAU as TAU32;
+use std::f64::consts::TAU as TAU64;
+const TAUDF: Df32 = Df32(TAU32,(TAU64 - (TAU32 as f64)) as f32);
+const RTAUDF:Df32 = Df32(
+    (1./TAU64) as f32,
+    ((1./TAU64) - (((1./TAU64) as f32) as f64)) as f32
+);
+const RPIDF:Df32 = Df32(RTAUDF.0*2.,RTAUDF.1*2.);
+const HPIDF: Df32 = Df32(TAUDF.0/4.,TAUDF.1/4.);
+const PIDF: Df32 = Df32(TAUDF.0/2.,TAUDF.1/2.);
 
 #[inline(always)]
 fn fma(a: f32, b: f32, c: f32) -> f32 {
@@ -46,47 +56,29 @@ pub fn exp2(x: f32) -> f32 {
 }
 #[inline(always)]
 fn sinf_poly(x: f32) -> f32 {
-    //((((-2.429759e-8*x+2.7543865e-6)*x-1.9841159e-4)*x+8.3333329e-3)*x-1.6666667e-1)*x+1.
     let a = f32::from_bits(0xb2cc0ff1);
     let b = f32::from_bits(0x3638a80e);
     let c = f32::from_bits(0xb9500b44);
     let d = f32::from_bits(0x3c088883);
     let e = f32::from_bits(0xbe2aaaaa);
     let x2 = x * x;
-    let dx2 = Df32::from_mul(x,x);
     fma(fma(fma(fma(fma(a, x2, b), x2, c), x2, d), x2, e), x2, 1.) * x
 }
 #[inline(always)]
 pub fn sin(x: f32) -> f32 {
-    let tauh: f32 = std::f32::consts::TAU;
-    let taul: f32 = (std::f64::consts::TAU - (tauh as f64)) as f32;
-    let rtau: f64 = 1./std::f64::consts::TAU;
-    let rtauh: f32 = rtau as f32;
-    let rtaul: f32 = (rtau - (rtauh as f64)) as f32;
-    let hpih = std::f32::consts::FRAC_PI_2;
-    let hpil = (std::f64::consts::FRAC_PI_2 - (hpih as f64)) as f32;
-    //-π/2 + abs(π/2 + x - 2 π round((π + 2 x)/(4 π)))
-    let q = fma(x,rtauh,0.25).round();
-    let y = x + Df32(hpih,hpil) - Df32(tauh,taul) * q;
-    let z = f32::from(y.abs()-Df32(hpih,hpil));
+    let q = fma(x,RTAUDF.0,0.25).round();
+    let y = x + HPIDF - TAUDF * q;
+    let z = f32::from(y.abs()-HPIDF);
     sinf_poly(z)
 }
 #[inline(always)]
-// todo: make less convoluted
 pub fn cos(x: f32) -> f32 {
-    let tau: f64 = std::f64::consts::TAU;
-    let tauh: f32 = tau as f32;
-    let taul: f32 = (tau - (tauh as f64)) as f32;
-    let rtau: f64 = 0.159_154_943_091_895_35;
-    let rtauh: f32 = rtau as f32;
-    let rtaul: f32 = (rtau - (rtauh as f64)) as f32;
-
-    let m = (fma(x, rtauh * 2f32, x * (rtaul * 2f32))).floor();
+    let m = (x*RPIDF.0).floor();
     let s = (((m as i32) & 1) * 2 - 1) as f32;
 
-    let high = fma(m, tauh / 2f32, tauh / 4f32);
-    let errorhigh = tauh / 4f32 + fma(m, tauh / 2f32, -high);
-    let low = fma(m, taul / 2f32, taul / 4f32);
+    let high = fma(m, PIDF.0, HPIDF.0);
+    let errorhigh = HPIDF.0 + fma(m, PIDF.0, -high);
+    let low = fma(m, PIDF.1, HPIDF.1);
 
     let mut x = x;
     x -= high;
