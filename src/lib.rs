@@ -527,6 +527,10 @@ mod tests {
         plot_approx("sin.png", -20., 20., sin, |x| x.sin());
     }
     #[test]
+    fn cos_plot() {
+        plot_approx("cos.png", -20., 20., cos, |x| x.cos());
+    }
+    #[test]
     fn rsqrt_approx_plot() {
         plot_approx("rsqrt_approx.png", 1., 128., rsqrt_blazing, |x| {
             1.0 / x.sqrt()
