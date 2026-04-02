@@ -46,11 +46,11 @@ pub fn exp2(x: f32) -> f32 {
 #[inline(always)]
 fn sinf_poly(x: f32) -> f32 {
     //((((-2.429759e-8*x+2.7543865e-6)*x-1.9841159e-4)*x+8.3333329e-3)*x-1.6666667e-1)*x+1.
-    let a = -2.429759e-8;//f32::from_bits(0xb2cc0ff1);
-    let b = 2.7543865e-6;//f32::from_bits(0x3638a80e);
-    let c = -1.9841159e-4;//f32::from_bits(0xb9500b44);
-    let d = 8.3333329e-3;//f32::from_bits(0x3c088883);
-    let e = 1.6666667e-1;//f32::from_bits(0xbe2aaaaa);
+    let a = f32::from_bits(0xb2cc0ff1);
+    let b = f32::from_bits(0x3638a80e);
+    let c = f32::from_bits(0xb9500b44);
+    let d = f32::from_bits(0x3c088883);
+    let e = f32::from_bits(0xbe2aaaaa);
     let x2 = x * x;
     fma(fma(fma(fma(fma(a, x2, b), x2, c), x2, d), x2, e), x2, 1.) * x
 }
