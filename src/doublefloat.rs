@@ -140,8 +140,7 @@ impl Add<f32> for Df32 {
     #[inline(always)]
     fn add(self, rhs: f32) -> Self {
         let (s, e) = two_sum(self.0, rhs);
-        let e = e + self.1;
-        let (s, e) = quick_two_sum(s, e);
+        let (s, e) = quick_two_sum(s, e + self.1);
         Self(s, e)
     }
 }
