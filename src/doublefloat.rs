@@ -111,6 +111,11 @@ impl Df32 {
     pub fn abs(self) -> Self {
         Self(self.0.abs(), mulsign(self.1, self.0))
     }
+    #[inline(always)]
+    pub fn sloppy_add(self, rhs: f32) -> Self {
+        let (s, e) = two_sum(self.0, rhs);
+        Self(s, e + self.1)
+    }
 }
 impl From<Df32> for f32 {
     #[inline(always)]
