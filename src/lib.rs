@@ -52,6 +52,7 @@ fn sinf_poly(x: f32) -> f32 {
     let d = f32::from_bits(0x3c088883);
     let e = f32::from_bits(0xbe2aaaaa);
     let x2 = x * x;
+    let dx2 = Df32::from_mul(x,x);
     fma(fma(fma(fma(fma(a, x2, b), x2, c), x2, d), x2, e), x2, 1.) * x
 }
 #[inline(always)]
@@ -65,13 +66,9 @@ pub fn sin(x: f32) -> f32 {
     let hpil = (std::f64::consts::FRAC_PI_2 - (hpih as f64)) as f32;
     //-π/2 + abs(π/2 + x - 2 π round((π + 2 x)/(4 π)))
     let q = fma(x,rtauh,0.25).round();
-    let y = fma(-q,taul,fma(-q,tauh,x))+hpih;
-    let z = y.abs()-hpih;
-
-    //todo fix error correct for abs()
-    let e = x-fma(q,tauh,fma(q,taul,mulsign(z+hpih,y)-hpih));
-
-    sinf_poly(z+e)
+    let y = x + Df32(hpih,hpil) - Df32(tauh,taul) * q;
+    let z = f32::from(y.abs()-Df32(hpih,hpil));
+    sinf_poly(z)
 }
 #[inline(always)]
 // todo: make less convoluted

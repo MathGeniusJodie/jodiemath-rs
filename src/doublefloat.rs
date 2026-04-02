@@ -95,6 +95,14 @@ impl Df32 {
         //Self(s,e)
         Self(s, e + self.1 + rhs.1)
     }
+    #[inline(always)]
+    pub fn abs(self) -> Self {
+        if self.0 > 0.{
+            self
+        } else {
+            Self(-self.0,-self.1)
+        }
+    }
 }
 
 impl From<Df32> for f32 {
