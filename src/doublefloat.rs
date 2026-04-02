@@ -7,9 +7,17 @@ pub struct Df32(pub f32, pub f32);
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
+const SIGN_MASK: u32 = 0x80000000;
+const EXPONENT_MASK: u32 = 0x7f800000;
+const MANTISSA_MASK: u32 = 0x007fffff;
+
 #[inline(always)]
 fn fma(a: f32, b: f32, c: f32) -> f32 {
     a.mul_add(b, c)
+}
+#[inline(always)]
+fn mulsign(x: f32, y: f32) -> f32 {
+    f32::from_bits(x.to_bits() ^ (y.to_bits() & SIGN_MASK))
 }
 
 /// Error-free addition (Knuth two-sum).
@@ -97,14 +105,9 @@ impl Df32 {
     }
     #[inline(always)]
     pub fn abs(self) -> Self {
-        if self.0 > 0.{
-            self
-        } else {
-            Self(-self.0,-self.1)
-        }
+        Self(self.0.abs(),mulsign(self.1,self.0))
     }
 }
-
 impl From<Df32> for f32 {
     #[inline(always)]
     fn from(d: Df32) -> f32 {

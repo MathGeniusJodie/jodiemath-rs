@@ -49,7 +49,6 @@ accurate cbrt | 5.6 GB/s | 0.5 GB/s | 11.2x
 ```
 
 # todo:
-- optimize Df32 abs()
 - optimize sin()
 - improve cos throughput
 - add inverse trig functions
