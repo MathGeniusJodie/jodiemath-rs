@@ -1,9 +1,3 @@
-
-
-
-(* Define your function eg. CubeRoot[x] *)
-g[x_] := CubeRoot[x]
-
 inv[x_] := FullSimplify[InverseFunction[g][x], Assumptions -> x > 0]
 
 f[s_] := 1/(inv[s]-x)

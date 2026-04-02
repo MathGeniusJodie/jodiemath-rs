@@ -55,18 +55,21 @@ fn sinf_poly(x: f32) -> f32 {
 }
 #[inline(always)]
 pub fn sin(x: f32) -> f32 {
-    let tau: f64 = std::f64::consts::TAU;
-    let tauh: f32 = tau as f32;
-    let taul: f32 = (tau - (tauh as f64)) as f32;
-    let rtau: f64 = 0.159_154_943_091_895_35;
+    let tauh: f32 = std::f32::consts::TAU;
+    let taul: f32 = (std::f64::consts::TAU - (tauh as f64)) as f32;
+    let rtau: f64 = 1./std::f64::consts::TAU;
     let rtauh: f32 = rtau as f32;
-    //let rtaul: f32 = (rtau - (rtauh as f64)) as f32;
-    let pi = std::f32::consts::PI;
-    let pilo = f32::from_bits(0x33bbbd2e);
-    let rpi = 0.318_309_87;
-    let z = x - (x * rtauh).round() * tauh + (x * rtauh).round() * taul;
-    let y = (x - (x * rpi).round() * pi + (x * rpi).round() * pilo).abs();
-    sinf_poly(mulsign(y, z))
+    let rtaul: f32 = (rtau - (rtauh as f64)) as f32;
+    let hpih = std::f32::consts::FRAC_PI_2;
+    let hpil = (std::f64::consts::FRAC_PI_2 - (hpih as f64)) as f32;
+    //-π/2 + abs(π/2 + x - 2 π round((π + 2 x)/(4 π)))
+    let q = fma(x,rtauh,0.25).round();
+    let z = (fma(-q,taul,fma(-q,tauh,x))+hpih).abs()-hpih;
+
+    //todo fix error correct for abs()
+    //let e = x-fma(q,tauh,fma(q,taul,z+hpih-hpih));
+
+    sinf_poly(z)
 }
 #[inline(always)]
 // todo: make less convoluted
@@ -430,9 +433,12 @@ mod tests {
         truth: impl Fn(f32) -> f32,
     ) {
         use plotters::prelude::*;
-        let y_vals = [approx(x_start), approx(x_end), truth(x_start), truth(x_end)];
-        let y_min = y_vals.iter().cloned().fold(f32::INFINITY, f32::min);
-        let y_max = y_vals.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let xs: Vec<f32> = (0..1000)
+            .map(|i| x_start + (x_end - x_start) * i as f32 / 999.0)
+            .collect();
+        let all_y: Vec<f32> = xs.iter().flat_map(|&x| [approx(x), truth(x)]).collect();
+        let y_min = all_y.iter().cloned().filter(|y| y.is_finite()).fold(f32::INFINITY, f32::min);
+        let y_max = all_y.iter().cloned().filter(|y| y.is_finite()).fold(f32::NEG_INFINITY, f32::max);
         let root = BitMapBackend::new(path, (480, 480)).into_drawing_area();
         root.fill(&WHITE).unwrap();
         let mut chart = ChartBuilder::on(&root)
@@ -442,9 +448,6 @@ mod tests {
             .build_cartesian_2d(x_start..x_end, y_min..y_max)
             .unwrap();
         chart.configure_mesh().draw().unwrap();
-        let xs: Vec<f32> = (0..1000)
-            .map(|i| x_start + (x_end - x_start) * i as f32 / 999.0)
-            .collect();
         chart
             .draw_series(LineSeries::new(xs.iter().map(|&x| (x, approx(x))), &BLACK))
             .unwrap()
@@ -518,6 +521,10 @@ mod tests {
     #[test]
     fn log2_approx_plot() {
         plot_approx("log2_approx.png", 1., 128., log2_blazing, |x| x.log2());
+    }
+    #[test]
+    fn sin_plot() {
+        plot_approx("sin.png", -20., 20., sin, |x| x.sin());
     }
     #[test]
     fn rsqrt_approx_plot() {
