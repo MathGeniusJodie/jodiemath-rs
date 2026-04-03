@@ -62,7 +62,10 @@ fn sinf_poly(x: f32) -> f32 {
     let d = f32::from_bits(0x3c088883);
     let e = f32::from_bits(0xbe2aaaaa);
     let x2 = x * x;
-    fma(fma(fma(fma(fma(a, x2, b), x2, c), x2, d), x2, e), x2, 1.) * x
+    let x3 = x2 * x;
+    fma(fma(fma(a, x2, b), x3, c*x),x3*x3,
+    fma(fma(d, x2, e), x3, x))
+    //fma(fma(fma(fma(fma(a, x2, b), x2, c), x2, d), x2, e), x2*x, x)
 }
 #[inline(always)]
 pub fn sin(x: f32) -> f32 {
