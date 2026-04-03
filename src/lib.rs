@@ -63,24 +63,25 @@ fn sinf_poly(x: f32) -> f32 {
     let e = f32::from_bits(0xbe2aaaaa);
     let x2 = x * x;
     let x3 = x2 * x;
-    fma(fma(fma(a, x2, b), x3, c*x),x3*x3,
-    fma(fma(d, x2, e), x3, x))
+    fma(
+        fma(fma(a, x2, b), x3, c * x),
+        x3 * x3,
+        fma(fma(d, x2, e), x3, x),
+    )
     //fma(fma(fma(fma(fma(a, x2, b), x2, c), x2, d), x2, e), x2*x, x)
 }
 #[inline(always)]
 pub fn sin(x: f32) -> f32 {
-    let q = fma(x, RTAUDF.0, 0.25).round();
-    let low = (0.25 - q) * TAUDF.1;
-    let y = Df32::from_mul(0.25 - q, TAUDF.0).sloppy_add(x);
-    let z = (-HPIDF).quick_add_to_f32(Df32(y.0, low + y.1).abs());
+    let q = 0.25 - fma(x, RTAUDF.0, 0.25).round();
+    let y = Df32::from_mul(q, TAUDF.0).sloppy_add(x);
+    let z = (-HPIDF).quick_add_to_f32(Df32(y.0, fma(q, TAUDF.1, y.1)).abs());
     sinf_poly(z)
 }
 #[inline(always)]
 pub fn cos(x: f32) -> f32 {
     let q = (x * RTAUDF.0).round();
-    let e = q * TAUDF.1;
     let y = fma(q, TAUDF.0, -x);
-    let z = HPIDF.quick_add_to_f32(-Df32(y, e).abs());
+    let z = HPIDF.quick_add_to_f32(-Df32(y, q * TAUDF.1).abs());
     sinf_poly(z)
 }
 
