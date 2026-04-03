@@ -5,46 +5,46 @@ Currently only the cbrt and exp2 functions are significantly faster, but I have 
 
 # precision (average ulp)
 ```
-         jodie cbrt error: 0.574
-           std cbrt error: 0.094
+         jodie cbrt error: 0.83
+           std cbrt error: 0
 jodie accurate cbrt error: 0
 
-jodie exp2 error: 1.27
-  std exp2 error: 0.985
+jodie exp2 error: 0.315
+  std exp2 error: 0.105
 
-jodie  cos error: 6.37
-  std  cos error: 6.13
+jodie  cos error: 0.45
+  std  cos error: 0.08
 
-jodie  sin error: 9.715
-  std  sin error: 7.33
+jodie  sin error: 0.3
+  std  sin error: 0.16
 
-jodie log2 error: 0.055
-  std log2 error: 0
+jodie log2 error: 0.16
+  std log2 error: 0.09
 ```
 
 # benchmarks
 ```
-Run on i7-12700H
+Run on i5-1145G7
 
 Latency (lower is better)
-              | jodie  | std    | perf improvement
---------------|--------|--------|-----------------
+              | jodie  | std    | improvement
+--------------|--------|--------|------------
          cbrt | 2.4 ns | 5.4 ns | 2.3x
-accurate cbrt | 7.3 ns | 5.4 ns | 0.7x
+cbrt_accurate | 7.3 ns | 5.4 ns | 0.7x
           cos | 4.7 ns | 6.7 ns | 1.4x
-         exp2 | 1.5 ns | 4.9 ns | 3.3x
+         exp2 | 2.1 ns | 5.4 ns | 2.6x
          log2 | 1.7 ns | 3.8 ns | 2.2x
           sin | 6.6 ns | 6.9 ns | 1.0x
 
 Throughput (higher is better) (single thread)
-              | jodie    | std      | perf improvement
---------------|----------|----------|-----------------
-         cbrt | 3.2 GB/s | 0.5 GB/s | 6.3x
-accurate cbrt | 1.8 GB/s | 0.5 GB/s | 3.6x
-          cos | 7.5 GB/s | 1.1 GB/s | 6.8x
-         exp2 | 6.8 GB/s | 1.4 GB/s | 4.9x
-         log2 | 6.6 GB/s | 1.9 GB/s | 3.5x
-          sin | 5.8 GB/s | 1.1 GB/s | 5.2x
+              | jodie    | std      | improvement
+--------------|----------|----------|------------
+         cbrt | 4.7 GB/s | 0.7 GB/s | 6.7x
+cbrt_accurate | 2.7 GB/s | 0.7 GB/s | 3.8x
+          cos | 4.1 GB/s | 0.6 GB/s | 6.8x
+         exp2 | 6.6 GB/s | 0.7 GB/s | 3.9x
+         log2 | 6.0 GB/s | 1.0 GB/s | 6.0x
+          sin | 3.2 GB/s | 0.6 GB/s | 5.3x
 
 ```
 

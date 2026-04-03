@@ -44,15 +44,11 @@ pub fn log_2(x: f32) -> f32 {
 
 #[inline(always)]
 pub fn exp2(x: f32) -> f32 {
-    let a = f32::from_bits(0x3af71c15);
-    let b = f32::from_bits(0x3c130514);
-    let c = f32::from_bits(0x3d64b437);
-    let d = f32::from_bits(0x3e75ea9e);
-    let e = f32::from_bits(0x3f317271);
     // exp2(floor(x))*exp2(fract(x)) == exp2(x)
     let exp2int = f32::from_bits(((x + 383_f32).to_bits() << 8) & EXPONENT_MASK);
     let f = x - x.floor();
-    exp2int * fma(fma(fma(fma(fma(a, f, b), f, c), f, d), f, e), f, 1_f32)
+    fma(fma(fma(2.1702255e-4,f,1.2439688e-3),f,9.678841e-3),exp2int*(f*f)*(f*f),
+    fma(fma(fma(5.5483342e-2,f,2.4022984e-1),f,6.9314698e-1),exp2int*f,exp2int))
 }
 #[inline(always)]
 fn sinf_poly(x: f32) -> f32 {
@@ -351,66 +347,66 @@ mod tests {
     fn cbrt_precision() {
         println!(
             "jodie cbrt error: {}",
-            ulp_error(1..1000, 1.0, cbrt, |x| x.cbrt())
+            ulp_error(1..10000, 1.0, cbrt, |x| x.cbrt())
         );
         println!(
             "std   cbrt error: {}",
-            ulp_error(1..1000, 1.0, |x| x.cbrt(), |x| x.cbrt())
+            ulp_error(1..10000, 1.0, |x| x.cbrt(), |x| x.cbrt())
         );
     }
     #[test]
     fn cbrt_accurate_precision() {
         println!(
             "jodie cbrt accurate error: {}",
-            ulp_error(1..1000, 1.0, cbrt_accurate, |x| x.cbrt())
+            ulp_error(1..10000, 1.0, cbrt_accurate, |x| x.cbrt())
         );
         println!(
             "std   cbrt error: {}",
-            ulp_error(1..1000, 1.0, |x| x.cbrt(), |x| x.cbrt())
+            ulp_error(1..10000, 1.0, |x| x.cbrt(), |x| x.cbrt())
         );
     }
     #[test]
     fn exp2_precision() {
         println!(
             "jodie exp2 error: {}",
-            ulp_error(-100..100, 0.1, exp2, |x| x.exp2())
+            ulp_error(-100..100, 0.01, exp2, |x| x.exp2())
         );
         println!(
             "std   exp2 error: {}",
-            ulp_error(-100..100, 0.1, |x| x.exp2(), |x| x.exp2())
+            ulp_error(-100..100, 0.01, |x| x.exp2(), |x| x.exp2())
         );
     }
     #[test]
     fn log2_precision() {
         println!(
             "jodie log2 error: {}",
-            ulp_error(2..1000, 1.0, log_2, |x| x.log2())
+            ulp_error(2..1000, 0.1, log_2, |x| x.log2())
         );
         println!(
             "std   log2 error: {}",
-            ulp_error(2..1000, 1.0, |x| x.log2(), |x| x.log2())
+            ulp_error(2..1000, 0.1, |x| x.log2(), |x| x.log2())
         );
     }
     #[test]
     fn sin_precision() {
         println!(
             "jodie sin error: {}",
-            ulp_error(-100..100, 0.1, sin, |x| x.sin())
+            ulp_error(-100..100, 0.01, sin, |x| x.sin())
         );
         println!(
             "std   sin error: {}",
-            ulp_error(-100..100, 0.1, |x| x.sin(), |x| x.sin())
+            ulp_error(-100..100, 0.01, |x| x.sin(), |x| x.sin())
         );
     }
     #[test]
     fn cos_precision() {
         println!(
             "jodie cos error: {}",
-            ulp_error(-100..100, 0.1, cos, |x| x.cos())
+            ulp_error(-100..100, 0.01, cos, |x| x.cos())
         );
         println!(
             "std   cos error: {}",
-            ulp_error(-100..100, 0.1, |x| x.cos(), |x| x.cos())
+            ulp_error(-100..100, 0.01, |x| x.cos(), |x| x.cos())
         );
     }
 
