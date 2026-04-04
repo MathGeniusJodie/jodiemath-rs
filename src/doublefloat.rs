@@ -73,9 +73,9 @@ impl Df32 {
     }
     // if |c| > |a*b|
     #[inline(always)]
-    pub fn from_quick_fma(a: f32, b: f32,c: f32) -> Self {
+    pub fn from_quick_fma(a: f32, b: f32, c: f32) -> Self {
         let s = a * b + c;
-        Self(s, fma(a,b,c-s))
+        Self(s, fma(a, b, c - s))
     }
 
     /// Collapse back to a single f32.

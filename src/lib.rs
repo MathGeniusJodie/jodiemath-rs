@@ -47,8 +47,15 @@ pub fn exp2(x: f32) -> f32 {
     // exp2(floor(x))*exp2(fract(x)) == exp2(x)
     let exp2int = f32::from_bits(((x + 383_f32).to_bits() << 8) & EXPONENT_MASK);
     let f = x - x.floor();
-    fma(fma(fma(2.1702255e-4,f,1.2439688e-3),f,9.678841e-3),exp2int*(f*f)*(f*f),
-    fma(fma(fma(5.5483342e-2,f,2.4022984e-1),f,6.9314698e-1),exp2int*f,exp2int))
+    fma(
+        fma(fma(2.1702255e-4, f, 1.2439688e-3), f, 9.678841e-3),
+        exp2int * (f * f) * (f * f),
+        fma(
+            fma(fma(5.5483342e-2, f, 2.4022984e-1), f, 6.9314698e-1),
+            exp2int * f,
+            exp2int,
+        ),
+    )
 }
 #[inline(always)]
 fn sinf_poly(x: f32) -> f32 {
@@ -70,7 +77,7 @@ fn sinf_poly(x: f32) -> f32 {
 pub fn sin(x: f32) -> f32 {
     let q = 0.25 - fma(x, RTAUDF.0, 0.25).round();
     let s = q * TAUDF.0 + x;
-    let y = Df32(s, fma(q,TAUDF.0,x-s));
+    let y = Df32(s, fma(q, TAUDF.0, x - s));
     let z = (-HPIDF).quick_add_to_f32(Df32(y.0, fma(q, TAUDF.1, y.1)).abs());
     sinf_poly(z)
 }
