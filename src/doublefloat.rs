@@ -66,6 +66,17 @@ impl Df32 {
         let (s, e) = quick_two_sum(a, b);
         Self(s, e)
     }
+    #[inline(always)]
+    pub fn from_quick_add_df(a: f32, b: Self) -> Self {
+        let (s, e) = quick_two_sum(a, b.0);
+        Self(s, e + b.1)
+    }
+    // if |c| > |a*b|
+    #[inline(always)]
+    pub fn from_quick_fma(a: f32, b: f32,c: f32) -> Self {
+        let s = a * b + c;
+        Self(s, fma(a,b,c-s))
+    }
 
     /// Collapse back to a single f32.
     #[inline(always)]

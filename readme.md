@@ -34,7 +34,7 @@ cbrt_accurate | 7.3 ns | 5.4 ns | 0.7x
           cos | 4.7 ns | 6.7 ns | 1.4x
          exp2 | 2.1 ns | 5.4 ns | 2.6x
          log2 | 1.7 ns | 3.8 ns | 2.2x
-          sin | 6.6 ns | 6.9 ns | 1.0x
+          sin | 5.3 ns | 6.5 ns | 1.2x
 
 Throughput (higher is better) (single thread)
               | jodie    | std      | improvement
@@ -44,7 +44,7 @@ cbrt_accurate | 2.7 GB/s | 0.7 GB/s | 3.8x
           cos | 4.1 GB/s | 0.6 GB/s | 6.8x
          exp2 | 6.6 GB/s | 0.7 GB/s | 3.9x
          log2 | 6.0 GB/s | 1.0 GB/s | 6.0x
-          sin | 3.2 GB/s | 0.6 GB/s | 5.3x
+          sin | 3.7 GB/s | 0.6 GB/s | 6.1x
 
 ```
 
