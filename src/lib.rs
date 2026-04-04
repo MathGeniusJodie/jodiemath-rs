@@ -8,14 +8,14 @@ const EXPONENT_MASK: u32 = 0x7f800000;
 const MANTISSA_MASK: u32 = 0x007fffff;
 use std::f32::consts::TAU as TAU32;
 use std::f64::consts::TAU as TAU64;
-const TAUDF: Df32 = Df32(TAU32, (TAU64 - (TAU32 as f64)) as f32);
-const RTAUDF: Df32 = Df32(
+const TAU: Df32 = Df32(TAU32, (TAU64 - (TAU32 as f64)) as f32);
+const RTAU: Df32 = Df32(
     (1. / TAU64) as f32,
     ((1. / TAU64) - (((1. / TAU64) as f32) as f64)) as f32,
 );
-const RPIDF: Df32 = Df32(RTAUDF.0 * 2., RTAUDF.1 * 2.);
-const HPIDF: Df32 = Df32(TAUDF.0 / 4., TAUDF.1 / 4.);
-const PIDF: Df32 = Df32(TAUDF.0 / 2., TAUDF.1 / 2.);
+const RPI: Df32 = Df32(RTAU.0 * 2., RTAU.1 * 2.);
+const HPI: Df32 = Df32(TAU.0 / 4., TAU.1 / 4.);
+const PI: Df32 = Df32(TAU.0 / 2., TAU.1 / 2.);
 
 #[inline(always)]
 fn fma(a: f32, b: f32, c: f32) -> f32 {
@@ -75,17 +75,17 @@ fn sinf_poly(x: f32) -> f32 {
 }
 #[inline(always)]
 pub fn sin(x: f32) -> f32 {
-    let q = 0.25 - fma(x, RTAUDF.0, 0.25).round();
-    let y = q * TAUDF.0 + x;
-    let e = fma(q, TAUDF.0, x - y);
-    let z = (-HPIDF).quick_add_to_f32(Df32(y, fma(q, TAUDF.1, e)).abs());
+    let q = 0.25 - fma(x, RTAU.0, 0.25).round();
+    let y = q * TAU.0 + x;
+    let e = fma(q, TAU.0, x - y);
+    let z = (-HPI).quick_add_to_f32(Df32(y, fma(q, TAU.1, e)).abs());
     sinf_poly(z)
 }
 #[inline(always)]
 pub fn cos(x: f32) -> f32 {
-    let q = (x * RTAUDF.0).round();
-    let y = fma(q, TAUDF.0, -x);
-    let z = HPIDF.quick_add_to_f32(-Df32(y, q * TAUDF.1).abs());
+    let q = (x * RTAU.0).round();
+    let y = fma(q, TAU.0, -x);
+    let z = HPI.quick_add_to_f32(-Df32(y, q * TAU.1).abs());
     sinf_poly(z)
 }
 
