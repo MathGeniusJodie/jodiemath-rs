@@ -734,7 +734,7 @@ function buildGraph(stmts) {
       case 'literal_u32': return 'u32';
       case 'literal_f32': return 'f32';
       case 'var': {
-        const nid = env[ast.name];
+        const nid = env[ast.name] ?? inputEnv[ast.name];
         if (nid !== undefined) return nodes[nid].type_hint || 'u32';
         return 'u32';
       }
@@ -845,6 +845,33 @@ function buildGraph(stmts) {
     } else if (stmt.kind === 'expr_stmt') {
       walk(stmt.expr);
     }
+  }
+
+  // back-propagate f32 type to input nodes:
+  // if an input feeds into an f32 operation, the input must be f32.
+  // skip bitwise ops — those operate on u32 bits even when the value came from a float.
+  const BITWISE = new Set(['&','|','^','!','<<','>>']);
+
+  // back-propagate f32 type to input nodes
+  for (const e of edges) {
+    const parent = nodes[e.from];
+    const child  = nodes[e.to];
+    if (parent.category !== 'input' || parent.type_hint === 'f32') continue;
+    if (child.type_hint !== 'f32') continue;
+    if (child.category === 'op' && BITWISE.has(child.label)) continue;
+    parent.type_hint = 'f32';
+  }
+
+  // forward-propagate f32 through non-bitwise ops so that ops downstream
+  // of promoted inputs are consistently typed. nodes are in creation order
+  // which is topological (parents always created before children), so one
+  // pass is sufficient.
+  for (const n of nodes) {
+    if (n.type_hint === 'f32') continue;
+    if (n.category === 'input' || n.category === 'literal') continue;
+    if (n.category === 'op' && BITWISE.has(n.label)) continue;
+    const anyParentF32 = edges.some(e => e.to === n.id && nodes[e.from].type_hint === 'f32');
+    if (anyParentF32) n.type_hint = 'f32';
   }
 
   return { nodes, edges };
@@ -1003,6 +1030,28 @@ function layoutGraph(graph) {
   // shift all non-input nodes down to sit below the input row
   for (const n of nodes) {
     if (!isInput(n.id)) n.y += inputRowHeight;
+  }
+
+  // resolve overlaps: push nodes sideways only — y positions are never modified.
+  // sort left-to-right so the rightmost conflicting node gets pushed right.
+  const OVERLAP_GAP = 4;
+  const nonInputs = nodes.filter(n => !isInput(n.id))
+    .sort((a, b) => a.x - b.x);
+  for (let pass = 0; pass < 20; pass++) {
+    let changed = false;
+    for (let i = 0; i < nonInputs.length; i++) {
+      for (let j = i + 1; j < nonInputs.length; j++) {
+        const a = nonInputs[i], b = nonInputs[j];
+        // no y overlap
+        if (a.y + a.height + OVERLAP_GAP <= b.y || b.y + b.height + OVERLAP_GAP <= a.y) continue;
+        // already clear horizontally
+        if (a.x + a.width + OVERLAP_GAP <= b.x) continue;
+        // push b right
+        b.x = a.x + a.width + OVERLAP_GAP;
+        changed = true;
+      }
+    }
+    if (!changed) break;
   }
 
   // compute total SVG bounds
