@@ -1095,26 +1095,18 @@ function renderSVG(graph, critInfo) {
     const width = isCrit ? 2 : 1.2;
     const marker = isCrit ? 'url(#arrow-crit)' : 'url(#arrow)';
 
-    if (Math.abs(y2 - y1) < 1) {
-      // flush connection: nodes are stacked directly
-      // draw a tiny connector or just the arrowhead
+    const dx = x2 - x1;
+    if (Math.abs(dx) < 2 && Math.abs(y2 - y1) >= 1) {
+      // straight vertical — no horizontal offset, no need to curve
       svg += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
         stroke="${color}" stroke-width="${width}" marker-end="${marker}"/>`;
     } else {
-      // there's vertical distance (fan-in from different depths).
-      // route the edge: go out horizontally from source bottom, then curve to target top
-      const dx = x2 - x1;
-      const dy = y2 - y1;
-      if (Math.abs(dx) < 2) {
-        // straight vertical
-        svg += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
-          stroke="${color}" stroke-width="${width}" marker-end="${marker}"/>`;
-      } else {
-        // bezier that hugs sides: exit bottom of from, sweep to top of to
-        const midY = (y1 + y2) / 2;
-        svg += `<path d="M${x1},${y1} C${x1},${midY} ${x2},${midY} ${x2},${y2}"
-          fill="none" stroke="${color}" stroke-width="${width}" marker-end="${marker}"/>`;
-      }
+      // bezier: exit downward from source, enter from above at target.
+      // enforce a minimum handle length so same-y edges snake instead of going straight.
+      const MIN_HANDLE = 36;
+      const handle = Math.max(Math.abs(y2 - y1) / 2, MIN_HANDLE);
+      svg += `<path d="M${x1},${y1} C${x1},${y1 + handle} ${x2},${y2 - handle} ${x2},${y2}"
+        fill="none" stroke="${color}" stroke-width="${width}" marker-end="${marker}"/>`;
     }
   }
 
