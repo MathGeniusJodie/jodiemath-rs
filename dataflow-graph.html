@@ -925,8 +925,8 @@ function layoutGraph(graph) {
   const PX_PER_CYCLE = 18;
   const MIN_NODE_HEIGHT = 20;
   const MIN_NODE_WIDTH = 60;
-  const NODE_GAP_X = 24;
-  const PADDING = 60;
+  const NODE_GAP_X = 12;
+  const PADDING = 32;
 
   // build adjacency
   const parents = {};
@@ -1042,8 +1042,8 @@ function layoutGraph(graph) {
     for (let i = 0; i < nonInputs.length; i++) {
       for (let j = i + 1; j < nonInputs.length; j++) {
         const a = nonInputs[i], b = nonInputs[j];
-        // no y overlap
-        if (a.y + a.height + OVERLAP_GAP <= b.y || b.y + b.height + OVERLAP_GAP <= a.y) continue;
+        // no y overlap — boxes stacked flush vertically are fine
+        if (a.y + a.height <= b.y || b.y + b.height <= a.y) continue;
         // already clear horizontally
         if (a.x + a.width + OVERLAP_GAP <= b.x) continue;
         // push b right
