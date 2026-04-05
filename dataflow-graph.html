@@ -949,9 +949,9 @@ function layoutGraph(graph) {
     const pEdges = edges.filter(e => e.to === n.id).sort((a, b) => a.port - b.port);
     const pLabels = pEdges.map(e => operandLabel(nodes[e.from])).filter(Boolean);
     if (pLabels.length === 2) {
-      n.displayLines = [pLabels[0], n.label, pLabels[1]];
+      n.displayLines = [`${pLabels[0]} ${n.label} ${pLabels[1]}`];
     } else if (pLabels.length === 1) {
-      n.displayLines = [n.label, pLabels[0]];
+      n.displayLines = [`${n.label} ${pLabels[0]}`];
     } else {
       n.displayLines = [n.label];
     }
@@ -1211,12 +1211,9 @@ function renderSVG(graph, critInfo) {
     const blockH = lines.length * LINE_H;
     const startY = n.y + (n.height - blockH) / 2 + LINE_H / 2;
     for (let li = 0; li < lines.length; li++) {
-      const isOperator = lines.length === 3 && li === 1;
-      const fontSize = isOperator ? 11 : 9;
-      const fill = isOperator ? '#e0e0e8' : '#8888a8';
       svg += `<text class="node-label" x="${n.x + n.width/2}" y="${startY + li * LINE_H}"
         text-anchor="middle" dominant-baseline="middle"
-        font-family="'JetBrains Mono', monospace" font-size="${fontSize}" fill="${fill}"
+        font-family="'JetBrains Mono', monospace" font-size="10" fill="#e0e0e8"
         opacity="${opacity}">${escXml(lines[li])}</text>`;
     }
 
