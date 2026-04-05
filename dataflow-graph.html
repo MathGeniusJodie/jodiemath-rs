@@ -1,0 +1,1228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dataflow Graph — Rust Expression Visualizer</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=DM+Sans:wght@400;500;600&display=swap');
+
+  :root {
+    --bg: #0c0c0f;
+    --surface: #16161b;
+    --surface2: #1e1e25;
+    --border: #2a2a35;
+    --text: #d4d4dc;
+    --text-dim: #6e6e80;
+    --accent: #e8a44a;
+    --accent-dim: #e8a44a33;
+    --u32-color: #5b9bd5;
+    --f32-color: #c678dd;
+    --op-color: #e8a44a;
+    --fn-color: #98c379;
+    --mem-color: #e06c75;
+    --conv-color: #61afef;
+    --edge-color: #3a3a48;
+    --edge-highlight: #e8a44a88;
+    --error: #e06c75;
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'DM Sans', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    padding: 20px 28px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+
+  header h1 {
+    font-family: var(--mono);
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: -0.3px;
+  }
+
+  header .sep {
+    width: 1px;
+    height: 18px;
+    background: var(--border);
+  }
+
+  header .subtitle {
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+
+  .main-layout {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+
+  .editor-panel {
+    width: 420px;
+    min-width: 320px;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+
+  .editor-header {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .editor-header label {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+  }
+
+  .btn {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 6px 14px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: var(--bg);
+    border-color: var(--accent);
+  }
+
+  .btn-primary:hover {
+    background: #d4932f;
+    border-color: #d4932f;
+  }
+
+  .editor-buttons {
+    display: flex;
+    gap: 8px;
+  }
+
+  textarea {
+    flex: 1;
+    background: var(--surface);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.7;
+    padding: 16px 20px;
+    border: none;
+    resize: none;
+    outline: none;
+    tab-size: 4;
+  }
+
+  textarea::placeholder {
+    color: var(--text-dim);
+  }
+
+  .config-panel {
+    border-top: 1px solid var(--border);
+    padding: 14px 20px;
+    flex-shrink: 0;
+  }
+
+  .config-panel summary {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+  }
+
+  .config-panel summary::before {
+    content: '▸ ';
+  }
+
+  .config-panel[open] summary::before {
+    content: '▾ ';
+  }
+
+  .config-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .config-item {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .config-item label {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-dim);
+  }
+
+  .config-item input {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 4px 8px;
+    border-radius: 3px;
+    width: 100%;
+    outline: none;
+  }
+
+  .config-item input:focus {
+    border-color: var(--accent);
+  }
+
+  .error-bar {
+    padding: 10px 20px;
+    background: #e06c7515;
+    border-top: 1px solid #e06c7533;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--error);
+    flex-shrink: 0;
+    display: none;
+  }
+
+  .error-bar.visible {
+    display: block;
+  }
+
+  .graph-panel {
+    flex: 1;
+    overflow: auto;
+    position: relative;
+    background:
+      radial-gradient(circle at 50% 50%, #16161b 0%, #0c0c0f 100%);
+  }
+
+  .graph-panel svg {
+    display: block;
+    min-width: 100%;
+    min-height: 100%;
+  }
+
+  .graph-empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 12px;
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+
+  .graph-empty .hint {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    opacity: 0.5;
+  }
+
+  .legend {
+    position: absolute;
+    bottom: 16px;
+    right: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 10px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .legend-swatch {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+  }
+
+  /* node hover effect via CSS */
+  .node-group { cursor: pointer; }
+  .node-group:hover .node-box { filter: brightness(1.2); }
+  .node-group:hover .node-label { fill: #fff; }
+
+  .stats-bar {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    display: none;
+    gap: 4px;
+    flex-direction: column;
+  }
+
+  .stats-bar.visible {
+    display: flex;
+  }
+
+  .stats-bar span {
+    color: var(--accent);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>dataflow</h1>
+  <div class="sep"></div>
+  <div class="subtitle">Rust expression → latency-scaled dependency graph</div>
+</header>
+
+<div class="main-layout">
+  <div class="editor-panel">
+    <div class="editor-header">
+      <label>Source</label>
+      <div class="editor-buttons">
+        <button class="btn" id="btn-example">Example</button>
+        <button class="btn btn-primary" id="btn-parse">Parse ⏎</button>
+      </div>
+    </div>
+
+    <textarea id="source" spellcheck="false" placeholder="// Enter Rust-like expressions&#10;let x = 5u32;&#10;let y = f32::from_bits(x);&#10;let z = fma(y, 2.0f32, 1.0f32);"></textarea>
+
+    <div class="error-bar" id="error-bar"></div>
+
+    <details class="config-panel" open>
+      <summary>Latency Config (cycles)</summary>
+      <div class="config-grid">
+        <div class="config-item">
+          <label>add / sub (int)</label>
+          <input type="number" data-op="add_u32" value="1" min="1">
+        </div>
+        <div class="config-item">
+          <label>add / sub (float)</label>
+          <input type="number" data-op="add_f32" value="3" min="1">
+        </div>
+        <div class="config-item">
+          <label>mul (int)</label>
+          <input type="number" data-op="mul_u32" value="3" min="1">
+        </div>
+        <div class="config-item">
+          <label>mul (float)</label>
+          <input type="number" data-op="mul_f32" value="5" min="1">
+        </div>
+        <div class="config-item">
+          <label>div (int)</label>
+          <input type="number" data-op="div_u32" value="20" min="1">
+        </div>
+        <div class="config-item">
+          <label>div (float)</label>
+          <input type="number" data-op="div_f32" value="14" min="1">
+        </div>
+        <div class="config-item">
+          <label>fma (float)</label>
+          <input type="number" data-op="fma" value="5" min="1">
+        </div>
+        <div class="config-item">
+          <label>const load (L1)</label>
+          <input type="number" data-op="load" value="5" min="1">
+        </div>
+        <div class="config-item">
+          <label>as (cast)</label>
+          <input type="number" data-op="cast" value="3" min="1">
+        </div>
+        <div class="config-item">
+          <label>bitwise &amp; | ^ ! &lt;&lt; &gt;&gt;</label>
+          <input type="number" data-op="bitwise" value="1" min="1">
+        </div>
+        <div class="config-item">
+          <label>neg (unary -)</label>
+          <input type="number" data-op="neg" value="1" min="1">
+        </div>
+        <div class="config-item">
+          <label>sqrt (float)</label>
+          <input type="number" data-op="sqrt" value="14" min="1">
+        </div>
+        <div class="config-item">
+          <label>abs / min / max</label>
+          <input type="number" data-op="minmax" value="1" min="1">
+        </div>
+      </div>
+    </details>
+  </div>
+
+  <div class="graph-panel" id="graph-panel">
+    <div class="graph-empty" id="graph-empty">
+      <div>No graph yet</div>
+      <div class="hint">Write some expressions and hit Parse</div>
+    </div>
+    <div class="stats-bar" id="stats-bar"></div>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-swatch" style="background:#5b9bd5"></div> u32 literal</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#c678dd"></div> f32 literal</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#e8a44a"></div> arithmetic op</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#98c379"></div> function</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#61afef"></div> cast</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── LATENCY CONFIG ───────────────────────────────────────────
+function getLatency() {
+  const cfg = {};
+  document.querySelectorAll('.config-item input').forEach(el => {
+    cfg[el.dataset.op] = parseInt(el.value) || 1;
+  });
+  return cfg;
+}
+
+// ─── TOKENIZER ────────────────────────────────────────────────
+const TOKEN_TYPES = {
+  LET: 'LET', IDENT: 'IDENT', NUMBER: 'NUMBER',
+  PLUS: 'PLUS', MINUS: 'MINUS', STAR: 'STAR', SLASH: 'SLASH', PERCENT: 'PERCENT',
+  AMP: 'AMP', PIPE: 'PIPE', CARET: 'CARET', BANG: 'BANG',
+  SHL: 'SHL', SHR: 'SHR',
+  LPAREN: 'LPAREN', RPAREN: 'RPAREN',
+  EQ: 'EQ', SEMI: 'SEMI', COMMA: 'COMMA', DOT: 'DOT',
+  COLONCOLON: 'COLONCOLON',
+  AS: 'AS',
+  EOF: 'EOF'
+};
+
+function tokenize(src) {
+  const tokens = [];
+  let i = 0;
+  while (i < src.length) {
+    // skip whitespace
+    if (/\s/.test(src[i])) { i++; continue; }
+    // skip line comments
+    if (src[i] === '/' && src[i+1] === '/') {
+      while (i < src.length && src[i] !== '\n') i++;
+      continue;
+    }
+    // two-char tokens
+    if (src[i] === ':' && src[i+1] === ':') { tokens.push({type: TOKEN_TYPES.COLONCOLON, val: '::'}); i+=2; continue; }
+    if (src[i] === '<' && src[i+1] === '<') { tokens.push({type: TOKEN_TYPES.SHL, val: '<<'}); i+=2; continue; }
+    if (src[i] === '>' && src[i+1] === '>') { tokens.push({type: TOKEN_TYPES.SHR, val: '>>'}); i+=2; continue; }
+    // single-char tokens
+    const singles = {'+':'PLUS','-':'MINUS','*':'STAR','/':'SLASH','%':'PERCENT',
+      '&':'AMP','|':'PIPE','^':'CARET','!':'BANG',
+      '(':'LPAREN',')':'RPAREN','=':'EQ',';':'SEMI',',':'COMMA','.':'DOT'};
+    if (singles[src[i]]) {
+      tokens.push({type: TOKEN_TYPES[singles[src[i]]], val: src[i]});
+      i++; continue;
+    }
+    // numbers: integer or float, with optional type suffix
+    if (/[0-9]/.test(src[i]) || (src[i] === '.' && /[0-9]/.test(src[i+1]))) {
+      let num = '';
+      // hex
+      if (src[i] === '0' && (src[i+1] === 'x' || src[i+1] === 'X')) {
+        num = '0x'; i += 2;
+        while (i < src.length && /[0-9a-fA-F_]/.test(src[i])) { if(src[i]!=='_') num += src[i]; i++; }
+      } else {
+        let hasDot = false;
+        while (i < src.length && (/[0-9_]/.test(src[i]) || (src[i]==='.' && !hasDot && /[0-9]/.test(src[i+1])))) {
+          if (src[i] === '.') hasDot = true;
+          if (src[i] !== '_') num += src[i];
+          i++;
+        }
+        // exponent
+        if (i < src.length && (src[i]==='e'||src[i]==='E')) {
+          num += src[i]; i++;
+          if (i < src.length && (src[i]==='+'||src[i]==='-')) { num += src[i]; i++; }
+          while (i < src.length && /[0-9]/.test(src[i])) { num += src[i]; i++; }
+        }
+      }
+      // type suffix
+      let suffix = null;
+      if (i < src.length && src.slice(i, i+3) === 'f32') { suffix = 'f32'; i += 3; }
+      else if (i < src.length && src.slice(i, i+3) === 'u32') { suffix = 'u32'; i += 3; }
+      else if (i < src.length && src.slice(i, i+3) === 'i32') { suffix = 'i32'; i += 3; }
+      tokens.push({type: TOKEN_TYPES.NUMBER, val: num, suffix});
+      continue;
+    }
+    // identifiers / keywords
+    if (/[a-zA-Z_]/.test(src[i])) {
+      let id = '';
+      while (i < src.length && /[a-zA-Z0-9_]/.test(src[i])) { id += src[i]; i++; }
+      if (id === 'let') tokens.push({type: TOKEN_TYPES.LET, val: 'let'});
+      else if (id === 'as') tokens.push({type: TOKEN_TYPES.AS, val: 'as'});
+      else tokens.push({type: TOKEN_TYPES.IDENT, val: id});
+      continue;
+    }
+    throw new Error(`Unexpected character '${src[i]}' at position ${i}`);
+  }
+  tokens.push({type: TOKEN_TYPES.EOF, val: ''});
+  return tokens;
+}
+
+// ─── AST NODES ────────────────────────────────────────────────
+// Each node: { kind, ... }
+// Kinds: 'literal_u32', 'literal_f32', 'var', 'binop', 'unaryop', 'call', 'cast', 'from_bits', 'to_bits', 'method_call'
+
+// ─── PARSER (recursive descent) ──────────────────────────────
+class Parser {
+  constructor(tokens) {
+    this.tokens = tokens;
+    this.pos = 0;
+  }
+  peek() { return this.tokens[this.pos]; }
+  advance() { return this.tokens[this.pos++]; }
+  expect(type) {
+    const t = this.advance();
+    if (t.type !== type) throw new Error(`Expected ${type}, got ${t.type} ('${t.val}')`);
+    return t;
+  }
+
+  parseProgram() {
+    const stmts = [];
+    while (this.peek().type !== TOKEN_TYPES.EOF) {
+      stmts.push(this.parseStmt());
+    }
+    return stmts;
+  }
+
+  parseStmt() {
+    if (this.peek().type === TOKEN_TYPES.LET) {
+      return this.parseLet();
+    }
+    // expression statement
+    const expr = this.parseExpr();
+    if (this.peek().type === TOKEN_TYPES.SEMI) this.advance();
+    return { kind: 'expr_stmt', expr };
+  }
+
+  parseLet() {
+    this.expect(TOKEN_TYPES.LET);
+    const name = this.expect(TOKEN_TYPES.IDENT).val;
+    this.expect(TOKEN_TYPES.EQ);
+    const expr = this.parseExpr();
+    if (this.peek().type === TOKEN_TYPES.SEMI) this.advance();
+    return { kind: 'let', name, expr };
+  }
+
+  parseExpr() {
+    return this.parseBitOr();
+  }
+
+  parseBitOr() {
+    let left = this.parseBitXor();
+    while (this.peek().type === TOKEN_TYPES.PIPE) {
+      this.advance();
+      const right = this.parseBitXor();
+      left = { kind: 'binop', op: '|', left, right };
+    }
+    return left;
+  }
+
+  parseBitXor() {
+    let left = this.parseBitAnd();
+    while (this.peek().type === TOKEN_TYPES.CARET) {
+      this.advance();
+      const right = this.parseBitAnd();
+      left = { kind: 'binop', op: '^', left, right };
+    }
+    return left;
+  }
+
+  parseBitAnd() {
+    let left = this.parseShift();
+    while (this.peek().type === TOKEN_TYPES.AMP) {
+      this.advance();
+      const right = this.parseShift();
+      left = { kind: 'binop', op: '&', left, right };
+    }
+    return left;
+  }
+
+  parseShift() {
+    let left = this.parseAddSub();
+    while (this.peek().type === TOKEN_TYPES.SHL || this.peek().type === TOKEN_TYPES.SHR) {
+      const op = this.advance().val;
+      const right = this.parseAddSub();
+      left = { kind: 'binop', op, left, right };
+    }
+    return left;
+  }
+
+  parseAddSub() {
+    let left = this.parseMulDiv();
+    while (this.peek().type === TOKEN_TYPES.PLUS || this.peek().type === TOKEN_TYPES.MINUS) {
+      const op = this.advance().val;
+      const right = this.parseMulDiv();
+      left = { kind: 'binop', op, left, right };
+    }
+    return left;
+  }
+
+  parseMulDiv() {
+    let left = this.parseUnary();
+    while (this.peek().type === TOKEN_TYPES.STAR || this.peek().type === TOKEN_TYPES.SLASH || this.peek().type === TOKEN_TYPES.PERCENT) {
+      const op = this.advance().val;
+      const right = this.parseUnary();
+      left = { kind: 'binop', op, left, right };
+    }
+    return left;
+  }
+
+  parseUnary() {
+    if (this.peek().type === TOKEN_TYPES.MINUS) {
+      this.advance();
+      const operand = this.parseUnary();
+      return { kind: 'unaryop', op: '-', operand };
+    }
+    if (this.peek().type === TOKEN_TYPES.BANG) {
+      this.advance();
+      const operand = this.parseUnary();
+      return { kind: 'unaryop', op: '!', operand };
+    }
+    return this.parsePostfix();
+  }
+
+  parsePostfix() {
+    let node = this.parsePrimary();
+    while (true) {
+      // .to_bits()
+      if (this.peek().type === TOKEN_TYPES.DOT) {
+        this.advance();
+        const method = this.expect(TOKEN_TYPES.IDENT).val;
+        this.expect(TOKEN_TYPES.LPAREN);
+        this.expect(TOKEN_TYPES.RPAREN);
+        node = { kind: 'method_call', method, receiver: node };
+        continue;
+      }
+      // as f32 / as u32
+      if (this.peek().type === TOKEN_TYPES.AS) {
+        this.advance();
+        const target = this.expect(TOKEN_TYPES.IDENT).val;
+        node = { kind: 'cast', target, operand: node };
+        continue;
+      }
+      break;
+    }
+    return node;
+  }
+
+  parsePrimary() {
+    const t = this.peek();
+
+    // parenthesized expr
+    if (t.type === TOKEN_TYPES.LPAREN) {
+      this.advance();
+      const expr = this.parseExpr();
+      this.expect(TOKEN_TYPES.RPAREN);
+      return expr;
+    }
+
+    // number literal
+    if (t.type === TOKEN_TYPES.NUMBER) {
+      this.advance();
+      const val = t.val.startsWith('0x') ? parseInt(t.val, 16) : parseFloat(t.val);
+      if (t.suffix === 'u32' || t.suffix === 'i32') {
+        return { kind: 'literal_u32', val: val >>> 0, raw: t.val + (t.suffix||'') };
+      }
+      if (t.suffix === 'f32' || t.val.includes('.') || t.val.includes('e') || t.val.includes('E')) {
+        return { kind: 'literal_f32', val, raw: t.val + (t.suffix||'') };
+      }
+      // default to u32 for unsuffixed integers
+      return { kind: 'literal_u32', val: val >>> 0, raw: t.val };
+    }
+
+    // identifier: could be f32::from_bits(...) or function call or variable
+    if (t.type === TOKEN_TYPES.IDENT) {
+      this.advance();
+      // f32::from_bits(x) or u32::from_bits(x)
+      if (this.peek().type === TOKEN_TYPES.COLONCOLON) {
+        const typeName = t.val;
+        this.advance(); // ::
+        const method = this.expect(TOKEN_TYPES.IDENT).val;
+        this.expect(TOKEN_TYPES.LPAREN);
+        const arg = this.parseExpr();
+        this.expect(TOKEN_TYPES.RPAREN);
+        return { kind: 'static_call', typeName, method, arg };
+      }
+      // function call: fma(a,b,c), sqrt(x), abs(x), min(a,b), max(a,b)
+      if (this.peek().type === TOKEN_TYPES.LPAREN) {
+        this.advance();
+        const args = [];
+        if (this.peek().type !== TOKEN_TYPES.RPAREN) {
+          args.push(this.parseExpr());
+          while (this.peek().type === TOKEN_TYPES.COMMA) {
+            this.advance();
+            args.push(this.parseExpr());
+          }
+        }
+        this.expect(TOKEN_TYPES.RPAREN);
+        return { kind: 'call', name: t.val, args };
+      }
+      // plain variable reference
+      return { kind: 'var', name: t.val };
+    }
+
+    throw new Error(`Unexpected token '${t.val}' (${t.type})`);
+  }
+}
+
+// ─── BUILD GRAPH NODES ────────────────────────────────────────
+let nodeIdCounter = 0;
+function buildGraph(stmts) {
+  nodeIdCounter = 0;
+  const env = {}; // variable name -> graph node id
+  const nodes = []; // { id, label, category, type_hint, latency, children:[] }
+  const edges = []; // { from, to, port }
+
+  function addNode(label, category, type_hint) {
+    const id = nodeIdCounter++;
+    nodes.push({ id, label, category, type_hint, children: [] });
+    return id;
+  }
+
+  function inferType(ast) {
+    if (!ast) return 'u32';
+    switch (ast.kind) {
+      case 'literal_u32': return 'u32';
+      case 'literal_f32': return 'f32';
+      case 'var': {
+        const nid = env[ast.name];
+        if (nid !== undefined) return nodes[nid].type_hint || 'u32';
+        return 'u32';
+      }
+      case 'cast': return ast.target;
+      case 'static_call':
+        if (ast.typeName === 'f32') return 'f32';
+        return 'u32';
+      case 'method_call':
+        if (ast.method === 'to_bits') return 'u32';
+        return 'f32';
+      case 'call':
+        if (['fma','sqrt','abs_f32'].includes(ast.name)) return 'f32';
+        if (['min','max','abs'].includes(ast.name)) return inferType(ast.args[0]);
+        return 'f32';
+      case 'binop': {
+        const lt = inferType(ast.left), rt = inferType(ast.right);
+        if (lt === 'f32' || rt === 'f32') return 'f32';
+        return 'u32';
+      }
+      case 'unaryop': return inferType(ast.operand);
+      default: return 'u32';
+    }
+  }
+
+  function walk(ast) {
+    switch (ast.kind) {
+      case 'literal_u32': {
+        return addNode(ast.raw || String(ast.val), 'literal', 'u32');
+      }
+      case 'literal_f32': {
+        return addNode(ast.raw || String(ast.val), 'literal', 'f32');
+      }
+      case 'var': {
+        // variable reference = just reuse the register, no new node
+        if (env[ast.name] !== undefined) {
+          return env[ast.name];
+        }
+        // undefined variable — show as an input/source node
+        return addNode(ast.name, 'literal', 'u32');
+      }
+      case 'binop': {
+        const lid = walk(ast.left);
+        const rid = walk(ast.right);
+        const ty = inferType(ast);
+        const nid = addNode(ast.op, 'op', ty);
+        edges.push({ from: lid, to: nid, port: 0 });
+        edges.push({ from: rid, to: nid, port: 1 });
+        return nid;
+      }
+      case 'unaryop': {
+        const oid = walk(ast.operand);
+        const ty = inferType(ast);
+        const nid = addNode(ast.op === '-' ? 'neg' : ast.op, 'op', ty);
+        edges.push({ from: oid, to: nid, port: 0 });
+        return nid;
+      }
+      case 'call': {
+        const argIds = ast.args.map(a => walk(a));
+        const nid = addNode(ast.name, 'fn', inferType(ast));
+        argIds.forEach((aid, i) => edges.push({ from: aid, to: nid, port: i }));
+        return nid;
+      }
+      case 'static_call': {
+        // f32::from_bits / u32::from_bits — pure reinterpret, no op
+        if (ast.method === 'from_bits') {
+          return walk(ast.arg);
+        }
+        const aid = walk(ast.arg);
+        const label = `${ast.typeName}::${ast.method}`;
+        const nid = addNode(label, 'conv', ast.typeName);
+        edges.push({ from: aid, to: nid, port: 0 });
+        return nid;
+      }
+      case 'method_call': {
+        // .to_bits() — pure reinterpret, no op
+        if (ast.method === 'to_bits') {
+          return walk(ast.receiver);
+        }
+        const rid = walk(ast.receiver);
+        const nid = addNode(`.${ast.method}()`, 'conv', ast.method === 'to_bits' ? 'u32' : 'f32');
+        edges.push({ from: rid, to: nid, port: 0 });
+        return nid;
+      }
+      case 'cast': {
+        const oid = walk(ast.operand);
+        const nid = addNode(`as ${ast.target}`, 'conv', ast.target);
+        edges.push({ from: oid, to: nid, port: 0 });
+        return nid;
+      }
+      default:
+        throw new Error(`Unknown AST node kind: ${ast.kind}`);
+    }
+  }
+
+  for (const stmt of stmts) {
+    if (stmt.kind === 'let') {
+      const eid = walk(stmt.expr);
+      // let is just naming — point the variable at the result node
+      // annotate the node with the variable name for display
+      if (!nodes[eid].varNames) nodes[eid].varNames = [];
+      nodes[eid].varNames.push(stmt.name);
+      env[stmt.name] = eid;
+    } else if (stmt.kind === 'expr_stmt') {
+      walk(stmt.expr);
+    }
+  }
+
+  return { nodes, edges };
+}
+
+// ─── ASSIGN LATENCY ──────────────────────────────────────────
+function assignLatencies(graph, cfg) {
+  for (const n of graph.nodes) {
+    switch (n.category) {
+      case 'literal':
+        n.latency = cfg.load;
+        break;
+      case 'conv':
+        if (n.label.includes('from_bits') || n.label.includes('to_bits')) {
+          n.latency = 0; // reinterpret cast, no op
+        } else {
+          n.latency = cfg.cast;
+        }
+        break;
+      case 'fn':
+        if (n.label === 'fma') n.latency = cfg.fma;
+        else if (n.label === 'sqrt') n.latency = cfg.sqrt;
+        else if (['abs','min','max'].includes(n.label)) n.latency = cfg.minmax;
+        else n.latency = cfg.fma;
+        break;
+      case 'op': {
+        const ty = n.type_hint || 'u32';
+        const isFloat = ty === 'f32';
+        if (['+','-'].includes(n.label)) n.latency = isFloat ? cfg.add_f32 : cfg.add_u32;
+        else if (n.label === '*') n.latency = isFloat ? cfg.mul_f32 : cfg.mul_u32;
+        else if (n.label === '/' || n.label === '%') n.latency = isFloat ? cfg.div_f32 : cfg.div_u32;
+        else if (['&','|','^','!','<<','>>'].includes(n.label)) n.latency = cfg.bitwise;
+        else if (n.label === 'neg') n.latency = isFloat ? cfg.add_f32 : cfg.neg;
+        else n.latency = cfg.add_u32;
+        break;
+      }
+      default:
+        n.latency = 0;
+    }
+  }
+}
+
+// ─── LAYOUT (cumulative latency Y, no arrow gaps) ────────────
+function layoutGraph(graph) {
+  const { nodes, edges } = graph;
+  if (nodes.length === 0) return;
+
+  const PX_PER_CYCLE = 18;
+  const MIN_NODE_HEIGHT = 20;
+  const MIN_NODE_WIDTH = 60;
+  const NODE_GAP_X = 24;
+  const PADDING = 60;
+
+  // build adjacency
+  const parents = {};
+  const children = {};
+  for (const n of nodes) { parents[n.id] = []; children[n.id] = []; }
+  for (const e of edges) {
+    children[e.from].push(e.to);
+    parents[e.to].push(e.from);
+  }
+
+  // node height = latency * PX_PER_CYCLE (min height for 0-latency nodes)
+  function textWidth(str) { return Math.max(str.length * 7.5 + 16, MIN_NODE_WIDTH); }
+  for (const n of nodes) {
+    n.height = Math.max((n.latency || 0) * PX_PER_CYCLE, MIN_NODE_HEIGHT);
+    n.width = Math.max(textWidth(n.label), MIN_NODE_WIDTH);
+  }
+
+  // topological layers (longest path from source)
+  const layer = {};
+  const visited = new Set();
+  function dfsLayer(id) {
+    if (visited.has(id)) return layer[id];
+    visited.add(id);
+    let maxP = -1;
+    for (const p of parents[id]) maxP = Math.max(maxP, dfsLayer(p));
+    layer[id] = maxP + 1;
+    return layer[id];
+  }
+  for (const n of nodes) dfsLayer(n.id);
+
+  // group by layer
+  const layers = {};
+  let maxLayer = 0;
+  for (const n of nodes) {
+    const l = layer[n.id];
+    if (!layers[l]) layers[l] = [];
+    layers[l].push(n.id);
+    maxLayer = Math.max(maxLayer, l);
+  }
+
+  // Y position: cumulative latency along critical chain.
+  // Each node's Y = max(parent.y + parent.height) so boxes stack flush.
+  // Process in topological order (layer 0, 1, 2, ...).
+  for (let l = 0; l <= maxLayer; l++) {
+    const ids = layers[l] || [];
+    for (const id of ids) {
+      let maxParentBottom = PADDING;
+      for (const p of parents[id]) {
+        maxParentBottom = Math.max(maxParentBottom, nodes[p].y + nodes[p].height);
+      }
+      nodes[id].y = maxParentBottom;
+    }
+  }
+
+  // X position: center each layer, sort by avg parent x to reduce crossings
+  const layerWidths = {};
+  for (let l = 0; l <= maxLayer; l++) {
+    const ids = layers[l] || [];
+    let w = 0;
+    for (const id of ids) w += nodes[id].width + NODE_GAP_X;
+    w -= NODE_GAP_X;
+    layerWidths[l] = Math.max(w, 0);
+  }
+  const maxWidth = Math.max(...Object.values(layerWidths), 200);
+
+  for (let l = 0; l <= maxLayer; l++) {
+    const ids = layers[l] || [];
+    ids.sort((a, b) => {
+      const ax = parents[a].length ? parents[a].reduce((s,p) => s + (nodes[p].x || 0), 0) / parents[a].length : 0;
+      const bx = parents[b].length ? parents[b].reduce((s,p) => s + (nodes[p].x || 0), 0) / parents[b].length : 0;
+      return ax - bx;
+    });
+    let x = (maxWidth - layerWidths[l]) / 2 + PADDING;
+    for (const id of ids) {
+      nodes[id].x = x;
+      x += nodes[id].width + NODE_GAP_X;
+    }
+  }
+
+  // compute total SVG bounds
+  let maxBottom = 0;
+  for (const n of nodes) maxBottom = Math.max(maxBottom, n.y + n.height);
+  graph.svgWidth = maxWidth + PADDING * 2;
+  graph.svgHeight = maxBottom + PADDING;
+}
+
+// ─── CRITICAL PATH ────────────────────────────────────────────
+function computeCriticalPath(graph) {
+  const { nodes, edges } = graph;
+  const parents = {};
+  for (const n of nodes) parents[n.id] = [];
+  for (const e of edges) parents[e.to].push(e.from);
+
+  const cost = {};
+  const visited = new Set();
+  function dfs(id) {
+    if (visited.has(id)) return cost[id];
+    visited.add(id);
+    let maxParent = 0;
+    for (const p of parents[id]) {
+      maxParent = Math.max(maxParent, dfs(p));
+    }
+    cost[id] = maxParent + (nodes[id].latency || 0);
+    return cost[id];
+  }
+  for (const n of nodes) dfs(n.id);
+
+  const totalLatency = Math.max(...Object.values(cost), 0);
+
+  // trace back critical path
+  const critical = new Set();
+  let maxId = 0;
+  for (const n of nodes) { if ((cost[n.id]||0) > (cost[maxId]||0)) maxId = n.id; }
+  function traceBack(id) {
+    critical.add(id);
+    let bestParent = -1, bestCost = -1;
+    for (const p of parents[id]) {
+      if ((cost[p]||0) > bestCost) { bestCost = cost[p]||0; bestParent = p; }
+    }
+    if (bestParent >= 0) traceBack(bestParent);
+  }
+  traceBack(maxId);
+
+  return { totalLatency, critical, cost };
+}
+
+// ─── SVG RENDERER ─────────────────────────────────────────────
+function renderSVG(graph, critInfo) {
+  const { nodes, edges } = graph;
+  const { critical, cost, totalLatency } = critInfo;
+
+  const categoryColors = {
+    literal: n => n.type_hint === 'f32' ? '#c678dd' : '#5b9bd5',
+    op: () => '#e8a44a',
+    fn: () => '#98c379',
+    conv: () => '#61afef',
+  };
+
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${graph.svgWidth} ${graph.svgHeight}" width="${graph.svgWidth}" height="${graph.svgHeight}">`;
+
+  // defs
+  svg += `<defs>
+    <marker id="arrow" viewBox="0 0 8 6" refX="8" refY="3" markerWidth="6" markerHeight="5" orient="auto-start-reverse">
+      <path d="M0 0L8 3L0 6z" fill="#4a4a58"/>
+    </marker>
+    <marker id="arrow-crit" viewBox="0 0 8 6" refX="8" refY="3" markerWidth="6" markerHeight="5" orient="auto-start-reverse">
+      <path d="M0 0L8 3L0 6z" fill="#e8a44a"/>
+    </marker>
+    <filter id="glow">
+      <feDropShadow dx="0" dy="1" stdDeviation="3" flood-color="#000" flood-opacity="0.4"/>
+    </filter>
+  </defs>`;
+
+  // edges — drawn as curves that hug the node boundaries, taking no extra vertical space
+  for (const e of edges) {
+    const from = nodes[e.from];
+    const to = nodes[e.to];
+    const isCrit = critical.has(e.from) && critical.has(e.to);
+
+    const x1 = from.x + from.width / 2;
+    const y1 = from.y + from.height; // bottom of source
+    const x2 = to.x + to.width / 2;
+    const y2 = to.y; // top of target
+
+    const color = isCrit ? '#e8a44aaa' : '#4a4a5888';
+    const width = isCrit ? 2 : 1.2;
+    const marker = isCrit ? 'url(#arrow-crit)' : 'url(#arrow)';
+
+    if (Math.abs(y2 - y1) < 1) {
+      // flush connection: nodes are stacked directly
+      // draw a tiny connector or just the arrowhead
+      svg += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
+        stroke="${color}" stroke-width="${width}" marker-end="${marker}"/>`;
+    } else {
+      // there's vertical distance (fan-in from different depths).
+      // route the edge: go out horizontally from source bottom, then curve to target top
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      if (Math.abs(dx) < 2) {
+        // straight vertical
+        svg += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
+          stroke="${color}" stroke-width="${width}" marker-end="${marker}"/>`;
+      } else {
+        // bezier that hugs sides: exit bottom of from, sweep to top of to
+        const midY = (y1 + y2) / 2;
+        svg += `<path d="M${x1},${y1} C${x1},${midY} ${x2},${midY} ${x2},${y2}"
+          fill="none" stroke="${color}" stroke-width="${width}" marker-end="${marker}"/>`;
+      }
+    }
+  }
+
+  // nodes
+  for (const n of nodes) {
+    const colorFn = categoryColors[n.category] || (() => '#888');
+    const color = colorFn(n);
+    const isCrit = critical.has(n.id);
+    const opacity = isCrit ? 1 : 0.7;
+    const rx = 3;
+
+    svg += `<g class="node-group" data-id="${n.id}">`;
+
+    // main box — height is proportional to latency
+    svg += `<rect class="node-box" x="${n.x}" y="${n.y}" width="${n.width}" height="${n.height}"
+      rx="${rx}" fill="${color}18" stroke="${color}" stroke-width="${isCrit ? 2 : 1}"
+      opacity="${opacity}" filter="url(#glow)"/>`;
+
+    // subtle fill gradient — darker at top, lighter at bottom
+    if (n.latency > 0) {
+      svg += `<rect x="${n.x}" y="${n.y}" width="${n.width}" height="${n.height}"
+        rx="${rx}" fill="${color}20" opacity="${opacity}"/>`;
+    }
+
+    // label — centered vertically in the box
+    const fontSize = n.label.length > 14 ? 9 : 11;
+    svg += `<text class="node-label" x="${n.x + n.width/2}" y="${n.y + n.height/2 + 1}"
+      text-anchor="middle" dominant-baseline="middle"
+      font-family="'JetBrains Mono', monospace" font-size="${fontSize}" fill="#e0e0e8"
+      opacity="${opacity}">${escXml(n.label)}</text>`;
+
+    // latency badge (top-right corner)
+    if (n.latency > 0) {
+      const bx = n.x + n.width - 2;
+      const by = n.y + 2;
+      const badgeW = n.latency >= 10 ? 22 : 16;
+      svg += `<rect x="${bx - badgeW + 2}" y="${by}" width="${badgeW}" height="13" rx="2"
+        fill="${color}" opacity="0.85"/>`;
+      svg += `<text x="${bx - badgeW/2 + 2}" y="${by + 7}" text-anchor="middle" dominant-baseline="middle"
+        font-family="'JetBrains Mono', monospace" font-size="8" font-weight="700"
+        fill="#0c0c0f">${n.latency}c</text>`;
+    }
+
+    // variable name annotation (from let bindings)
+    if (n.varNames && n.varNames.length > 0) {
+      const label = n.varNames.join(', ');
+      svg += `<text x="${n.x - 6}" y="${n.y + n.height/2 + 1}"
+        text-anchor="end" dominant-baseline="middle"
+        font-family="'JetBrains Mono', monospace" font-size="9" fill="#6e6e80"
+        font-style="italic">${escXml(label)}</text>`;
+    }
+
+    svg += `</g>`;
+  }
+
+  svg += `</svg>`;
+  return svg;
+}
+
+function escXml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ─── MAIN PIPELINE ────────────────────────────────────────────
+function run() {
+  const src = document.getElementById('source').value;
+  const errBar = document.getElementById('error-bar');
+  const panel = document.getElementById('graph-panel');
+  const empty = document.getElementById('graph-empty');
+  const statsBar = document.getElementById('stats-bar');
+
+  errBar.textContent = '';
+  errBar.classList.remove('visible');
+  statsBar.classList.remove('visible');
+
+  try {
+    const tokens = tokenize(src);
+    const parser = new Parser(tokens);
+    const stmts = parser.parseProgram();
+    const graph = buildGraph(stmts);
+    const cfg = getLatency();
+    assignLatencies(graph, cfg);
+    layoutGraph(graph);
+    const critInfo = computeCriticalPath(graph);
+    const svg = renderSVG(graph, critInfo);
+
+    empty.style.display = 'none';
+    // remove old svg
+    const oldSvg = panel.querySelector('svg');
+    if (oldSvg) oldSvg.remove();
+    panel.insertAdjacentHTML('afterbegin', svg);
+
+    // stats
+    const opCount = graph.nodes.filter(n => n.category !== 'literal' && n.category !== 'assign').length;
+    statsBar.innerHTML = `
+      <div>Nodes: <span>${graph.nodes.length}</span></div>
+      <div>Ops: <span>${opCount}</span></div>
+      <div>Critical path: <span>${critInfo.totalLatency} cycles</span></div>
+    `;
+    statsBar.classList.add('visible');
+
+  } catch (e) {
+    errBar.textContent = `Error: ${e.message}`;
+    errBar.classList.add('visible');
+  }
+}
+
+// ─── EXAMPLE ──────────────────────────────────────────────────
+const EXAMPLE = `// Estrin's scheme for a degree-3 polynomial
+// p(x) = c0 + c1*x + c2*x^2 + c3*x^3
+let c0 = 1.0f32;
+let c1 = 0.5f32;
+let c2 = 0.125f32;
+let c3 = 0.0625f32;
+let x = f32::from_bits(0x3f800000u32);
+let x2 = x * x;
+let p01 = fma(c1, x, c0);
+let p23 = fma(c3, x, c2);
+let result = fma(p23, x2, p01);
+let bits = result.to_bits();
+let masked = bits & 0x7F800000u32;
+let shifted = masked >> 23u32;`;
+
+document.getElementById('btn-parse').addEventListener('click', run);
+document.getElementById('btn-example').addEventListener('click', () => {
+  document.getElementById('source').value = EXAMPLE;
+  run();
+});
+
+// ctrl+enter to parse
+document.getElementById('source').addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); run(); }
+  // tab to indent
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    const ta = e.target;
+    const start = ta.selectionStart;
+    ta.value = ta.value.substring(0, start) + '    ' + ta.value.substring(ta.selectionEnd);
+    ta.selectionStart = ta.selectionEnd = start + 4;
+  }
+});
+
+// run example on load
+document.getElementById('source').value = EXAMPLE;
+setTimeout(run, 100);
+</script>
+</body>
+</html>
