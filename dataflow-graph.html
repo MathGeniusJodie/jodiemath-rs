@@ -406,10 +406,11 @@
     </div>
     <div class="stats-bar" id="stats-bar"></div>
     <div class="legend">
+      <div class="legend-item"><div class="legend-swatch" style="background:#4a4a5e"></div> input</div>
       <div class="legend-item"><div class="legend-swatch" style="background:#5b9bd5"></div> u32 literal</div>
       <div class="legend-item"><div class="legend-swatch" style="background:#c678dd"></div> f32 literal</div>
-      <div class="legend-item"><div class="legend-swatch" style="background:#e8a44a"></div> arithmetic op</div>
-      <div class="legend-item"><div class="legend-swatch" style="background:#98c379"></div> function</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#e8a44a"></div> u32 op</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#e06c75"></div> f32 op</div>
       <div class="legend-item"><div class="legend-swatch" style="background:#61afef"></div> cast</div>
     </div>
   </div>
@@ -717,6 +718,7 @@ let nodeIdCounter = 0;
 function buildGraph(stmts) {
   nodeIdCounter = 0;
   const env = {}; // variable name -> graph node id
+  const inputEnv = {}; // dedupe input nodes by name
   const nodes = []; // { id, label, category, type_hint, latency, children:[] }
   const edges = []; // { from, to, port }
 
@@ -770,8 +772,11 @@ function buildGraph(stmts) {
         if (env[ast.name] !== undefined) {
           return env[ast.name];
         }
-        // undefined variable — show as an input/source node
-        return addNode(ast.name, 'literal', 'u32');
+        // undefined variable — function input, already in a register
+        if (inputEnv[ast.name] !== undefined) return inputEnv[ast.name];
+        const nid = addNode(ast.name, 'input', 'u32');
+        inputEnv[ast.name] = nid;
+        return nid;
       }
       case 'binop': {
         const lid = walk(ast.left);
@@ -798,7 +803,9 @@ function buildGraph(stmts) {
       case 'static_call': {
         // f32::from_bits / u32::from_bits — pure reinterpret, no op
         if (ast.method === 'from_bits') {
-          return walk(ast.arg);
+          const nid = walk(ast.arg);
+          nodes[nid].type_hint = ast.typeName;
+          return nid;
         }
         const aid = walk(ast.arg);
         const label = `${ast.typeName}::${ast.method}`;
@@ -847,6 +854,9 @@ function buildGraph(stmts) {
 function assignLatencies(graph, cfg) {
   for (const n of graph.nodes) {
     switch (n.category) {
+      case 'input':
+        n.latency = 0;
+        break;
       case 'literal':
         n.latency = cfg.load;
         break;
@@ -901,29 +911,35 @@ function layoutGraph(graph) {
   }
 
   // node height = latency * PX_PER_CYCLE (min height for 0-latency nodes)
+  // input nodes get a fixed small height and are excluded from vertical stacking
   function textWidth(str) { return Math.max(str.length * 7.5 + 16, MIN_NODE_WIDTH); }
   for (const n of nodes) {
-    n.height = Math.max((n.latency || 0) * PX_PER_CYCLE, MIN_NODE_HEIGHT);
+    n.height = n.category === 'input' ? MIN_NODE_HEIGHT : Math.max((n.latency || 0) * PX_PER_CYCLE, MIN_NODE_HEIGHT);
     n.width = Math.max(textWidth(n.label), MIN_NODE_WIDTH);
   }
 
-  // topological layers (longest path from source)
+  const isInput = id => nodes[id].category === 'input';
+
+  // topological layers (longest path from source), skipping input nodes
   const layer = {};
   const visited = new Set();
   function dfsLayer(id) {
-    if (visited.has(id)) return layer[id];
+    if (visited.has(id)) return layer[id] ?? 0;
     visited.add(id);
     let maxP = -1;
-    for (const p of parents[id]) maxP = Math.max(maxP, dfsLayer(p));
-    layer[id] = maxP + 1;
+    for (const p of parents[id]) {
+      if (!isInput(p)) maxP = Math.max(maxP, dfsLayer(p));
+    }
+    layer[id] = isInput(id) ? -1 : maxP + 1;
     return layer[id];
   }
   for (const n of nodes) dfsLayer(n.id);
 
-  // group by layer
+  // group non-input nodes by layer
   const layers = {};
   let maxLayer = 0;
   for (const n of nodes) {
+    if (isInput(n.id)) continue;
     const l = layer[n.id];
     if (!layers[l]) layers[l] = [];
     layers[l].push(n.id);
@@ -932,12 +948,14 @@ function layoutGraph(graph) {
 
   // Y position: cumulative latency along critical chain.
   // Each node's Y = max(parent.y + parent.height) so boxes stack flush.
+  // Input parents contribute 0 to stacking (they have no vertical presence).
   // Process in topological order (layer 0, 1, 2, ...).
   for (let l = 0; l <= maxLayer; l++) {
     const ids = layers[l] || [];
     for (const id of ids) {
       let maxParentBottom = PADDING;
       for (const p of parents[id]) {
+        if (isInput(p)) continue;
         maxParentBottom = Math.max(maxParentBottom, nodes[p].y + nodes[p].height);
       }
       nodes[id].y = maxParentBottom;
@@ -967,6 +985,24 @@ function layoutGraph(graph) {
       nodes[id].x = x;
       x += nodes[id].width + NODE_GAP_X;
     }
+  }
+
+  // position input nodes in a row at the very top
+  const inputNodes = nodes.filter(n => isInput(n.id));
+  const inputRowHeight = inputNodes.length > 0 ? MIN_NODE_HEIGHT + NODE_GAP_X : 0;
+  if (inputNodes.length > 0) {
+    const totalInputW = inputNodes.reduce((s, n) => s + n.width, 0) + NODE_GAP_X * (inputNodes.length - 1);
+    let ix = (maxWidth - totalInputW) / 2 + PADDING;
+    for (const n of inputNodes) {
+      n.y = PADDING;
+      n.x = ix;
+      ix += n.width + NODE_GAP_X;
+    }
+  }
+
+  // shift all non-input nodes down to sit below the input row
+  for (const n of nodes) {
+    if (!isInput(n.id)) n.y += inputRowHeight;
   }
 
   // compute total SVG bounds
@@ -1022,9 +1058,10 @@ function renderSVG(graph, critInfo) {
   const { critical, cost, totalLatency } = critInfo;
 
   const categoryColors = {
+    input: () => '#4a4a5e',
     literal: n => n.type_hint === 'f32' ? '#c678dd' : '#5b9bd5',
-    op: () => '#e8a44a',
-    fn: () => '#98c379',
+    op: n => (n.type_hint === 'f32' && !['&','|','^','!','<<','>>'].includes(n.label)) ? '#e06c75' : '#e8a44a',
+    fn: n => (n.type_hint === 'f32' || ['fma','sqrt','abs_f32'].includes(n.label)) ? '#e06c75' : '#e8a44a',
     conv: () => '#61afef',
   };
 
