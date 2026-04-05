@@ -1069,11 +1069,11 @@ function renderSVG(graph, critInfo) {
 
   // defs
   svg += `<defs>
-    <marker id="arrow" viewBox="0 0 8 6" refX="8" refY="3" markerWidth="6" markerHeight="5" orient="auto-start-reverse">
-      <path d="M0 0L8 3L0 6z" fill="#4a4a58"/>
+    <marker id="arrow" viewBox="0 0 10 8" refX="10" refY="4" markerWidth="7" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0L10 4L0 8z" fill="#4a4a58"/>
     </marker>
-    <marker id="arrow-crit" viewBox="0 0 8 6" refX="8" refY="3" markerWidth="6" markerHeight="5" orient="auto-start-reverse">
-      <path d="M0 0L8 3L0 6z" fill="#e8a44a"/>
+    <marker id="arrow-crit" viewBox="0 0 10 8" refX="10" refY="4" markerWidth="7" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0L10 4L0 8z" fill="#e8a44a"/>
     </marker>
     <filter id="glow">
       <feDropShadow dx="0" dy="1" stdDeviation="3" flood-color="#000" flood-opacity="0.4"/>
@@ -1103,9 +1103,12 @@ function renderSVG(graph, critInfo) {
     } else {
       // bezier: exit downward from source, enter from above at target.
       // enforce a minimum handle length so same-y edges snake instead of going straight.
-      const MIN_HANDLE = 36;
-      const handle = Math.max(Math.abs(y2 - y1) / 2, MIN_HANDLE);
-      svg += `<path d="M${x1},${y1} C${x1},${y1 + handle} ${x2},${y2 - handle} ${x2},${y2}"
+      const MIN_HANDLE_OUT = 28;
+      const MIN_HANDLE_IN = 48;
+      const half = Math.abs(y2 - y1) / 2;
+      const hOut = Math.max(half, MIN_HANDLE_OUT);
+      const hIn  = Math.max(half, MIN_HANDLE_IN);
+      svg += `<path d="M${x1},${y1} C${x1},${y1 + hOut} ${x2},${y2 - hIn} ${x2},${y2}"
         fill="none" stroke="${color}" stroke-width="${width}" marker-end="${marker}"/>`;
     }
   }
