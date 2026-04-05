@@ -937,12 +937,34 @@ function layoutGraph(graph) {
     parents[e.to].push(e.from);
   }
 
+  // compute display lines for op nodes: show operands above/below the operator
+  function operandLabel(n) {
+    if (!n) return null;
+    if (n.varNames && n.varNames.length > 0) return n.varNames[0];
+    if (n.category === 'input' || n.category === 'literal') return n.label;
+    return null; // unnamed intermediate — don't clutter
+  }
+  for (const n of nodes) {
+    if (n.category !== 'op') { n.displayLines = [n.label]; continue; }
+    const pEdges = edges.filter(e => e.to === n.id).sort((a, b) => a.port - b.port);
+    const pLabels = pEdges.map(e => operandLabel(nodes[e.from])).filter(Boolean);
+    if (pLabels.length === 2) {
+      n.displayLines = [pLabels[0], n.label, pLabels[1]];
+    } else if (pLabels.length === 1) {
+      n.displayLines = [n.label, pLabels[0]];
+    } else {
+      n.displayLines = [n.label];
+    }
+  }
+
+  const LINE_H = 12;
   // node height = latency * PX_PER_CYCLE (min height for 0-latency nodes)
   // input nodes get a fixed small height and are excluded from vertical stacking
   function textWidth(str) { return Math.max(str.length * 7.5 + 16, MIN_NODE_WIDTH); }
   for (const n of nodes) {
-    n.height = n.category === 'input' ? MIN_NODE_HEIGHT : Math.max((n.latency || 0) * PX_PER_CYCLE, MIN_NODE_HEIGHT);
-    n.width = Math.max(textWidth(n.label), MIN_NODE_WIDTH);
+    const minH = Math.max(n.displayLines.length * LINE_H + 8, MIN_NODE_HEIGHT);
+    n.height = n.category === 'input' ? MIN_NODE_HEIGHT : Math.max((n.latency || 0) * PX_PER_CYCLE, minH);
+    n.width = Math.max(...n.displayLines.map(l => textWidth(l)), MIN_NODE_WIDTH);
   }
 
   const isInput = id => nodes[id].category === 'input';
@@ -1183,12 +1205,20 @@ function renderSVG(graph, critInfo) {
         rx="${rx}" fill="${color}20" opacity="${opacity}"/>`;
     }
 
-    // label — centered vertically in the box
-    const fontSize = n.label.length > 14 ? 9 : 11;
-    svg += `<text class="node-label" x="${n.x + n.width/2}" y="${n.y + n.height/2 + 1}"
-      text-anchor="middle" dominant-baseline="middle"
-      font-family="'JetBrains Mono', monospace" font-size="${fontSize}" fill="#e0e0e8"
-      opacity="${opacity}">${escXml(n.label)}</text>`;
+    // label — centered vertically; op nodes show operand / operator / operand
+    const lines = n.displayLines || [n.label];
+    const LINE_H = 12;
+    const blockH = lines.length * LINE_H;
+    const startY = n.y + (n.height - blockH) / 2 + LINE_H / 2;
+    for (let li = 0; li < lines.length; li++) {
+      const isOperator = lines.length === 3 && li === 1;
+      const fontSize = isOperator ? 11 : 9;
+      const fill = isOperator ? '#e0e0e8' : '#8888a8';
+      svg += `<text class="node-label" x="${n.x + n.width/2}" y="${startY + li * LINE_H}"
+        text-anchor="middle" dominant-baseline="middle"
+        font-family="'JetBrains Mono', monospace" font-size="${fontSize}" fill="${fill}"
+        opacity="${opacity}">${escXml(lines[li])}</text>`;
+    }
 
     // latency badge (top-right corner)
     if (n.latency > 0) {
