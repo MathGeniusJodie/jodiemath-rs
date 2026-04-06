@@ -134,23 +134,23 @@ fn cbrt_throughput(x: f32) -> f32 {
     r * r * x
 }
 
-fn cbrt_blazing(x: f32) -> f32 {
-    f32::from_bits(0x2a4ddef1u32.wrapping_add(x.to_bits() / 3))
+fn cbrt_approx(x: f32) -> f32 {
+    f32::from_bits(0x2a4ddef1 + (x.to_bits() / 3))
 }
-fn sqrt_blazing(x: f32) -> f32 {
-    f32::from_bits(0x1FBD22DFu32.wrapping_add(x.to_bits() >> 1))
+fn sqrt_approx(x: f32) -> f32 {
+    f32::from_bits(0x1FBD22DF + (x.to_bits() >> 1))
 }
-fn rcp_blazing(x: f32) -> f32 {
-    f32::from_bits(0x7EEF370Bu32.wrapping_sub(x.to_bits()))
+fn rcp_approx(x: f32) -> f32 {
+    f32::from_bits(0x7EEF370B - x.to_bits())
 }
-fn exp2_blazing(x: f32) -> f32 {
+fn exp2_approx(x: f32) -> f32 {
     -f32::from_bits((x + 383.).to_bits() << 8)
 }
-fn log2_blazing(x: f32) -> f32 {
-    f32::from_bits((x).to_bits() >> 8 | 0x43800000) - 383.
+fn log2_approx(x: f32) -> f32 {
+    f32::from_bits((x).to_bits() >> 8 | 256_f32.to_bits()) - 383.
 }
-fn rsqrt_blazing(x: f32) -> f32 {
-    f32::from_bits(0x5F33E79Fu32.wrapping_sub(x.to_bits() >> 1))
+fn rsqrt_approx(x: f32) -> f32 {
+    f32::from_bits(0x5F33E79F - (x.to_bits() >> 1))
 }
 
 // 50 average ulp error 32 cycle latency 5.5 cycle rthroughput
@@ -505,23 +505,23 @@ mod tests {
 
     #[test]
     fn cbrt_approx_plot() {
-        plot_approx("cbrt_approx.png", 1., 128., cbrt_blazing, |x| x.cbrt());
+        plot_approx("cbrt_approx.png", 1., 128., cbrt_approx, |x| x.cbrt());
     }
     #[test]
     fn sqrt_approx_plot() {
-        plot_approx("sqrt_approx.png", 1., 128., sqrt_blazing, |x| x.sqrt());
+        plot_approx("sqrt_approx.png", 1., 128., sqrt_approx, |x| x.sqrt());
     }
     #[test]
     fn rcp_approx_plot() {
-        plot_approx("rcp_approx.png", 1., 10., rcp_blazing, |x| 1.0 / x);
+        plot_approx("rcp_approx.png", 1., 10., rcp_approx, |x| 1.0 / x);
     }
     #[test]
     fn exp2_approx_plot() {
-        plot_approx("exp2_approx.png", 0., 10., exp2_blazing, |x| x.exp2());
+        plot_approx("exp2_approx.png", 0., 10., exp2_approx, |x| x.exp2());
     }
     #[test]
     fn log2_approx_plot() {
-        plot_approx("log2_approx.png", 1., 128., log2_blazing, |x| x.log2());
+        plot_approx("log2_approx.png", 1., 128., log2_approx, |x| x.log2());
     }
     #[test]
     fn sin_plot() {
@@ -533,7 +533,7 @@ mod tests {
     }
     #[test]
     fn rsqrt_approx_plot() {
-        plot_approx("rsqrt_approx.png", 1., 128., rsqrt_blazing, |x| {
+        plot_approx("rsqrt_approx.png", 1., 128., rsqrt_approx, |x| {
             1.0 / x.sqrt()
         });
     }
