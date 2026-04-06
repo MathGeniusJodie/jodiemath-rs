@@ -144,7 +144,7 @@ fn rcp_blazing(x: f32) -> f32 {
     f32::from_bits(0x7EEF370Bu32.wrapping_sub(x.to_bits()))
 }
 fn exp2_blazing(x: f32) -> f32 {
-    f32::from_bits((x + 383.).to_bits() << 8 & 0x7FFFFFFF)
+    -f32::from_bits((x + 383.).to_bits() << 8)
 }
 fn log2_blazing(x: f32) -> f32 {
     f32::from_bits((x).to_bits() >> 8 | 0x43800000) - 383.
