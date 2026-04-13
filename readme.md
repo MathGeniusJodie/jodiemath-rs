@@ -50,6 +50,7 @@ cbrt_accurate | 2.7 GB/s | 0.7 GB/s | 3.8x
 
 # todo:
 - do principled and thourough analysis of dependency chains and rounding errors to find optimizations
+- investigate higher order for last iter on accurate cbrt
 - add inverse trig functions
 - add tan()
 - perfectly rounded versions
