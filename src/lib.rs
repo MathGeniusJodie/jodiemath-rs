@@ -91,8 +91,6 @@ pub fn cos(x: f32) -> f32 {
 
 #[inline(always)]
 pub fn cbrt(x: f32) -> f32 {
-    // todo: test, has better latency
-    // let s = f32::from_bits(0x2a55466u32.wrapping_add(x.to_bits()<<1/6));
     let s = f32::from_bits(x.to_bits() / 3 + 0x2a509a07u32);
     let s2 = s * s;
     fma(
@@ -128,24 +126,21 @@ pub fn cbrt_accurate(x: f32) -> f32 {
     return s2xps4.div_to_f32(s32x);
 }
 
-// higher throughput cbrt experiment, 7 ulp average error
+// higher throughput cbrt experiment, 5.5 ulp average error
 fn cbrt_throughput(x: f32) -> f32 {
+    //let r = f32::from_bits(0xd461ff81u32.wrapping_sub((x.to_bits()>>16)*0x5556u32));
     let r = f32::from_bits(0xd461ff81u32.wrapping_sub(x.to_bits() / 3));
     let r = fma(r * r, (r * r) * x, r * f32::from_bits(0x3fb6e3d7));
     let r = fma(r * r, (r * r) * x, r * f32::from_bits(0x3fe09c2a));
     r * r * x
 }
-// todo: test, has better latency
-/*
-fn cbrt_throughput(x: f32) -> f32 {
-    let r = f32::from_bits(0xd461ff81u32.wrapping_sub(x.to_bits()<<1 / 6));
-    let r = fma(r * r, (r * r) * x, r * f32::from_bits(0x3fb6e3d7));
-    let r2 = fma(r * r, r * x, f32::from_bits(0x3fe09c2a));
-    r2 * r2 * ((r * r) * x)
-}*/
+
 
 fn cbrt_approx(x: f32) -> f32 {
-    f32::from_bits(0x2a4ddef1 + (x.to_bits() / 3))
+	let y = f32::from_bits(0x2a509849u32 + (x.to_bits() / 3));
+	let y = (x + 2.*(y*y)*y) / (3.*(y*y));
+    (2.*x*y + (y*y)*(y*y))/(x + 2.*(y*y)*y)
+    //(x + 2.*(y*y)*y) / (3.*(y*y))
 }
 fn sqrt_approx(x: f32) -> f32 {
     f32::from_bits(0x1FBD22DF + (x.to_bits() >> 1))
@@ -165,37 +160,15 @@ fn rsqrt_approx(x: f32) -> f32 {
 
 // 50 average ulp error 32 cycle latency 5.5 cycle rthroughput
 fn cbrt_fast(x: f32) -> f32 {
-    let s = f32::from_bits(0x2a4ddef1u32.wrapping_add(x.to_bits() / 3));
-    let r = f32::from_bits(0x68ff2381u32.wrapping_sub((x.to_bits() / 3) << 1));
+    let s = f32::from_bits(0x2a4ddef1u32.wrapping_add((x.to_bits()>>16)*0x5556u32));
+    let r = f32::from_bits(0x68ff2381u32.wrapping_sub((x.to_bits()>>16)*0xaaacu32));
     let s = fma(s * s, s * -r, fma(r, x, s));
     fma(s * s, s * -r, fma(r, x, s))
 }
-
 pub fn cbrt_constant(x: f32, c: &[u32]) -> f32 {
-    let s = f32::from_bits(c[0].wrapping_add(x.to_bits() / 3));
-    let r = f32::from_bits(c[1].wrapping_sub((x.to_bits() / 3) << 1));
-    return fma(s * s, s * -r, fma(r, x, s));
-
-    let s2 = Df32::from_mul(s, s);
-    let s3 = s2 * s;
-    let s3x = s3 * x;
-    let s6 = s3 * s3;
-    let x2 = Df32::from_mul(x, x);
-    // h3
-    fma(
-        s,
-        (
-            Df32(fma(-2., s6.0, s3x.0) + x2.0, -2. * s6.1 + s3x.1 + x2.1)
-            //(Df32(s6.0*-2.,s6.1*-2.).quick_add_df(s3x) + x2) * 3.
-        )
-        .div_to_f32(
-            Df32(
-                fma(s3x.0, 16. / 3., fma(s6.0, 10. / 3., x2.0 * (1. / 3.))),
-                fma(s3x.1, 16. / 3., fma(s6.1, 10. / 3., x2.1 * (1. / 3.))),
-            ), //Df32(s3x.0*16.,s3x.1*16.) + s6 * 10. + x2
-        ),
-        s,
-    )
+	let y = f32::from_bits(c[0] + (x.to_bits() / 3));
+	let y = (x + 2.*(y*y)*y) / (3.*(y*y));
+    y
 
     //h4
     //s - ((s3 - x)*(Df32(s3x.0*16.,s3x.1*16.).quick_add_df(10.*s6) + x2)).div_to_f32(
@@ -231,7 +204,7 @@ mod tests {
         initial_consts: &[u32],
     ) {
         let mut consts: Vec<u32> = initial_consts.to_vec();
-        let iters = 100;
+        let iters = 10_000;
 
         let mut best_err: u64 = 0;
         let mut steps: u64 = 0;
@@ -260,7 +233,7 @@ mod tests {
                     .iter()
                     .map(|&_| {
                         let n: u32 = rand::rng().random();
-                        return f32::from_bits(n) as i32 as u32;
+                        //return f32::from_bits(n) as i32 as u32;
                         if steps < 10 {
                             n
                         } else {
@@ -332,7 +305,7 @@ mod tests {
         run_descent(
             |x, consts| cbrt_constant(x, consts),
             |x| (x as f64).cbrt() as f32,
-            &[0x2a4dc461u32, 0x6900943cu32],
+            &[0x2a5063f7],
         );
     }*/
 
@@ -377,6 +350,17 @@ mod tests {
         println!(
             "jodie cbrt accurate error: {}",
             ulp_error(1..10000, 1.0, cbrt_accurate, |x| x.cbrt())
+        );
+        println!(
+            "std   cbrt error: {}",
+            ulp_error(1..10000, 1.0, |x| x.cbrt(), |x| x.cbrt())
+        );
+    }
+    #[test]
+    fn cbrt_throughput_precision() {
+        println!(
+            "jodie cbrt throughput error: {}",
+            ulp_error(1..10000, 1.0, cbrt_throughput, |x| x.cbrt())
         );
         println!(
             "std   cbrt error: {}",
@@ -582,6 +566,12 @@ mod tests {
     fn cbrt_accurate_error() {
         plot_error("cbrt_accurate_error.png", 1., 128., |x| {
             cbrt_accurate(x) / (x as f64).cbrt() as f32 - 1.0
+        });
+    }
+    #[test]
+    fn cbrt_approx_error() {
+        plot_error("cbrt_approx_error.png", 1., 128., |x| {
+            cbrt_approx(x) / (x as f64).cbrt() as f32 - 1.0
         });
     }
 }
