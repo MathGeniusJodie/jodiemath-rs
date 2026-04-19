@@ -91,6 +91,8 @@ pub fn cos(x: f32) -> f32 {
 
 #[inline(always)]
 pub fn cbrt(x: f32) -> f32 {
+    // todo: test, has better latency
+    // let s = f32::from_bits(0x2a55466u32.wrapping_add(x.to_bits()<<1/6));
     let s = f32::from_bits(x.to_bits() / 3 + 0x2a509a07u32);
     let s2 = s * s;
     fma(
@@ -133,6 +135,14 @@ fn cbrt_throughput(x: f32) -> f32 {
     let r = fma(r * r, (r * r) * x, r * f32::from_bits(0x3fe09c2a));
     r * r * x
 }
+// todo: test, has better latency
+/*
+fn cbrt_throughput(x: f32) -> f32 {
+    let r = f32::from_bits(0xd461ff81u32.wrapping_sub(x.to_bits()<<1 / 6));
+    let r = fma(r * r, (r * r) * x, r * f32::from_bits(0x3fb6e3d7));
+    let r2 = fma(r * r, r * x, f32::from_bits(0x3fe09c2a));
+    r2 * r2 * ((r * r) * x)
+}*/
 
 fn cbrt_approx(x: f32) -> f32 {
     f32::from_bits(0x2a4ddef1 + (x.to_bits() / 3))
