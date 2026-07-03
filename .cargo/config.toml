@@ -1,0 +1,4 @@
+[build]
+# mul_add compiles to a libm call (~2x slower) without hardware fma;
+# benchmarks are only meaningful with this enabled
+rustflags = ["-C", "target-cpu=native"]

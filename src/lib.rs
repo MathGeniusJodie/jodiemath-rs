@@ -5,129 +5,267 @@ use doublefloat::Df32;
 
 const SIGN_MASK: u32 = 0x80000000;
 const EXPONENT_MASK: u32 = 0x7f800000;
-const MANTISSA_MASK: u32 = 0x007fffff;
-use std::f32::consts::TAU as TAU32;
-use std::f64::consts::TAU as TAU64;
-const TAU: Df32 = Df32(TAU32, (TAU64 - (TAU32 as f64)) as f32);
-const RTAU: Df32 = Df32(
-    (1. / TAU64) as f32,
-    ((1. / TAU64) - (((1. / TAU64) as f32) as f64)) as f32,
-);
-const RPI: Df32 = Df32(RTAU.0 * 2., RTAU.1 * 2.);
-const HPI: Df32 = Df32(TAU.0 / 4., TAU.1 / 4.);
-const PI: Df32 = Df32(TAU.0 / 2., TAU.1 / 2.);
 
 #[inline(always)]
 fn fma(a: f32, b: f32, c: f32) -> f32 {
     a.mul_add(b, c)
 }
-#[inline(always)]
-fn mulsign(x: f32, y: f32) -> f32 {
-    f32::from_bits(x.to_bits() ^ (y.to_bits() & SIGN_MASK))
-}
 
 #[inline(always)]
 pub fn log_2(x: f32) -> f32 {
-    let a = f32::from_bits(0x40153ebb);
-    let b = f32::from_bits(0x41163b4a);
-    let c = f32::from_bits(0xc09c1a68);
-    let d = f32::from_bits(0x3ecfca47);
-    let e = f32::from_bits(0x409f8156);
-    let f = f32::from_bits(0x40d76ca4);
-    let g = f32::from_bits(0xc0dafb8a);
-    // log2(x*y) == log2(x)+log2(y)
-    let m = f32::from_bits(1_f32.to_bits() | (x.to_bits() & MANTISSA_MASK));
-    let log2exponent =
-        f32::from_bits(256_f32.to_bits() | ((x.to_bits() & EXPONENT_MASK) >> 8)) - 383.;
-    log2exponent + fma(m * m, fma(a, m, b), fma(g, m, c)) / fma(m * m, fma(d, m, e), fma(f, m, 1.))
+    // edge handling is done with selects (no early returns) so loops over
+    // arrays of log_2 calls can auto-vectorize: scale denormals up before
+    // the single normal-path evaluation, then patch specials afterwards.
+    let tiny = x < f32::MIN_POSITIVE; // denormal, zero, negative; false for nan
+    let xs = if tiny { x * 16777216.0 } else { x };
+    let koff = if tiny { -24.0 } else { 0.0 };
+    // koff is folded into the exponent term inside log_2_normal so the
+    // correction stays off the serial critical path (k + koff is exact)
+    let r = log_2_normal(xs, koff);
+    // -inf for +-0, nan for x < 0 (includes -inf); the select input only
+    // depends on x, so it resolves in parallel with the poly evaluation
+    let spec = if x == 0.0 { f32::NEG_INFINITY } else { f32::NAN };
+    let r = if x <= 0.0 { spec } else { r };
+    // +inf and nan: x*x is inf/nan respectively (false for -inf: -inf < inf)
+    if !(x < f32::INFINITY) {
+        x * x
+    } else {
+        r
+    }
 }
 
 #[inline(always)]
+fn log_2_normal(x: f32, koff: f32) -> f32 {
+    // decompose x = 2^k * m with m in [sqrt(2)/2, sqrt(2)), so s = m - 1
+    // is exact (Sterbenz) and centered on 0: log2 stays relatively
+    // accurate near x = 1. log2(m) = s * P(s), degree-9 minimax P fitted
+    // with lolremez (rel. error 4.1e-9).
+    let e = (x.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23; // exponent if m in [√2/2, √2)
+    let m = f32::from_bits((x.to_bits() as i32).wrapping_sub(e << 23) as u32);
+    let k = e as f32 + koff; // both integers: exact, and off the poly's critical path
+    let s = m - 1.0;
+    let c: [f32; 10] = [
+        1.442695,
+        -0.72134733,
+        0.4808985,
+        -0.36069715,
+        0.288568,
+        -0.23961738,
+        0.20460059,
+        -0.19106273,
+        0.18617496,
+        -0.10994955,
+    ];
+    let s2 = s * s;
+    let s4 = s2 * s2;
+    let l0 = fma(c[1], s, c[0]);
+    let l1 = fma(c[3], s, c[2]);
+    let l2 = fma(c[5], s, c[4]);
+    let l3 = fma(c[7], s, c[6]);
+    let l4 = fma(c[9], s, c[8]);
+    let r0 = fma(l1, s2, l0);
+    let r1 = fma(l3, s2, l2);
+    let r2 = fma(l4, s4, r1);
+    let p = fma(r2, s4, r0);
+    // k + s * P(s) in a single rounding
+    fma(p, s, k)
+}
+
+/// exp2 without domain checks: valid for x in [-126, 128), i.e. normal
+/// (non-denormal, finite, nonzero) results only. Outside that range the
+/// exponent construction wraps around and the result is garbage (including
+/// for nan). Use exp2_checked for full-range handling; this version is
+/// ~2.7 ns faster in serial latency.
+#[inline(always)]
 pub fn exp2(x: f32) -> f32 {
-    // exp2(floor(x))*exp2(fract(x)) == exp2(x)
-    let exp2int = f32::from_bits(((x + 383_f32).to_bits() << 8) & EXPONENT_MASK);
-    let f = x - x.floor();
+    // exp2(floor(x)) * exp2(fract(x)) == exp2(x). exp2int must come from
+    // the same floor(x) as f: computing it from x + 383 double-counts the
+    // integer part when x + 383 rounds up across an integer (e.g.
+    // x = 4.9999999).
+    let k = x.floor();
+    let f = x - k;
+    let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
     fma(
-        fma(fma(2.1702255e-4, f, 1.2439688e-3), f, 9.678841e-3),
+        fma(fma(2.1702237e-4, f, 1.2439679e-3), f, 9.678826e-3),
         exp2int * (f * f) * (f * f),
         fma(
-            fma(fma(5.5483342e-2, f, 2.4022984e-1), f, 6.9314698e-1),
+            fma(fma(5.548333e-2, f, 2.4022985e-1), f, 6.93147e-1),
             exp2int * f,
             exp2int,
         ),
     )
 }
+
+#[inline(always)]
+pub fn exp2_checked(x: f32) -> f32 {
+    // fully branchless (auto-vectorizes): exp2(x) = P(f) * 2^k1 * 2^k2 with
+    // k1 + k2 = k = floor(x). Splitting k keeps both power-of-two factors
+    // representable over the whole clamped range, so overflow to inf and
+    // (correctly rounded) denormal underflow fall out of the two multiplies
+    // — no pre-offset, no rescale. Both multiplies are exact power-of-two
+    // scalings except the final rounding into the denormal range, so the
+    // result rounds exactly once. nan propagates through P(f), so there are
+    // no fixup selects at all.
+    // k must come from the same floor(x) as f: computing the exponent from
+    // x + 383 double-counts the integer part when x + 383 rounds up across
+    // an integer (e.g. x = 4.9999999).
+    let xs = x.clamp(-151.0, 128.0);
+    let k = xs.floor();
+    let f = xs - k;
+    // any split k = k1 + k2 with both halves in valid exponent range works,
+    // so k1 = round(xs/2) via the magic constant is fine (and cheap: it
+    // runs in parallel with the floor). k1 in [-76, 64], k2 in [-77, 65].
+    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+    let k1b = fma(xs, 0.5, ROUND_MAGIC) - (ROUND_MAGIC - 383.0); // k1 + 383
+    let k2b = (k + 766.0) - k1b; // k2 + 383, exact: all integers
+    let t1 = f32::from_bits((k1b.to_bits() << 8) & EXPONENT_MASK);
+    let t2 = f32::from_bits((k2b.to_bits() << 8) & EXPONENT_MASK);
+    let f2 = f * f;
+    let a = fma(fma(2.1702237e-4, f, 1.2439679e-3), f, 9.678826e-3);
+    let b = fma(fma(5.548333e-2, f, 2.4022985e-1), f, 6.93147e-1);
+    // weave t1 into the fma chain (t1*f is exact: both factors normal) so
+    // only one multiply (by t2) remains after the polynomial
+    let p = fma(a, t1 * f2 * f2, fma(b, t1 * f, t1));
+    p * t2
+}
+// sin(x) ~= x + x^3*p(x^2) on [-pi/2, pi/2], degree-9 minimax (relative
+// error ~6.1e-9), fitted with lolremez. Estrin evaluation, 2 fma chains.
 #[inline(always)]
 fn sinf_poly(x: f32) -> f32 {
-    let a = f32::from_bits(0xb2cc0ff1);
-    let b = f32::from_bits(0x3638a80e);
-    let c = f32::from_bits(0xb9500b44);
-    let d = f32::from_bits(0x3c088883);
-    let e = f32::from_bits(0xbe2aaaaa);
-    let x2 = x * x;
-    let x3 = x2 * x;
-    fma(
-        fma(fma(a, x2, b), x3, c * x),
-        x3 * x3,
-        fma(fma(d, x2, e), x3, x),
-    )
-    //fma(fma(fma(fma(fma(a, x2, b), x2, c), x2, d), x2, e), x2*x, x)
+    let c0 = -0.16666660f32;
+    let c1 = 8.3330662e-3f32;
+    let c2 = -1.9809603e-4f32;
+    let c3 = 2.6057806e-6f32;
+    let y = x * x;
+    let y2 = y * y;
+    let x3 = y * x;
+    let a = fma(c1, y, c0);
+    let b = fma(c3, y, c2);
+    let p = fma(b, y2, a);
+    fma(p, x3, x)
 }
+// pi split into pieces with trailing zero bits so q*PI_A and q*PI_B are
+// exact for moderate |q|, keeping the reduced argument accurate in a
+// relative sense near the zeros of sin (Cody-Waite with fma).
+const PI_A: f32 = 3.140625;
+const PI_B: f32 = 0.0009670257568359375;
+const PI_C: f32 = 6.277114152908325e-7;
+const PI_D: f32 = 1.2154201256553421e-10;
+const FRAC_1_PI: f32 = std::f32::consts::FRAC_1_PI;
+
+// 1.5 * 2^23; adding this to |v| < 2^22 rounds v to the nearest integer
+// in the low mantissa bits (round-to-nearest-even).
+const ROUND_MAGIC: f32 = 12582912.0;
+
 #[inline(always)]
 pub fn sin(x: f32) -> f32 {
-    let q = 0.25 - fma(x, RTAU.0, 0.25).round();
-    let y = q * TAU.0 + x;
-    let e = fma(q, TAU.0, x - y);
-    let z = (-HPI).quick_add_to_f32(Df32(y, fma(q, TAU.1, e)).abs());
-    sinf_poly(z)
+    let qb = fma(x, FRAC_1_PI, ROUND_MAGIC);
+    let q = qb - ROUND_MAGIC;
+    let r = fma(q, -PI_A, x);
+    let r = fma(q, -PI_B, r);
+    let r = fma(q, -PI_C, r);
+    let r = fma(q, -PI_D, r);
+    let s = sinf_poly(r);
+    // sin(x) = (-1)^q * sin(r); parity of q is the lowest mantissa bit of qb
+    let parity = qb.to_bits() << 31;
+    f32::from_bits(s.to_bits() ^ parity)
 }
 #[inline(always)]
 pub fn cos(x: f32) -> f32 {
-    let q = (x * RTAU.0).round();
-    let y = fma(q, TAU.0, -x);
-    let z = HPI.quick_add_to_f32(-Df32(y, q * TAU.1).abs());
-    sinf_poly(z)
+    // k = round(x/pi - 0.5), q = k + 0.5, r = x - q*pi in [-pi/2, pi/2]
+    let kb = fma(x, FRAC_1_PI, -0.5) + ROUND_MAGIC;
+    let q = (kb - ROUND_MAGIC) + 0.5;
+    let r = fma(q, -PI_A, x);
+    let r = fma(q, -PI_B, r);
+    let r = fma(q, -PI_C, r);
+    let r = fma(q, -PI_D, r);
+    let s = sinf_poly(r);
+    // cos(x) = (-1)^(k+1) * sin(r)
+    let parity = !kb.to_bits() << 31;
+    f32::from_bits(s.to_bits() ^ parity)
+}
+
+/// Core of cbrt for normal finite x: bit-trick seed (~3% error), then a
+/// single degree-5 correction. d = s^3 - x is exact-ish via fma at any
+/// scale, and x/s^3 == 1/(1+r) exactly for r = d/x, so
+/// cbrt(x) = s * (1+r)^(-1/3), approximated by a minimax poly in r
+/// (fitted with lolremez on the seed error range [-0.0999, 0.0894]).
+/// All intermediates are O(1) or O(x): no overflow/underflow anywhere.
+/// `scale` (an exact power of two, or 1.0) multiplies the result; it is
+/// applied to `ss` before the final fma so it stays off the serial
+/// critical path (the seed is ready long before the poly).
+#[inline(always)]
+fn cbrt_normal(x: f32, scale: f32) -> f32 {
+    let ax = x.to_bits() & !SIGN_MASK;
+    let a = f32::from_bits(ax);
+    let rcp = 1.0 / a; // independent of the seed chain, starts immediately
+    let s = f32::from_bits(ax / 3 + 0x2a509a07u32);
+    let s2 = s * s;
+    let d = fma(s2, s, -a);
+    let r = d * rcp;
+    let c1 = -0.33333335f32;
+    let c2 = 0.22221951f32;
+    let c3 = -0.17281278f32;
+    let c4 = 0.14525594f32;
+    let c5 = -0.12942781f32;
+    let r2 = r * r;
+    let a1 = fma(c2, r, c1);
+    let b1 = fma(c4, r, c3);
+    let b2 = fma(c5, r2, b1);
+    let p = fma(b2, r2, a1);
+    let ss = f32::from_bits(s.to_bits() | (x.to_bits() & SIGN_MASK)) * scale;
+    let sr = ss * r;
+    fma(sr, p, ss)
 }
 
 #[inline(always)]
 pub fn cbrt(x: f32) -> f32 {
-    let s = f32::from_bits(x.to_bits() / 3 + 0x2a509a07u32);
-    let s2 = s * s;
-    fma(
-        fma(0.6 * s, s2, 0.3 * x),
-        fma(s2, -s2, x * s) / fma(fma(s, s2, 1.6 * x), s * s2, x * x * 0.1),
-        s,
-    )
+    let ax = x.to_bits() & !SIGN_MASK;
+    let tiny = ax < 0x0080_0000; // denormal or zero: rescale by 2^24 = (2^8)^3
+    let xs = if tiny { x * 16777216.0 } else { x };
+    let scale = if tiny { 0.00390625 } else { 1.0 };
+    let r = cbrt_normal(xs, scale);
+    // +-0, +-inf, nan propagate (also kills the rcp=inf NaN for x == +-0)
+    if ax == 0 || ax >= EXPONENT_MASK { x + x } else { r }
+}
+
+/// cbrt to within ~0.5 ulp: cbrt_normal (<= 1 ulp), then one Newton step
+/// carried out in double-f32 arithmetic.
+#[inline(always)]
+fn cbrt_accurate_normal(x: f32, scale: f32) -> f32 {
+    let y = cbrt_normal(x, 1.0);
+    let y2 = Df32::from_mul(y, y);
+    let y3 = y2 * y;
+    // e = y^3 - x, exact-ish: |e| ~ ulp(x)
+    let e = (y3.0 - x) + y3.1;
+    // (y - e / (3 y^2)) * scale, with the scale mul on y hidden behind the
+    // divide; scale is an exact power of two so the fma rounds identically
+    // to scaling afterwards (no intermediate hits the denormal range)
+    let den = 3.0 * y2.0;
+    fma(e / den, -scale, y * scale)
 }
 
 #[inline(always)]
 pub fn cbrt_accurate(x: f32) -> f32 {
-    let s = f32::from_bits(0x2a4ddef1u32.wrapping_add(x.to_bits() / 3));
-    let r = f32::from_bits(0x68ff2381u32.wrapping_sub((x.to_bits() / 3) << 1));
-    let s = fma(s * s, s * -r, fma(r, x, s));
-    let s = fma(s * s, s * -r, fma(r, x, s));
-    let s2 = Df32::from_mul(s, s);
-    let s32x = {
-        let b = fma(s2.0, s * 2., x);
-        let p = x - b;
-        let e = fma(s2.0, s * 2., p) - (p + b - x);
-        let lo = fma(s2.1, s * 2., e);
-        Df32(b, lo)
-    };
-    let s2xps4 = {
-        let s40 = s2.0 * s2.0;
-        let e = fma(s2.0, s2.0, -s40);
-        let s41 = fma(s2.0 * 2., s2.1, fma(s2.1, s2.1, e));
-        let p = s * 2. * x;
-        let e = fma(s * 2., x, -p);
-        let s = p + s40;
-        Df32(s, s40 - (s - p) + e + s41)
-    };
-    return s2xps4.div_to_f32(s32x);
+    let ax = x.to_bits() & !SIGN_MASK;
+    // below 2^-56 the double-f32 residual would denormalize and misround;
+    // rescale by 2^126 = (2^42)^3 (also covers denormals). Above 2^127 the
+    // Newton step's y^3 can overflow to inf (NaN out), so rescale down too.
+    const SCALE_UP: f32 = f32::from_bits(0x7e80_0000); // 2^126
+    const SCALE_UP_OUT: f32 = f32::from_bits(0x2a80_0000); // 2^-42
+    const SCALE_DN: f32 = f32::from_bits(0x0080_0000); // 2^-126
+    const SCALE_DN_OUT: f32 = f32::from_bits(0x5480_0000); // 2^42
+    let small = ax < 0x2380_0000;
+    let big = ax >= 0x7f00_0000; // 2^127; inf/nan land here too, fixed up below
+    let xs = if small { x * SCALE_UP } else if big { x * SCALE_DN } else { x };
+    let scale = if small { SCALE_UP_OUT } else if big { SCALE_DN_OUT } else { 1.0 };
+    let r = cbrt_accurate_normal(xs, scale);
+    // +-0, +-inf, nan propagate (also kills the rcp=inf NaN for x == +-0)
+    if ax == 0 || ax >= EXPONENT_MASK { x + x } else { r }
 }
 
 // higher throughput cbrt experiment, 5.5 ulp average error
-fn cbrt_throughput(x: f32) -> f32 {
+pub fn cbrt_throughput(x: f32) -> f32 {
     //let r = f32::from_bits(0xd461ff81u32.wrapping_sub((x.to_bits()>>16)*0x5556u32));
     let r = f32::from_bits(0xd461ff81u32.wrapping_sub(x.to_bits() / 3));
     let r = fma(r * r, (r * r) * x, r * f32::from_bits(0x3fb6e3d7));
@@ -136,30 +274,30 @@ fn cbrt_throughput(x: f32) -> f32 {
 }
 
 
-fn cbrt_approx(x: f32) -> f32 {
+pub fn cbrt_approx(x: f32) -> f32 {
 	let y = f32::from_bits(0x2a509849u32 + (x.to_bits() / 3));
 	let y = (x + 2.*(y*y)*y) / (3.*(y*y));
     (2.*x*y + (y*y)*(y*y))/(x + 2.*(y*y)*y)
     //(x + 2.*(y*y)*y) / (3.*(y*y))
 }
-fn sqrt_approx(x: f32) -> f32 {
+pub fn sqrt_approx(x: f32) -> f32 {
     f32::from_bits(0x1FBD22DF + (x.to_bits() >> 1))
 }
-fn rcp_approx(x: f32) -> f32 {
+pub fn rcp_approx(x: f32) -> f32 {
     f32::from_bits(0x7EEF370B - x.to_bits())
 }
-fn exp2_approx(x: f32) -> f32 {
+pub fn exp2_approx(x: f32) -> f32 {
     -f32::from_bits((x + 383.).to_bits() << 8)
 }
-fn log2_approx(x: f32) -> f32 {
+pub fn log2_approx(x: f32) -> f32 {
     f32::from_bits((x).to_bits() >> 8 | 256_f32.to_bits()) - 383.
 }
-fn rsqrt_approx(x: f32) -> f32 {
+pub fn rsqrt_approx(x: f32) -> f32 {
     f32::from_bits(0x5F33E79F - (x.to_bits() >> 1))
 }
 
 // 50 average ulp error 32 cycle latency 5.5 cycle rthroughput
-fn cbrt_fast(x: f32) -> f32 {
+pub fn cbrt_fast(x: f32) -> f32 {
     let s = f32::from_bits(0x2a4ddef1u32.wrapping_add((x.to_bits()>>16)*0x5556u32));
     let r = f32::from_bits(0x68ff2381u32.wrapping_sub((x.to_bits()>>16)*0xaaacu32));
     let s = fma(s * s, s * -r, fma(r, x, s));

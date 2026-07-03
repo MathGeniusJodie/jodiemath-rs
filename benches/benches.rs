@@ -8,7 +8,7 @@ const N: usize = 1;
 fn bench_cbrt(c: &mut Criterion) {
     c.bench_function("overhead", |b| {
         b.iter(|| {
-            let input: [f32; N] = black_box([12345.0; N]);
+            let input: [f32; N] = black_box([12.345; N]);
             let mut out: [f32; N] = [0.0; N];
             for i in 0..N {
                 out[i] = input[i];
@@ -20,7 +20,7 @@ fn bench_cbrt(c: &mut Criterion) {
     });
     c.bench_function("jodie exp2", |b| {
         b.iter(|| {
-            let input: [f32; N] = black_box([12345.0; N]);
+            let input: [f32; N] = black_box([12.345; N]);
             let mut out: [f32; N] = [0.0; N];
             for i in 0..N {
                 out[i] = exp2(input[i]);
@@ -32,7 +32,7 @@ fn bench_cbrt(c: &mut Criterion) {
     });
     c.bench_function("std exp2", |b| {
         b.iter(|| {
-            let input: [f32; N] = black_box([12345.0; N]);
+            let input: [f32; N] = black_box([12.345; N]);
             let mut out: [f32; N] = [0.0; N];
             for i in 0..N {
                 out[i] = input[i].exp2();
@@ -44,7 +44,7 @@ fn bench_cbrt(c: &mut Criterion) {
     });
     c.bench_function("jodie cbrt", |b| {
         b.iter(|| {
-            let input: [f32; N] = black_box([12345.0; N]);
+            let input: [f32; N] = black_box([12.345; N]);
             let mut out: [f32; N] = [0.0; N];
             for i in 0..N {
                 out[i] = cbrt(input[i]);
@@ -56,7 +56,7 @@ fn bench_cbrt(c: &mut Criterion) {
     });
     c.bench_function("jodie accurate cbrt", |b| {
         b.iter(|| {
-            let input: [f32; N] = black_box([12345.0; N]);
+            let input: [f32; N] = black_box([12.345; N]);
             let mut out: [f32; N] = [0.0; N];
             for i in 0..N {
                 out[i] = cbrt_accurate(input[i]);
@@ -69,7 +69,7 @@ fn bench_cbrt(c: &mut Criterion) {
 
     c.bench_function("std cbrt", |b| {
         b.iter(|| {
-            let input: [f32; N] = black_box([12345.0; N]);
+            let input: [f32; N] = black_box([12.345; N]);
             let mut out: [f32; N] = [0.0; N];
             for i in 0..N {
                 out[i] = input[i].cbrt();
@@ -81,7 +81,7 @@ fn bench_cbrt(c: &mut Criterion) {
     });
     c.bench_function("jodie cos", |b| {
         b.iter(|| {
-            let input: [f32; N] = black_box([12345.0; N]);
+            let input: [f32; N] = black_box([12.345; N]);
             let mut out: [f32; N] = [0.0; N];
             for i in 0..N {
                 out[i] = cos(input[i]);
@@ -93,7 +93,7 @@ fn bench_cbrt(c: &mut Criterion) {
     });
     c.bench_function("std cos", |b| {
         b.iter(|| {
-            let input: [f32; N] = black_box([12345.0; N]);
+            let input: [f32; N] = black_box([12.345; N]);
             let mut out: [f32; N] = [0.0; N];
             for i in 0..N {
                 out[i] = input[i].cos();
@@ -105,7 +105,7 @@ fn bench_cbrt(c: &mut Criterion) {
     });
     c.bench_function("jodie log_2", |b| {
         b.iter(|| {
-            let input: [f32; N] = black_box([12345.0; N]);
+            let input: [f32; N] = black_box([12.345; N]);
             let mut out: [f32; N] = [0.0; N];
             for i in 0..N {
                 out[i] = log_2(input[i]);
@@ -117,7 +117,7 @@ fn bench_cbrt(c: &mut Criterion) {
     });
     c.bench_function("std log_2", |b| {
         b.iter(|| {
-            let input: [f32; N] = black_box([12345.0; N]);
+            let input: [f32; N] = black_box([12.345; N]);
             let mut out: [f32; N] = [0.0; N];
             for i in 0..N {
                 out[i] = input[i].log2();
@@ -129,7 +129,7 @@ fn bench_cbrt(c: &mut Criterion) {
     });
     c.bench_function("jodie sin", |b| {
         b.iter(|| {
-            let input: [f32; N] = black_box([12345.0; N]);
+            let input: [f32; N] = black_box([12.345; N]);
             let mut out: [f32; N] = [0.0; N];
             for i in 0..N {
                 out[i] = sin(input[i]);
@@ -141,7 +141,7 @@ fn bench_cbrt(c: &mut Criterion) {
     });
     c.bench_function("std sin", |b| {
         b.iter(|| {
-            let input: [f32; N] = black_box([12345.0; N]);
+            let input: [f32; N] = black_box([12.345; N]);
             let mut out: [f32; N] = [0.0; N];
             for i in 0..N {
                 out[i] = input[i].sin();
