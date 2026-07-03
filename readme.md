@@ -2,10 +2,9 @@
 Attempting to provide faster implementations of common f32 math functions with a similar level of accuracy to the standard library.
 There are also perfectly rounded variants and faster-but-sloppier variants.
 
-All functions are full-range correct — negatives, denormals, zero, inf and nan
+All functions are full-range correct. Negatives, denormals, zero, inf and nan
 are handled, except exp2, where the default is the fast
-unchecked version: it is only valid for x in [-126, 128) (normal, finite,
-nonzero results) and returns garbage outside; exp2_checked handles the full
+unchecked version whicj is only valid for x in [-126, 128). exp2_checked handles the full
 range (overflow to inf, denormal underflow, nan) for ~2.5 ns extra latency.
 cbrt_accurate is perfectly rounded on every input tested.
 
