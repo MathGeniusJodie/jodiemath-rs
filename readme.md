@@ -25,7 +25,7 @@ cbrt_accurate |   0.000   |     0     |    0    |    0
 
 # benchmarks
 Run on i5-1145G7, -C target-cpu=native (now set in .cargo/config.toml)
-
+```
 Serial latency (dependency chain, examples/quickbench.rs; lower is better)
               | jodie   | std     | improvement
 --------------|---------|---------|------------
@@ -36,7 +36,8 @@ cbrt_accurate | 20.0 ns | 21.2 ns | 1.1x
  exp2_checked | 11.0 ns |  9.6 ns | 0.9x
          log2 |  8.9 ns | 10.0 ns | 1.1x
           sin | 10.8 ns | 12.8 ns | 1.2x
-
+```
+```
 Throughput (independent array evals over [f32; 4096], examples/quickbench.rs; lower is better)
               | jodie    | std     | improvement
 --------------|----------|---------|------------
@@ -47,7 +48,7 @@ cbrt_accurate | 0.69 ns  | 3.89 ns | 5.6x
  exp2_checked | 0.38 ns  | 2.27 ns | 6.0x
          log2 | 0.36 ns  | 2.75 ns | 7.7x
           sin | 0.21 ns  | 2.98 ns | 13.9x
-
+```
 The throughput gap vs std comes almost entirely from vectorization: std's
 functions have branches, so LLVM can't vectorize loops that call them.
 
