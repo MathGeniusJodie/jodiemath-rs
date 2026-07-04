@@ -57,6 +57,11 @@ functions have branches, so LLVM can't vectorize loops that call them.
 - `cargo run --release --example quickbench [filter]` - latency (serial dependency chain) + throughput, min of 7 reps
 - `cargo run --release --example edgecheck` - bit-exact checks of edge cases (0, -0, denormals, inf, nan, domain boundaries)
 - `cargo run --release --example tune` - coordinate-descent ulp tuning of polynomial coefficients
+- `cargo run --release --example mca` - theoretical latency/throughput straight from llvm-mca's scheduler
+  model for the host CPU (requires `llvm-mca` on PATH). No wall-clock timing, so no thermal-throttling
+  noise, and much faster to iterate on than quickbench; see examples/mca_target.rs for the marker
+  functions it analyzes and why each region is built the way it is (llvm-mca has no branch predictor,
+  so branchy edge-case handling has to be routed around, not just measured through).
 
 # todo:
 - do principled and thourough analysis of dependency chains and rounding errors to find optimizations

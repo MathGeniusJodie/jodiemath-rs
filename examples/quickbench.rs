@@ -5,6 +5,8 @@ use jodiemath_rs::*;
 use std::hint::black_box;
 use std::time::Instant;
 
+include!("support/mca_common.rs");
+
 const LAT_ITERS: u64 = 4_000_000;
 const TP_ARR: usize = 4096;
 const TP_PASSES: usize = 1024;
@@ -17,10 +19,7 @@ fn bench_latency(name: &str, f: impl Fn(f32) -> f32) {
         let mut x = 1.234_f32;
         let start = Instant::now();
         for _ in 0..LAT_ITERS {
-            let y = f(x);
-            // cheap domain clamp that stays in the dependency chain:
-            // strip exponent drift, keep mantissa bits varying
-            x = f32::from_bits((y.to_bits() & 0x007f_ffff) | 0x4000_0000); // [2,4)
+            x = mix(f(x));
         }
         black_box(x);
         let ns = start.elapsed().as_nanos() as f64 / LAT_ITERS as f64;

@@ -34,8 +34,13 @@ pub fn log_2(x: f32) -> f32 {
     }
 }
 
+/// Core of log_2 for positive normal finite x only: no handling for zero,
+/// negative, denormal, inf, or nan input (those are the caller's job, see
+/// log_2). Called directly with an out-of-domain x, this returns a
+/// plausible-looking but wrong finite value rather than NaN/-inf.
+#[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
-fn log_2_normal(x: f32, koff: f32) -> f32 {
+pub fn log_2_normal(x: f32, koff: f32) -> f32 {
     // decompose x = 2^k * m with m in [sqrt(2)/2, sqrt(2)), so s = m - 1
     // is exact (Sterbenz) and centered on 0: log2 stays relatively
     // accurate near x = 1. log2(m) = s * P(s), degree-9 minimax P fitted
@@ -194,8 +199,9 @@ pub fn cos(x: f32) -> f32 {
 /// `scale` (an exact power of two, or 1.0) multiplies the result; it is
 /// applied to `ss` before the final fma so it stays off the serial
 /// critical path (the seed is ready long before the poly).
+#[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
-fn cbrt_normal(x: f32, scale: f32) -> f32 {
+pub fn cbrt_normal(x: f32, scale: f32) -> f32 {
     let ax = x.to_bits() & !SIGN_MASK;
     let a = f32::from_bits(ax);
     let rcp = 1.0 / a; // independent of the seed chain, starts immediately
@@ -230,9 +236,14 @@ pub fn cbrt(x: f32) -> f32 {
 }
 
 /// cbrt to within ~0.5 ulp: cbrt_normal (<= 1 ulp), then one Newton step
-/// carried out in double-f32 arithmetic.
+/// carried out in double-f32 arithmetic. Only valid for x already rescaled
+/// into cbrt_accurate's safe range (roughly 2^-56 to 2^127): outside it the
+/// double-f32 residual denormalizes/misrounds, or the Newton step's cube
+/// can overflow to inf, silently breaking the ~0.5 ulp guarantee (see
+/// cbrt_accurate for the rescale).
+#[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
-fn cbrt_accurate_normal(x: f32, scale: f32) -> f32 {
+pub fn cbrt_accurate_normal(x: f32, scale: f32) -> f32 {
     let y = cbrt_normal(x, 1.0);
     let y2 = Df32::from_mul(y, y);
     let y3 = y2 * y;
