@@ -382,15 +382,23 @@ const POLY_SAFE_BOUND: f32 = 1000.0;
 pub fn sin_checked(x: f32) -> f32 {
     let (qh, ql) = round_x_over_pi(x, 0.0);
     let r = reduce_pi(x, qh, ql).clamp(-POLY_SAFE_BOUND, POLY_SAFE_BOUND);
-    let s = sinf_poly(r);
     // sin(x) = (-1)^q * sin(r); q = qh+ql, so parity(q) = (parity(qh) +
     // parity(ql)) mod 2. parity(qh) and parity(ql) are each exactly 0.0 or
     // 1.0, so their sum mod 2 is just whether they differ (XOR), cheaper
     // than a 3rd floor-based parity() call on the sum.
+    //
+    // sin is odd, so (-1)^q * sin(r) == sin((-1)^q * r): flip r's sign bit
+    // *before* sinf_poly instead of negating its result after. Bit-exact
+    // with the old `s * (1.0 - 2.0 * par)` (both IEEE negation and a
+    // multiply by exactly +-1 only ever flip the sign bit, never round),
+    // but the flip mask depends solely on qh/ql -- ready long before r
+    // exits reduce_pi -- so it hides entirely in the reduction's shadow
+    // instead of costing a real fma+mul on sinf_poly's tail.
     let pq = parity(qh);
     let pl = parity(ql);
-    let par = if pq == pl { 0.0 } else { 1.0 };
-    s * (1.0 - 2.0 * par)
+    let flip = if pq == pl { 0 } else { SIGN_MASK };
+    let r = f32::from_bits(r.to_bits() ^ flip);
+    sinf_poly(r)
 }
 #[inline(always)]
 pub fn cos_checked(x: f32) -> f32 {
@@ -401,13 +409,14 @@ pub fn cos_checked(x: f32) -> f32 {
     // the low correction term above -- kl stays small enough that + 0.5
     // is always exact
     let r = reduce_pi(x, kh, kl + 0.5).clamp(-POLY_SAFE_BOUND, POLY_SAFE_BOUND);
-    let s = sinf_poly(r);
-    // cos(x) = (-1)^(k+1) * sin(r); k = kh+kl. Same XOR simplification as
-    // sin above.
+    // cos(x) = (-1)^(k+1) * sin(r); k = kh+kl. Same sign-flip-before-the-
+    // poly trick as sin_checked above (also odd in r), inverted since the
+    // exponent is k+1 instead of k.
     let pk = parity(kh);
     let pl = parity(kl);
-    let par = if pk == pl { 0.0 } else { 1.0 };
-    s * (2.0 * par - 1.0)
+    let flip = if pk == pl { SIGN_MASK } else { 0 };
+    let r = f32::from_bits(r.to_bits() ^ flip);
+    sinf_poly(r)
 }
 
 /// Core of cbrt for normal finite x: bit-trick seed (~3% error), then a

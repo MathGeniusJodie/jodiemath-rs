@@ -621,19 +621,46 @@ and measurement disagree (see the Fast2Sum comments).
 
 ## sin_checked / cos_checked: sign application and parity
 
-- **Flip r, not the result.** sin is odd, so
-  (−1)^q·sin(r) = sin((−1)^q·r): apply the parity as a sign-bit XOR on r
-  *before* sinf_poly instead of `s * (1.0 - 2.0 * par)` after it. The
-  parity mask depends only on qh/ql, which are ready long before r exits
-  reduce_pi — so the xor hides completely in the reduction's shadow, and
-  the fma+mul currently sitting *after* the poly's last fma (~8 cycles of
-  pure tail latency) vanish. Same trick works for cos_checked (its
-  (−1)^(k+1)·sin(r) is likewise odd in r). The mask itself: `let flip = if
-  pq == pl { 0u32 } else { SIGN_MASK }; r = f32::from_bits(r.to_bits() ^
-  flip)` — cmp + blend + xor, all cheap non-FMA-port ops. Also deletes the
-  `1.0 - 2.0*par` arithmetic entirely. (The fast sin/cos already xor the
-  *output* sign bit — they could equally pre-xor r to shave the final
-  1-cycle xor off the tail, though there it's marginal.)
+- **Flip r, not the result — done, tested, kept (2026-07-06).** sin is odd,
+  so (−1)^q·sin(r) = sin((−1)^q·r): applied the parity as a sign-bit XOR on
+  r *before* sinf_poly instead of `s * (1.0 - 2.0 * par)` after it, for both
+  sin_checked and cos_checked. IEEE negation and a multiply-by-exactly-±1
+  both only ever flip the sign bit (never round), so this is provably
+  bit-exact with the old code — confirmed via the full accuracy.rs
+  exhaustive sweep (every avg/max ulp and worst-x value identical to the
+  pre-change baseline, all 2^32 inputs, every domain bucket) and edgecheck's
+  nan/inf/max/1e10/1e20 cases (bit-for-bit identical). Real-world result was
+  much smaller than hoped, and mca's *latency* harness could not measure it
+  at all: mca_target.rs's 64-deep chain runs each call's output through
+  `mix()` (examples/support/mca_common.rs), which masks away the sign bit
+  every iteration (`& 0x007fffff`) to keep values in a safe domain — so
+  LLVM can *prove* the entire old `s * (1.0 - 2.0*par)` step is dead code
+  across the whole chain (verified: zero compare/kmov instructions anywhere
+  in the compiled `sin_checked_latency` region) and deletes it at compile
+  time. The old "113 cyc" latency baseline already excluded this step's real
+  cost. The new version moves the flip *before* the opaque poly, where LLVM
+  can no longer see through 4 chained fmas to prove sign doesn't matter, so
+  the mask-compute chain (vcmpneqss+kmovd+shll+vxorps) now shows up for
+  real — making latency mode look ~1 cyc *worse*, an artifact of the
+  benchmark, not a real regression (confirmed cbrt_normal's own sign
+  reapplication is silently eliminated the exact same way — this blind spot
+  is crate-wide, not sin/cos-specific, and affects every function whose
+  result carries a sign via a bit trick rather than surviving through
+  something LLVM can't reason past). Throughput mode (real array store, no
+  `mix()`, immune to this) is the trustworthy number: mca throughput
+  5.916->5.793 cyc/elem for sin_checked (~2.1% faster), 5.077->5.093 for
+  cos_checked (basically a wash, +0.3%); quickbench wall-clock throughput
+  agrees within thermal noise (sin_checked cluster ~1.38-1.40ns vs baseline
+  ~1.40-1.49ns; cos_checked ~1.40-1.43ns vs ~1.43-1.49ns). Kept anyway: it's
+  free (bit-exact, no accuracy cost), simpler code (one less named
+  intermediate, two fewer arithmetic ops in source), and a small real win
+  for sin_checked with no measurable downside for cos_checked. The bigger
+  finding here is the `mix()` blind spot itself — untested follow-up: fix
+  `mix()` to preserve the sign bit (e.g. `& 0x807fffff`) so latency numbers
+  for *every* sign-bit-trick function (cbrt, cbrt_accurate, and any future
+  parity/mulsign idea below) become trustworthy; this will likely change
+  several other rows in the mca/readme tables too, so treat as its own pass
+  with a full re-baseline, not a drive-by edit.
 - **parity() is 2× (mul + floor + fma) on the FMA/round ports — move it to
   the integer domain.** For an integer-valued float q, the parity bit is
   readable directly from the bit pattern: shift = 150 − exponent_field,
