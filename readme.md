@@ -60,7 +60,7 @@ theoretical cost from llvm-mca (-mcpu=native, 100 iterations)
                     | latency (cyc) | throughput (cyc)
 --------------------|----------------|------------------
 cbrt                |          35.06 |             1.629
-cbrt_accurate       |          70.06 |             3.134
+cbrt_accurate       |          63.06 |             3.132
 exp2                |          35.00 |             0.841
 exp2_checked        |          43.06 |             1.399
 log2                |          34.23 |             1.556

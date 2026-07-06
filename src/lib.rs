@@ -269,16 +269,30 @@ pub fn cbrt(x: f32) -> f32 {
 #[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
 pub fn cbrt_accurate_normal(x: f32, scale: f32) -> f32 {
+    let ax = x.to_bits() & !SIGN_MASK;
+    let a = f32::from_bits(ax);
+    // Depends only on x, so it runs in parallel with the seed chain below
+    // instead of waiting on y (see den_recip).
+    let rcp3 = (1.0 / a) * (1.0 / 3.0);
     let y = cbrt_normal(x);
     let y2 = Df32::from_mul(y, y);
     let y3 = y2 * y;
     // e = y^3 - x, exact-ish: |e| ~ ulp(x)
     let e = (y3.0 - x) + y3.1;
+    // 1/(3y^2) without a second hardware division: y^3 ~ x (cbrt_normal's
+    // seed is within ~2 ulp) gives 1/y^2 = y/y^3 ~ y/x = |y|/a, so
+    // |y|*rcp3 approximates 1/(3y^2). Newton's quadratic convergence only
+    // needs den to a handful of accurate bits, not a full division -- this
+    // ~2-ulp-relative substitution error is far inside the rounding budget.
+    // Bit-exact (0 ulp) against the old division over the full
+    // examples/accuracy.rs sweep and examples/edgecheck.rs. Also a real
+    // (small) throughput win here since this CPU's FP divider is nearly
+    // idle while FMA/mul ports are the bottleneck (examples/mca.rs).
+    let den_recip = y.abs() * rcp3;
     // (y - e / (3 y^2)) * scale, with the scale mul on y hidden behind the
     // divide; scale is an exact power of two so the fma rounds identically
     // to scaling afterwards (no intermediate hits the denormal range)
-    let den = 3.0 * y2.0;
-    fma(e / den, -scale, y * scale)
+    fma(e * den_recip, -scale, y * scale)
 }
 
 #[inline(always)]
