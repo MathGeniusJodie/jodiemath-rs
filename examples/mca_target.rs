@@ -110,8 +110,77 @@ throughput_fn!(thr_log2, "log2_throughput", log_2);
 latency_fn!(lat_sin, "sin_latency", sin);
 throughput_fn!(thr_sin, "sin_throughput", sin);
 
+latency_fn!(lat_sin_checked, "sin_checked_latency", sin_checked);
+throughput_fn!(thr_sin_checked, "sin_checked_throughput", sin_checked);
+
 latency_fn!(lat_cos, "cos_latency", cos);
 throughput_fn!(thr_cos, "cos_throughput", cos);
+
+latency_fn!(lat_cos_checked, "cos_checked_latency", cos_checked);
+throughput_fn!(thr_cos_checked, "cos_checked_throughput", cos_checked);
+
+latency_fn!(lat_ln, "ln_latency", ln);
+throughput_fn!(thr_ln, "ln_throughput", ln);
+
+latency_fn!(lat_log10, "log10_latency", log10);
+throughput_fn!(thr_log10, "log10_throughput", log10);
+
+latency_fn!(lat_log1p, "log1p_latency", log1p);
+throughput_fn!(thr_log1p, "log1p_throughput", log1p);
+
+latency_fn!(lat_exp, "exp_latency", exp);
+throughput_fn!(thr_exp, "exp_throughput", exp);
+
+latency_fn!(lat_expm1, "expm1_latency", expm1);
+throughput_fn!(thr_expm1, "expm1_throughput", expm1);
+
+latency_fn!(lat_sinh, "sinh_latency", sinh);
+throughput_fn!(thr_sinh, "sinh_throughput", sinh);
+
+latency_fn!(lat_cosh, "cosh_latency", cosh);
+throughput_fn!(thr_cosh, "cosh_throughput", cosh);
+
+latency_fn!(lat_tanh, "tanh_latency", tanh);
+throughput_fn!(thr_tanh, "tanh_throughput", tanh);
+
+latency_fn!(lat_asinh, "asinh_latency", asinh);
+throughput_fn!(thr_asinh, "asinh_throughput", asinh);
+
+latency_fn!(lat_acosh, "acosh_latency", acosh);
+throughput_fn!(thr_acosh, "acosh_throughput", acosh);
+
+latency_fn!(lat_atanh, "atanh_latency", atanh);
+throughput_fn!(thr_atanh, "atanh_throughput", atanh);
+
+latency_fn!(lat_asin, "asin_latency", asin);
+throughput_fn!(thr_asin, "asin_throughput", asin);
+
+latency_fn!(lat_acos, "acos_latency", acos);
+throughput_fn!(thr_acos, "acos_throughput", acos);
+
+latency_fn!(lat_atan, "atan_latency", atan);
+throughput_fn!(thr_atan, "atan_throughput", atan);
+
+latency_fn!(lat_atan2, "atan2_latency", |x: f32| atan2(x, 1.0));
+throughput_fn!(thr_atan2, "atan2_throughput", |x: f32| atan2(x, 1.0));
+
+latency_fn!(lat_tan, "tan_latency", tan);
+throughput_fn!(thr_tan, "tan_throughput", tan);
+
+latency_fn!(lat_erf, "erf_latency", erf);
+throughput_fn!(thr_erf, "erf_throughput", erf);
+
+latency_fn!(lat_erfc, "erfc_latency", erfc);
+throughput_fn!(thr_erfc, "erfc_throughput", erfc);
+
+latency_fn!(lat_hypot, "hypot_latency", |x: f32| hypot(x, 1.0));
+throughput_fn!(thr_hypot, "hypot_throughput", |x: f32| hypot(x, 1.0));
+
+latency_fn!(lat_powf, "powf_latency", |x: f32| powf(x, 2.0));
+throughput_fn!(thr_powf, "powf_throughput", |x: f32| powf(x, 2.0));
+
+latency_fn!(lat_remainder, "remainder_latency", |x: f32| remainder(x, 3.0));
+throughput_fn!(thr_remainder, "remainder_throughput", |x: f32| remainder(x, 3.0));
 
 fn main() {
     // smoke test only: exercises every marked function once so `cargo run
@@ -141,7 +210,30 @@ fn main() {
         lat_exp2_checked, thr_exp2_checked;
         lat_log2, thr_log2;
         lat_sin, thr_sin;
+        lat_sin_checked, thr_sin_checked;
         lat_cos, thr_cos;
+        lat_cos_checked, thr_cos_checked;
+        lat_ln, thr_ln;
+        lat_log10, thr_log10;
+        lat_log1p, thr_log1p;
+        lat_exp, thr_exp;
+        lat_expm1, thr_expm1;
+        lat_sinh, thr_sinh;
+        lat_cosh, thr_cosh;
+        lat_tanh, thr_tanh;
+        lat_asinh, thr_asinh;
+        lat_acosh, thr_acosh;
+        lat_atanh, thr_atanh;
+        lat_asin, thr_asin;
+        lat_acos, thr_acos;
+        lat_atan, thr_atan;
+        lat_atan2, thr_atan2;
+        lat_tan, thr_tan;
+        lat_erf, thr_erf;
+        lat_erfc, thr_erfc;
+        lat_hypot, thr_hypot;
+        lat_powf, thr_powf;
+        lat_remainder, thr_remainder;
     );
     black_box(&arr_out);
 }

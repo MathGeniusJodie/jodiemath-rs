@@ -18,3 +18,4 @@ opt-level = 3
 [dev-dependencies]
 seq-macro = "0.3.6"
 serde_json = "1.0.150"
+libm = "0.2"

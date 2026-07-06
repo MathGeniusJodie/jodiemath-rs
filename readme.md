@@ -10,34 +10,41 @@ latency. cbrt_accurate is within 1 ulp on every input tested (exhaustively,
 see below) -- **not** perfectly rounded on every input, despite an earlier
 claim here: the full 2^32-pattern sweep found a systematic 1-ulp miss at one
 specific mantissa, recurring at every octave from ~2^-126 to ~2^127.
-**sin/cos: gradual degradation, not a cliff -- sub-ulp (avg) out to ~1e13,
-decaying smoothly from there, and always finite for every finite input.**
+sin/cos's default, like exp2's, is the fast unchecked version: a single-f32
+Cody-Waite reduction (`fma`-based magic-constant rounding), accurate only
+while q = round(x/pi) is exact, i.e. |x| < 2^22 * pi (~1.3e7) -- ~2.7x lower
+serial latency and ~7x higher vectorized throughput than std (see
+benchmarks below). **sin_checked/cos_checked trade that speed for gradual
+degradation, not a cliff -- sub-ulp (avg) out to ~1e13, decaying smoothly
+from there, and always finite for every finite input** -- for ~18 ns extra
+serial latency (~1.3 ns extra per element in a vectorized loop).
 q = round(x/pi) must be an exact integer for the reduction to land in
-[-pi/2, pi/2]; a single f32 q is a binary either-or (exactly right, or off
-by a whole integer once |x| crosses q's exact-integer ceiling), which
-shifts the residual by a whole multiple of pi and puts the degree-9
-polynomial (fit only for [-pi/2, pi/2]) hopelessly outside its domain -- a
-relocatable *cliff*, not a slope, no matter how q is rounded (tried both
-the classic magic-constant trick and a native hardware `.round()`; the
-latter only moves the cliff from ~1.3e7 to ~2.6e7, same shape). Fixed by
-giving q a second, small f32 word (qh, ql) -- genuine double-float
-precision via `two_prod`/`two_sum` error-free transforms (exact at any
-magnitude, unlike the crate's other PI_A..D trick, which needs bounded q).
+[-pi/2, pi/2]; a single f32 q (sin/cos's default, above) is a binary
+either-or (exactly right, or off by a whole integer once |x| crosses q's
+exact-integer ceiling), which shifts the residual by a whole multiple of pi
+and puts the degree-9 polynomial (fit only for [-pi/2, pi/2]) hopelessly
+outside its domain -- a relocatable *cliff*, not a slope, no matter how q
+is rounded (tried both the classic magic-constant trick and a native
+hardware `.round()`; the latter only moves the cliff from ~1.3e7 to ~2.6e7,
+same shape). sin_checked/cos_checked fix this by giving q a second, small
+f32 word (qh, ql) -- genuine double-float precision via
+`two_prod`/`two_sum` error-free transforms (exact at any magnitude, unlike
+the default's PI_A..D trick, which needs bounded q).
 A cheap clamp on the *reduced residual* (before it reaches the polynomial)
-still guarantees the output can never overflow to `inf`, however bad the
-reduction gets. Verified
+still guarantees sin_checked/cos_checked's output can never overflow to
+`inf`, however bad the reduction gets. Verified
 exhaustively over all 2^32 bit patterns (examples/accuracy.rs,
 examples/edgecheck.rs): avg ulp stays flat (~0.25-0.35) from small x out
 through ~1e13, then climbs gradually (not a jump) through ~1e19 before
 plateauing at essentially-uncorrelated-but-finite output for anything
-larger. **Real bug found and fixed along the way**: folding cos's -0.5
-phase-shift offset directly into the two_prod's dominant term breaks once
-that term's own ulp exceeds 1 (|x| ~ 1.68e7) -- adding a fixed 0.5 to an
-already-coarse-ulp float just rounds it away, silently corrupting cos's
-residual by a whole pi. This is the same class of bug as everything else
-in this reduction (a small quantity lost against a big-ulp value) and
-likely also affected an earlier, since-removed version of this same
-double-float design that was never checked with a cos-specific
+larger. **Real bug found and fixed along the way**: folding cos_checked's
+-0.5 phase-shift offset directly into the two_prod's dominant term breaks
+once that term's own ulp exceeds 1 (|x| ~ 1.68e7) -- adding a fixed 0.5 to
+an already-coarse-ulp float just rounds it away, silently corrupting
+cos_checked's residual by a whole pi. This is the same class of bug as
+everything else in this reduction (a small quantity lost against a big-ulp
+value) and likely also affected an earlier, since-removed version of this
+same double-float design that was never checked with a cos-specific
 magnitude-bucketed sweep (only sin's was; the two aren't symmetric here).
 Fixed by folding the offset into the small correction word instead, where
 it survives regardless of the dominant term's own precision. A middle
@@ -46,6 +53,44 @@ smallest one) was tried and measured to cost the same as keeping all three
 (~130-140 cyc either way) -- there isn't a cheaper partial version once you
 need genuine multi-word q precision at all, so the version here just keeps
 all three tiers for the best accuracy at no extra cost.
+sin_checked/cos_checked (then still named sin/cos) were the crate's default
+for a while during this work; the cheap single-word version was reinstated
+as the plain sin/cos afterwards, once it was clear the accurate version's
+latency cost (below) wasn't worth paying unconditionally for every caller,
+matching the exp2/exp2_checked split above.
+
+Straight-ported from jodiemath's C library (github.com/MathGeniusJodie/jodiemath):
+ln, log10, log1p, exp, expm1, sinh, cosh, tanh, asinh, acosh, atanh, asin, acos,
+atan, atan2, tan, erf, erfc, hypot, powf, remainder. These reuse this crate's
+own log_2/exp2/sin/cos internally rather than re-deriving them from scratch,
+so they inherit those functions' own tradeoffs: exp, expm1, sinh, cosh, tanh,
+powf, erf and erfc all route through the fast *unchecked* exp2, so they share
+its `[-126, 128)` domain limit (see exp's doc comment); tan shares sin/cos's
+`|x| < 2^22*pi` domain. A few also inherit real accuracy defects from the C
+original's naive formulas -- confirmed by hand-tracing the floating-point
+ops and by the exhaustive/fuzz sweep below, not assumed, and identical in
+the C source, so these aren't translation bugs:
+- asin, atanh, asinh and log1p all lose essentially all precision for small
+  `|x|` (e.g. `asinh(2.34e-8)` returns exactly `0` instead of the correct
+  tiny nonzero value) -- a `sqrt(1±x)-1` or `ln(1+tiny)` pattern that a
+  proper libm avoids with a small-x series branch; jodiemath's straight-line
+  formula doesn't have one.
+- sinh and tanh have the same cancellation, for the same reason (subtracting
+  two near-1 `exp()` values right around x=0); cosh doesn't, since it adds
+  instead of subtracting.
+- acosh returns `+inf` instead of `NaN` for large-magnitude *negative* x,
+  since squaring x erases its sign before the domain check ever sees it.
+- erfc's own `|x|<=10` clamp doesn't fully protect its internal exp2 call:
+  for `|x| >= ~9.35` the exponent it computes falls outside exp2's unchecked
+  domain.
+- remainder's `x - round(x/y)*y` loses precision to cancellation once
+  `|x/y|` is large, since `round(x/y)*y`'s absolute error scales with
+  `ulp(x)`, which can exceed the true remainder's own magnitude (at most
+  `|y|/2`).
+See each function's doc comment in src/lib.rs for the specifics; a real fix
+for any of these means redesigning the algorithm (a small-x series branch,
+routing through exp2_checked, etc.), which is out of scope for a straight
+port and left for later.
 
 All functions auto-vectorize, it's a hard requirement
 
@@ -53,36 +98,87 @@ All functions auto-vectorize, it's a hard requirement
 Fuzz-mode (100M random f32 bit patterns/function); pass `thorough` for an
 exhaustive sweep of all 2^32 patterns instead (few minutes, needs --release).
 ```
-                  | jodie avg  | jodie max | std avg | std max
-------------------|------------|-----------|---------|--------
-             cbrt |    0.326   |     3     |    0    |    0
-    cbrt_accurate |    0.000   |     1     |    0    |    0
-             exp2 |    0.030   |     1     |  0.000  |    1
-     exp2_checked |    0.016   |     1     |  0.000  |    1
-             log2 |    0.003   |     3     |  0.000  |    1
-    sin (|x|<=1e6)|    0.036   |     2     |  0.000  |    1
-    cos (|x|<=1e6)|    0.081   |     3     |  0.000  |    1
-    sin (all f32) | (degrades gradually past |x| ~ 1e13 -- see note above; 0.007/1 for std)
-    cos (all f32) | (degrades gradually past |x| ~ 1e13 -- see note above; 0.007/1 for std)
+                        | jodie avg  | jodie max | std avg | std max
+------------------------|------------|-----------|---------|--------
+                   cbrt |    0.326   |     3     |    0    |    0
+          cbrt_accurate |    0.000   |     1     |    0    |    0
+                   exp2 |    0.030   |     1     |  0.000  |    1
+           exp2_checked |    0.016   |     1     |  0.000  |    1
+                   log2 |    0.003   |     3     |  0.000  |    1
+        sin (|x|<1.3e7) |    0.065   |   1183    |  0.003  |    1
+        cos (|x|<1.3e7) |    0.293   |   2780    |  0.002  |    1
+ sin_checked (|x|<=1e6) |    0.036   |     2     |  0.000  |    1
+ cos_checked (|x|<=1e6) |    0.081   |     3     |  0.000  |    1
+  sin_checked (all f32) | (degrades gradually past |x| ~ 1e13 -- see note above; 0.007/1 for std)
+  cos_checked (all f32) | (degrades gradually past |x| ~ 1e13 -- see note above; 0.007/1 for std)
 ```
-sin/cos rows are exhaustive (all 2^32 bit patterns); the rest of this table
-is the default 100M-sample fuzz mode. Magnitude-bucketed avg/max ulp shows
-the actual shape of the degradation -- flat and low for a very long
-stretch, then a real but gradual climb, never a sudden jump to garbage and
-never `inf` (confirmed by an exhaustive all-2^32-pattern check that no
-finite input produces a non-finite output). These buckets are now a
-permanent part of `examples/accuracy.rs` (quick-fuzz mode, ~1.3M
-samples/bucket) instead of an ad hoc uncommitted script, so the shape claim
-stays checkable after future changes instead of just asserted:
+The sin/cos/sin_checked/cos_checked rows are exhaustive (all 2^32 bit
+patterns, examples/accuracy.rs `thorough` mode); the rest of the table is
+the default 100M-sample fuzz mode. sin/cos's row covers its whole documented
+domain (|x| < 2^22*pi, ~1.3e7 -- see the overview above); its max ulp
+climbing into the thousands even in-domain, well before the cliff at the
+domain edge, is expected -- the single-word Cody-Waite reduction's own
+rounding error grows as |x| grows, independent of whether q is still
+exactly rounded (std's error stays ~1 ulp across the same domain, for
+comparison). Magnitude-bucketed
+avg/max ulp for sin_checked/cos_checked (also now exhaustive, not just
+fuzzed) shows the actual shape of the degradation -- flat and low for a very
+long stretch, then a real but gradual climb, never a sudden jump to garbage
+and never `inf` (confirmed by an exhaustive all-2^32-pattern check that no
+finite input produces a non-finite output). These buckets are a permanent
+part of `examples/accuracy.rs`, so the shape claim stays checkable after
+future changes instead of just asserted:
 ```
-        range | sin avg |  sin max | cos avg |  cos max
---------------|---------|----------|---------|----------
-     |x|<=1e6 |   0.036 |        2 |   0.081 |        3
-   [1e7,1e8)  |   0.253 |        2 |   0.262 |        6
-  [1e9,1e10)  |   0.252 |       24 |   0.252 |        2
- [1e12,1e13)  |   0.285 |    10535 |   0.282 |     3037
- [1e15,1e16)  |   3.2e8 |    2.4e9 |   9.7e8 |     2.4e9
+        range | sin_checked avg | sin_checked max | cos_checked avg | cos_checked max
+--------------|-----------------|------------------|-----------------|------------------
+     |x|<=1e6 |           0.036 |                2 |           0.081 |                3
+   [1e7,1e8)  |           0.252 |                6 |           0.262 |                6
+  [1e9,1e10)  |           0.252 |               48 |           0.252 |               67
+ [1e12,1e13)  |           0.292 |           154382 |           0.286 |           154382
+ [1e15,1e16)  |           3.2e8 |             2.4e9|           9.7e8 |             2.4e9
 ```
+
+Straight-ported functions (100M-sample fuzz mode; see the overview above for
+each function's real domain, and its doc comment for known inherited
+defects). "everywhere" rows for asin/atanh/asinh/log1p/sinh/tanh/acosh
+deliberately include the region where the known cancellation/sign-loss
+defect lives -- that's the point of measuring them unrestricted, so the
+number stays honest instead of hiding the defect behind a narrower domain.
+```
+                        | jodie avg  | jodie max | std avg | std max
+------------------------|------------|-----------|---------|--------
+                     ln |    0.126   |     3     |  0.000  |    1
+                  log10 |    0.286   |     4     |  0.000  |    0
+       log1p (in-domain)|    0.002   |     1     |  0.000  |    0
+   log1p (small |x|, known cancellation)  | catastrophic -- see above
+      exp (in-domain)   |    0.289   |    64     |  0.000  |    1
+    expm1 (in-domain)   |    0.240   |    63     |  0.000  |    0
+     sinh (in-domain, away from 0) |    0.274*  |   63*    |  0.000  |    0
+     cosh (in-domain)   |    0.274   |    63     |  0.000  |    0
+     tanh (in-domain, away from 0) |  catastrophic near 0, see above  |  0.000  |    0
+                  asinh | catastrophic near 0, see above  | (std also imperfect at extreme |x|)
+                  acosh | catastrophic for x<-huge (sign loss), see above
+                  atanh | catastrophic near 0, see above  |  0.037   |  34384
+                   asin | catastrophic near 0, see above  |  0.000  |    0
+                   acos |    0.496   |     4     |  0.000  |    0
+                   atan |    0.188   |    19     |  0.000  |    0
+       tan (in-domain)  |    0.331   |  2967     |  0.000  |    0
+                    erf (|x|<6)  |    0.631   |     5     | (no std erf)
+                   erfc (|x|<9.3)|    0.297   |   115     | (no std erfc)
+                  atan2 |    0.136   |    19     |  0.000  |    0
+        hypot (bounded) |    0.039   |     1     |  0.000  |    0
+        powf (in-domain)|    0.359   |   123     |  0.000  |    1
+     remainder (|x/y|<1000) |    1375**  | 2.7e9** | (no std remainder)
+```
+`*` sinh/tanh's own table rows above are for the domain-restricted (exp2-safe)
+range only; the near-zero cancellation still lives inside that same range
+(see the "everywhere" note above the table), so treat these two numbers as
+optimistic for anything close to x=0.
+`**` remainder's max ulp stays large even inside the `|x/y|<1000` bound: a
+handful of inputs land close enough to an exact half-integer quotient that
+f32 rounding flips which integer `round(x/y)` picks vs. the f64 reference,
+jumping the result by a whole `y` -- an inherent tie-breaking sensitivity of
+any round()-based remainder, not specific to this formula.
 
 # benchmarks
 Run on i5-1145G7, -C target-cpu=native (now set in .cargo/config.toml)
@@ -92,34 +188,98 @@ Serial latency (dependency chain, examples/quickbench.rs; lower is better)
 --------------|---------|---------|------------
          cbrt | 12.9 ns | 22.0 ns | 1.7x
 cbrt_accurate | 17.0 ns | 22.0 ns | 1.3x
-          cos | 30.1 ns | 12.6 ns | 0.4x
+          cos | 12.7 ns | 12.8 ns | 1.0x
+  cos_checked | 30.3 ns | 12.8 ns | 0.4x
          exp2 |  8.5 ns | 13.3 ns | 1.6x
  exp2_checked | 13.3 ns | 13.3 ns | 1.0x
          log2 | 13.1 ns | 14.9 ns | 1.1x
-          sin | 29.1 ns | 12.8 ns | 0.4x
+          sin | 10.9 ns | 12.9 ns | 1.2x
+  sin_checked | 29.2 ns | 12.9 ns | 0.4x
+           ln | 15.3 ns | 14.5 ns | 0.9x
+        log10 | 14.3 ns | 16.6 ns | 1.2x
+        log1p | 16.5 ns | 21.1 ns | 1.3x
+          exp | 13.1 ns | 13.6 ns | 1.0x
+        expm1 | 14.6 ns | 19.1 ns | 1.3x
+         sinh | 16.9 ns | 20.1 ns | 1.2x
+         cosh | 27.7 ns | 37.5 ns | 1.4x
+         tanh | 35.9 ns | 33.8 ns | 0.9x
+        asinh | 43.7 ns | 86.3 ns | 2.0x
+        acosh | 35.1 ns | 27.0 ns | 0.8x
+        atanh | 23.2 ns |  4.2 ns | 0.2x
+         asin | 19.4 ns |  4.1 ns | 0.2x
+         acos | 13.0 ns |  4.0 ns | 0.3x
+         atan | 16.5 ns | 27.4 ns | 1.7x
+        atan2 | 16.6 ns | 33.8 ns | 2.0x
+          tan | 23.5 ns | 27.3 ns | 1.2x
+          erf | 21.0 ns |     -   |  -
+         erfc | 22.9 ns |     -   |  -
+        hypot |  8.4 ns | 13.9 ns | 1.7x
+         powf | 24.2 ns |  3.2 ns | 0.1x
+    remainder | 12.7 ns |     -   |  -
 ```
-sin/cos's latency is worse than std again (2026-07-06, later same day:
-reinstated a double-float reduction -- see the accuracy note above for why
-the cheap single-word version was reverted a second time). Deliberate
-trade, same shape as the very first version of this reduction: gradual,
-predictable degradation instead of a cliff costs real latency. (Improved
-slightly from 32.9/31.7 ns by the same-day critical-path shortening
-described below -- still 0.4x at this rounding.)
+atanh/asin/acos/powf's std comparisons here are suspiciously fast (4, 4, 4
+and 3.2 ns -- close to or under this crate's own fastest functions) and are
+likely partly LLVM constant-folding artifacts from quickbench's methodology
+(sinh/asin/acos/atan2/powf are benched via a fixed second argument, e.g.
+`|x| x.powf(2.0)`, which can let LLVM specialize the std call at compile
+time in a way a real call site with a variable exponent wouldn't get) rather
+than std's true per-call cost -- take these specific ratios with a grain of
+salt pending a version of quickbench that varies both arguments.
+sin_checked/cos_checked's latency is worse than std (2026-07-06, later same
+day: reinstated a double-float reduction -- see the accuracy note above for
+why the cheap single-word version moved behind these _checked names instead
+of being std's default). Deliberate trade, same shape as the very first
+version of this reduction: gradual, predictable degradation instead of a
+cliff costs real latency. (Improved slightly from 32.9/31.7 ns by the
+same-day critical-path shortening described below -- still 0.4x at this
+rounding.) sin/cos (the crate's default, restored to the pre-double-float
+single-word version afterwards) are back to ~1.0-1.2x std, matching the
+exp2/exp2_checked fast-default/checked-full-range split.
 ```
 Throughput (independent array evals over [f32; 4096], examples/quickbench.rs; lower is better)
               | jodie    | std     | improvement
 --------------|----------|---------|------------
          cbrt | 0.37 ns  | 3.93 ns | 10.6x
 cbrt_accurate | 0.67 ns  | 3.93 ns | 5.9x
-          cos | 1.52 ns  | 2.92 ns | 1.9x
+          cos | 0.27 ns  | 3.41 ns | 12.6x
+  cos_checked | 1.61 ns  | 3.41 ns | 2.1x
          exp2 | 0.23 ns  | 3.13 ns | 13.7x
  exp2_checked | 0.48 ns  | 3.13 ns | 6.6x
          log2 | 0.53 ns  | 4.10 ns | 7.8x
-          sin | 1.51 ns  | 3.05 ns | 2.0x
+          sin | 0.22 ns  | 3.10 ns | 14.4x
+  sin_checked | 1.49 ns  | 3.10 ns | 2.1x
+           ln | 0.55 ns  | 3.82 ns | 7.0x
+        log10 | 0.53 ns  | 5.30 ns | 10.1x
+        log1p | 0.60 ns  | 6.28 ns | 10.4x
+          exp | 0.32 ns  | 3.09 ns | 9.7x
+        expm1 | 0.49 ns  | 6.46 ns | 13.2x
+         sinh | 0.69 ns  | 14.84 ns | 21.5x
+         cosh | 1.69 ns  | 22.54 ns | 13.3x
+         tanh | 1.04 ns  | 18.06 ns | 17.3x
+        asinh | 2.19 ns  | 41.42 ns | 18.9x
+        acosh | 1.32 ns  |  6.17 ns | 4.7x
+        atanh | 0.79 ns  |  4.54 ns | 5.7x
+         asin | 0.46 ns  |  4.01 ns | 8.7x
+         acos | 0.26 ns  |  4.01 ns | 15.6x
+         atan | 0.62 ns  |  8.28 ns | 13.3x
+        atan2 | 0.62 ns  | 13.30 ns | 21.4x
+          tan | 0.76 ns  |  9.07 ns | 11.9x
+          erf | 0.70 ns  |     -    |  -
+         erfc | 0.68 ns  |     -    |  -
+        hypot | 0.24 ns  |  2.92 ns | 12.0x
+         powf | 0.95 ns  |  0.07 ns | 0.07x
+    remainder | 0.22 ns  |     -    |  -
 ```
-sin/cos's throughput is back down to ~1.6x std (was ~9-11x with the cheap
-single-word-plus-clamp version, ~13-14x with the original
-single-word-but-inf-prone version). This is the direct cost of genuine
+powf's std throughput row here (0.07 ns, faster than a single cycle) is
+almost certainly the same fixed-second-argument constant-folding artifact
+noted in the latency table above (LLVM likely reduces `x.powf(2.0)` to
+`x*x` at compile time) rather than a genuine per-call cost -- the other
+ratios are consistent with the rest of this crate's usual 5-20x vectorized
+throughput advantage.
+sin_checked/cos_checked's throughput is ~2.1x std (was ~9-11x with the
+cheap single-word-plus-clamp version, ~13-14x with the original
+single-word-but-inf-prone version -- i.e. today's sin/cos default,
+restored unchanged, now measuring ~12.6-14.4x). This is the direct cost of genuine
 gradual degradation: a double-float q needs several `two_prod`/`two_sum`
 error-free transforms (each 2-6 ops) to stay accurate well past a single
 f32's exact-integer range, instead of one cheap magic-constant rounding
@@ -254,9 +414,36 @@ cbrt_accurate       |          59.06 |             3.129
 exp2                |          35.00 |             0.841
 exp2_checked        |          43.06 |             1.399
 log2                |          34.23 |             1.556
-sin                 |         124.00 |             6.421
-cos                 |         128.00 |             5.354
+sin                 |          46.00 |             1.022
+sin_checked         |         124.00 |             6.421
+cos                 |          54.00 |             1.360
+cos_checked         |         128.00 |             5.354
+ln                  |          56.91 |             1.626
+log10               |          56.91 |             1.626
+log1p               |          59.98 |             2.023
+exp                 |          39.00 |             0.974
+expm1               |          71.00 |             1.441
+sinh                |          48.02 |             2.083
+cosh                |          48.02 |             2.083
+tanh                |          62.00 |             1.359
+asinh               |          76.98 |             2.788
+acosh               |          72.06 |             2.788
+atanh               |          71.00 |             2.677
+asin                |          56.11 |             1.433
+acos                |          37.11 |             0.811
+atan                |          76.81 |             1.984
+atan2               |          81.00 |             1.969
+tan                 |          69.00 |             2.324
+erf                 |          88.02 |             2.101
+erfc                |          67.09 |             2.097
+hypot               |          25.00 |             0.766
+powf                |          85.86 |             2.784
+remainder           |          37.00 |             0.649
 ```
+sin/cos are the restored single-word Cody-Waite version (identical codegen
+to before this session's double-float work, confirmed by these numbers
+matching exactly); sin_checked/cos_checked are today's name for the
+double-float version this whole section was benchmarking.
 
 # tools
 - `cargo run --release --example accuracy [thorough] [filter]` - avg/max ulp against an f64 reference.
@@ -274,6 +461,13 @@ cos                 |         128.00 |             5.354
 
 # todo:
 - do principled and thourough analysis of dependency chains and rounding errors to find optimizations
-- add inverse trig functions
-- add tan()
 - perfectly rounded versions
+- fix (or at least give a "_checked" full-range companion to) the inherited
+  accuracy defects in the newly-ported functions: small-x cancellation in
+  asin/atanh/asinh/log1p/sinh/tanh, acosh's sign-losing overflow, and
+  erf/erfc/exp-family's dependence on the fast unchecked exp2 -- see the
+  overview above and each function's doc comment
+- vary both arguments in quickbench's two-argument benchmarks (atan2, hypot,
+  powf, remainder currently fix one argument, which may be letting LLVM
+  constant-fold std's side of a couple of comparisons -- see the benchmark
+  notes above)

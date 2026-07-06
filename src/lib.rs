@@ -158,6 +158,57 @@ fn sinf_poly(x: f32) -> f32 {
     let p = fma(b, y2, a);
     fma(p, x3, x)
 }
+
+// pi split into pieces with trailing zero bits so q*PI_A and q*PI_B are
+// exact for moderate |q|, keeping the reduced argument accurate in a
+// relative sense near the zeros of sin (Cody-Waite with fma).
+const PI_A: f32 = 3.140625;
+const PI_B: f32 = 0.0009670257568359375;
+const PI_C: f32 = 6.277114152908325e-7;
+const PI_D: f32 = 1.2154201256553421e-10;
+const FRAC_1_PI: f32 = std::f32::consts::FRAC_1_PI;
+
+// 1.5 * 2^23; adding this to |v| < 2^22 rounds v to the nearest integer
+// in the low mantissa bits (round-to-nearest-even).
+const ROUND_MAGIC: f32 = 12582912.0;
+
+/// sin(x) via single-f32 range reduction: q = round(x/pi) (the round-via-fma
+/// magic-constant trick) is exact only while |x| stays under ~1.3e7 (2^22 *
+/// pi). Past that, q can land a whole integer off, shifting the residual by
+/// a whole multiple of pi and pushing it outside sinf_poly's fitted domain
+/// [-pi/2, pi/2] -- including returning inf for some large finite x, since
+/// nothing here clamps the residual. Use sin_checked for full-range gradual
+/// degradation instead of this cliff; this version is much faster.
+#[inline(always)]
+pub fn sin(x: f32) -> f32 {
+    let qb = fma(x, FRAC_1_PI, ROUND_MAGIC);
+    let q = qb - ROUND_MAGIC;
+    let r = fma(q, -PI_A, x);
+    let r = fma(q, -PI_B, r);
+    let r = fma(q, -PI_C, r);
+    let r = fma(q, -PI_D, r);
+    let s = sinf_poly(r);
+    // sin(x) = (-1)^q * sin(r); parity of q is the lowest mantissa bit of qb
+    let parity = qb.to_bits() << 31;
+    f32::from_bits(s.to_bits() ^ parity)
+}
+/// Same domain limits as sin (see its doc comment); use cos_checked for
+/// full-range gradual degradation.
+#[inline(always)]
+pub fn cos(x: f32) -> f32 {
+    // k = round(x/pi - 0.5), q = k + 0.5, r = x - q*pi in [-pi/2, pi/2]
+    let kb = fma(x, FRAC_1_PI, -0.5) + ROUND_MAGIC;
+    let q = (kb - ROUND_MAGIC) + 0.5;
+    let r = fma(q, -PI_A, x);
+    let r = fma(q, -PI_B, r);
+    let r = fma(q, -PI_C, r);
+    let r = fma(q, -PI_D, r);
+    let s = sinf_poly(r);
+    // cos(x) = (-1)^(k+1) * sin(r)
+    let parity = !kb.to_bits() << 31;
+    f32::from_bits(s.to_bits() ^ parity)
+}
+
 // q = round(x/pi) must be an *exact* integer for x - q*pi to land accurately
 // in [-pi/2, pi/2]. A single-f32 q (tried first, and again after a
 // native-round detour -- see jodiemath-workflow memory, 2026-07-06) is a
@@ -245,15 +296,16 @@ fn two_prod(a: f32, b: f32) -> (f32, f32) {
 #[inline(always)]
 fn round_x_over_pi(x: f32, pre_offset: f32) -> (f32, f32) {
     let (p0, e0) = two_prod(x, RPI_HI);
-    // e0 and x*RPI_LO are comparable magnitude (both ~x*2^-24), so which is
-    // bigger is genuinely uncertain -- quick_two_sum's |a|>=|b| assumption
-    // isn't guaranteed here either, same as the other quick_two_sum call in
-    // reduce_pi. Kept anyway for the same reason: Fast2Sum's failure mode is
-    // a bounded (not unbounded) perturbation of the *low* word, verified
-    // empirically against the full accuracy sweep below, not just assumed.
-    let (s, e1) = quick_two_sum(e0, x * RPI_LO);
+    // quick_two_sum's error term is provably dead: its only use is `s + e1`
+    // immediately after, and for a Fast2Sum pair s+e1 == a+b exactly (as
+    // reals), so `fl(s + e1)` is just the correctly-rounded a+b again --
+    // i.e. `s` itself. True even when the |a|>=|b| assumption is violated
+    // (then e1 isn't the exact correction, but s+e1 is still noise-tier
+    // relative to s, not a real correction -- verified exhaustively, see
+    // IDEAS.md). So the whole quick_two_sum call collapses to a plain add.
+    let s = e0 + x * RPI_LO;
     // pre_offset folded in here (not into p0 -- see the bug note above)
-    let lo = fma(x, RPI_TINY, s + e1) + pre_offset;
+    let lo = fma(x, RPI_TINY, s) + pre_offset;
     let qh = p0.round();
     let rem = (p0 - qh) + lo;
     let ql = rem.round();
@@ -327,7 +379,7 @@ fn parity(q: f32) -> f32 {
 const POLY_SAFE_BOUND: f32 = 1000.0;
 
 #[inline(always)]
-pub fn sin(x: f32) -> f32 {
+pub fn sin_checked(x: f32) -> f32 {
     let (qh, ql) = round_x_over_pi(x, 0.0);
     let r = reduce_pi(x, qh, ql).clamp(-POLY_SAFE_BOUND, POLY_SAFE_BOUND);
     let s = sinf_poly(r);
@@ -341,7 +393,7 @@ pub fn sin(x: f32) -> f32 {
     s * (1.0 - 2.0 * par)
 }
 #[inline(always)]
-pub fn cos(x: f32) -> f32 {
+pub fn cos_checked(x: f32) -> f32 {
     // k = round(x/pi - 0.5), q = k + 0.5, r = x - q*pi in [-pi/2, pi/2]
     let (kh, kl) = round_x_over_pi(x, -0.5);
     // q = k + 0.5; fold the 0.5 into the small word kl, not the (possibly
@@ -540,6 +592,296 @@ pub fn cbrt_constant(x: f32, c: &[u32]) -> f32 {
     let s32 = Df32::from_mul(s,s) * (s*2.);
     s * 2f32 + ((s32*-1.5)*s).div_to_f32(s32.quick_add(x))*/
     //s
+}
+
+// x * sign(y): an xor of sign bits, not the same as copysign (which
+// replaces x's sign outright -- mulsign(-2,-3) == 2, copysign(-2,-3) == -2).
+// Ported from jodiemath's mulsign.
+#[inline(always)]
+fn mulsign(x: f32, y: f32) -> f32 {
+    f32::from_bits(x.to_bits() ^ (y.to_bits() & SIGN_MASK))
+}
+
+const LN_2: f32 = std::f32::consts::LN_2;
+const LOG10_2: f32 = std::f32::consts::LOG10_2;
+const LOG2_E: f32 = std::f32::consts::LOG2_E;
+const FRAC_PI_2: f32 = std::f32::consts::FRAC_PI_2;
+
+/// Straight port of jodiemath's logf: log2(x) rescaled by ln(2). Same domain
+/// behavior as log_2 (its edge handling covers zero/negative/denormal/inf/nan).
+#[inline(always)]
+pub fn ln(x: f32) -> f32 {
+    log_2(x) * LN_2
+}
+
+/// Straight port of jodiemath's log10f: log2(x) rescaled by log10(2).
+#[inline(always)]
+pub fn log10(x: f32) -> f32 {
+    log_2(x) * LOG10_2
+}
+
+/// Straight port of jodiemath's log1pf: ln(1+x), inherited as-is including
+/// its known flaw -- log1p exists specifically to be accurate for small
+/// |x| (where 1+x would normally lose precision), but this formula computes
+/// 1.0+x first anyway, so for |x| below ~6e-8 (half of f32's ulp(1.0)) it
+/// rounds to exactly 1.0 and ln(1.0) returns exactly 0 instead of the
+/// (tiny but nonzero) correct answer -- the same cancellation class as
+/// asinh/atanh below. A real fix needs to skip the 1+x step for small x,
+/// beyond a straight port.
+#[inline(always)]
+pub fn log1p(x: f32) -> f32 {
+    ln(1.0 + x)
+}
+
+/// Straight port of jodiemath's expf: exp2(x * log2(e)). Inherits exp2's
+/// unchecked domain (see exp2's doc comment): only accurate while
+/// x*log2(e) stays in [-126, 128), i.e. roughly x in [-87.3, 88.7) --
+/// outside that, exp2's bit-trick construction produces garbage rather
+/// than a clamped/overflowed value. Every other function below that's
+/// built on exp (expm1, sinh, cosh, tanh, powf, erf, erfc) inherits the
+/// same limit; this is a straight port of the C original, which has the
+/// identical gap (its own expf also calls the unchecked exp2f).
+#[inline(always)]
+pub fn exp(x: f32) -> f32 {
+    exp2(x * LOG2_E)
+}
+
+/// Straight port of jodiemath's expm1f: a Pade approximant near 0 (where
+/// exp(x)-1 loses precision to cancellation), exp(x)-1 directly elsewhere.
+/// See exp's doc comment for the inherited unchecked-exp2 domain limit.
+#[inline(always)]
+pub fn expm1(x: f32) -> f32 {
+    let a = x * fma(-2.0, x * x, -120.0) / fma(x, fma(x, x - 12.0, 60.0), -120.0);
+    let b = exp(x) - 1.0;
+    if x.abs() < 0.5 { a } else { b }
+}
+
+/// Straight port of jodiemath's sinhf. See exp's doc comment for the
+/// inherited unchecked-exp2 domain limit. Also inherits a near-zero
+/// cancellation flaw of its own: exp(x) and exp(-x) are both ~1 for small
+/// x, so subtracting them loses precision the same way asinh/atanh do
+/// below -- unlike cosh just below, which adds instead of subtracting and
+/// so doesn't have this problem.
+#[inline(always)]
+pub fn sinh(x: f32) -> f32 {
+    0.5 * (exp(x) - exp(-x))
+}
+
+/// Straight port of jodiemath's coshf. See exp's doc comment for the
+/// inherited unchecked-exp2 domain limit.
+#[inline(always)]
+pub fn cosh(x: f32) -> f32 {
+    0.5 * (exp(x) + exp(-x))
+}
+
+/// Straight port of jodiemath's tanhf. See exp's doc comment for the
+/// inherited unchecked-exp2 domain limit (here on exp(2x), so the safe
+/// range is halved). Also inherits the same near-zero cancellation flaw as
+/// sinh above: 2/(exp(2x)+1) is ~1 for small x, so `1.0 - (...)` loses
+/// precision the same way.
+#[inline(always)]
+pub fn tanh(x: f32) -> f32 {
+    1.0 - 2.0 / (exp(2.0 * x) + 1.0)
+}
+
+/// Straight port of jodiemath's asinhf: ln(x + sqrt(x^2+1)), inherited as-is
+/// from the C original including its known flaw -- for small |x| (below
+/// ~6e-8, half of f32's ulp(1.0)), x + sqrt(x^2+1) rounds down to exactly
+/// 1.0, so ln(...) returns exactly 0 instead of the (tiny but nonzero)
+/// correct answer. A real fix needs a log1p-based small-x branch (like a
+/// proper libm asinh), which is beyond a straight port; this just documents
+/// the cliff so it isn't mistaken for a translation bug.
+#[inline(always)]
+pub fn asinh(x: f32) -> f32 {
+    ln(x + (x * x + 1.0).sqrt())
+}
+
+/// Straight port of jodiemath's acoshf: ln(x + sqrt(x^2-1)), inherited as-is
+/// including its known flaw -- squaring x erases its sign before the
+/// domain check, so for large-magnitude *negative* x (where the true
+/// answer is NaN, acosh's domain is x >= 1) this returns +inf instead:
+/// x*x overflows to +inf the same for either sign, and x + inf is +inf
+/// regardless of x's sign, so the NaN that a correctly-signed negative
+/// sqrt argument would otherwise produce never happens.
+#[inline(always)]
+pub fn acosh(x: f32) -> f32 {
+    ln(x + (x * x - 1.0).sqrt())
+}
+
+/// Straight port of jodiemath's atanhf: 0.5*ln((1+x)/(1-x)), inherited as-is
+/// including its known flaw -- same near-zero cancellation as asinh above
+/// (for tiny |x|, (1+x)/(1-x) rounds to exactly 1.0, so ln(...) is exactly
+/// 0 instead of the correct tiny nonzero answer). A real fix needs a
+/// log1p-based small-x branch, beyond a straight port.
+#[inline(always)]
+pub fn atanh(x: f32) -> f32 {
+    0.5 * ln((1.0 + x) / (1.0 - x))
+}
+
+// degree-6 minimax poly (Estrin via fma), fitted for acos's sqrt(1-|x|)
+// factor. Ported from jodiemath's acosf_poly.
+#[inline(always)]
+fn acos_poly(x: f32) -> f32 {
+    let u = 2.2960134e-3f32;
+    let u = fma(u, x, -1.1146357e-2);
+    let u = fma(u, x, 2.6900099e-2);
+    let u = fma(u, x, -4.8802612e-2);
+    let u = fma(u, x, 8.875567e-2);
+    let u = fma(u, x, -2.1458527e-1);
+    fma(u, x, 1.5707962)
+}
+
+/// Straight port of jodiemath's acosf.
+#[inline(always)]
+pub fn acos(x: f32) -> f32 {
+    const PI: f32 = 3.14159265359;
+    let a = x.abs();
+    let y = (1.0 - a).sqrt() * acos_poly(a);
+    mulsign(y, x) + if x < 0.0 { PI } else { 0.0 }
+}
+
+/// Straight port of jodiemath's asinf: a rational correction folded into
+/// the acos-style sqrt identity, inherited as-is including its known flaw --
+/// the same near-zero cancellation as asinh/atanh (sqrt(1-a)-1 loses
+/// precision as a -> 0), so for small |x| this returns a coarser answer
+/// than the ~1e-6-relative-error goal the rest of jodiemath aims for. A
+/// real fix needs a small-x series branch, beyond a straight port.
+#[inline(always)]
+pub fn asin(x: f32) -> f32 {
+    let a = x.abs();
+    let d = fma(-0.0392588, a, 0.179323);
+    let d = fma(-a, d, 1.75866);
+    let d = fma(-a, d, -3.66063);
+    let a = (a * a - a) / d + a;
+    mulsign((1.0 - a).sqrt() - 1.0, x) * (-FRAC_PI_2)
+}
+
+// Pade-style rational approximation of atan on [0,1]. Ported from
+// jodiemath's atanf_poly.
+#[inline(always)]
+fn atan_poly(x: f32) -> f32 {
+    let a = f32::from_bits(0x3d267031);
+    let b = f32::from_bits(0x3f28513c);
+    let c = f32::from_bits(0x3e2f725f);
+    let d = f32::from_bits(0x3f7da425);
+    let x2 = x * x;
+    (fma(fma(a, x2, b), x2, 1.0) * x) / fma(fma(x2, c, d), x2, 1.0)
+}
+
+/// Straight port of jodiemath's atanf: reciprocates |x| > 1 into range
+/// (atan(x) = pi/2 - atan(1/x)) before the poly, matching atan_poly's fit.
+#[inline(always)]
+pub fn atan(x: f32) -> f32 {
+    let a = x.abs();
+    let y = if a < 1.0 { a } else { 1.0 / a };
+    let y = atan_poly(y);
+    let y = if a < 1.0 { y } else { FRAC_PI_2 - y };
+    mulsign(y, x)
+}
+
+/// Straight port of jodiemath's atan2f.
+#[inline(always)]
+pub fn atan2(y: f32, x: f32) -> f32 {
+    let nonzerox = x != 0.0;
+    let nonzeroy = y != 0.0;
+    let bothzero = !nonzerox && !nonzeroy;
+    let hpisignx = if nonzerox || bothzero { mulsign(FRAC_PI_2, x) } else { 0.0 };
+    let base = if nonzerox { atan(y / x) } else { 0.0 };
+    base + mulsign(FRAC_PI_2 - hpisignx, y)
+}
+
+/// Straight port of jodiemath's tanf: sin(x)/cos(x), same domain limits as
+/// this crate's sin/cos (see their doc comments).
+#[inline(always)]
+pub fn tan(x: f32) -> f32 {
+    sin(x) / cos(x)
+}
+
+// degree-6 minimax poly feeding erf's exp2-based tail (|x| >= 0.28). Ported
+// from jodiemath's erff_poly.
+#[inline(always)]
+fn erf_poly(x: f32) -> f32 {
+    let u = 3.118769e-4f32;
+    let u = fma(u, x, -4.67225e-3);
+    let u = fma(u, x, 3.3162573e-2);
+    let u = fma(u, x, -1.5214339e-1);
+    let u = fma(u, x, -9.1684705e-1);
+    let u = fma(u, x, -1.6282598);
+    fma(u, x, 3.1332566e-5)
+}
+
+/// Straight port of jodiemath's erff: a Pade approximant near 0 (where the
+/// tail form loses precision to cancellation), the exp2-based tail elsewhere.
+/// The tail branch's exp2 call inherits exp2's unchecked domain (see exp's
+/// doc comment) once erf_poly(|x|)'s degree-6 growth pushes its argument
+/// out of [-126, 128) -- only relevant once erf has long since saturated to
+/// +-1 at f32 precision (|x| beyond roughly 4), so it doesn't affect any
+/// input where the answer isn't already indistinguishable from +-1.
+#[inline(always)]
+pub fn erf(x: f32) -> f32 {
+    let x2 = x * x;
+    let numer = x * fma(f32::from_bits(0x3f174f6e), x2, f32::from_bits(0x3f906ebb));
+    let denom = fma(fma(f32::from_bits(0x3e3e2be3), x2, f32::from_bits(0x3f5b6db7)), x2, 1.0);
+    let a = numer / denom;
+    let b = mulsign(1.0 - exp2(erf_poly(x.abs())), x);
+    if x.abs() < 0.28 { a } else { b }
+}
+
+/// Straight port of jodiemath's erfcf: a rational*gaussian tail, clamped to
+/// |x| <= 10 before evaluation (matching the C original). That clamp is
+/// meant to keep exp(-xa*xa) in exp's safe range, but doesn't fully manage
+/// it: for |x| >= ~9.35, xa*xa >= ~87.4, and exp(-87.4) needs
+/// exp2(-87.4*log2(e)) =~ exp2(-126.1) -- already at, or just past, exp2's
+/// unchecked [-126, 128) domain (see exp's doc comment), so the result is
+/// unreliable (not a clean 0) for that whole tail rather than just far out
+/// past f32's underflow point. Inherited as-is from the C original (same
+/// clamp, same gap); a real fix would need exp2_checked here instead.
+#[inline(always)]
+pub fn erfc(x: f32) -> f32 {
+    let z = if x < 0.0 { -1.0 } else { 1.0 };
+    let w = if x < 0.0 { 2.0 } else { 0.0 };
+    // NaN-preserving clamp: f32::min suppresses NaN (returns the other
+    // operand), unlike C's `x>10.f?10.f:x` ternary (false for NaN, so it
+    // takes the x branch, keeping NaN). This if/else matches the ternary.
+    let xa = x.abs();
+    let xa = if xa > 10.0 { 10.0 } else { xa };
+    let n = fma(f32::from_bits(0x35c42f59), xa, f32::from_bits(0x3daf42dc));
+    let n = fma(n, xa, f32::from_bits(0x3ee32e3c));
+    let n = fma(n, xa, f32::from_bits(0x3f7a7520));
+    let n = fma(n, xa, 1.0);
+    let d = fma(f32::from_bits(0x3e1b69eb), xa, f32::from_bits(0x3f48fde0));
+    let d = fma(d, xa, f32::from_bits(0x3fe918cc));
+    let d = fma(d, xa, f32::from_bits(0x4006d465));
+    let d = fma(d, xa, 1.0);
+    let y = exp(-(xa * xa)) * n / d;
+    fma(y, z, w)
+}
+
+/// Straight port of jodiemath's hypotf: naive sqrt(x^2+y^2), no anti-overflow
+/// rescaling (unlike std's hypot) -- trades the overflow/underflow edge cases
+/// for vectorizability, same tradeoff this crate makes for cbrt/sin/cos vs.
+/// their std counterparts.
+#[inline(always)]
+pub fn hypot(x: f32, y: f32) -> f32 {
+    (x * x + y * y).sqrt()
+}
+
+/// Straight port of jodiemath's powf: exp2(log2(x) * y). Inherits exp2's
+/// unchecked domain (see exp's doc comment): only accurate while
+/// log2(x)*y stays in [-126, 128).
+#[inline(always)]
+pub fn powf(x: f32, y: f32) -> f32 {
+    exp2(log_2(x) * y)
+}
+
+/// Straight port of jodiemath's remainderf: x - round(x/y)*y (ties away from
+/// zero, via f32::round -- not IEEE 754 remainder's ties-to-even).
+/// round(x/y)*y's absolute error scales with ulp(x), which swamps the true
+/// remainder (at most |y|/2) once |x/y| is large -- inherited from the C
+/// original's identical formula, only reliable while |x/y| stays moderate.
+#[inline(always)]
+pub fn remainder(x: f32, y: f32) -> f32 {
+    x - (x / y).round() * y
 }
 
 #[cfg(test)]
