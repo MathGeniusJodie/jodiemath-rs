@@ -100,6 +100,7 @@ fn main() {
     let order = [
         "nop",
         "cbrt",
+        "cbrt_wrapped",
         "cbrt_accurate",
         "cbrt_throughput_fn",
         "cbrt_fast",

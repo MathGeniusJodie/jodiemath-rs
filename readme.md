@@ -14,10 +14,10 @@ All functions auto-vectorize, it's a hard requirement
 ```
               | jodie avg | jodie max | std avg | std max
 --------------|-----------|-----------|---------|--------
-         cbrt |   0.085   |     1     |    0    |    0
+         cbrt |   0.329   |     2     |    0    |    0
 cbrt_accurate |   0.000   |     0     |    0    |    0
-         exp2 |   0.059   |     2     |  0.000  |    1
- exp2_checked |   0.059   |     2     |  0.000  |    1
+         exp2 |   0.037   |     1     |  0.000  |    1
+ exp2_checked |   0.037   |     1     |  0.000  |    1
          log2 |   0.006   |     2     |  0.000  |    1
  sin (|x|<1e3)|   0.027   |     2     |  0.002  |    1
  cos (|x|<1e3)|   0.082   |     2     |  0.001  |    1
@@ -29,28 +29,44 @@ Run on i5-1145G7, -C target-cpu=native (now set in .cargo/config.toml)
 Serial latency (dependency chain, examples/quickbench.rs; lower is better)
               | jodie   | std     | improvement
 --------------|---------|---------|------------
-         cbrt | 11.6 ns | 21.2 ns | 1.8x
-cbrt_accurate | 20.0 ns | 21.2 ns | 1.1x
-          cos | 12.7 ns | 12.6 ns | 1.0x
-         exp2 |  8.5 ns |  9.6 ns | 1.1x
- exp2_checked | 11.0 ns |  9.6 ns | 0.9x
-         log2 |  8.9 ns | 10.0 ns | 1.1x
-          sin | 10.8 ns | 12.8 ns | 1.2x
+         cbrt | 12.9 ns | 22.0 ns | 1.7x
+cbrt_accurate | 19.5 ns | 22.0 ns | 1.1x
+          cos | 18.5 ns | 18.5 ns | 1.0x
+         exp2 |  8.5 ns | 13.3 ns | 1.6x
+ exp2_checked | 13.3 ns | 13.3 ns | 1.0x
+         log2 | 13.1 ns | 14.9 ns | 1.1x
+          sin | 15.9 ns | 18.7 ns | 1.2x
 ```
 ```
 Throughput (independent array evals over [f32; 4096], examples/quickbench.rs; lower is better)
               | jodie    | std     | improvement
 --------------|----------|---------|------------
-         cbrt | 0.60 ns  | 3.89 ns | 6.5x
-cbrt_accurate | 0.69 ns  | 3.89 ns | 5.6x
-          cos | 0.27 ns  | 2.90 ns | 10.7x
-         exp2 | 0.23 ns  | 2.27 ns | 9.9x
- exp2_checked | 0.38 ns  | 2.27 ns | 6.0x
-         log2 | 0.36 ns  | 2.75 ns | 7.7x
-          sin | 0.21 ns  | 2.98 ns | 13.9x
+         cbrt | 0.37 ns  | 3.93 ns | 10.6x
+cbrt_accurate | 0.69 ns  | 3.93 ns | 5.7x
+          cos | 0.40 ns  | 4.13 ns | 10.4x
+         exp2 | 0.23 ns  | 3.13 ns | 13.7x
+ exp2_checked | 0.48 ns  | 3.13 ns | 6.6x
+         log2 | 0.53 ns  | 4.10 ns | 7.8x
+          sin | 0.31 ns  | 4.26 ns | 13.8x
 ```
 The throughput gap vs std comes almost entirely from vectorization: std's
 functions have branches, so LLVM can't vectorize loops that call them.
+Absolute ns swing session-to-session with CPU thermal state (the laptop
+throttles up to ~2.5x mid-session) -- only trust jodie-vs-std ratios measured
+in the same run. examples/mca.rs gives a thermal-noise-free second opinion in
+cycles instead of ns:
+```
+theoretical cost from llvm-mca (-mcpu=native, 100 iterations)
+                    | latency (cyc) | throughput (cyc)
+--------------------|----------------|------------------
+cbrt                |          35.06 |             1.629
+cbrt_accurate       |          70.06 |             3.134
+exp2                |          35.00 |             0.841
+exp2_checked        |          43.06 |             1.399
+log2                |          34.23 |             1.556
+sin                 |          46.00 |             1.022
+cos                 |          54.00 |             1.360
+```
 
 # tools
 - `cargo run --release --example accuracy [filter]` - avg/max ulp over dense strided sweeps of each domain

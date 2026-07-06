@@ -81,8 +81,13 @@ macro_rules! throughput_fn {
 latency_fn!(lat_nop, "nop_latency", |x: f32| black_box(x));
 throughput_fn!(thr_nop, "nop_throughput", |x: f32| x);
 
-latency_fn!(lat_cbrt, "cbrt_latency", |x: f32| cbrt_normal(x, 1.0));
+latency_fn!(lat_cbrt, "cbrt_latency", cbrt_normal);
 throughput_fn!(thr_cbrt, "cbrt_throughput", cbrt);
+
+// full public cbrt (with its tiny-input select), not just the _normal core --
+// this is the fair "real function, all edge-case handling included" latency
+// number, since lat_cbrt above intentionally skips the rare-input branch.
+latency_fn!(lat_cbrt_wrapped, "cbrt_wrapped_latency", cbrt);
 
 latency_fn!(lat_cbrt_accurate, "cbrt_accurate_latency", |x: f32| cbrt_accurate_normal(x, 1.0));
 throughput_fn!(thr_cbrt_accurate, "cbrt_accurate_throughput", cbrt_accurate);
@@ -123,6 +128,8 @@ fn main() {
             )*
         };
     }
+
+    black_box(lat_cbrt_wrapped(black_box(1.234)));
 
     run_all!(
         lat_nop, thr_nop;

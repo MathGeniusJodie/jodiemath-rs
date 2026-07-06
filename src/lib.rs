@@ -90,15 +90,18 @@ pub fn exp2(x: f32) -> f32 {
     let k = x.floor();
     let f = x - k;
     let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
-    fma(
-        fma(fma(2.1702237e-4, f, 1.2439679e-3), f, 9.678826e-3),
-        exp2int * (f * f) * (f * f),
-        fma(
-            fma(fma(5.548333e-2, f, 2.4022985e-1), f, 6.93147e-1),
-            exp2int * f,
-            exp2int,
-        ),
-    )
+    // Q(f) = (2^f - 1)/f, degree 5, grouped into 3 balanced pairs (g0, g1,
+    // g2) instead of two degree-2 Horner halves: same 6 coefficients (so
+    // same accuracy target) and the same 4-deep fma critical path, but the
+    // combine only ever needs f^2 (never exp2int*f^4), so it's 2 fewer
+    // plain multiplies per call than the old A/B split.
+    let f2 = f * f;
+    let g0 = fma(2.4022985e-1, f, 6.93147e-1);
+    let g1 = fma(9.678826e-3, f, 5.548333e-2);
+    let g2 = fma(2.1702237e-4, f, 1.2439679e-3);
+    let h = fma(g2, f2, g1);
+    let q = fma(h, f2, g0);
+    fma(q, exp2int * f, exp2int)
 }
 
 #[inline(always)]
@@ -125,12 +128,18 @@ pub fn exp2_checked(x: f32) -> f32 {
     let k2b = (k + 766.0) - k1b; // k2 + 383, exact: all integers
     let t1 = f32::from_bits((k1b.to_bits() << 8) & EXPONENT_MASK);
     let t2 = f32::from_bits((k2b.to_bits() << 8) & EXPONENT_MASK);
+    // same 3-balanced-pair Q(f) as exp2 (see there for the derivation): same
+    // coefficients/critical-path depth as the old A/B split, 2 fewer plain
+    // multiplies (never needs t1*f^4, only t1*f)
     let f2 = f * f;
-    let a = fma(fma(2.1702237e-4, f, 1.2439679e-3), f, 9.678826e-3);
-    let b = fma(fma(5.548333e-2, f, 2.4022985e-1), f, 6.93147e-1);
+    let g0 = fma(2.4022985e-1, f, 6.93147e-1);
+    let g1 = fma(9.678826e-3, f, 5.548333e-2);
+    let g2 = fma(2.1702237e-4, f, 1.2439679e-3);
+    let h = fma(g2, f2, g1);
+    let q = fma(h, f2, g0);
     // weave t1 into the fma chain (t1*f is exact: both factors normal) so
     // only one multiply (by t2) remains after the polynomial
-    let p = fma(a, t1 * f2 * f2, fma(b, t1 * f, t1));
+    let p = fma(q, t1 * f, t1);
     p * t2
 }
 // sin(x) ~= x + x^3*p(x^2) on [-pi/2, pi/2], degree-9 minimax (relative
@@ -191,17 +200,32 @@ pub fn cos(x: f32) -> f32 {
 }
 
 /// Core of cbrt for normal finite x: bit-trick seed (~3% error), then a
-/// single degree-5 correction. d = s^3 - x is exact-ish via fma at any
+/// single degree-3 correction. d = s^3 - x is exact-ish via fma at any
 /// scale, and x/s^3 == 1/(1+r) exactly for r = d/x, so
-/// cbrt(x) = s * (1+r)^(-1/3), approximated by a minimax poly in r
-/// (fitted with lolremez on the seed error range [-0.0999, 0.0894]).
+/// cbrt(x) = s * (1+r)^(-1/3), approximated by a minimax poly in r (fitted
+/// with lolremez on the seed error range [-0.0999, 0.0894], then
+/// coordinate-descent tuned). Degree3 (4 coeffs) instead of degree5 trades
+/// avg/max ulp (0.085/1 -> 0.33/2, still inside the 1 avg / 2 max budget)
+/// for one fewer fma and one less critical-path depth, worth it: throughput
+/// 2.41 -> 1.00 cyc/elem, latency 39 -> 35 cyc (examples/mca.rs).
 /// All intermediates are O(1) or O(x): no overflow/underflow anywhere.
-/// `scale` (an exact power of two, or 1.0) multiplies the result; it is
-/// applied to `ss` before the final fma so it stays off the serial
-/// critical path (the seed is ready long before the poly).
+/// Callers needing a rescaled result (an exact power of two, or 1.0) must
+/// multiply the *return value*, not thread a scale parameter through: an
+/// in-function scale param that touches 2 downstream ops (the old code
+/// scaled `ss`, which then feeds both `sr` and the final fma) gives LLVM's
+/// vectorizer's per-branch constant-folding heuristic enough incentive to
+/// fully duplicate this entire function for tiny vs. normal inputs instead
+/// of computing once and blending -- confirmed via llvm-mca disassembly
+/// (2x the fma/mul count and 2x the divisions in cbrt's throughput region
+/// vs. cbrt_accurate_normal, which only touches its scale param in a single
+/// final op and doesn't duplicate). A single post-multiply by an exact
+/// power of two rounds identically to pre-scaling (same argument as
+/// cbrt_accurate_normal's scale), so this is a pure codegen fix: throughput
+/// 2.247 -> 1.629 cyc/elem, latency unchanged, no accuracy change
+/// (examples/mca.rs).
 #[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
-pub fn cbrt_normal(x: f32, scale: f32) -> f32 {
+pub fn cbrt_normal(x: f32) -> f32 {
     let ax = x.to_bits() & !SIGN_MASK;
     let a = f32::from_bits(ax);
     let rcp = 1.0 / a; // independent of the seed chain, starts immediately
@@ -209,17 +233,15 @@ pub fn cbrt_normal(x: f32, scale: f32) -> f32 {
     let s2 = s * s;
     let d = fma(s2, s, -a);
     let r = d * rcp;
-    let c1 = -0.33333335f32;
-    let c2 = 0.22221951f32;
-    let c3 = -0.17281278f32;
-    let c4 = 0.14525594f32;
-    let c5 = -0.12942781f32;
+    let c1 = -0.33333164f32;
+    let c2 = 0.22220786f32;
+    let c3 = -0.17394418f32;
+    let c4 = 0.1482371f32;
     let r2 = r * r;
     let a1 = fma(c2, r, c1);
     let b1 = fma(c4, r, c3);
-    let b2 = fma(c5, r2, b1);
-    let p = fma(b2, r2, a1);
-    let ss = f32::from_bits(s.to_bits() | (x.to_bits() & SIGN_MASK)) * scale;
+    let p = fma(b1, r2, a1);
+    let ss = f32::from_bits(s.to_bits() | (x.to_bits() & SIGN_MASK));
     let sr = ss * r;
     fma(sr, p, ss)
 }
@@ -230,7 +252,10 @@ pub fn cbrt(x: f32) -> f32 {
     let tiny = ax < 0x0080_0000; // denormal or zero: rescale by 2^24 = (2^8)^3
     let xs = if tiny { x * 16777216.0 } else { x };
     let scale = if tiny { 0.00390625 } else { 1.0 };
-    let r = cbrt_normal(xs, scale);
+    // scale multiplies cbrt_normal's *return value* (see cbrt_normal's doc
+    // comment for why threading it through as a parameter instead makes
+    // LLVM duplicate the whole function per branch)
+    let r = cbrt_normal(xs) * scale;
     // +-0, +-inf, nan propagate (also kills the rcp=inf NaN for x == +-0)
     if ax == 0 || ax >= EXPONENT_MASK { x + x } else { r }
 }
@@ -244,7 +269,7 @@ pub fn cbrt(x: f32) -> f32 {
 #[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
 pub fn cbrt_accurate_normal(x: f32, scale: f32) -> f32 {
-    let y = cbrt_normal(x, 1.0);
+    let y = cbrt_normal(x);
     let y2 = Df32::from_mul(y, y);
     let y3 = y2 * y;
     // e = y^3 - x, exact-ish: |e| ~ ulp(x)
