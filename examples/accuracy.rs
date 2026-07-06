@@ -237,8 +237,26 @@ fn main() {
         report("std exp2", &s, t0);
     }
     if run("sin") {
-        for (name, hi) in [("sin |x|<=pi/4", 0.785398_f32), ("sin |x|<=10", 10.0), ("sin |x|<=1000", 1000.0)] {
+        for (name, hi) in [
+            ("sin |x|<=pi/4", 0.785398_f32),
+            ("sin |x|<=10", 10.0),
+            ("sin |x|<=1000", 1000.0),
+            ("sin |x|<=1e6", 1e6),
+        ] {
             let domain = move |x: f32| x.abs() <= hi;
+            let s = measure!(domain, sin, |x: f64| x.sin());
+            report(name, &s, t0);
+        }
+        // magnitude buckets past the 1-ulp-average guarantee: verifies the
+        // reduction degrades gradually (not a cliff) well beyond 1e6, per
+        // its doc comment.
+        for (name, lo, hi) in [
+            ("sin [1e7,1e8)", 1e7, 1e8),
+            ("sin [1e9,1e10)", 1e9, 1e10),
+            ("sin [1e12,1e13)", 1e12, 1e13),
+            ("sin [1e15,1e16)", 1e15, 1e16),
+        ] {
+            let domain = move |x: f32| x.abs() >= lo && x.abs() < hi;
             let s = measure!(domain, sin, |x: f64| x.sin());
             report(name, &s, t0);
         }
@@ -248,8 +266,23 @@ fn main() {
         report("std sin (all f32)", &s, t0);
     }
     if run("cos") {
-        for (name, hi) in [("cos |x|<=pi/4", 0.785398_f32), ("cos |x|<=10", 10.0), ("cos |x|<=1000", 1000.0)] {
+        for (name, hi) in [
+            ("cos |x|<=pi/4", 0.785398_f32),
+            ("cos |x|<=10", 10.0),
+            ("cos |x|<=1000", 1000.0),
+            ("cos |x|<=1e6", 1e6),
+        ] {
             let domain = move |x: f32| x.abs() <= hi;
+            let s = measure!(domain, cos, |x: f64| x.cos());
+            report(name, &s, t0);
+        }
+        for (name, lo, hi) in [
+            ("cos [1e7,1e8)", 1e7, 1e8),
+            ("cos [1e9,1e10)", 1e9, 1e10),
+            ("cos [1e12,1e13)", 1e12, 1e13),
+            ("cos [1e15,1e16)", 1e15, 1e16),
+        ] {
+            let domain = move |x: f32| x.abs() >= lo && x.abs() < hi;
             let s = measure!(domain, cos, |x: f64| x.cos());
             report(name, &s, t0);
         }

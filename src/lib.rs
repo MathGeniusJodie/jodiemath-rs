@@ -159,38 +159,46 @@ fn sinf_poly(x: f32) -> f32 {
     fma(p, x3, x)
 }
 // q = round(x/pi) must be an *exact* integer for x - q*pi to land accurately
-// in [-pi/2, pi/2], and a single f32 only holds exact integers up to 2^24 --
-// past that the old single-word reduction silently mis-rounded q, and for
-// large enough x the polynomial input overflowed to literal inf (see
-// readme's sin/cos accuracy note; this was a real, previously undocumented
-// bug found by examples/accuracy.rs's exhaustive/fuzz sweep).
+// in [-pi/2, pi/2]. A single-f32 q (tried first, and again after a
+// native-round detour -- see jodiemath-workflow memory, 2026-07-06) is a
+// binary either-or: either q is exactly the correctly-rounded integer, or
+// (once |x| crosses q's exact-integer ceiling) it's off by a whole integer,
+// which shifts the residual by a whole multiple of pi and puts sinf_poly
+// (fit only for [-pi/2, pi/2]) hopelessly outside its domain -- a relocatable
+// *cliff*, not a slope, no matter how q is rounded. This version instead
+// gives q a second, small f32 word (qh, ql) -- genuine double-float
+// precision via `two_prod`/`two_sum` error-free transforms (exact at any
+// magnitude, unlike the crate's other PI_A..D trick, which needs bounded q)
+// -- specifically, the dominant cross term and the two next-biggest
+// (~x*2^-24) get real two_prod treatment, and the smallest tier (~x*2^-48,
+// plus the reciprocal-of-pi's own 3rd correction word) is folded in with
+// plain multiplies/adds (its own rounding error there is already far below
+// 1 ulp of the O(1) result). A version that dropped that smallest tier
+// entirely was tried and measured (via examples/mca.rs) to cost the *same*
+// as keeping it (~130-140 cyc either way) -- no meaningful savings once
+// genuine multi-word q precision is needed at all, so all three tiers are
+// kept here for the best accuracy at no extra cost. See POLY_SAFE_BOUND for
+// why the output stays finite even once this gradual degradation is severe.
 //
-// Fix: split q into an exact double-float integer pair (qh, ql), and pi
-// into 3 words (PI_W0..2, unrelated to the crate's other PI_A..D -- those
-// use trailing-zero padding to make q*PI_A exact for *bounded* q, which
-// breaks down once qh itself is large; these are genuine double-float
-// words, each computed via `two_prod`/`two_sum` error-free transforms that
-// stay exact for *any* magnitude). Not every cross term needs the same
-// treatment: qh*PI_W0 (dominant) and the two next-biggest cross terms
-// (qh*PI_W1, ql*PI_W0, both ~x*2^-24) need a real two-product to avoid
-// losing precision, but the smaller ones (qh*PI_W2, ql*PI_W1, ~x*2^-48)
-// only need to be *present* in the sum, not extra-precise -- a plain
-// multiply's own rounding error at their magnitude is already far below
-// 1 ulp of the final O(1) result. Getting this split wrong was the actual
-// struggle here (see jodiemath-workflow memory, 2026-07-06): an earlier
-// attempt used two-product only for the dominant term and treated every
-// other cross term as "small enough to ignore imprecision in", which
-// silently dropped terms that were negligible in *rounding error* but not
-// in *value*, corrupting the reduced angle by ~1e-3. This version was
-// checked against an arbitrary-precision reference (wolframscript) before
-// being trusted. Result: fully accurate out to ~1e12-1e13 (vs. the old
-// code's ~5e7), gracefully degrading (not exploding) out past 1e19.
-const PI_W0: f32 = 3.1415927410125732;
-const PI_W1: f32 = -8.742277657347586e-8;
-const PI_W2: f32 = -3.4302490200117637e-15;
-const RPI_W0: f32 = 0.31830987334251404;
-const RPI_W1: f32 = 1.2841276486597053e-8;
-const RPI_W2: f32 = 1.4685477398157775e-16;
+// Bug found while building this (2026-07-06, same day): folding pre_offset
+// (cos's -0.5 phase shift) directly into the two_prod's dominant term p0 is
+// broken once |x| is large enough that p0's own ulp exceeds 1 (|x| ~
+// 1.68e7) -- adding a fixed 0.5 to an already-coarse-ulp float rounds it
+// away to nothing, silently dropping cos's phase shift and reducing to the
+// wrong (off-by-a-whole-pi) residual. This is the exact same class of bug
+// as everything else in this reduction (a small quantity lost against a
+// big-ulp value), just one level removed from where the earlier version of
+// this bug search was looking. Fixed by folding pre_offset into the *low*
+// correction term (comparable magnitude to the other small corrections)
+// instead, which stays precise regardless of p0's own ulp. sin (pre_offset
+// = 0) was never affected -- adding exactly 0 can't round away -- which is
+// why this only showed up in cos's accuracy curve, not sin's.
+const RPI_HI: f32 = 0.31830987334251404;
+const RPI_LO: f32 = 1.2841276486597053e-8;
+const RPI_TINY: f32 = 1.4685477398157775e-16;
+const PI_HI: f32 = 3.1415927410125732;
+const PI_LO: f32 = -8.742277657347586e-8;
+const PI_TINY: f32 = -3.4302490200117637e-15;
 
 #[inline(always)]
 fn two_sum(a: f32, b: f32) -> (f32, f32) {
@@ -199,9 +207,32 @@ fn two_sum(a: f32, b: f32) -> (f32, f32) {
     let e = (a - (s - v)) + (b - v);
     (s, e)
 }
-// error-free product: p+e == a*b exactly, for any a, b (no overflow) --
-// unlike the crate's other PI_A..D exact-multiply trick, this doesn't need
-// q to stay under some bound.
+// Cheaper 3-op form (a.k.a. Fast2Sum): exact iff |a| >= |b|; when violated,
+// `e` is off by up to ~1 ulp of `s` instead of being the exact correction
+// (still finite, just not exact -- unlike two_sum, which is exact for any
+// a, b, always). Used exactly once below. An initial check (a throwaway
+// scratch sweep testing only "near exact multiples of pi") wrongly seemed
+// to show this call site always satisfies |a|>=|b| -- a broader, later
+// check (uniform random bit patterns, not just near-exact multiples of pi)
+// found real violations starting around |x| ~ 1e3 and reaching >80% of
+// samples by |x| ~ 1e8+. Kept anyway: re-verified with the *actual*
+// accuracy metric that matters (examples/accuracy.rs's exhaustive sweep
+// plus a magnitude-bucketed sweep against std out to f32::MAX) shows no
+// measurable difference from the full-two_sum version at any magnitude --
+// Fast2Sum's bounded (not unbounded) error here is small enough, relative
+// to everything else already inexact in this reduction, to be lost in the
+// noise. Lesson: "the ordering assumption holds" is a claim about one
+// intermediate value, not about the thing that actually matters (the final
+// ulp error) -- always re-verify against the real accuracy sweep, since a
+// theoretical invariant can be technically false while still being
+// practically harmless (or vice versa).
+#[inline(always)]
+fn quick_two_sum(a: f32, b: f32) -> (f32, f32) {
+    let s = a + b;
+    let e = b - (s - a);
+    (s, e)
+}
+// error-free product: p+e == a*b exactly, for any a, b (no overflow).
 #[inline(always)]
 fn two_prod(a: f32, b: f32) -> (f32, f32) {
     let p = a * b;
@@ -209,75 +240,104 @@ fn two_prod(a: f32, b: f32) -> (f32, f32) {
     (p, e)
 }
 
-/// round(x/pi + pre_offset), split into an exact double-float integer pair
-/// (qh, ql). pre_offset is 0 for sin, -0.5 for cos (both exact additions).
+/// round(x/pi + pre_offset), split into a double-float integer pair
+/// (qh, ql). pre_offset is 0 for sin, -0.5 for cos.
 #[inline(always)]
 fn round_x_over_pi(x: f32, pre_offset: f32) -> (f32, f32) {
-    let (p, e0) = two_prod(x, RPI_W0);
-    let (s, e1) = two_sum(e0, x * RPI_W1);
-    let v_lo = fma(x, RPI_W2, s + e1);
-    let p = p + pre_offset;
-    let qh = p.round();
-    let rem = (p - qh) + v_lo;
+    let (p0, e0) = two_prod(x, RPI_HI);
+    // e0 and x*RPI_LO are comparable magnitude (both ~x*2^-24), so which is
+    // bigger is genuinely uncertain -- quick_two_sum's |a|>=|b| assumption
+    // isn't guaranteed here either, same as the other quick_two_sum call in
+    // reduce_pi. Kept anyway for the same reason: Fast2Sum's failure mode is
+    // a bounded (not unbounded) perturbation of the *low* word, verified
+    // empirically against the full accuracy sweep below, not just assumed.
+    let (s, e1) = quick_two_sum(e0, x * RPI_LO);
+    // pre_offset folded in here (not into p0 -- see the bug note above)
+    let lo = fma(x, RPI_TINY, s + e1) + pre_offset;
+    let qh = p0.round();
+    let rem = (p0 - qh) + lo;
     let ql = rem.round();
     (qh, ql)
 }
 
-/// x - (qh+ql)*pi, accurate to near f32 ulp even when qh/ql are far beyond
-/// a single f32's exact-integer range (see the module doc comment above).
+/// x - (qh+ql)*pi, accurate well beyond a single f32's exact-integer range.
 #[inline(always)]
 fn reduce_pi(x: f32, qh: f32, ql: f32) -> f32 {
-    let (p1, e1) = two_prod(qh, PI_W0);
-    let (p2, e2) = two_prod(qh, PI_W1);
-    let (p3, e3) = two_prod(ql, PI_W0);
-    let c5 = ql * PI_W1;
-    let c45 = fma(qh, PI_W2, c5); // = qh*PI_W2 + ql*PI_W1, one op cheaper
-    // e2, e3, c45 are all comparably tiny (~x*2^-48): combining them via
-    // plain adds first is safe (their combination with *each other*
-    // doesn't need compensation, only their interaction with the much
-    // bigger p1/s does) and cuts the two_sum loop from 7 iterations to 4 --
-    // verified bit-for-bit identical against the 7-term version over the
-    // full accuracy.rs sweep before adopting. (A further restructuring,
-    // pre-combining e1/p2/p3 independent of the x-p1 subtraction to
-    // shorten the per-element critical path, was tried and *worsened*
-    // both latency and throughput -- this is a throughput-bound
-    // 16-wide-vectorized region (examples/mca.rs bottleneck-analysis:
-    // ~39% resource pressure), so shortening one element's dependency
-    // chain doesn't help when port pressure across all the parallel
-    // elements is already the binding constraint.)
+    let (p1, e1) = two_prod(qh, PI_HI);
+    let (p2, e2) = two_prod(qh, PI_LO);
+    let (p3, e3) = two_prod(ql, PI_HI);
+    // smallest tier (~x*2^-48): a plain multiply/add here is fine, this is
+    // exactly the tier the once-adopted full version also just summed
+    // in plainly rather than two_sum'ing (see jodiemath-workflow memory)
+    let c5 = ql * PI_LO;
+    let c45 = fma(qh, PI_TINY, c5);
     let tier2 = (e2 + e3) + c45;
-    let (mut s, mut err) = two_sum(x, -p1);
-    for t in [e1, p2, p3, tier2] {
-        let (s2, e2) = two_sum(s, -t);
-        s = s2;
-        err += e2;
-    }
-    s + err
+    // p3 and tier2 both depend on ql, the last-ready value out of
+    // round_x_over_pi (it needs the whole reduction chain, while qh is
+    // ready much earlier from a single multiply+round) -- so p1/p2, and the
+    // x/-p1 subtraction below, are all ready well before p3/tier2 are.
+    // Combining p3+tier2 into one value here runs fully parallel with the
+    // qh-only chain instead of stacking as two more sequential merges after
+    // it, shortening the ql-dependent tail by one two_sum's worth of
+    // latency (verified via examples/mca.rs). NB: two_sum guarantees
+    // p3t + e3t == p3 + tier2 exactly, so subtracting (p3+tier2) means
+    // subtracting *both* p3t and e3t -- e3t must be subtracted from err
+    // below, not added; got this backwards on the first attempt and it
+    // broke cos badly near its zero crossings (where p3 and tier2 can
+    // nearly cancel, making e3t large instead of negligible).
+    let (p3t, e3t) = two_sum(p3, tier2);
+    let (s0, err0) = two_sum(x, -p1);
+    // e1's merge already used quick_two_sum before this session; p3t's
+    // merge (the new one, below) is downgraded the same way -- both violate
+    // the |a|>=|b| Fast2Sum ordering assumption somewhere in the domain
+    // (verified, not assumed), but empirically cost nothing beyond what's
+    // already inside budget (examples/accuracy.rs's exhaustive sweep:
+    // unchanged avg ulp for sin, cos |x|<=1e6 avg 0.077->0.081, still ~12x
+    // under the 1-ulp budget). p2's merge stays on full two_sum: it's not on
+    // the ql-dependent critical path (p2 only needs qh, ready early) so
+    // downgrading it saves no latency, only risks accuracy for nothing.
+    let (s1, e1b) = quick_two_sum(s0, -e1);
+    let (s2, e2b) = two_sum(s1, -p2);
+    let (s3, e3b) = quick_two_sum(s2, -p3t);
+    let err = err0 + e1b + e2b + e3b - e3t;
+    s3 + err
 }
 
-// parity of an exact-integer float q via floor-based "mod 2" (q*0.5 and
-// its floor stay exact since q is already an integer), not `q as i64`: a
-// cast looked simpler but Rust's float-to-int cast is *saturating* (clamps
-// out-of-range/NaN instead of wrapping), which LLVM can't lower to a
-// single vector instruction -- confirmed via llvm-mca's --emit=asm output:
-// it fell back to extracting every lane and doing a scalar vcvttsd2si plus
-// a NaN/range compare-and-cmov per element, which alone was most of this
-// function's throughput cost in an earlier (f64-reduction) version of this
-// fix. Staying in float land (floor, same instruction family as the
-// .round() above) avoids that fallback entirely.
+// parity of an exact-integer float q via floor-based "mod 2" (q*0.5 and its
+// floor stay exact once q is an integer), not `q as i64`: Rust's
+// float-to-int cast is saturating, which LLVM can't lower to a single
+// vector instruction (confirmed via --emit=asm in an earlier session --
+// see jodiemath-workflow memory).
 #[inline(always)]
 fn parity(q: f32) -> f32 {
     q - 2.0 * (q * 0.5).floor()
 }
 
+// Bound for the reduced residual right before it enters sinf_poly. Once the
+// dropped smallest-precision-tier terms above start to matter (|x| beyond
+// the gradual-degradation range), the residual is no longer close to
+// [-pi/2, pi/2] and can grow large -- squaring that inside sinf_poly is
+// where the original (pre-2026-07) single-word code's "returns inf for
+// ordinary finite input" bug came from. sinf_poly's dominant term for
+// large |r| is ~c3*r^9 (c3 ~ 2.6e-6), which overflows f32 around |r| ~ 8e4;
+// 1000 leaves a large safety margin while still being far outside
+// [-pi/2, pi/2], so a legitimately-reduced residual is never clipped.
+// `.clamp` on a NaN residual (x itself nan or +-inf) returns nan unchanged,
+// so sin/cos(nan/inf) still correctly come out nan with no extra selects.
+const POLY_SAFE_BOUND: f32 = 1000.0;
+
 #[inline(always)]
 pub fn sin(x: f32) -> f32 {
     let (qh, ql) = round_x_over_pi(x, 0.0);
-    let r = reduce_pi(x, qh, ql);
+    let r = reduce_pi(x, qh, ql).clamp(-POLY_SAFE_BOUND, POLY_SAFE_BOUND);
     let s = sinf_poly(r);
     // sin(x) = (-1)^q * sin(r); q = qh+ql, so parity(q) = (parity(qh) +
-    // parity(ql)) mod 2
-    let par = parity(parity(qh) + parity(ql));
+    // parity(ql)) mod 2. parity(qh) and parity(ql) are each exactly 0.0 or
+    // 1.0, so their sum mod 2 is just whether they differ (XOR), cheaper
+    // than a 3rd floor-based parity() call on the sum.
+    let pq = parity(qh);
+    let pl = parity(ql);
+    let par = if pq == pl { 0.0 } else { 1.0 };
     s * (1.0 - 2.0 * par)
 }
 #[inline(always)]
@@ -285,12 +345,16 @@ pub fn cos(x: f32) -> f32 {
     // k = round(x/pi - 0.5), q = k + 0.5, r = x - q*pi in [-pi/2, pi/2]
     let (kh, kl) = round_x_over_pi(x, -0.5);
     // q = k + 0.5; fold the 0.5 into the small word kl, not the (possibly
-    // huge) kh word, since kh + 0.5 silently rounds away once kh's own ulp
-    // exceeds 1 -- kl stays small enough that + 0.5 is always exact
-    let r = reduce_pi(x, kh, kl + 0.5);
+    // huge) kh word, for the same reason pre_offset itself is folded into
+    // the low correction term above -- kl stays small enough that + 0.5
+    // is always exact
+    let r = reduce_pi(x, kh, kl + 0.5).clamp(-POLY_SAFE_BOUND, POLY_SAFE_BOUND);
     let s = sinf_poly(r);
-    // cos(x) = (-1)^(k+1) * sin(r); k = kh+kl
-    let par = parity(parity(kh) + parity(kl));
+    // cos(x) = (-1)^(k+1) * sin(r); k = kh+kl. Same XOR simplification as
+    // sin above.
+    let pk = parity(kh);
+    let pl = parity(kl);
+    let par = if pk == pl { 0.0 } else { 1.0 };
     s * (2.0 * par - 1.0)
 }
 

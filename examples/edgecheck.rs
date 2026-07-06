@@ -5,6 +5,10 @@ fn check(name: &str, got: f32, want: f32) {
     println!("{} {:30} got {:e} (0x{:08x}) want {:e}", if ok { "ok  " } else { "FAIL" }, name, got, got.to_bits(), want);
 }
 
+fn check_finite(name: &str, got: f32) {
+    println!("{} {:30} got {:e} (0x{:08x}) (finite)", if got.is_finite() { "ok  " } else { "FAIL" }, name, got, got.to_bits());
+}
+
 fn main() {
     // log_2
     check("log_2(0)", log_2(0.0), f32::NEG_INFINITY);
@@ -49,5 +53,21 @@ fn main() {
         check(&format!("{n}(min_denorm)"), f(f32::from_bits(1)), ((f32::from_bits(1) as f64).cbrt()) as f32);
         check(&format!("{n}(max)"), f(f32::MAX), ((f32::MAX as f64).cbrt()) as f32);
         check(&format!("{n}(2^-57)"), f(f32::from_bits(0x2300_0000)), ((f32::from_bits(0x2300_0000) as f64).cbrt()) as f32);
+    }
+    // sin/cos: accurate reduction only holds while q = round(x/pi) is an
+    // exact f32 integer (|x| well under 2^24 * pi); nan/+-inf must still
+    // come out nan, and every other finite x (including ones far past the
+    // accurate range) must come out finite, never inf -- see sin/cos's doc
+    // comment for why (the residual clamp added 2026-07-06 that guarantees
+    // this).
+    for f in [sin as fn(f32) -> f32, cos as fn(f32) -> f32] {
+        let n = if f == sin as fn(f32) -> f32 { "sin" } else { "cos" };
+        check(&format!("{n}(nan)"), f(f32::NAN), f32::NAN);
+        check(&format!("{n}(inf)"), f(f32::INFINITY), f32::NAN);
+        check(&format!("{n}(-inf)"), f(f32::NEG_INFINITY), f32::NAN);
+        check_finite(&format!("{n}(max)"), f(f32::MAX));
+        check_finite(&format!("{n}(-max)"), f(f32::MIN));
+        check_finite(&format!("{n}(1e20)"), f(1e20));
+        check_finite(&format!("{n}(1e10)"), f(1e10));
     }
 }
