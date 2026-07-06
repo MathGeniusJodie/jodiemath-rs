@@ -158,45 +158,140 @@ fn sinf_poly(x: f32) -> f32 {
     let p = fma(b, y2, a);
     fma(p, x3, x)
 }
-// pi split into pieces with trailing zero bits so q*PI_A and q*PI_B are
-// exact for moderate |q|, keeping the reduced argument accurate in a
-// relative sense near the zeros of sin (Cody-Waite with fma).
-const PI_A: f32 = 3.140625;
-const PI_B: f32 = 0.0009670257568359375;
-const PI_C: f32 = 6.277114152908325e-7;
-const PI_D: f32 = 1.2154201256553421e-10;
-const FRAC_1_PI: f32 = std::f32::consts::FRAC_1_PI;
+// q = round(x/pi) must be an *exact* integer for x - q*pi to land accurately
+// in [-pi/2, pi/2], and a single f32 only holds exact integers up to 2^24 --
+// past that the old single-word reduction silently mis-rounded q, and for
+// large enough x the polynomial input overflowed to literal inf (see
+// readme's sin/cos accuracy note; this was a real, previously undocumented
+// bug found by examples/accuracy.rs's exhaustive/fuzz sweep).
+//
+// Fix: split q into an exact double-float integer pair (qh, ql), and pi
+// into 3 words (PI_W0..2, unrelated to the crate's other PI_A..D -- those
+// use trailing-zero padding to make q*PI_A exact for *bounded* q, which
+// breaks down once qh itself is large; these are genuine double-float
+// words, each computed via `two_prod`/`two_sum` error-free transforms that
+// stay exact for *any* magnitude). Not every cross term needs the same
+// treatment: qh*PI_W0 (dominant) and the two next-biggest cross terms
+// (qh*PI_W1, ql*PI_W0, both ~x*2^-24) need a real two-product to avoid
+// losing precision, but the smaller ones (qh*PI_W2, ql*PI_W1, ~x*2^-48)
+// only need to be *present* in the sum, not extra-precise -- a plain
+// multiply's own rounding error at their magnitude is already far below
+// 1 ulp of the final O(1) result. Getting this split wrong was the actual
+// struggle here (see jodiemath-workflow memory, 2026-07-06): an earlier
+// attempt used two-product only for the dominant term and treated every
+// other cross term as "small enough to ignore imprecision in", which
+// silently dropped terms that were negligible in *rounding error* but not
+// in *value*, corrupting the reduced angle by ~1e-3. This version was
+// checked against an arbitrary-precision reference (wolframscript) before
+// being trusted. Result: fully accurate out to ~1e12-1e13 (vs. the old
+// code's ~5e7), gracefully degrading (not exploding) out past 1e19.
+const PI_W0: f32 = 3.1415927410125732;
+const PI_W1: f32 = -8.742277657347586e-8;
+const PI_W2: f32 = -3.4302490200117637e-15;
+const RPI_W0: f32 = 0.31830987334251404;
+const RPI_W1: f32 = 1.2841276486597053e-8;
+const RPI_W2: f32 = 1.4685477398157775e-16;
 
-// 1.5 * 2^23; adding this to |v| < 2^22 rounds v to the nearest integer
-// in the low mantissa bits (round-to-nearest-even).
-const ROUND_MAGIC: f32 = 12582912.0;
+#[inline(always)]
+fn two_sum(a: f32, b: f32) -> (f32, f32) {
+    let s = a + b;
+    let v = s - a;
+    let e = (a - (s - v)) + (b - v);
+    (s, e)
+}
+// error-free product: p+e == a*b exactly, for any a, b (no overflow) --
+// unlike the crate's other PI_A..D exact-multiply trick, this doesn't need
+// q to stay under some bound.
+#[inline(always)]
+fn two_prod(a: f32, b: f32) -> (f32, f32) {
+    let p = a * b;
+    let e = fma(a, b, -p);
+    (p, e)
+}
+
+/// round(x/pi + pre_offset), split into an exact double-float integer pair
+/// (qh, ql). pre_offset is 0 for sin, -0.5 for cos (both exact additions).
+#[inline(always)]
+fn round_x_over_pi(x: f32, pre_offset: f32) -> (f32, f32) {
+    let (p, e0) = two_prod(x, RPI_W0);
+    let (s, e1) = two_sum(e0, x * RPI_W1);
+    let v_lo = fma(x, RPI_W2, s + e1);
+    let p = p + pre_offset;
+    let qh = p.round();
+    let rem = (p - qh) + v_lo;
+    let ql = rem.round();
+    (qh, ql)
+}
+
+/// x - (qh+ql)*pi, accurate to near f32 ulp even when qh/ql are far beyond
+/// a single f32's exact-integer range (see the module doc comment above).
+#[inline(always)]
+fn reduce_pi(x: f32, qh: f32, ql: f32) -> f32 {
+    let (p1, e1) = two_prod(qh, PI_W0);
+    let (p2, e2) = two_prod(qh, PI_W1);
+    let (p3, e3) = two_prod(ql, PI_W0);
+    let c5 = ql * PI_W1;
+    let c45 = fma(qh, PI_W2, c5); // = qh*PI_W2 + ql*PI_W1, one op cheaper
+    // e2, e3, c45 are all comparably tiny (~x*2^-48): combining them via
+    // plain adds first is safe (their combination with *each other*
+    // doesn't need compensation, only their interaction with the much
+    // bigger p1/s does) and cuts the two_sum loop from 7 iterations to 4 --
+    // verified bit-for-bit identical against the 7-term version over the
+    // full accuracy.rs sweep before adopting. (A further restructuring,
+    // pre-combining e1/p2/p3 independent of the x-p1 subtraction to
+    // shorten the per-element critical path, was tried and *worsened*
+    // both latency and throughput -- this is a throughput-bound
+    // 16-wide-vectorized region (examples/mca.rs bottleneck-analysis:
+    // ~39% resource pressure), so shortening one element's dependency
+    // chain doesn't help when port pressure across all the parallel
+    // elements is already the binding constraint.)
+    let tier2 = (e2 + e3) + c45;
+    let (mut s, mut err) = two_sum(x, -p1);
+    for t in [e1, p2, p3, tier2] {
+        let (s2, e2) = two_sum(s, -t);
+        s = s2;
+        err += e2;
+    }
+    s + err
+}
+
+// parity of an exact-integer float q via floor-based "mod 2" (q*0.5 and
+// its floor stay exact since q is already an integer), not `q as i64`: a
+// cast looked simpler but Rust's float-to-int cast is *saturating* (clamps
+// out-of-range/NaN instead of wrapping), which LLVM can't lower to a
+// single vector instruction -- confirmed via llvm-mca's --emit=asm output:
+// it fell back to extracting every lane and doing a scalar vcvttsd2si plus
+// a NaN/range compare-and-cmov per element, which alone was most of this
+// function's throughput cost in an earlier (f64-reduction) version of this
+// fix. Staying in float land (floor, same instruction family as the
+// .round() above) avoids that fallback entirely.
+#[inline(always)]
+fn parity(q: f32) -> f32 {
+    q - 2.0 * (q * 0.5).floor()
+}
 
 #[inline(always)]
 pub fn sin(x: f32) -> f32 {
-    let qb = fma(x, FRAC_1_PI, ROUND_MAGIC);
-    let q = qb - ROUND_MAGIC;
-    let r = fma(q, -PI_A, x);
-    let r = fma(q, -PI_B, r);
-    let r = fma(q, -PI_C, r);
-    let r = fma(q, -PI_D, r);
+    let (qh, ql) = round_x_over_pi(x, 0.0);
+    let r = reduce_pi(x, qh, ql);
     let s = sinf_poly(r);
-    // sin(x) = (-1)^q * sin(r); parity of q is the lowest mantissa bit of qb
-    let parity = qb.to_bits() << 31;
-    f32::from_bits(s.to_bits() ^ parity)
+    // sin(x) = (-1)^q * sin(r); q = qh+ql, so parity(q) = (parity(qh) +
+    // parity(ql)) mod 2
+    let par = parity(parity(qh) + parity(ql));
+    s * (1.0 - 2.0 * par)
 }
 #[inline(always)]
 pub fn cos(x: f32) -> f32 {
     // k = round(x/pi - 0.5), q = k + 0.5, r = x - q*pi in [-pi/2, pi/2]
-    let kb = fma(x, FRAC_1_PI, -0.5) + ROUND_MAGIC;
-    let q = (kb - ROUND_MAGIC) + 0.5;
-    let r = fma(q, -PI_A, x);
-    let r = fma(q, -PI_B, r);
-    let r = fma(q, -PI_C, r);
-    let r = fma(q, -PI_D, r);
+    let (kh, kl) = round_x_over_pi(x, -0.5);
+    // q = k + 0.5; fold the 0.5 into the small word kl, not the (possibly
+    // huge) kh word, since kh + 0.5 silently rounds away once kh's own ulp
+    // exceeds 1 -- kl stays small enough that + 0.5 is always exact
+    let r = reduce_pi(x, kh, kl + 0.5);
     let s = sinf_poly(r);
-    // cos(x) = (-1)^(k+1) * sin(r)
-    let parity = !kb.to_bits() << 31;
-    f32::from_bits(s.to_bits() ^ parity)
+    // cos(x) = (-1)^(k+1) * sin(r); k = kh+kl
+    let par = parity(parity(kh) + parity(kl));
+    s * (2.0 * par - 1.0)
 }
 
 /// Core of cbrt for normal finite x: bit-trick seed (~3% error), then a
@@ -271,9 +366,15 @@ pub fn cbrt(x: f32) -> f32 {
 pub fn cbrt_accurate_normal(x: f32, scale: f32) -> f32 {
     let ax = x.to_bits() & !SIGN_MASK;
     let a = f32::from_bits(ax);
-    // Depends only on x, so it runs in parallel with the seed chain below
-    // instead of waiting on y (see den_recip).
-    let rcp3 = (1.0 / a) * (1.0 / 3.0);
+    // Depends only on x (not y or e), so this whole expression runs fully
+    // parallel with cbrt_normal's seed chain and the double-float cube
+    // below -- folding scale in here too (rather than into a separate
+    // multiply after y or e are ready) means the only work left on the
+    // critical path after e is a single fma, and the only work left after y
+    // is a single multiply (den_recip), instead of two of each. scale is an
+    // exact power of two, so this rounds identically to scaling afterwards
+    // (no intermediate hits the denormal range).
+    let neg_rcp3_scale = -((1.0 / a) * (1.0 / 3.0)) * scale;
     let y = cbrt_normal(x);
     let y2 = Df32::from_mul(y, y);
     let y3 = y2 * y;
@@ -288,11 +389,8 @@ pub fn cbrt_accurate_normal(x: f32, scale: f32) -> f32 {
     // examples/accuracy.rs sweep and examples/edgecheck.rs. Also a real
     // (small) throughput win here since this CPU's FP divider is nearly
     // idle while FMA/mul ports are the bottleneck (examples/mca.rs).
-    let den_recip = y.abs() * rcp3;
-    // (y - e / (3 y^2)) * scale, with the scale mul on y hidden behind the
-    // divide; scale is an exact power of two so the fma rounds identically
-    // to scaling afterwards (no intermediate hits the denormal range)
-    fma(e * den_recip, -scale, y * scale)
+    let neg_den_recip_scale = y.abs() * neg_rcp3_scale;
+    fma(e, neg_den_recip_scale, y * scale)
 }
 
 #[inline(always)]
