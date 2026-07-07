@@ -70,10 +70,35 @@ branches, no scalar-only intrinsics unless the vector form exists).
   and handle k·ln2 as Cody–Waite: `fma(k, LN2_HI, poly_ln) + k*LN2_LO` — two
   extra fmas, roughly halves ln's error. Same for log10.
 - **log_2 degree-8 probe** with quantized refit (see cross-cutting).
-- **log1p, real fix (branchless)**: u = 1 + x; c = x − (u − 1) (exact by
-  Sterbenz for the interesting range); result = ln(u) + c/u (or `fma(c, 1/u,
-  ln(u))` — another division for the idle divider). Fixes the documented
-  small-x cliff with selects only.
+- **log1p, real fix (branchless) — done, tested, kept (2026-07-07).** u = 1
+  + x; c = x − (u − 1) (exact by Sterbenz for the interesting range);
+  result = ln(u) + c/u. This wasn't a marginal "over budget" case: a fuzz
+  sweep across the whole crate (100M samples/fn) turned up log1p at
+  **172,186,304 avg ulp / 864,026,618 max ulp** (worst x ≈ 6e-8, exactly
+  the documented small-x collapse-to-1.0 cliff) — the naive `ln(1.0 + x)`
+  was returning garbage across most of the domain log1p exists to serve,
+  not a tuning shortfall. Implemented as specified, plus two edge guards
+  the original idea's one-liner glossed over: x = −1 exactly (u = 0) makes
+  c/u a literal 0/0, and x = +inf makes it inf/inf (via c = x−(u−1) =
+  inf−inf = NaN first) — both should contribute nothing (ln(u) alone is
+  already the correct −inf/+inf) but without a guard they poison the sum to
+  NaN. Both collapse c/u itself to NaN, so a single `corr.is_finite()`
+  check (not two separate checks on u) suppresses both at once. Verified:
+  exhaustive (all 2^32 patterns) sweep now shows avg ulp 0.1061 / max ulp 4
+  (worst x ≈ 0.13, unrelated to the small-x fix — this is just ln's own
+  ~3-ulp fit error compounding by one step, an expected residual, not a new
+  bug); edgecheck's `log1p(0)/(-1)/(-2)` and a temporary test covering
+  ±inf/NaN/f32::MAX/a small-x sanity check all passed before the temp test
+  was removed. mca cost, measured (not just reasoned about, after an
+  initial two-guard version cost noticeably more before collapsing to the
+  one-check form above): 59.98→61.14 cyc latency (+1.9%), 2.084→2.339
+  cyc/elem throughput (+12.2%) — a real but modest cost, mostly one
+  division (the crate's established idle-divider finding) plus the
+  is_finite guard. Kept despite the nonzero perf cost: this crate's stated
+  budget (≤0.5 avg / ≤2 max ulp) treats accuracy as the primary constraint
+  and speed as the thing traded *within* it, and a 172-million-ulp average
+  is a correctness bug, not a trade to weigh against a ~12% throughput
+  cost on one function.
 - **Denormal pre-scale via multiply**: current tiny-path is fine; with AVX-512
   `vgetmantps`/`vgetexpps` the whole tiny/koff dance disappears.
 

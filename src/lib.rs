@@ -676,17 +676,28 @@ pub fn log10(x: f32) -> f32 {
     log_2(x) * LOG10_2
 }
 
-/// Straight port of jodiemath's log1pf: ln(1+x), inherited as-is including
-/// its known flaw -- log1p exists specifically to be accurate for small
-/// |x| (where 1+x would normally lose precision), but this formula computes
-/// 1.0+x first anyway, so for |x| below ~6e-8 (half of f32's ulp(1.0)) it
-/// rounds to exactly 1.0 and ln(1.0) returns exactly 0 instead of the
-/// (tiny but nonzero) correct answer -- the same cancellation class as
-/// asinh/atanh below. A real fix needs to skip the 1+x step for small x,
-/// beyond a straight port.
+/// ln(1+x), accurate for small |x| (unlike the naive `ln(1.0 + x)`, which
+/// loses x's low bits forming 1.0+x -- the exact case log1p exists to
+/// handle -- and rounds to exactly 1.0, hence exactly 0, for |x| below
+/// ~6e-8, half of f32's ulp(1.0)). u = 1+x still rounds away those bits,
+/// but c = x - (u - 1) recovers the *exact* rounding error (u - 1 is exact
+/// by Sterbenz whenever u is within a factor of 2 of 1, i.e. x in roughly
+/// [-0.5, 1] -- comfortably covering the whole small-x range this matters
+/// for), and d(ln)/du = 1/u folds it back in as one division (idle
+/// divider) + one add. u == 0 (x == -1 exactly, log1p's other domain edge)
+/// and u == inf (x == inf) both make the correction degenerate to a
+/// literal 0/0 or inf-inf-over-inf NaN even though it should contribute
+/// nothing there (ln(u) alone is already the correct -inf/+inf) -- both
+/// edges collapse c/u itself to NaN, so one `is_finite` check on the
+/// already-computed correction (not a separate check on u) suppresses both
+/// at once instead of letting it poison the result.
 #[inline(always)]
 pub fn log1p(x: f32) -> f32 {
-    ln(1.0 + x)
+    let u = 1.0 + x;
+    let c = x - (u - 1.0);
+    let corr = c / u;
+    let corr = if corr.is_finite() { corr } else { 0.0 };
+    ln(u) + corr
 }
 
 /// Straight port of jodiemath's expf: exp2(x * log2(e)). Inherits exp2's
