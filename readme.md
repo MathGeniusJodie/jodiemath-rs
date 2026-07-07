@@ -265,6 +265,31 @@ IDEAS.md for the before/after measurements):
   log_2/exp2_checked machinery with only a sign correction at the end).
   mca cost is small: 97.88->98.03 cyc latency (+0.2%), 3.788->3.898
   cyc/elem throughput (+2.9%).
+- **fixed**: three infinity-handling gaps in the two-arg functions, found
+  by extending the same sweep to `+-inf`/`NaN` combinations after the
+  powf fix above. `remainder(finite x, +-inf)` was `NaN` instead of `x`
+  (IEEE754/C99: `q` rounds to exactly `0.0` for any finite `x`, but
+  multiplying that zero by an *infinite* `y` gave `NaN` via `0*inf`,
+  instead of the intended "no reduction happened" no-op) -- fixed with a
+  trailing `if y.is_infinite() && x.is_finite() { x } else { r }` select
+  (`x`/`y` themselves infinite/NaN still correctly fall through to `NaN`,
+  matching std). `hypot(+-inf, NaN)` was `NaN` instead of `+inf` --
+  IEEE754/C99 special-cases infinity to "win" over NaN here (unlike
+  almost every other function), which the naive `x*x+y*y` formula can't
+  reach on its own once either argument actually is NaN -- fixed with a
+  trailing `if x.is_infinite() || y.is_infinite() { INFINITY } else { normal }`
+  select; distinct from hypot's already-documented finite-overflow
+  tradeoff, unaffected either way. `atan2(+-inf, +-inf)` was `NaN`
+  instead of a defined `+-pi/4`/`+-3pi/4` by quadrant -- `y/x` is
+  `inf/inf` (`NaN`) there, so the general atan-based formula has no ratio
+  to work with at true infinity; IEEE754/C99 define a fixed convention
+  instead, added as a trailing select the same way. All three follow the
+  same "compute everything unconditionally, select last, no early
+  returns" idiom as the log1p/remainder/powf fixes above (an early return
+  here would risk the same `llvm-mca` region-marker corruption already
+  found once this session). mca cost is negligible: atan2 unchanged
+  (57.17/1.467), hypot +0.5%/+0.4% (21.00->21.11 cyc, 0.763->0.766
+  cyc/elem), remainder unchanged (33.02/0.647).
 
 **sinh_throughput/cosh_throughput** are a second tier for sinh/cosh, added
 after finding that computing `exp(-x)` as `1.0 / exp(x)` (instead of a
@@ -631,7 +656,7 @@ atan2               |          57.17 |             1.467
 tan                 |          71.02 |             2.532
 erf                 |         102.74 |             3.163
 erfc                |          78.09 |             2.599
-hypot               |          21.00 |             0.763
+hypot               |          21.11 |             0.766
 powf                |          98.03 |             3.898
 remainder           |          33.02 |             0.647
 ```

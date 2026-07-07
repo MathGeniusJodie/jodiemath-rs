@@ -200,6 +200,13 @@ fn main() {
     check("atan2(-0,-1)", atan2(-0.0, -1.0), -std::f32::consts::PI);
     check("atan2(1,-0)", atan2(1.0, -0.0), std::f32::consts::FRAC_PI_2);
     check("atan2(-1,-0)", atan2(-1.0, -0.0), -std::f32::consts::FRAC_PI_2);
+    // atan2(+-inf, +-inf): y/x is inf/inf = NaN, so the general formula
+    // can't produce an answer -- IEEE754/C99 define a canonical result by
+    // quadrant regardless (+-pi/4 or +-3pi/4), used to come out NaN here.
+    check("atan2(inf,inf)", atan2(f32::INFINITY, f32::INFINITY), std::f32::consts::FRAC_PI_4);
+    check("atan2(inf,-inf)", atan2(f32::INFINITY, f32::NEG_INFINITY), 3.0 * std::f32::consts::FRAC_PI_4);
+    check("atan2(-inf,inf)", atan2(f32::NEG_INFINITY, f32::INFINITY), -std::f32::consts::FRAC_PI_4);
+    check("atan2(-inf,-inf)", atan2(f32::NEG_INFINITY, f32::NEG_INFINITY), -3.0 * std::f32::consts::FRAC_PI_4);
     check("tan(0)", tan(0.0), 0.0);
 
     check("erf(0)", erf(0.0), 0.0);
@@ -222,6 +229,13 @@ fn main() {
 
     check("hypot(0,0)", hypot(0.0, 0.0), 0.0);
     check("hypot(3,4)", hypot(3.0, 4.0), 5.0);
+    // hypot(+-inf, anything) = +inf even with a NaN other argument --
+    // IEEE754/C99 special-cases infinity to "win" over NaN here. The
+    // naive x*x+y*y formula can't reach this alone (inf*inf + NaN*NaN
+    // degrades to NaN); distinct from this function's already-documented
+    // finite-overflow tradeoff.
+    check("hypot(inf,nan)", hypot(f32::INFINITY, f32::NAN), f32::INFINITY);
+    check("hypot(nan,inf)", hypot(f32::NAN, f32::INFINITY), f32::INFINITY);
     check("powf(2,3)", powf(2.0, 3.0), 8.0);
     check("powf(1,5)", powf(1.0, 5.0), 1.0);
     // powf used to return plausible-looking finite garbage instead of
@@ -266,4 +280,11 @@ fn main() {
     // was already correct).
     check("remainder(-0,3)", remainder(-0.0, 3.0), -0.0);
     check("remainder(0,3)", remainder(0.0, 3.0), 0.0);
+    // remainder(finite x, +-inf) = x (IEEE754/C99 special case): q rounds
+    // to exactly 0.0 for any finite x, but multiplying that zero by an
+    // *infinite* y used to give NaN (0*inf is NaN) instead of the
+    // intended "no reduction happened, answer is just x" no-op.
+    check("remainder(3,inf)", remainder(3.0, f32::INFINITY), 3.0);
+    check("remainder(-3,inf)", remainder(-3.0, f32::INFINITY), -3.0);
+    check("remainder(inf,3)", remainder(f32::INFINITY, 3.0), f32::NAN);
 }

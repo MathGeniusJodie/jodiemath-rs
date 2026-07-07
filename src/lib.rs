@@ -694,6 +694,7 @@ const LN_2: f32 = std::f32::consts::LN_2;
 const LOG10_2: f32 = std::f32::consts::LOG10_2;
 const LOG2_E: f32 = std::f32::consts::LOG2_E;
 const FRAC_PI_2: f32 = std::f32::consts::FRAC_PI_2;
+const FRAC_PI_4: f32 = std::f32::consts::FRAC_PI_4;
 
 /// Straight port of jodiemath's logf: log2(x) rescaled by ln(2). Same domain
 /// behavior as log_2 (its edge handling covers zero/negative/denormal/inf/nan).
@@ -1167,7 +1168,15 @@ pub fn atan2(y: f32, x: f32) -> f32 {
     let bothzero = !nonzerox && !nonzeroy;
     let hpisignx = if nonzerox || bothzero { mulsign(FRAC_PI_2, x) } else { 0.0 };
     let correction = mulsign(FRAC_PI_2 - hpisignx, y);
-    if nonzerox { atan(y / x) + correction } else { correction }
+    let r = if nonzerox { atan(y / x) + correction } else { correction };
+    // atan2(+-inf, +-inf): y/x is inf/inf, which is NaN, so the general
+    // formula above can't produce an answer here at all. IEEE754/C99
+    // define a canonical result by quadrant regardless (+-pi/4 or
+    // +-3pi/4) -- not derived from any real ratio, since there isn't one
+    // at true infinity, just a fixed convention.
+    let bothinf = x.is_infinite() && y.is_infinite();
+    let inf_result = mulsign(if x.is_sign_negative() { 3.0 * FRAC_PI_4 } else { FRAC_PI_4 }, y);
+    if bothinf { inf_result } else { r }
 }
 
 /// Straight port of jodiemath's tanf: sin(x)/cos(x), same domain limits as
@@ -1270,7 +1279,16 @@ pub fn erfc(x: f32) -> f32 {
 /// their std counterparts.
 #[inline(always)]
 pub fn hypot(x: f32, y: f32) -> f32 {
-    fma(x, x, y * y).sqrt()
+    let normal = fma(x, x, y * y).sqrt();
+    // hypot(+-inf, anything) and hypot(anything, +-inf) = +inf, even when
+    // the other argument is NaN -- IEEE754/C99 special-cases infinity to
+    // "win" over NaN here (unlike almost every other function). The naive
+    // formula can't reach this on its own: once either argument actually
+    // is NaN, `inf*inf + NaN*NaN` degrades to NaN instead. Distinct from
+    // this function's already-documented overflow tradeoff above (that's
+    // about *finite* x/y large enough to overflow x*x/y*y; this is about
+    // a literally-infinite argument, unaffected by that tradeoff either way).
+    if x.is_infinite() || y.is_infinite() { f32::INFINITY } else { normal }
 }
 
 /// exp2(log2(x) * y). Used to route through the *unchecked* exp2 for its
@@ -1337,7 +1355,15 @@ pub fn powf(x: f32, y: f32) -> f32 {
 pub fn remainder(x: f32, y: f32) -> f32 {
     let q = (x / y).round();
     let normal = fma(-q, y, x);
-    if x == 0.0 { x } else { normal }
+    let r = if x == 0.0 { x } else { normal };
+    // remainder(finite x, +-inf) = x (IEEE754/C99 special case): q rounds
+    // to exactly 0.0 for any finite x, but `fma(-q, y, x)` then multiplies
+    // that zero by an *infinite* y, giving NaN (0*inf is NaN) instead of
+    // the intended "no reduction happened, answer is just x" no-op. x
+    // itself infinite/nan still correctly falls through to `normal`
+    // (matches std's remainder(inf, ...) = NaN) since `x.is_finite()`
+    // excludes it here.
+    if y.is_infinite() && x.is_finite() { x } else { r }
 }
 
 #[cfg(test)]

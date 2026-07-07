@@ -684,6 +684,53 @@ branches, no scalar-only intrinsics unless the vector form exists).
   3.788->3.898 cyc/elem throughput (+2.9%) — by far the cheapest of this
   session's correctness fixes relative to its scope (a whole missing
   half-domain, not just a sign at one point).
+- **remainder/hypot/atan2's infinity-handling gaps — a direct follow-up
+  to powf's fix, done, tested, kept (2026-07-07).** Extended the same
+  sweep to `+-inf`/`NaN` combinations for every remaining two-arg
+  function, on the theory that if powf had a whole undocumented missing
+  half-domain, other multi-arg functions might too. Found three:
+  `remainder(finite x, +-inf)` was `NaN` instead of `x` -- `q` rounds to
+  exactly `0.0` for any finite `x` (correct), but `fma(-q, y, x)` then
+  multiplies that zero by an *infinite* `y`, and `0*inf` is `NaN`,
+  destroying the intended "no reduction happened" no-op (IEEE754/C99:
+  `remainder(x, +-inf) = x` for finite `x`). Fixed with a trailing
+  `if y.is_infinite() && x.is_finite() { x } else { r }` select -- `x`
+  itself infinite/NaN still correctly falls through to `NaN` (matches
+  std's `remainder(inf, y) = NaN`), verified unaffected.
+  `hypot(+-inf, NaN)`/`hypot(NaN, +-inf)` were `NaN` instead of `+inf` --
+  IEEE754/C99 special-cases infinity to "win" over NaN specifically in
+  hypot (unlike almost every other function: `sqrt(x²+y²)` genuinely
+  diverges to `+inf` as either argument grows without bound, regardless
+  of what the other argument is), but the naive `fma(x,x,y*y).sqrt()`
+  can't reach that once an argument actually *is* NaN (`inf*inf +
+  NaN*NaN` degrades to `NaN`). Fixed with a trailing
+  `if x.is_infinite() || y.is_infinite() { INFINITY } else { normal }`
+  select -- explicitly *not* the same thing as hypot's already-documented
+  finite-overflow tradeoff (that's about large-but-finite `x`/`y`
+  overflowing `x*x`/`y*y`; this is a literally-infinite argument, a
+  different case the doc comment didn't cover). `atan2(+-inf, +-inf)`
+  was `NaN` instead of a defined `+-pi/4`/`+-3pi/4` by quadrant -- `y/x`
+  is `inf/inf` (`NaN`) there, so the general `atan`-based formula simply
+  has no ratio to compute with at true infinity (there isn't one, unlike
+  a large-but-finite y/x that approaches some limit); IEEE754/C99 instead
+  define a fixed convention independent of any limit. Fixed the same way,
+  a trailing select gated on `x.is_infinite() && y.is_infinite()`, added
+  `FRAC_PI_4` as a new local const alongside the existing `FRAC_PI_2`.
+  All three follow the same "compute everything unconditionally, select
+  last, no early returns" idiom as log1p/remainder/powf above (checked
+  `cargo run --example mca` compiles clean after each, not just
+  `cargo build`/`test`, per that same lesson). Verified bit-exact against
+  std for every case (`remainder(3,inf)`, `remainder(-3,inf)`,
+  `remainder(inf,3)==NaN`, `hypot(inf,nan)`, `hypot(nan,inf)`, all 4
+  `atan2(+-inf,+-inf)` quadrant combinations). `hypot(1e30,1e30)`
+  (finite-overflow) deliberately left alone -- that's the pre-existing,
+  already-documented tradeoff, a different case, not something this pass
+  touched. Fuzz accuracy sweeps for hypot/atan2 unchanged from their
+  documented baselines. mca cost negligible: atan2 completely unchanged
+  (57.17/1.467, bit-for-bit — the new select only ever fires on inputs
+  the old formula already couldn't handle), hypot +0.5%/+0.4%
+  (21.00->21.11 cyc, 0.763->0.766 cyc/elem), remainder unchanged
+  (33.02/0.647).
 - **erf's tail branch (`erf_poly`) refit — tried, no meaningful headroom
   found, not applied (2026-07-07).** Fourth use of the tuning recipe,
   extended with `erf_tail_c` (scored as the whole `mulsign(1.0 -
