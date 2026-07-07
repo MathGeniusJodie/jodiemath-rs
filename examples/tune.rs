@@ -187,6 +187,19 @@ fn sinf_poly_c(x: f32, c: &[f32]) -> f32 {
     fma(p, x3, x)
 }
 
+// expm1's Pade near-zero branch (see src/lib.rs's expm1), |x| < 0.5. The
+// shipped constants (-2, -120, -12, 60, -120) look like an exact closed-
+// form Pade approximant to e^x rather than an empirical lolremez fit
+// (small integers, -120 shared between numerator and denominator) --
+// tuning treats them as 5 independent free parameters regardless, since
+// coordinate descent doesn't care about the identity's elegance.
+#[inline(always)]
+fn expm1_near0_c(x: f32, c: &[f32]) -> f32 {
+    let numer = x * fma(c[0], x * x, c[1]);
+    let denom = fma(x, fma(x, x + c[2], c[3]), c[4]);
+    numer / denom
+}
+
 // erfc's rational*gaussian tail (see src/lib.rs's erfc): the 8 named
 // coefficients (4 for n, 4 for d) are tuned; the two Horner chains'
 // trailing "+1.0" leading terms are left fixed, matching the shipped
@@ -376,5 +389,17 @@ fn main() {
         }
         let init = [-0.16666660, 8.3330662e-3, -1.9809603e-4, 2.6057806e-6];
         tune("sinf_poly", &sinf_poly_c, &|x| x.sin(), &grid, &init);
+    }
+    if which.contains("expm1") {
+        // expm1's Pade branch domain, |x| < 0.5.
+        let mut grid = vec![];
+        let mut b = 0f32.to_bits();
+        while b < 0.5f32.to_bits() {
+            grid.push(f32::from_bits(b));
+            grid.push(-f32::from_bits(b));
+            b += 300;
+        }
+        let init = [-2.0, -120.0, -12.0, 60.0, -120.0];
+        tune("expm1_near0", &expm1_near0_c, &|x| x.exp_m1(), &grid, &init);
     }
 }

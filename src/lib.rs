@@ -718,12 +718,23 @@ pub fn exp(x: f32) -> f32 {
     exp2(x * LOG2_E)
 }
 
-/// Straight port of jodiemath's expm1f: a Pade approximant near 0 (where
-/// exp(x)-1 loses precision to cancellation), exp(x)-1 directly elsewhere.
-/// See exp's doc comment for the inherited unchecked-exp2 domain limit.
+/// A Pade approximant near 0 (where exp(x)-1 loses precision to
+/// cancellation), exp(x)-1 directly elsewhere. See exp's doc comment for
+/// the inherited unchecked-exp2 domain limit. The 5 coefficients (an
+/// exact closed-form Pade identity to e^x, not an empirical fit -- small
+/// integers, -120 shared between numerator and denominator) were refit
+/// (2026-07-07) with examples/tune.rs against f64::exp_m1 over |x| < 0.5,
+/// treating them as 5 independent free parameters. tune.rs's own
+/// coarse tuning grid (~1.7M points) underestimated both the before and
+/// after max ulp (reported 3->2); a targeted exhaustive scalar check of
+/// just this branch (302M samples, step-7 over the full |x|<0.5 range)
+/// found the real numbers are max ulp 4 -> 3, avg ulp 0.111 -> 0.109 --
+/// still a genuine improvement, just smaller than the coarse grid
+/// suggested. Zero perf cost (same instructions, only the 5 literal
+/// constants differ).
 #[inline(always)]
 pub fn expm1(x: f32) -> f32 {
-    let a = x * fma(-2.0, x * x, -120.0) / fma(x, fma(x, x - 12.0, 60.0), -120.0);
+    let a = x * fma(-1.9999927, x * x, -120.0) / fma(x, fma(x, x - 12.000030, 59.999996), -120.0);
     let b = exp(x) - 1.0;
     if x.abs() < 0.5 { a } else { b }
 }

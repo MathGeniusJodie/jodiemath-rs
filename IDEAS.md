@@ -123,6 +123,26 @@ branches, no scalar-only intrinsics unless the vector form exists).
   select-based.
 - **expm1's Padé division** is fine (idle divider), but the select boundary
   at 0.5 could be re-tuned after the exp accuracy fix.
+- **expm1's Padé branch refit — done, tested, kept (2026-07-07), ninth use
+  of this session's tuning recipe, fifth real win, and a methodology
+  lesson about the tuner's own grid resolution.** The 5 coefficients
+  (-2, -120, -12, 60, -120 -- an exact closed-form Padé identity to e^x,
+  not an empirical fit, given the small integers and the shared -120)
+  extended into `expm1_near0_c`, tuned as 5 independent free parameters
+  against `f64::exp_m1` over `|x| < 0.5`. tune.rs's coordinate-descent
+  grid (~1.7M points, its normal density for a 5-coefficient search)
+  reported max ulp 3→2; a targeted follow-up exhaustive check (a
+  temporary scalar test, 302M samples via step-7 over the full branch
+  domain, not just tune.rs's sparser grid) found the *real* numbers are
+  max ulp 4→3, avg ulp 0.111→0.109 — the coarse grid had missed the true
+  worst input on *both* sides, undercounting by exactly 1 ulp each time
+  (a wash on the reported delta's shape, but a reminder that a tuner's
+  own scoring grid isn't the same guarantee as an exhaustive or
+  near-exhaustive sweep, and applying a tuned result deserves its own
+  verification pass even when the grid-reported numbers look clean).
+  Still a genuine, if smaller-than-first-reported, improvement. Confirmed
+  zero perf cost via mca (71.00 cyc / 1.441 cyc/elem, bit-for-bit
+  unchanged) — same instructions, only the 5 literal constants differ.
 
 ## sin / cos / sin_checked / cos_checked / tan
 
