@@ -553,12 +553,34 @@ and measurement disagree (see the Fast2Sum comments).
   separately, or `rem = ((p0 - qh) + s) + lo_lo` — e1 is ~x·2^-49, the same
   tier as the x·RPI_TINY term, so it plausibly matters exactly as much as
   RPI_TINY does. Would cost real ops for an as-yet-unmeasured accuracy gain.
-- **sin_checked pays a real add for `pre_offset = 0.0`.** LLVM cannot fold
-  `lo + 0.0` away without the nsz fast-math flag (−0.0 + 0.0 = +0.0 changes
-  the value), and Rust emits strict FP. So sin's path carries a dead add on
-  the ql critical chain. Fix: `const PRE_OFFSET: bool` generic /
-  two monomorphized variants of round_x_over_pi, so sin's version simply
-  doesn't have the add.
+- **sin_checked pays a real add for `pre_offset = 0.0` — tried, measured,
+  reverted (2026-07-07).** LLVM cannot fold `lo + 0.0` away without the nsz
+  fast-math flag (−0.0 + 0.0 = +0.0 changes the value), and Rust emits
+  strict FP, so sin's path carried a dead `vxorps`+`vaddps` pair on the ql
+  critical chain. Fix tried: `round_x_over_pi<const HAS_OFFSET: bool>`,
+  monomorphized so sin_checked's instantiation (`HAS_OFFSET = false`) skips
+  the add entirely while cos_checked's (`HAS_OFFSET = true`) is emitted
+  identically to before. Confirmed via `--emit=asm` diff that the two
+  instructions were genuinely gone from sin_checked's throughput region (not
+  just reasoned about) and that cos_checked's assembly was untouched. Result
+  (mca, reproducible across repeat runs): sin_checked latency unchanged
+  (109.00 cyc — the add wasn't actually gating the critical path length) and
+  throughput *worse* (5.289→5.410 cyc/elem, +2.3%) despite fewer
+  instructions/uOps (16000/17200→15700/16800) and a theoretically-improved
+  `Block RThroughput` (65.0→64.0); `--bottleneck-analysis` showed both
+  Resource Pressure (36.39%→34.46%) and Register Dependencies
+  (74.20%→72.59%) percentages *dropped* too, yet simulated `Total Cycles`
+  rose (8462→8656) — removing the op let the register allocator/scheduler
+  make different choices for the surrounding code that cost more than the
+  removed op saved, same non-monotonic-scheduling shape as the e3-downgrade
+  and err-chain-rebalance entries below, just with the direction flipped
+  (this time on sin_checked, with cos_checked as an unaffected, bit-identical
+  control — confirmed 113.00 cyc/4.598 cyc/elem both before and after,
+  ruling out mca noise). Accuracy unaffected (quick/fuzz sweep, ~100M
+  samples: sin_checked |x|≤1e6 avg/max ulp 0.0355/2, matching the established
+  baseline within fuzz noise) — the claim that the add is mathematically
+  inert was correct, it just isn't free once the scheduler is in the loop.
+  Reverted (`git checkout -- src/lib.rs`); not adopted.
 - **Both `.round()` calls (`p0.round()`, `rem.round()`) are ties-away —
   partially done, tested, kept (2026-07-06).** "Any consistent rounding
   works here" turned out true for `ql = rem.round_ties_even()` but *false*
