@@ -1560,13 +1560,34 @@ saves an op and/or a rounding:
   absorbs small residual seed/correction error regardless of the exact
   coefficients). mca bit-for-bit unchanged (cbrt 35.06 cyc / 1.629
   cyc/elem, cbrt_accurate 59.06 cyc / 3.129 cyc/elem) — zero perf cost.
-- **powf's tier mismatch**: it composes the *checked* log_2 (pays the full
-  denormal/negative/inf select chain) with the *unchecked* exp2 (returns
-  garbage outside [-126, 128)). The expensive half buys correctness that
-  the cheap half then throws away. Either `powf_fast` = log_2_normal +
-  exp2 (document the domain, much faster) or `powf_checked` = log_2 +
-  exp2_checked (actually correct at the edges); the current middle serves
-  neither caller.
+- **powf's tier mismatch — done, tested, kept (2026-07-07), the `powf_checked`
+  half of this idea.** Composed the *checked* log_2 (pays the full
+  denormal/negative/inf select chain) with the *unchecked* exp2 (garbage
+  outside [-126, 128)) -- the expensive half bought correctness the cheap
+  half then threw away. Checked by hand how bad "garbage" actually was,
+  same technique that found the erf/erfc bugs: `powf(2.0, 500.0)` (should
+  be `inf`) was `2.88e17`, `powf(2.0, 1000.0)` (should be `inf`) was
+  `3.6e-12` -- plausible-looking finite garbage, not just reduced
+  precision, for any `y` large enough to push `log2(x)*y` past 128.
+  Unlike erf/erfc, powf's doc comment was already *honest* about this
+  (matching exp/sinh/tanh's shared, accepted "inherits unchecked exp2"
+  disclosure, not a false safety claim) -- so this wasn't a hidden-bug
+  fix in the same sense, more completing the `powf_checked` half of the
+  idea directly on `powf` itself (no separate `powf_fast` tier added;
+  `powf` isn't part of an established fast/checked naming pair the way
+  sin/sin_checked or exp2/exp2_checked are, so fixing it in place doesn't
+  violate that convention). Fixed by routing through `exp2_checked`
+  instead of `exp2`. Real, disclosed perf cost (unlike erf/erfc's fixes,
+  which only touched a rarely-hit tail branch, this touches every call):
+  mca 85.86→97.88 cyc latency (+14.0%), 2.784→3.788 cyc/elem throughput
+  (+36.1%). In-domain accuracy (the documented `[-126,128)` range)
+  essentially unchanged. edgecheck extended with
+  `powf(2,1000)`/`(2,-1000)`/`(10,100)`. Kept for the same reasoning as
+  every other correctness fix this session: `2.88e17` where the answer is
+  `inf` is a real bug, disclosed doc comment or not.
+  `powf_fast` (log_2_normal + exp2, undocumented-domain but fastest) is
+  still a plausible future addition for callers who want the old
+  behavior back, not attempted here.
 - **exp2/exp2_checked share their entire Q(f) poly + the floor/fract
   preamble** — if both stay, a shared `#[inline(always)]` core with the
   exponent-construction strategy as the only difference keeps future

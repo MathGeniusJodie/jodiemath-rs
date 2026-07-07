@@ -169,6 +169,12 @@ fn main() {
     check("hypot(3,4)", hypot(3.0, 4.0), 5.0);
     check("powf(2,3)", powf(2.0, 3.0), 8.0);
     check("powf(1,5)", powf(1.0, 5.0), 1.0);
+    // powf used to return plausible-looking finite garbage instead of
+    // inf/0 once log2(x)*y left the unchecked exp2's domain (see doc
+    // comment) -- now correctly saturates.
+    check("powf(2,1000)", powf(2.0, 1000.0), f32::INFINITY);
+    check("powf(2,-1000)", powf(2.0, -1000.0), 0.0);
+    check("powf(10,100)", powf(10.0, 100.0), f32::INFINITY);
     check("remainder(5,3)", remainder(5.0, 3.0), -1.0);
     check("remainder(4,2)", remainder(4.0, 2.0), 0.0);
 }

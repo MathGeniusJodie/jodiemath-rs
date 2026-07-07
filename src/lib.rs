@@ -1201,12 +1201,24 @@ pub fn hypot(x: f32, y: f32) -> f32 {
     fma(x, x, y * y).sqrt()
 }
 
-/// Straight port of jodiemath's powf: exp2(log2(x) * y). Inherits exp2's
-/// unchecked domain (see exp's doc comment): only accurate while
-/// log2(x)*y stays in [-126, 128).
+/// exp2(log2(x) * y). Used to route through the *unchecked* exp2 for its
+/// exponent -- correctly documented as inaccurate outside
+/// `log2(x)*y in [-126, 128)`, but "inaccurate" undersold it: outside
+/// that range the unchecked bit-trick construction wraps around instead
+/// of overflowing/underflowing, so e.g. `powf(2.0, 500.0)` (should be
+/// `inf`) came out `2.88e17`, `powf(2.0, 1000.0)` (should be `inf`) came
+/// out `3.6e-12` -- plausible-looking finite garbage, not just reduced
+/// precision. Also a real tier mismatch: `log_2` is already the
+/// full-range *checked* primitive (handles zero/negative/denormal/inf
+/// cleanly), so powf was already paying that cost without getting the
+/// matching benefit on the exp2 side. Fixed by routing through
+/// `exp2_checked` instead, so the whole function is consistently
+/// checked. Real perf cost (unlike erf/erfc's fixes, which only touched
+/// a rarely-hit edge branch, this touches every call): see mca numbers
+/// in the readme/IDEAS.md.
 #[inline(always)]
 pub fn powf(x: f32, y: f32) -> f32 {
-    exp2(log_2(x) * y)
+    exp2_checked(log_2(x) * y)
 }
 
 /// Straight port of jodiemath's remainderf: x - round(x/y)*y (ties away from

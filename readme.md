@@ -63,10 +63,12 @@ Straight-ported from jodiemath's C library (github.com/MathGeniusJodie/jodiemath
 ln, log10, log1p, exp, expm1, sinh, cosh, tanh, asinh, acosh, atanh, asin, acos,
 atan, atan2, tan, erf, erfc, hypot, powf, remainder. These reuse this crate's
 own log_2/exp2/sin/cos internally rather than re-deriving them from scratch,
-so they inherit those functions' own tradeoffs: exp, expm1, sinh, cosh, tanh,
-powf, erf and erfc all route through the fast *unchecked* exp2, so they share
-its `[-126, 128)` domain limit (see exp's doc comment); tan shares sin/cos's
-`|x| < 2^22*pi` domain. A few originally inherited real accuracy defects
+so they inherit those functions' own tradeoffs: exp, expm1, sinh, cosh and
+tanh route through the fast *unchecked* exp2, so they share its
+`[-126, 128)` domain limit (see exp's doc comment); tan shares sin/cos's
+`|x| < 2^22*pi` domain. powf and erf/erfc's tail branch used to share that
+same unchecked-exp2 limit but are now fixed (routed through exp2_checked
+instead, see below). A few originally inherited real accuracy defects
 from the C original's naive formulas -- confirmed by hand-tracing the
 floating-point ops and by the exhaustive/fuzz sweep below, not assumed,
 and identical in the C source, so these weren't translation bugs. Several
@@ -132,6 +134,15 @@ IDEAS.md for the before/after measurements):
   turned out to be more accurate than plain exp2 even within the
   previously-tested range (avg ulp 0.631 -> 0.319, moving erf from
   *over* budget to comfortably under it).
+- **fixed**: powf composed the *checked* log_2 with the *unchecked* exp2 --
+  the expensive half bought correctness the cheap half then threw away.
+  Unlike erf/erfc, the doc comment here was already honest about the
+  limitation (not a false safety claim), but the practical effect was the
+  same: `powf(2.0, 500.0)` (should be `inf`) was `2.88e17`,
+  `powf(2.0, 1000.0)` was `3.6e-12` -- plausible finite garbage for any
+  `y` large enough to push `log2(x)*y` past 128. Fixed by routing through
+  `exp2_checked`; real, disclosed perf cost since this touches every
+  call, not just an edge branch (+14% latency, +36% throughput).
 - **still open**: remainder's `x - round(x/y)*y` loses precision to
   cancellation once `|x/y|` is large, since `round(x/y)*y`'s absolute
   error scales with `ulp(x)`, which can exceed the true remainder's own
@@ -503,7 +514,7 @@ tan                 |          69.00 |             2.324
 erf                 |         102.74 |             3.163
 erfc                |          78.09 |             2.599
 hypot               |          21.00 |             0.763
-powf                |          85.86 |             2.784
+powf                |          97.88 |             3.788
 remainder           |          33.00 |             0.646
 ```
 sin/cos are the restored single-word Cody-Waite version (identical codegen
