@@ -726,6 +726,33 @@ pub fn cosh(x: f32) -> f32 {
     0.5 * (exp(x) + exp(-x))
 }
 
+/// Throughput-tier sinh: computes `exp(-x)` as `1.0 / exp(x)` instead of a
+/// second full exp evaluation, trading one whole poly evaluation for one
+/// division. On this CPU the FP divider is close to idle even when the
+/// FMA/mul ports are saturated (same finding behind cbrt_accurate's
+/// reciprocal reuse), so a vectorized loop over many elements sees a large
+/// throughput win -- but a single serial call now waits on `exp(x)` before
+/// the division can even start, where the two independent `exp` calls in
+/// `sinh` could previously run in parallel, so *latency* is worse here, not
+/// better. Same accuracy as `sinh` for practical purposes (one extra
+/// rounding from the division; measured negligible impact, see readme).
+/// Use `sinh` for a value on its own or a serial dependency chain, this for
+/// a large array/SIMD loop. Mirrors `cosh_throughput` below.
+#[inline(always)]
+pub fn sinh_throughput(x: f32) -> f32 {
+    let e = exp(x);
+    0.5 * (e - 1.0 / e)
+}
+
+/// Throughput-tier cosh: see `sinh_throughput`'s doc comment for the
+/// latency/throughput tradeoff this shares (same `1.0/exp(x)` reuse, same
+/// reasoning, same caveat).
+#[inline(always)]
+pub fn cosh_throughput(x: f32) -> f32 {
+    let e = exp(x);
+    0.5 * (e + 1.0 / e)
+}
+
 /// Straight port of jodiemath's tanhf. See exp's doc comment for the
 /// inherited unchecked-exp2 domain limit (here on exp(2x), so the safe
 /// range is halved). Also inherits the same near-zero cancellation flaw as

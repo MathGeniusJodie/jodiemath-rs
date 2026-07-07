@@ -98,6 +98,8 @@ fn main() {
     bench!("std sinh", |x: f32| x.sinh());
     bench!("cosh", cosh);
     bench!("std cosh", |x: f32| x.cosh());
+    bench!("sinh_throughput", sinh_throughput);
+    bench!("cosh_throughput", cosh_throughput);
     bench!("tanh", tanh);
     bench!("std tanh", |x: f32| x.tanh());
     bench!("asinh", asinh);

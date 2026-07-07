@@ -183,10 +183,28 @@ branches, no scalar-only intrinsics unless the vector form exists).
 
 ## exp-family elementary (sinh/cosh/tanh) — currently 2× exp each
 
-- **One exp, one reciprocal**: e = exp(x); exp(−x) = 1/e (idle divider, ~0.5
-  ulp extra). sinh/cosh/tanh all drop from two exp2 evaluations to one — a
-  large throughput win for the price of a division and a small accuracy hit
-  that a refit absorbs.
+- **One exp, one reciprocal** — done, tested, adopted as a separate opt-in
+  tier rather than a straight replacement (2026-07-07). e = exp(x);
+  exp(−x) = 1/e. Accuracy hit was negligible in practice (no refit needed:
+  cosh avg/max ulp 0.275/63 → 0.272/64, comfortably inside budget). But this
+  was the first idea in the whole IDEAS.md-testing series where mca showed
+  latency and throughput moving in *opposite* directions with no accuracy
+  angle at all: throughput improved hugely (sinh/cosh 2.083→1.279 cyc/elem,
+  -38.6%, matching the "large throughput win" prediction exactly), but
+  latency got measurably *worse* (48.02→58.00 cyc, +20.8%) — the division
+  can't start until `exp(x)` finishes, whereas the original's two
+  independent `exp(x)`/`exp(-x)` calls run in parallel on a CPU with enough
+  ports, so serial latency was better *before* this change. Unlike every
+  prior "op reshuffle didn't help" entry in this file, this one isn't
+  fixable by reordering — the division is inherently dependent on `e`.
+  Flagged to Jodie as a genuine tradeoff (not obvious which axis the crate
+  should prioritize); resolved as **both**: `sinh`/`cosh` keep the
+  lower-latency parallel-exp form as the default, `sinh_throughput`/
+  `cosh_throughput` are new public functions for array-heavy callers,
+  mirroring the sin/sin_checked and exp2/exp2_checked tiering already used
+  elsewhere (see readme for the full writeup). tanh wasn't touched by this
+  idea — it already only calls `exp` once (via `exp(2x)`), so the
+  two-exp-calls framing doesn't apply there.
 - **tanh cancellation fix**: tanh = expm1(2x)/(expm1(2x)+2) — exact-ish for
   small x, one division, reuses the fixed expm1. Kills the documented
   small-x flaw branchlessly.

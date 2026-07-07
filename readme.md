@@ -92,6 +92,21 @@ for any of these means redesigning the algorithm (a small-x series branch,
 routing through exp2_checked, etc.), which is out of scope for a straight
 port and left for later.
 
+**sinh_throughput/cosh_throughput** are a second tier for sinh/cosh, added
+after finding that computing `exp(-x)` as `1.0 / exp(x)` (instead of a
+second independent `exp` evaluation) is a genuine tradeoff, not a strict
+win: on this CPU the FP divider is close to idle even when the FMA/mul
+ports are saturated, so a vectorized loop sees a large throughput gain
+(one whole `exp` poly evaluation replaced by one division), but a single
+serial call is *slower*, since the division can't start until `exp(x)` is
+done -- unlike the default's two independent `exp` calls, which a
+CPU with enough ports can run in parallel. Plain `sinh`/`cosh` keep the
+lower-latency, parallel-exp form as the default (matching every other
+tier split in this crate, where the plain name is the "normal" choice);
+`sinh_throughput`/`cosh_throughput` are opt-in for callers who mainly loop
+over arrays. Accuracy is essentially unaffected (one extra rounding from
+the division; see the precision table below).
+
 All functions auto-vectorize, it's a hard requirement
 
 # precision (see examples/accuracy.rs)
@@ -155,6 +170,8 @@ number stays honest instead of hiding the defect behind a narrower domain.
     expm1 (in-domain)   |    0.240   |    63     |  0.000  |    0
      sinh (in-domain, away from 0) |    0.274*  |   63*    |  0.000  |    0
      cosh (in-domain)   |    0.274   |    63     |  0.000  |    0
+ sinh_throughput (in-domain, away from 0) | 0.274* |  63*    |  0.000  |    0
+    cosh_throughput (in-domain) |    0.272   |    64     |  0.000  |    0
      tanh (in-domain, away from 0) |  catastrophic near 0, see above  |  0.000  |    0
                   asinh | catastrophic near 0, see above  | (std also imperfect at extreme |x|)
                   acosh | catastrophic for x<-huge (sign loss), see above
@@ -173,7 +190,9 @@ number stays honest instead of hiding the defect behind a narrower domain.
 `*` sinh/tanh's own table rows above are for the domain-restricted (exp2-safe)
 range only; the near-zero cancellation still lives inside that same range
 (see the "everywhere" note above the table), so treat these two numbers as
-optimistic for anything close to x=0.
+optimistic for anything close to x=0. sinh_throughput inherits the same
+cancellation (identical formula shape near 0), so its row carries the same
+caveat.
 `**` remainder's max ulp stays large even inside the `|x/y|<1000` bound: a
 handful of inputs land close enough to an exact half-integer quotient that
 f32 rounding flips which integer `round(x/y)` picks vs. the f64 reference,
@@ -431,6 +450,8 @@ exp                 |          39.00 |             0.974
 expm1               |          71.00 |             1.441
 sinh                |          48.02 |             2.083
 cosh                |          48.02 |             2.083
+sinh_throughput     |          58.00 |             1.279
+cosh_throughput     |          58.00 |             1.279
 tanh                |          58.00 |             1.330
 asinh               |          71.99 |             2.806
 acosh               |          69.03 |             2.806

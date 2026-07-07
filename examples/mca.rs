@@ -118,6 +118,8 @@ fn main() {
         "expm1",
         "sinh",
         "cosh",
+        "sinh_throughput_fn",
+        "cosh_throughput_fn",
         "tanh",
         "asinh",
         "acosh",

@@ -538,6 +538,10 @@ fn main() {
         report("cosh", &s, t0);
         let s = measure!(sinh_domain, |x: f32| x.cosh(), cosh_u35);
         report("std cosh", &s, t0);
+        let s = measure!(sinh_domain, sinh_throughput, sinh_u35);
+        report("sinh_throughput", &s, t0);
+        let s = measure!(sinh_domain, cosh_throughput, cosh_u35);
+        report("cosh_throughput", &s, t0);
     }
     if run("tanh") {
         // tanh uses exp(2x): same reasoning as sinh/cosh, halved.
