@@ -437,8 +437,8 @@ acosh               |          69.03 |             2.806
 atanh               |          71.00 |             2.677
 asin                |          56.11 |             1.433
 acos                |          37.11 |             0.811
-atan                |          76.81 |             1.984
-atan2               |          81.00 |             1.969
+atan                |          57.09 |             1.410
+atan2               |          57.17 |             1.467
 tan                 |          69.00 |             2.324
 erf                 |          88.02 |             2.101
 erfc                |          67.09 |             2.097
@@ -513,6 +513,28 @@ barring overflow), so both forms round the same real-valued product exactly
 once. mca: 62.00->58.00 cyc latency (-6.5%), 1.359->1.330 cyc/elem
 throughput (-2.1%); sinh/cosh/exp (unaffected controls, don't share this
 code path) stayed exactly at baseline.
+
+**atan's range-reciprocal select replaced with a single `min`.** `let y = if
+a < 1.0 { a } else { 1.0 / a }` computed `1.0 / a` unconditionally either way
+(this crate's branchless/vectorized style evaluates both arms), so the
+`if`/`else` was purely a compare+blend choosing between two already-computed
+values -- and since `a = x.abs() >= 0`, `a.min(1.0 / a)` picks the exact same
+value the select did (`a` itself below 1, the reciprocal at/above 1) in one
+`vminps`. The second select (`if a < 1.0 { y } else { FRAC_PI_2 - y }`)
+still needs the `a < 1.0` compare, so this removes one blend, not the
+compare. Bit-exact, confirmed by an exhaustive (all 2^32 bit patterns)
+old-vs-new comparison (temporary test, removed after use; NaN: `a=NaN ->
+1/a=NaN -> min(NaN,NaN)=NaN`, matching the old else-branch). Much bigger win
+than "save one blend" suggested: mca latency 76.81->57.09 cyc (-25.7%),
+throughput 1.984->1.410 cyc/elem (-28.9%) for `atan`; `atan2` (calls `atan`
+directly, same reduction applies) 81.00->57.17 cyc (-29.4%) latency,
+1.969->1.467 cyc/elem (-25.5%) throughput. `tan` (unaffected control, doesn't
+call `atan`) stayed exactly at baseline. The magnitude suggests the old
+select was interacting badly with something beyond its own instruction
+count (e.g. register pressure or scheduling around the division), not just
+costing one op in isolation -- consistent with this crate's recurring
+finding that op-count reasoning and measured cost don't always match, this
+time in the surprising direction (a small-looking change, a large real win).
 
 # tools
 - `cargo +nightly run --release --example accuracy [thorough] [filter]` - avg/max ulp against an f64

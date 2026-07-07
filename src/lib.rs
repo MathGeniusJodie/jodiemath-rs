@@ -830,7 +830,13 @@ fn atan_poly(x: f32) -> f32 {
 #[inline(always)]
 pub fn atan(x: f32) -> f32 {
     let a = x.abs();
-    let y = if a < 1.0 { a } else { 1.0 / a };
+    // a >= 0, so min(a, 1/a) picks whichever branch the old a<1.0 select
+    // did (a itself below 1, the reciprocal at/above 1) in one vminps
+    // instead of a compare+blend; the reciprocal was already computed
+    // unconditionally either way (both branches evaluate in the
+    // branchless/vectorized style this crate uses). NaN: a=NaN -> 1/a=NaN
+    // -> min(NaN, NaN) = NaN, matching the old else-branch's 1.0/NaN.
+    let y = a.min(1.0 / a);
     let y = atan_poly(y);
     let y = if a < 1.0 { y } else { FRAC_PI_2 - y };
     mulsign(y, x)

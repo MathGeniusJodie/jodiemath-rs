@@ -876,12 +876,21 @@ saves an op and/or a rounding:
 
 ## Other functions, specific spots
 
-- **atan's range select**: `let y = if a < 1.0 { a } else { 1.0 / a }` is
-  compare+blend; for a ≥ 0, this is exactly `a.min(1.0 / a)` — one vminps
-  (NaN: a = NaN → 1/a = NaN → min NaN, correct; a = 0 → min(0, inf) = 0,
-  correct). The `a < 1.0` mask is still needed for the π/2 − y select, so
-  this saves one blend, not the compare — small but real, and min has
-  friendlier port options.
+- **atan's range select** — done, tested, kept (2026-07-07), and a much
+  bigger win than expected. `let y = if a < 1.0 { a } else { 1.0 / a }` was
+  compare+blend on an already-unconditionally-computed reciprocal; for
+  a ≥ 0, `a.min(1.0 / a)` picks the same value in one vminps (NaN: a=NaN →
+  1/a=NaN → min(NaN,NaN)=NaN, matching the old else-branch). The `a < 1.0`
+  mask is still needed for the π/2 − y select, so this removes one blend,
+  not the compare. Confirmed bit-exact via an exhaustive (all 2^32 bit
+  patterns) old-vs-new comparison. Measured impact was far larger than "one
+  blend fewer" suggested: mca latency 76.81→57.09 cyc (-25.7%), throughput
+  1.984→1.410 cyc/elem (-28.9%) for atan; atan2 (calls atan directly)
+  81.00→57.17 cyc (-29.4%) / 1.969→1.467 cyc/elem (-25.5%). tan (unaffected
+  control) stayed exactly at baseline. Mechanism not fully root-caused —
+  the old select apparently cost more than one blend's worth in this
+  region (register pressure or scheduling interacting with the division,
+  by analogy to other entries in this file), not just its raw op count.
 - **erfc's final `fma(y, z, w)` with z = ±1 — tried, measured, reverted
   (2026-07-07).** Replaced `z`'s select + `fma(y, z, w)` with
   `mulsign(y, x) + w`, removing the `z` variable/select entirely on the
