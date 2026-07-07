@@ -598,13 +598,10 @@ fn main() {
         report("std tan (in-domain)", &s, t0);
     }
     if run("erf") {
-        // erf's tail branch calls exp2(erf_poly(|x|)), which overflows
-        // exp2's unchecked domain once |x| is beyond ~8.5 -- well past
-        // where erf has already saturated to +-1 at f32 precision (see
-        // erf's doc comment), so this bound only excludes the range where
-        // the "true" answer is indistinguishable from the saturated value.
-        let erf_domain = |x: f32| x.abs() < 6.0;
-        let s = measure!(erf_domain, erf, erf_u10);
+        // erf_poly used to be evaluated unbounded on |x|, which was wrong
+        // (not just imprecise) well before this bound -- see erf's doc
+        // comment. Fixed now, so this measures the whole domain.
+        let s = measure!(everywhere, erf, erf_u10);
         report("erf", &s, t0);
         // erfc clamps to |x|<=10 before its own exp2 call; that clamp used
         // to not fully protect exp2's unchecked domain (see erfc's doc

@@ -1078,21 +1078,36 @@ fn erf_poly(x: f32) -> f32 {
     fma(u, x, 3.1332566e-5)
 }
 
-/// Straight port of jodiemath's erff: a Pade approximant near 0 (where the
-/// tail form loses precision to cancellation), the exp2-based tail elsewhere.
-/// The tail branch's exp2 call inherits exp2's unchecked domain (see exp's
-/// doc comment) once erf_poly(|x|)'s degree-6 growth pushes its argument
-/// out of [-126, 128) -- only relevant once erf has long since saturated to
-/// +-1 at f32 precision (|x| beyond roughly 4), so it doesn't affect any
-/// input where the answer isn't already indistinguishable from +-1.
+/// A Pade approximant near 0 (where the tail form loses precision to
+/// cancellation), the exp2-based tail elsewhere. The tail branch used to
+/// evaluate `erf_poly` directly on `|x|` with no bound, on the theory
+/// (stated here previously) that it's "only relevant once erf has long
+/// since saturated to +-1... so it doesn't affect any input where the
+/// answer isn't already indistinguishable from +-1" -- checked by hand
+/// and false: `erf_poly` is a plain degree-6 polynomial (unbounded, not
+/// fitted to stay well-behaved outside where it was tuned), and its
+/// leading term's positive coefficient means it eventually turns around
+/// and grows to +inf for large |x| instead of staying deeply negative
+/// (erf_poly(9) ~ -92, erf_poly(20) ~ +8698) -- so `exp2(erf_poly(|x|))`
+/// stopped being ~0 and started being huge, giving `erf(50) = -1.02e17`,
+/// `erf(100) = NaN`, `erf(+-inf) = NaN` instead of the correct +-1.
+/// Fixed by clamping `|x|` to 10 before `erf_poly` (same bound erfc's own
+/// clamp already uses, chosen the same way: comfortably past where erf
+/// has actually saturated -- confirmed erf_poly stays safely negative,
+/// -83.8, at that bound) -- `exp2` alone wasn't the bug here (its
+/// [-126,128) domain covers erf_poly(10) fine); swapped to `exp2_checked`
+/// anyway as cheap extra insurance now that the input is guaranteed
+/// bounded, matching erfc's fix.
 #[inline(always)]
 pub fn erf(x: f32) -> f32 {
     let x2 = x * x;
     let numer = x * fma(f32::from_bits(0x3f174f6e), x2, f32::from_bits(0x3f906ebb));
     let denom = fma(fma(f32::from_bits(0x3e3e2be3), x2, f32::from_bits(0x3f5b6db7)), x2, 1.0);
     let a = numer / denom;
-    let b = mulsign(1.0 - exp2(erf_poly(x.abs())), x);
-    if x.abs() < 0.28 { a } else { b }
+    let xa = x.abs();
+    let xa_bounded = if xa > 10.0 { 10.0 } else { xa };
+    let b = mulsign(1.0 - exp2_checked(erf_poly(xa_bounded)), x);
+    if xa < 0.28 { a } else { b }
 }
 
 /// A rational*gaussian tail, clamped to |x| <= 10 before evaluation

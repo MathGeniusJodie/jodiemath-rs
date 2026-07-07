@@ -148,6 +148,14 @@ fn main() {
     check("tan(0)", tan(0.0), 0.0);
 
     check("erf(0)", erf(0.0), 0.0);
+    // erf_poly used to be evaluated unbounded: its own unboundedness (not
+    // an exp2 domain issue) made erf(50)/(100)/(+-inf) wrong (see doc
+    // comment) instead of correctly saturating to +-1.
+    check("erf(50)", erf(50.0), 1.0);
+    check("erf(-50)", erf(-50.0), -1.0);
+    check("erf(inf)", erf(f32::INFINITY), 1.0);
+    check("erf(-inf)", erf(f32::NEG_INFINITY), -1.0);
+    check("erf(nan)", erf(f32::NAN), f32::NAN);
     check("erfc(0)", erfc(0.0), 1.0);
     // erfc's clamp used to not fully protect its internal exp2 call for
     // |x| >= ~9.35 (see its doc comment) -- these used to be inf/huge

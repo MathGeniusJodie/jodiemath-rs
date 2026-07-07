@@ -378,8 +378,39 @@ branches, no scalar-only intrinsics unless the vector form exists).
   cyc/elem throughput (+23.9%) — comparable to log1p's fix. Kept for the
   same reasoning as the small-x cancellation fixes above: `inf` where the
   answer is a tiny positive number is a correctness bug, not a tuning gap.
+- **erf's tail, a worse bug than erfc's — done, tested, kept (2026-07-07),
+  found while double-checking accuracy.rs's own domain filters after the
+  erfc fix above (same shape of bug: a filter narrowed to dodge an issue
+  rather than exercise it, this time `erf_domain = |x| x.abs() < 6.0`
+  with a doc comment claiming it was safe past there).** Checked by hand
+  instead of trusting the comment: `erf(50) = -1.02e17`, `erf(100)` and
+  `erf(±inf) = NaN`, all of which should be `±1`. Root cause is *not* the
+  same as erfc's: `erf_poly` (the tail branch's degree-6 polynomial,
+  evaluated directly on `|x|` with no bound at all) has a positive leading
+  coefficient, so instead of staying deeply negative as `|x|` grows (which
+  is what keeps `exp2(erf_poly(x)) ≈ 0`, giving the correct saturation to
+  `±1`), it eventually turns around and grows to `+∞`
+  (`erf_poly(9) ≈ -92`, `erf_poly(20) ≈ +8698`, confirmed by direct
+  computation, not guessed) — so `exp2_checked` alone wouldn't have fixed
+  this the way it fixed erfc; the polynomial itself needed bounding.
+  Fixed by clamping `|x|` to 10 before `erf_poly` — the same bound erfc's
+  own clamp already uses, and confirmed by direct computation that
+  `erf_poly(10) ≈ -83.8` stays safely within even the *unchecked* exp2's
+  domain — then swapped to `exp2_checked` anyway as cheap insurance now
+  that the input is bounded, matching erfc's fix. That swap turned out to
+  be a free accuracy bonus even within the previously-tested `|x|<6`
+  range: `exp2_checked` is itself more accurate than plain `exp2`
+  (established earlier this session), moving erf's own avg ulp from
+  0.631 (over budget) to 0.319 (comfortably under) as a side effect of a
+  bug fix, not a separate optimization. Widened accuracy.rs's own
+  `erf_domain` filter to `everywhere` now that the bug is gone. edgecheck
+  extended with `erf(50)/(-50)/(±inf)/(nan)`. mca cost: 88.02→102.74 cyc
+  latency (+16.7%), 2.101→3.163 cyc/elem throughput (+50.6%) — kept for
+  the same reasoning as every other correctness fix this session.
 - **erf/erfc joint refit** with f32-quantized coefficients against the actual
-  budget (these are relative-1e-6 C ports, same caveat as atan).
+  budget (these are relative-1e-6 C ports, same caveat as atan) — erf's
+  ~0.32 avg ulp residual after the bound fix above is this kind of
+  fit-tightness gap, not a further algebraic trick.
 - **hypot**: keep naive per the crate's stated tradeoff; optional
   `hypot_checked` via max-exponent scaling (`vgetexpps` or bit trick) if
   wanted — two extra multiplies, no division.

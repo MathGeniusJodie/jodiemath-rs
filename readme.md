@@ -118,6 +118,19 @@ IDEAS.md for the before/after measurements):
   ulp issue, e.g. `erfc(9.5)` used to be `inf`. Fixed by routing through
   `exp2_checked` instead of `exp` for the Gaussian factor; its wider
   `[-151, 128)` domain comfortably covers the whole clamped range.
+- **fixed**: erf's tail branch evaluated `erf_poly` (a plain unbounded
+  degree-6 polynomial) directly on `|x|` with no bound at all -- worse
+  than erfc's gap, since it wasn't just an exp2-domain issue: the
+  polynomial's own positive leading coefficient makes it turn around and
+  grow to `+inf` for large `|x|` instead of staying deeply negative
+  (`erf_poly(9) ~ -92`, `erf_poly(20) ~ +8698`), so `erf(50)` was
+  `-1.02e17`, `erf(100)` and `erf(+-inf)` were `NaN`, all of which should
+  saturate to `+-1`. Fixed by bounding `|x|` to 10 before `erf_poly` (same
+  bound erfc's clamp already uses) -- also swapped to `exp2_checked` as
+  cheap extra insurance now that the input is bounded, which as a bonus
+  turned out to be more accurate than plain exp2 even within the
+  previously-tested range (avg ulp 0.631 -> 0.319, moving erf from
+  *over* budget to comfortably under it).
 - **still open**: remainder's `x - round(x/y)*y` loses precision to
   cancellation once `|x/y|` is large, since `round(x/y)*y`'s absolute
   error scales with `ulp(x)`, which can exceed the true remainder's own
@@ -211,7 +224,7 @@ comment); their rows are exhaustive (all 2^32 f32 bit patterns), not fuzz.
                    acos |    0.496   |     4     |  0.000  |    0
                    atan |    0.188   |    19     |  0.000  |    0
        tan (in-domain)  |    0.331   |  2967     |  0.000  |    0
-                    erf (|x|<6)  |    0.631   |     5     | (no std erf)
+                            erf  |    0.319   |     5     | (no std erf)
                    erfc (|x|<=10)|    0.297   |   115     | (no std erfc)
                   atan2 |    0.136   |    19     |  0.000  |    0
         hypot (bounded) |    0.034   |     1     |  0.000  |    0
@@ -486,7 +499,7 @@ acos                |          37.11 |             0.811
 atan                |          57.09 |             1.410
 atan2               |          57.17 |             1.467
 tan                 |          69.00 |             2.324
-erf                 |          88.02 |             2.101
+erf                 |         102.74 |             3.163
 erfc                |          78.09 |             2.599
 hypot               |          21.00 |             0.763
 powf                |          85.86 |             2.784
@@ -610,11 +623,10 @@ time in the surprising direction (a small-looking change, a large real win).
   it the rest of the way -- see asin's doc comment
 - fix (or at least give a "_checked" full-range companion to) the remaining
   inherited accuracy defects in the newly-ported functions: remainder's
-  tie-breaking cliff, erf's own ~0.63-avg-ulp fit gap (needs a refit, not
-  an algebraic fix -- see asin's fix for why the same trick doesn't apply
-  here), and erf/exp-family's dependence on the fast unchecked exp2
-  (erfc already fixed, see above) -- see the overview above and each
-  function's doc comment
+  tie-breaking cliff, and the exp-family's (exp/expm1/sinh/cosh/tanh/powf)
+  dependence on the fast unchecked exp2 for their *main* computation, not
+  just an edge-case tail (erf/erfc's own tail-specific gaps already fixed,
+  see above) -- see the overview above and each function's doc comment
 - vary both arguments in quickbench's two-argument benchmarks (atan2, hypot,
   powf, remainder currently fix one argument, which may be letting LLVM
   constant-fold std's side of a couple of comparisons -- see the benchmark
