@@ -68,6 +68,29 @@ fn score(
     (max, sum)
 }
 
+#[inline(always)]
+fn mulsign_c(x: f32, y: f32) -> f32 {
+    f32::from_bits(x.to_bits() ^ (y.to_bits() & 0x8000_0000))
+}
+
+// asin's mid-branch rational correction (see src/lib.rs's asin doc
+// comment): a2 = (a^2-a)/d + a where d is this 3-coefficient poly (plus
+// the leading constant folded in as c[3]), then the already-fixed
+// rationalized sqrt step. Only the correction's 4 coefficients are being
+// tuned here -- the rationalization and mulsign/branch structure are
+// fixed, matching what's actually shipped in src/lib.rs.
+#[inline(always)]
+fn asin_mid_c(x: f32, c: &[f32]) -> f32 {
+    let a = x.abs();
+    let d = fma(-c[0], a, c[1]);
+    let d = fma(-a, d, c[2]);
+    let d = fma(-a, d, c[3]);
+    let a2 = (a * a - a) / d + a;
+    let sq = (1.0 - a2).sqrt();
+    let sm1 = -a2 / (sq + 1.0);
+    mulsign_c(sm1, x) * (-std::f32::consts::FRAC_PI_2)
+}
+
 fn tune(
     name: &str,
     f: &dyn Fn(f32, &[f32]) -> f32,
@@ -128,5 +151,20 @@ fn main() {
             -0.23961740, 0.20460062, -0.19106275, 0.18617496, -0.10994955,
         ];
         tune("log2", &log2_c, &|x| x.log2(), &grid, &init);
+    }
+    if which.contains("asin") {
+        // asin's mid branch is only ever evaluated for a = |x| in
+        // [0.1, 0.9) in the shipped code (see src/lib.rs's asin) -- tune
+        // against exactly that range, not the whole [0,1] domain, so the
+        // objective matches what's actually on the hot path.
+        let mut grid = vec![];
+        let mut b = 0.1f32.to_bits();
+        while b < 0.9f32.to_bits() {
+            grid.push(f32::from_bits(b));
+            grid.push(-f32::from_bits(b));
+            b += 37;
+        }
+        let init = [0.0392588, 0.179323, 1.75866, -3.66063];
+        tune("asin_mid", &asin_mid_c, &|x| x.asin(), &grid, &init);
     }
 }

@@ -1000,14 +1000,29 @@ fn asin_small(x: f32) -> f32 {
 ///    that bias scales with x and can't be shrunk further by moving
 ///    thresholds around; a full fix would need the mid branch refit or
 ///    widened *and* extended (asin's Taylor series converges too slowly
-///    approaching x=1 to just push the small-x cutoff out), left as a
-///    further follow-up rather than chased in this same pass.
+///    approaching x=1 to just push the small-x cutoff out).
+/// 4. The mid branch's 4 coefficients, refit (2026-07-07) with
+///    examples/tune.rs's coordinate-descent tuner against a grid over
+///    a in [0.1, 0.9) (exactly the range the mid branch is used for in
+///    the shipped code). Zero perf cost -- same instructions, only the
+///    literal constants changed. Result: max ulp 121 -> 84 (a real ~30%
+///    cut); avg ulp moved 0.325 -> 0.377, still comfortably under budget.
+///    The tuner's own lexicographic (max, then avg) objective explains
+///    the tradeoff -- a separate avg-first, max-capped search found only
+///    a negligible avg improvement (25.115 -> 25.092 on the tuning grid)
+///    with max unchanged, confirming the two objectives pull in different
+///    directions around this point rather than one dominating the other;
+///    kept the max-first result since max was the specifically open
+///    residual from fix 3. Not a complete fix (bit-exact-matching a
+///    correctly-rounded reference would need a genuinely different
+///    correction shape, not just retuned coefficients of this one), but
+///    real, measured progress at no cost.
 #[inline(always)]
 pub fn asin(x: f32) -> f32 {
     let a = x.abs();
-    let d = fma(-0.0392588, a, 0.179323);
-    let d = fma(-a, d, 1.75866);
-    let d = fma(-a, d, -3.66063);
+    let d = fma(-0.03926096, a, 0.17931573);
+    let d = fma(-a, d, 1.7587008);
+    let d = fma(-a, d, -3.6605723);
     let a2 = (a * a - a) / d + a;
     let sq = (1.0 - a2).sqrt();
     let sm1 = -a2 / (sq + 1.0);

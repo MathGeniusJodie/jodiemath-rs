@@ -252,6 +252,35 @@ branches, no scalar-only intrinsics unless the vector form exists).
   scheduling surprise logged elsewhere in this file (asinh's fix showed
   the identical shape). Net win on 3 of 4 measured axes (avg ulp, max ulp,
   latency), real cost on the fourth (throughput) — kept.
+- **asin mid-branch refit — done, tested, kept (2026-07-07), a direct
+  continuation of the two entries above using real numerical tooling for
+  the first time this session.** Extended `examples/tune.rs` (previously
+  only wired up for exp2/log2) with `asin_mid_c`, replicating the mid
+  branch's shipped formula (rational correction + the already-fixed
+  rationalized sqrt step) so the coordinate-descent tuner scores it
+  against `f64::asin` over a grid matching exactly where the mid branch is
+  used in production (`a` in `[0.1, 0.9)`). First attempt used a much
+  denser grid (10.7M points) and simply didn't finish in reasonable time;
+  settled on ~3.6M points as the practical ceiling for this coordinate-
+  descent implementation (evaluates the *whole* grid per coefficient-nudge
+  trial). Tuner's lexicographic (max, then avg) objective found max
+  120→83 (on-grid) with avg getting *worse* (25.1→29.3) — tried to find a
+  Pareto-better point with a custom avg-first/max-capped variant, which
+  failed cleanly and informatively: for every cap tried between the start
+  and the tuned max, zero valid first moves existed, meaning the real path
+  to max=83 crosses through intermediate states worse than those caps, not
+  reachable by a search that must stay under a fixed ceiling at every
+  step. Removed that variant (dead end for this case, not generically
+  useless, just didn't help here) rather than leave unused code around.
+  Applied the plain tuned result to `src/lib.rs`: exhaustive sweep
+  confirmed the grid-based prediction translated directly — max ulp
+  121→84 (~30%), avg ulp 0.325→0.377 (still comfortably under the 0.5
+  budget). Zero perf cost (mca bit-for-bit unchanged, 43.24 cyc / 2.899
+  cyc/elem — same instructions, only the 4 literal constants differ).
+  Not a complete fix (the doc comment is explicit that a genuinely
+  different correction shape, not just retuned coefficients, would be
+  needed to go further), but real, measured, free progress on the
+  specifically-flagged open residual from the entry above.
 - **acos/asin shared kernel**: both reduce to sqrt(1−a)·poly; a shared
   computation with different post-transforms would halve the code and enable a
   combined refit at f32-quantized precision.

@@ -105,12 +105,13 @@ IDEAS.md for the before/after measurements):
   `|x| < 0.1`), and that same bias gets amplified by the sqrt singularity
   in asin's derivative right at x -> 1 (fixed by reusing acos's own
   well-conditioned formula, `asin(x) = pi/2 - acos(x)`, above `|x| > 0.9`).
-  avg ulp comfortably under budget (0.325); max ulp down to 121 (from 852
-  million) but not fully closed -- the same relative bias now shows up at
-  the small/mid branch boundary (x ~ 0.1) instead, since it scales with x
-  and can't be shrunk further just by moving thresholds -- see asin's doc
-  comment for what a complete fix (refit or a wider Taylor branch) would
-  need.
+  avg ulp comfortably under budget; max ulp down to 121 (from 852 million)
+  but not fully closed -- the same relative bias then showed up at the
+  small/mid branch boundary (x ~ 0.1) instead. Refit the mid branch's 4
+  coefficients with examples/tune.rs's coordinate-descent tuner
+  (zero perf cost, same instructions): max ulp 121 -> 84, avg ulp 0.325 ->
+  0.377 (still comfortably under budget) -- not a complete fix, see asin's
+  doc comment for why and what one would need.
 - **fixed**: erfc's own `|x|<=10` clamp didn't fully protect its internal
   exp2 call: for `|x| >= ~9.35` the exponent it computes fell outside the
   *unchecked* exp2's domain, returning `inf` or huge finite garbage
@@ -220,7 +221,7 @@ comment); their rows are exhaustive (all 2^32 f32 bit patterns), not fuzz.
                   asinh |    0.173   |     4     | (std also imperfect at extreme |x|)
                   acosh |    0.063   |     4     |  0.000  |    1
                   atanh |    0.032   |     3     |  0.037  | 363409
-                   asin |    0.325   |   121     |  0.000  |    0
+                   asin |    0.377   |    84     |  0.000  |    0
                    acos |    0.496   |     4     |  0.000  |    0
                    atan |    0.188   |    19     |  0.000  |    0
        tan (in-domain)  |    0.331   |  2967     |  0.000  |    0
@@ -617,10 +618,10 @@ time in the surprising direction (a small-looking change, a large real win).
 # todo:
 - do principled and thourough analysis of dependency chains and rounding errors to find optimizations
 - perfectly rounded versions
-- asin's max-ulp residual (121, now at the small/mid branch boundary
-  x ~ 0.1, after the near-1 fix moved the worst case there): a refit of
-  the mid branch's rational correction (or a wider Taylor branch) to close
-  it the rest of the way -- see asin's doc comment
+- asin's max-ulp residual (84, still at the small/mid branch boundary
+  x ~ 0.1 after refitting the mid branch's 4 coefficients): a genuinely
+  different correction shape (not just retuned coefficients) or a wider
+  Taylor branch to close it the rest of the way -- see asin's doc comment
 - fix (or at least give a "_checked" full-range companion to) the remaining
   inherited accuracy defects in the newly-ported functions: remainder's
   tie-breaking cliff, and the exp-family's (exp/expm1/sinh/cosh/tanh/powf)
