@@ -878,14 +878,17 @@ pub fn acosh(x: f32) -> f32 {
     if x < 1.0 { f32::NAN } else { r }
 }
 
-/// Straight port of jodiemath's atanhf: 0.5*ln((1+x)/(1-x)), inherited as-is
-/// including its known flaw -- same near-zero cancellation as asinh above
-/// (for tiny |x|, (1+x)/(1-x) rounds to exactly 1.0, so ln(...) is exactly
-/// 0 instead of the correct tiny nonzero answer). A real fix needs a
-/// log1p-based small-x branch, beyond a straight port.
+/// atanh(x) = 0.5*ln((1+x)/(1-x)) = 0.5*(log1p(x) - log1p(-x)), reusing
+/// log1p's already-correct small-x handling instead of forming
+/// (1+x)/(1-x) directly, which rounds to exactly 1.0 for tiny |x| (so
+/// ln(...) came out exactly 0 instead of the correct tiny nonzero answer)
+/// -- same fix shape as tanh reusing expm1 above. Domain x in [-1, 1]
+/// falls out for free: log1p(-x) is -inf at x=1 and log1p(x) is -inf at
+/// x=-1 (log1p's own domain edge), giving +-inf; |x|>1 makes one of the
+/// two arguments < -1, where log1p is already NaN.
 #[inline(always)]
 pub fn atanh(x: f32) -> f32 {
-    0.5 * ln((1.0 + x) / (1.0 - x))
+    0.5 * (log1p(x) - log1p(-x))
 }
 
 // degree-6 minimax poly (Estrin via fma), fitted for acos's sqrt(1-|x|)

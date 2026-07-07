@@ -86,10 +86,14 @@ IDEAS.md for the before/after measurements):
   sqrt(f32::MAX) (`x*x` overflowing prematurely); both fixed with an
   explicit domain check and a rescaled/log1p-routed formula that avoids
   ever squaring or summing something that overflows.
-- **still open**: asin and atanh (and asinh, though its cliff is much
-  narrower than the others', see its doc comment) still lose essentially
-  all precision for small `|x|`, the same `ln(1+tiny)`/cancellation
-  pattern log1p had -- no small-x branch yet.
+- **fixed**: atanh lost essentially all precision for small `|x|` from
+  forming `(1+x)/(1-x)` directly (rounds to exactly 1.0 for tiny x); now
+  `0.5*(log1p(x) - log1p(-x))`, reusing log1p's fix directly (same shape
+  as tanh reusing expm1).
+- **still open**: asin (and asinh, though its cliff is much narrower than
+  the others', see its doc comment) still loses essentially all precision
+  for small `|x|`, the same cancellation pattern log1p/atanh had -- no
+  small-x branch yet.
 - **still open**: erfc's own `|x|<=10` clamp doesn't fully protect its
   internal exp2 call: for `|x| >= ~9.35` the exponent it computes falls
   outside exp2's unchecked domain.
@@ -162,12 +166,12 @@ future changes instead of just asserted:
 Straight-ported functions (100M-sample fuzz mode / exhaustive where noted;
 see the overview above for each function's real domain, and its doc comment
 for known inherited defects and any fixes since). "everywhere" rows for
-asin/atanh/asinh deliberately include the region where the known
-cancellation defect lives -- that's the point of measuring them
-unrestricted, so the number stays honest instead of hiding the defect
-behind a narrower domain. log1p, sinh/sinh_throughput, tanh and acosh had
-the same class of defect but are fixed now (see above); their rows are
-exhaustive (all 2^32 f32 bit patterns), not fuzz.
+asin/asinh deliberately include the region where the known cancellation
+defect lives -- that's the point of measuring them unrestricted, so the
+number stays honest instead of hiding the defect behind a narrower domain.
+log1p, sinh/sinh_throughput, tanh, acosh and atanh had the same class of
+defect but are fixed now (see above); their rows are exhaustive (all 2^32
+f32 bit patterns), not fuzz.
 ```
                         | jodie avg  | jodie max | std avg | std max
 ------------------------|------------|-----------|---------|--------
@@ -183,7 +187,7 @@ exhaustive (all 2^32 f32 bit patterns), not fuzz.
      tanh (in-domain)   |    0.144   |     6     |  0.000  |    0
                   asinh | catastrophic near 0, see above  | (std also imperfect at extreme |x|)
                   acosh |    0.063   |     4     |  0.000  |    1
-                  atanh | catastrophic near 0, see above  |  0.037   |  34384
+                  atanh |    0.032   |     3     |  0.037  | 363409
                    asin | catastrophic near 0, see above  |  0.000  |    0
                    acos |    0.496   |     4     |  0.000  |    0
                    atan |    0.188   |    19     |  0.000  |    0
@@ -457,7 +461,7 @@ cosh_throughput     |          58.00 |             1.279
 tanh                |          87.64 |             1.793
 asinh               |          71.99 |             2.806
 acosh               |         110.47 |             6.839
-atanh               |          71.00 |             2.677
+atanh               |          80.03 |             4.210
 asin                |          56.11 |             1.433
 acos                |          37.11 |             0.811
 atan                |          57.09 |             1.410
@@ -583,7 +587,7 @@ time in the surprising direction (a small-looking change, a large real win).
 - perfectly rounded versions
 - fix (or at least give a "_checked" full-range companion to) the remaining
   inherited accuracy defects in the newly-ported functions: small-x
-  cancellation in asin/atanh/asinh (log1p/sinh/tanh already fixed, see
+  cancellation in asin/asinh (log1p/sinh/tanh/atanh already fixed, see
   above), erfc's own exp2 domain gap, remainder's tie-breaking cliff, and
   erf/erfc/exp-family's dependence on the fast unchecked exp2 -- see the
   overview above and each function's doc comment

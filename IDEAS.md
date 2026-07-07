@@ -1033,6 +1033,21 @@ saves an op and/or a rounding:
   throughput (+144%). Kept for the same reasoning as log1p/tanh/sinh: a
   function silently returning `+inf` instead of `NaN`, or `+inf` instead
   of a valid ~89, across roughly half its domain, is a correctness bug.
+- **atanh's small-x cancellation — done, tested, kept (2026-07-07), the
+  cheapest of this session's five correctness fixes.** Same bug class as
+  log1p (170,498,046 avg ulp / 855,638,016 max ulp, worst x ≈ 3e-8):
+  forming `(1+x)/(1-x)` directly rounds to exactly 1.0 for tiny x, so
+  `ln(...)` came out exactly 0. Fixed in one line, reusing log1p directly
+  (same shape as tanh reusing expm1): `atanh(x) = 0.5*ln((1+x)/(1-x)) =
+  0.5*(log1p(x) - log1p(-x))`. Domain (x in [-1,1], NaN/±inf elsewhere)
+  fell out for free from log1p's own already-fixed domain handling — no
+  new edge-case code needed, and edgecheck's existing
+  `atanh(0)/(1)/(-1)/(2)` cases all passed unmodified. Verified
+  exhaustive: avg/max ulp now 0.0322/3 — better than std's own reference
+  here (0.0369/363409, std has its own conditioning issue near x=±1).
+  mca cost, smallest relative jump of this session's five fixes: 71.00→
+  80.03 cyc latency (+12.7%), 2.650→4.210 cyc/elem throughput (+58.9%).
+  Kept for the same reasoning as the other four.
 - **atan's range select** — done, tested, kept (2026-07-07), and a much
   bigger win than expected. `let y = if a < 1.0 { a } else { 1.0 / a }` was
   compare+blend on an already-unconditionally-computed reciprocal; for
