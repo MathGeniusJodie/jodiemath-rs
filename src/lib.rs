@@ -939,20 +939,70 @@ pub fn acos(x: f32) -> f32 {
     mulsign(y, x) + if x < 0.0 { PI } else { 0.0 }
 }
 
-/// Straight port of jodiemath's asinf: a rational correction folded into
-/// the acos-style sqrt identity, inherited as-is including its known flaw --
-/// the same near-zero cancellation as asinh/atanh (sqrt(1-a)-1 loses
-/// precision as a -> 0), so for small |x| this returns a coarser answer
-/// than the ~1e-6-relative-error goal the rest of jodiemath aims for. A
-/// real fix needs a small-x series branch, beyond a straight port.
+// asin(x) = x + x^3/6 + 3x^5/40 + 15x^7/336 + O(x^9), the odd Taylor series
+// (exact rational coefficients). Unlike sinh's Taylor series, this one
+// converges slowly as |x| approaches 1 (asin has a sqrt singularity
+// there), so it's only used below |x| < 0.1 (see asin below), where 4
+// terms already leave truncation error orders of magnitude under budget:
+// the next (dropped) term, 105x^9/3456, is ~2.7e-11 at x=0.1 relative to
+// asin(0.1) ~ 0.1, i.e. ~2.7e-10 relative, far under f32 eps.
+#[inline(always)]
+fn asin_small(x: f32) -> f32 {
+    let x2 = x * x;
+    let c0 = 1.0f32;
+    let c1 = 1.0 / 6.0f32;
+    let c2 = 3.0 / 40.0f32;
+    let c3 = 15.0 / 336.0f32;
+    let p = fma(fma(fma(c3, x2, c2), x2, c1), x2, c0);
+    x * p
+}
+
+/// A rational correction folded into the acos-style sqrt identity, plus a
+/// small-x Taylor branch. Two separate accuracy problems in the
+/// straight-ported form, found and fixed one at a time as each fix's own
+/// exhaustive re-sweep exposed the next (same pattern as acosh/asinh
+/// above):
+/// 1. The final step, `sqrt(1-a) - 1`, has the same near-zero cancellation
+///    as asinh/acosh's `sqrt(1+t) - 1` (loses precision as `a -> 0`, i.e.
+///    as `x -> 0`, exactly where asin needs to be most accurate). Fixed
+///    the same way as those: rationalized to `sqrt(1-a) - 1 = -a /
+///    (sqrt(1-a) + 1)`, no cancellation. The rational correction
+///    `a = (a^2-a)/d + a` is left exactly as fitted -- only the final
+///    cancelling subtraction is rewritten.
+/// 2. Fix 1 alone still left avg/max ulp at 293/825 (down from
+///    169,116,394/852,038,214, but nowhere near budget): the rational
+///    correction's own fit has a small persistent *relative* bias
+///    (~3e-5, inherited from the C original's coarser ~1e-6-relative
+///    goal) that cancellation had been masking -- with the cancellation
+///    gone, that bias is what's left, concentrated at small x where it
+///    dominates the (otherwise tiny) true answer. Fixed by adding a
+///    genuine Taylor branch below |x| < 0.1 (see asin_small), the same
+///    shape as sinh's fix -- no refit of the rational correction needed,
+///    since it's only inaccurate in the regime the Taylor branch now
+///    covers instead.
+/// Result after both fixes: avg ulp 0.328, comfortably under budget. Max
+/// ulp is still 468 (down from 852 million, but not under the stated
+/// ≤2 -- a known, not fully closed, residual), concentrated right at the
+/// x=1 boundary: asin's derivative has a sqrt singularity there, so the
+/// rational correction's own ~1e-6-relative-accuracy fit gets amplified
+/// into real ulp error in exactly the way the small-x cancellation used to
+/// (a different symptom of the same "this fit wasn't tuned for x=0/x=1
+/// extremes" root cause) -- closing it fully would need either a refit or
+/// a dedicated near-1 series branch (asin(x) via acos(x)'s better-
+/// conditioned sqrt(1-x) form, say), left as a follow-up rather than
+/// bundled into this fix.
 #[inline(always)]
 pub fn asin(x: f32) -> f32 {
     let a = x.abs();
     let d = fma(-0.0392588, a, 0.179323);
     let d = fma(-a, d, 1.75866);
     let d = fma(-a, d, -3.66063);
-    let a = (a * a - a) / d + a;
-    mulsign((1.0 - a).sqrt() - 1.0, x) * (-FRAC_PI_2)
+    let a2 = (a * a - a) / d + a;
+    let sq = (1.0 - a2).sqrt();
+    let sm1 = -a2 / (sq + 1.0);
+    let big = mulsign(sm1, x) * (-FRAC_PI_2);
+    let small = asin_small(x);
+    if a < 0.1 { small } else { big }
 }
 
 // Pade-style rational approximation of atan on [0,1]. Ported from

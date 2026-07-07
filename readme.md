@@ -97,9 +97,15 @@ IDEAS.md for the before/after measurements):
   entirely by computing on `|x|` (asinh is odd) with a rationalized
   `sqrt(x^2+1)-1` term routed through log1p, then restoring the sign with
   `mulsign`; also gained the same overflow guards as acosh for huge `|x|`.
-- **still open**: asin still loses essentially all precision for small
-  `|x|`, the same cancellation pattern log1p/atanh had -- no small-x
-  branch yet.
+- **fixed** (mostly): asin had the same near-zero cancellation as the
+  others (rationalized the same way), plus a second, separate issue once
+  that was fixed: the rational correction's own fit has a small persistent
+  relative bias that cancellation had been masking, dominating right where
+  the true answer is smallest. Added a genuine small-x Taylor branch below
+  `|x| < 0.1`. avg ulp now comfortably under budget (0.328); max ulp
+  (468, at x -> 1, a derivative singularity) is real progress from 852
+  million but not fully closed -- see its doc comment for why and what a
+  complete fix would need.
 - **still open**: erfc's own `|x|<=10` clamp doesn't fully protect its
   internal exp2 call: for `|x| >= ~9.35` the exponent it computes falls
   outside exp2's unchecked domain.
@@ -171,13 +177,11 @@ future changes instead of just asserted:
 
 Straight-ported functions (100M-sample fuzz mode / exhaustive where noted;
 see the overview above for each function's real domain, and its doc comment
-for known inherited defects and any fixes since). The "everywhere" row for
-asin deliberately includes the region where the known cancellation defect
-lives -- that's the point of measuring it unrestricted, so the number stays
-honest instead of hiding the defect behind a narrower domain. log1p,
-sinh/sinh_throughput, tanh, acosh, atanh and asinh had the same class of
-defect but are fixed now (see above); their rows are exhaustive (all 2^32
-f32 bit patterns), not fuzz.
+for known inherited defects and any fixes since). log1p, sinh/
+sinh_throughput, tanh, acosh, atanh, asinh and asin all had the same class
+of small-x cancellation defect but are fixed now (see above; asin's max
+ulp has a separate, not-fully-closed residual near x=1, see its doc
+comment); their rows are exhaustive (all 2^32 f32 bit patterns), not fuzz.
 ```
                         | jodie avg  | jodie max | std avg | std max
 ------------------------|------------|-----------|---------|--------
@@ -194,7 +198,7 @@ f32 bit patterns), not fuzz.
                   asinh |    0.173   |     4     | (std also imperfect at extreme |x|)
                   acosh |    0.063   |     4     |  0.000  |    1
                   atanh |    0.032   |     3     |  0.037  | 363409
-                   asin | catastrophic near 0, see above  |  0.000  |    0
+                   asin |    0.328   |   468     |  0.000  |    0
                    acos |    0.496   |     4     |  0.000  |    0
                    atan |    0.188   |    19     |  0.000  |    0
        tan (in-domain)  |    0.331   |  2967     |  0.000  |    0
@@ -468,7 +472,7 @@ tanh                |          87.64 |             1.793
 asinh               |          55.40 |             9.625
 acosh               |         110.47 |             6.839
 atanh               |          80.03 |             4.210
-asin                |          56.11 |             1.433
+asin                |          89.02 |             2.124
 acos                |          37.11 |             0.811
 atan                |          57.09 |             1.410
 atan2               |          57.17 |             1.467
@@ -591,10 +595,12 @@ time in the surprising direction (a small-looking change, a large real win).
 # todo:
 - do principled and thourough analysis of dependency chains and rounding errors to find optimizations
 - perfectly rounded versions
+- asin's max-ulp residual (468) right at x=1: a dedicated near-1 series
+  branch (or refit) to close it the rest of the way -- see asin's doc
+  comment for why it's still there after the small-x/cancellation fixes
 - fix (or at least give a "_checked" full-range companion to) the remaining
-  inherited accuracy defects in the newly-ported functions: small-x
-  cancellation in asin (log1p/sinh/tanh/atanh/asinh already fixed, see
-  above), erfc's own exp2 domain gap, remainder's tie-breaking cliff, and
+  inherited accuracy defects in the newly-ported functions: erfc's own
+  exp2 domain gap, remainder's tie-breaking cliff, and
   erf/erfc/exp-family's dependence on the fast unchecked exp2 -- see the
   overview above and each function's doc comment
 - vary both arguments in quickbench's two-argument benchmarks (atan2, hypot,

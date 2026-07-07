@@ -126,12 +126,13 @@ fn main() {
     check("atanh(-1)", atanh(-1.0), f32::NEG_INFINITY);
     check("atanh(2)", atanh(2.0), f32::NAN);
 
-    // asin(0) comes out -0.0, not +0.0: the trailing `* (-hpi)` in asinf
-    // flips the sign of the intermediate 0 (same in the C original --
-    // traced by hand, not a translation artifact), backwards from the
-    // usual libm convention of asin matching its input's zero sign.
-    check("asin(0)", asin(0.0), -0.0);
-    check("asin(-0)", asin(-0.0), 0.0);
+    // asin(0)'s zero sign used to come out backwards (-0.0 for +0.0 input)
+    // from the trailing `* (-hpi)` flipping an intermediate +0 -- fixed as
+    // a side effect of rationalizing the small-x cancellation below (see
+    // asin's doc comment), now matching the usual libm convention (and
+    // this crate's other odd functions, e.g. atan/sinh/asinh/tanh).
+    check("asin(0)", asin(0.0), 0.0);
+    check("asin(-0)", asin(-0.0), -0.0);
     check("asin(1)", asin(1.0), std::f32::consts::FRAC_PI_2);
     check("asin(-1)", asin(-1.0), -std::f32::consts::FRAC_PI_2);
     check("asin(2)", asin(2.0), f32::NAN);

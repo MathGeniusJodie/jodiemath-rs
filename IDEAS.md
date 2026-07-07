@@ -187,10 +187,49 @@ branches, no scalar-only intrinsics unless the vector form exists).
 
 ## asin / acos / atan / atan2
 
-- **asin small-x fix (branchless)**: select between the existing sqrt form and
-  an odd poly x + x³·P(x²) for |x| < 0.5. Kills the documented near-zero
-  precision loss; both sides vectorize, cost is the blended second poly
-  (or refit a single form that doesn't cancel: asin(x) = atan2-style rewrite).
+- **asin small-x fix — done, tested, kept (2026-07-07), seventh and last of
+  this session's correctness fixes.** Two bugs, not the one documented,
+  found and fixed one at a time (same pattern as acosh/asinh): (169,116,394
+  avg ulp / 852,038,214 max ulp overall, worst x ≈ 2.3e-8).
+  1. `sqrt(1-a) - 1` (the final step of the acos-style sqrt identity) has
+     the same cancellation as asinh/acosh's `sqrt(1+t) - 1`. Fixed with the
+     same rationalization, `sqrt(1-a) - 1 = -a / (sqrt(1-a) + 1)`, leaving
+     the fitted rational correction `a = (a²-a)/d + a` untouched. This
+     alone dropped avg/max ulp to 293.15/825 — a huge improvement (~577,000x
+     on avg) but still nowhere near the 0.5 budget.
+  2. What's left after fix 1 isn't cancellation at all: the rational
+     correction's own fit carries a small persistent *relative* bias
+     (~3e-5, traceable to the C original's coarser ~1e-6-relative goal)
+     that the much-larger cancellation error had been hiding. In relative
+     terms this bias is roughly constant across the domain, but it
+     dominates specifically where the true answer is smallest (x → 0),
+     exactly mirroring why log1p/tanh/sinh needed small-x branches. Fixed
+     the same way: a genuine 4-term Taylor branch (`x + x³/6 + 3x⁵/40 +
+     15x⁷/336`, exact rational coefficients) below `|x| < 0.1` — a much
+     smaller cutoff than sinh's 0.5, since asin's Taylor series converges
+     far slower near its sqrt singularity at x=1 (checked: 2 terms alone
+     leave ~63 ulp at x=0.1, not enough; 4 terms leave ~2.7e-10 relative,
+     comfortable margin at that cutoff). The rational correction was left
+     alone rather than refit, since it's only inaccurate in the regime the
+     Taylor branch now covers.
+  Sign-of-zero bonus: the old formula's zero sign was backwards from the
+  rest of this crate's odd functions (`asin(+0)` came out `-0.0`) — the
+  rationalized form happens to produce the mathematically conventional
+  sign instead, confirmed by checking atan/sinh/asinh/tanh(-0) all agree
+  with the new convention; edgecheck updated to match (this was a
+  pre-existing, separately-documented quirk, not something this fix set
+  out to change, but worth noting since the expected values flipped).
+  Verified exhaustive: avg ulp now 0.328 (in budget), max ulp 468 (real
+  progress from 852 million, but not under the stated ≤2) — concentrated
+  at x → 1, a genuinely different mechanism (asin's derivative singularity
+  amplifying the same rational-correction's own fit inaccuracy, this time
+  at the *other* domain edge) that a small-x branch can't reach. Left open
+  as a documented follow-up (see asin's doc comment) rather than bundling
+  in a second, near-1 branch this round. mca cost, in line with the
+  session's other fixes: 56.11→89.02 cyc latency (+58.6%), 1.433→2.124
+  cyc/elem throughput (+48.2%). Kept for the same reasoning as the other
+  six: the avg-ulp fix alone is a correctness fix by any reasonable bar,
+  even though the max-ulp story isn't fully resolved.
 - **acos/asin shared kernel**: both reduce to sqrt(1−a)·poly; a shared
   computation with different post-transforms would halve the code and enable a
   combined refit at f32-quantized precision.
