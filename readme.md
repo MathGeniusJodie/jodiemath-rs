@@ -143,6 +143,17 @@ IDEAS.md for the before/after measurements):
   `y` large enough to push `log2(x)*y` past 128. Fixed by routing through
   `exp2_checked`; real, disclosed perf cost since this touches every
   call, not just an edge branch (+14% latency, +36% throughput).
+- **fixed**: `acos(-0.0)` returned `-pi/2` instead of the correct `+pi/2`
+  (acos is never negative -- unlike odd functions like sin/asinh, `-0.0`
+  has no legitimate negative result here). Root cause: `mulsign` (bit-based
+  sign) and `x < 0.0` (value-based comparison) disagree on exactly this
+  one input, whose sign *bit* is set but whose *value* equals `+0.0`.
+  An exhaustive-sweep-only find -- fuzz sampling essentially never lands
+  on this one bit pattern (avg ulp exhaustively was 0.99 with max ulp in
+  the billions, invisible in quick-mode's 0.50/4 reading). Fixed by
+  normalizing `-0.0` to `+0.0` before `mulsign` sees it (`x + 0.0`, exact
+  and a no-op for every other input). Essentially free (mca unchanged,
+  37.11 cyc latency both before and after).
 - **still open**: remainder's `x - round(x/y)*y` loses precision to
   cancellation once `|x/y|` is large, since `round(x/y)*y`'s absolute
   error scales with `ulp(x)`, which can exceed the true remainder's own
@@ -507,7 +518,7 @@ asinh               |          55.40 |             9.625
 acosh               |         110.47 |             6.839
 atanh               |          80.03 |             4.210
 asin                |          43.24 |             2.899
-acos                |          37.11 |             0.811
+acos                |          37.11 |             0.820
 atan                |          57.09 |             1.410
 atan2               |          57.17 |             1.467
 tan                 |          69.00 |             2.324

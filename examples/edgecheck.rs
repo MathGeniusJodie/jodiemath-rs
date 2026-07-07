@@ -139,6 +139,15 @@ fn main() {
     check("acos(1)", acos(1.0), 0.0);
     check("acos(-1)", acos(-1.0), std::f32::consts::PI);
     check("acos(2)", acos(2.0), f32::NAN);
+    // acos(-0.0) used to come out -pi/2 (mulsign's bit-based sign check
+    // disagreed with x<0.0's value-based one, exactly at this one input)
+    // instead of the correct +pi/2 -- acos is never negative. The
+    // remaining 1-ulp gap from the "ideal" FRAC_PI_2 here is acos_poly's
+    // own pre-existing, already-accepted fit imprecision (unrelated to
+    // the sign bug, and unchanged by this fix -- acos(0) had it too,
+    // before and after), not a new issue.
+    check_known_1ulp("acos(0)", acos(0.0), std::f32::consts::FRAC_PI_2);
+    check_known_1ulp("acos(-0)", acos(-0.0), std::f32::consts::FRAC_PI_2);
     check("atan(0)", atan(0.0), 0.0);
     check("atan(inf)", atan(f32::INFINITY), std::f32::consts::FRAC_PI_2);
     check("atan(-inf)", atan(f32::NEG_INFINITY), -std::f32::consts::FRAC_PI_2);

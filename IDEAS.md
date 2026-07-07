@@ -433,6 +433,37 @@ branches, no scalar-only intrinsics unless the vector form exists).
   infrastructure (a correct, reusable tuner, even though this particular
   run found nothing) rather than reverting it, matching how exp2_c/log2_c/
   asin_mid_c/atan_poly_c are kept as permanent tuners in that file.
+- **acos's negative-zero sign bug — found and fixed while re-investigating
+  the same "acos near 1" territory the refit above covered, done, tested,
+  kept (2026-07-07).** Went looking for an *algebraic* (not coefficient)
+  fix for acos's residual, and ran the exhaustive sweep to characterize it
+  precisely first -- found something the earlier quick-mode reading
+  (0.50 avg / 4 max) had completely missed: **exhaustively, avg ulp was
+  0.99 and max ulp was in the billions**, worst x = `-0.0`. `acos(-0.0)`
+  was returning `-pi/2` instead of the correct `+pi/2` (acos is never
+  negative, unlike odd functions where `-0.0` legitimately maps to a
+  negative result). Root cause: `mulsign(y, x)` uses `x`'s raw sign *bit*,
+  while the trailing `if x < 0.0 { PI }` uses a value comparison -- these
+  agree for every finite x except exactly `-0.0` (bit says negative,
+  value says "not less than zero"), so `mulsign` flipped `y`'s sign while
+  the `+pi` correction never fired. This is precisely the class of bug
+  this file's own "Negative-zero audit" bullet warned about in the
+  abstract ("several select-based paths can silently lose -0.0") --
+  first time in this session it was actually *found*, by exhaustive
+  sweeping rather than by the audit itself. Fixed with `mulsign(y, x +
+  0.0)`: `-0.0 + 0.0 = +0.0` exactly (IEEE754's defined round-to-nearest
+  behavior for that one case), a no-op for every other input including
+  genuinely negative ones. Verified exhaustive: avg ulp 0.99 → 0.4964
+  (back in budget), max ulp billions → 4 (the same small residual the
+  refit above already established can't be tightened further via
+  coefficients). mca essentially unchanged (37.11 cyc latency both
+  before and after, throughput 0.811 → 0.820, noise-level) -- a nearly
+  free fix for a bug an order of magnitude worse than what quick-mode
+  fuzzing alone would ever have surfaced. edgecheck extended with
+  `acos(0)`/`acos(-0)` (via `check_known_1ulp`, since the 1-ulp gap from
+  the "ideal" `FRAC_PI_2` there is acos_poly's own pre-existing,
+  unrelated fit imprecision — present before this fix too, not
+  introduced by it).
 - **erf's tail branch (`erf_poly`) refit — tried, no meaningful headroom
   found, not applied (2026-07-07).** Fourth use of the tuning recipe,
   extended with `erf_tail_c` (scored as the whole `mulsign(1.0 -

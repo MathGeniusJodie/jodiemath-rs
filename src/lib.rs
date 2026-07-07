@@ -946,13 +946,27 @@ fn acos_poly(x: f32) -> f32 {
     fma(u, x, 1.5707962)
 }
 
-/// Straight port of jodiemath's acosf.
+/// acos(x), domain x in [-1,1] (result always in [0,pi], never negative --
+/// unlike sin/asinh/etc., acos isn't an odd function, so x=-0.0 has no
+/// legitimate negative result the way it does for those). `mulsign`
+/// (bit-based sign) and `x < 0.0` (value-based comparison) disagree on
+/// exactly one input: `-0.0`, whose sign *bit* is set but whose *value*
+/// equals `+0.0`. `mulsign` flipped `y`'s sign there (per the bit), while
+/// `x < 0.0` correctly saw "not negative" and skipped the `+pi`
+/// correction -- so `acos(-0.0)` came out `-pi/2` instead of the correct
+/// `+pi/2`, an exhaustive-sweep-only find (fuzz sampling essentially
+/// never lands on this one exact bit pattern; avg ulp exhaustively was
+/// 0.99 with max ulp in the billions, not the quick-mode reading of
+/// 0.50/4). Fixed by normalizing `-0.0` to `+0.0` before `mulsign` sees
+/// it: `x + 0.0` is `-0.0 + 0.0 = +0.0` exactly (IEEE754's defined
+/// round-to-nearest behavior for that one case) and a no-op for every
+/// other `x`, genuinely negative or not.
 #[inline(always)]
 pub fn acos(x: f32) -> f32 {
     const PI: f32 = std::f32::consts::PI;
     let a = x.abs();
     let y = (1.0 - a).sqrt() * acos_poly(a);
-    mulsign(y, x) + if x < 0.0 { PI } else { 0.0 }
+    mulsign(y, x + 0.0) + if x < 0.0 { PI } else { 0.0 }
 }
 
 // asin(x) = x + x^3/6 + 3x^5/40 + 15x^7/336 + O(x^9), the odd Taylor series
