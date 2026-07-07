@@ -1587,20 +1587,34 @@ and measurement disagree (see the Fast2Sum comments).
 ## sin_checked / cos_checked: the clamp
 
 - **`clamp(-1000, 1000)` is max+min on the r critical path; a single `min`
-  on y inside the poly does the same job.** The blowup mechanism is r²
-  overflowing through the poly's r⁹ term; r² ≥ 0 always, so only an upper
-  bound is needed: `let y = (x * x).min(POLY_SAFE_BOUND * POLY_SAFE_BOUND)`
-  in sinf_poly (or a clamped-poly variant used only by the checked pair).
-  One op instead of two. NaN still propagates: f32::min(NaN, c) returns c,
-  but x3 = y·x re-poisons the result through the untouched x factor, so
-  sin/cos(NaN/±inf) still come out NaN. Needs edgecheck confirmation, and
-  note x (the residual) still enters linearly via the final fma — with y
-  clamped the result is bounded by ~|r|·(1+p·B²)… check the actual bound
-  with B² = 1e6: p ~ 0.17·1e6·… — redo the overflow arithmetic before
-  trusting it; if it doesn't hold, clamp still reduces to `r.min(B)` +
-  `.max(-B)` where only one of the two can instead ride on |r| via abs
-  tricks. (Flagging honestly: the one-op version needs its own overflow
-  proof, the two-op → still-two-op fallback is guaranteed safe.)
+  on y inside the poly — tried, measured unsafe, reverted (2026-07-07).**
+  The blowup mechanism is r² overflowing through the poly's r⁹ term; r² ≥
+  0 always, so the idea was that only an upper bound on y is needed:
+  `let y = (x * x).min(POLY_SAFE_BOUND * POLY_SAFE_BOUND)` inside
+  `sinf_poly`, dropping the outer `r.clamp(-1000,1000)` call site entirely
+  (2 dependent ops, confirmed via `--emit=asm`: `vmaxss`+`vminss`) down to
+  1. The idea's own text already flagged the risk and asked for the
+  overflow arithmetic to be checked before trusting it -- checked
+  empirically (isolated standalone copy of `sinf_poly` with only `y`
+  clamped, swept a wide log-spaced range of finite `r` magnitudes up to
+  1e30 for both signs) rather than trusting the analysis either way, per
+  this crate's established practice: **it fails**. `x` (the raw residual)
+  still enters the final `fma(p, x3, x)` *linearly*, unclamped -- and for
+  `r ≈ -9.7e29` (comfortably finite, `f32::MAX` is ~3.4e38), the result
+  overflows to `-inf`. This is *exactly* the "returns inf for ordinary
+  finite input" bug `POLY_SAFE_BOUND` was introduced to fix in the first
+  place, reintroduced by a different route -- clamping `y` alone bounds
+  the r⁹-term blowup but does nothing about the r¹-term blowup, and the
+  crate's no-inf-for-finite-input property for sin_checked/cos_checked is
+  exhaustively verified elsewhere in this file, not something to trade
+  away for ~1% latency. The idea's own honest fallback ("two-op →
+  still-two-op, guaranteed safe") is just the current code, so there's no
+  safe cheaper version left to try here without a structurally different
+  fix (e.g. actually re-deriving a tighter bound on `1+p*B²` accounting
+  for the *unclamped* linear term, which the idea's own arithmetic sketch
+  never got around to). Not adopted; no code changes (tested in an
+  isolated, non-shared standalone copy of the function specifically so
+  nothing needed reverting).
 
 ## sin_checked / cos_checked: structural
 
