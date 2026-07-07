@@ -891,6 +891,19 @@ saves an op and/or a rounding:
   the old select apparently cost more than one blend's worth in this
   region (register pressure or scheduling interacting with the division,
   by analogy to other entries in this file), not just its raw op count.
+- **atan2's `bothzero = !nonzerox && !nonzeroy` feeding
+  `hpisignx = if nonzerox || bothzero {...}` — checked, no-op, not adopted
+  (2026-07-07).** Pure boolean algebra: `A || (¬A∧B) ≡ A∨B`, so this
+  simplifies to `nonzerox || y == 0.0`, dropping `nonzeroy`/`bothzero`
+  entirely (fewer source-level ops). But a full `--emit=asm` diff of the
+  whole compiled example (not just the `atan2` region) showed the two
+  builds are **byte-for-byte identical** — LLVM's InstCombine already
+  performs this exact simplification, so there's nothing left to gain at
+  the source level. mca confirmed zero change on both axes (57.17 cyc /
+  1.467 cyc/elem, exactly, both before and after). Not committed (no
+  measurable speedup, per this crate's bar for adopting an IDEAS.md item)
+  but also not a regression — recorded so a future pass doesn't
+  re-discover and re-test the same already-free simplification.
 - **erfc's final `fma(y, z, w)` with z = ±1 — tried, measured, reverted
   (2026-07-07).** Replaced `z`'s select + `fma(y, z, w)` with
   `mulsign(y, x) + w`, removing the `z` variable/select entirely on the
