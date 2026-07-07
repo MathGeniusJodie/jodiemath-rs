@@ -1290,7 +1290,30 @@ pub fn hypot(x: f32, y: f32) -> f32 {
 /// in the readme/IDEAS.md.
 #[inline(always)]
 pub fn powf(x: f32, y: f32) -> f32 {
-    exp2_checked(log_2(x) * y)
+    let ax = x.abs();
+    let mag = exp2_checked(log_2(ax) * y);
+    // For negative x, `exp2(log2(|x|)*y)` alone can't ever be negative
+    // (exp2 of any real argument is positive), so this route always gave
+    // NaN for x < 0.0 -- even for a well-defined case like `(-2.0)^3.0 =
+    // -8.0`. A real result only exists there when y is an integer: even y
+    // -> +mag, odd y -> -mag (reusing `parity`, the same integer-parity
+    // helper sin_checked/cos_checked already use), non-integer y -> NaN
+    // (correctly matches std, e.g. `(-8.0)^(1/3)` is NaN in f32 too --
+    // real cube roots of negative numbers aren't picked by this branch).
+    let y_int = y == y.trunc();
+    let y_odd = y_int && parity(y) != 0.0;
+    let neg_signed = if y_odd { -mag } else { mag };
+    let neg_result = if y_int { neg_signed } else { f32::NAN };
+    // `x.is_sign_negative()` (bit-based), not `x < 0.0` (value-based): the
+    // latter disagrees with the former exactly at x = -0.0 (same class of
+    // bug as acos's earlier `-0.0` fix this session), which would silently
+    // route `(-0.0)^3.0` through the wrong (positive) branch instead of
+    // the correctly-signed `-0.0`.
+    let r = if x.is_sign_negative() { neg_result } else { mag };
+    // pow(x, 0) = 1 for *any* x -- even 0, negative, or NaN -- a
+    // dedicated IEEE754/C99 special case, not derivable from the log/exp2
+    // formula (0*inf and NaN*0 both degrade to NaN above). Override last.
+    if y == 0.0 { 1.0 } else { r }
 }
 
 /// Straight port of jodiemath's remainderf: x - round(x/y)*y (ties away from

@@ -228,6 +228,43 @@ IDEAS.md for the before/after measurements):
   cancellation once `|x/y|` is large, since `round(x/y)*y`'s absolute
   error scales with `ulp(x)`, which can exceed the true remainder's own
   magnitude (at most `|y|/2`).
+- **fixed**: `powf(x, y)` for negative `x` was *always* `NaN`, even for
+  well-defined, common cases like `powf(-2.0, 3.0)` (should be `-8.0`).
+  Found by the same `-0.0` sweep, widened to a couple of general negative
+  bases once `powf(-0.0, 3.0)` turned up wrong. Root cause: the whole
+  function is `exp2_checked(log2(|x|)*y)`-shaped, and `exp2` of any real
+  argument is always non-negative -- this route has no way to ever
+  produce a negative result, regardless of `y`. Fixed by computing the
+  magnitude on `|x|` as before, then reapplying the correct sign for
+  negative `x` when `y` is an integer (even `y` -> positive, odd `y` ->
+  negative, reusing `parity`, the same integer-parity helper
+  `sin_checked`/`cos_checked` already use) and `NaN` when `y` isn't an
+  integer (matches std -- e.g. `(-8.0)^(1/3)` is `NaN` in f32 too, real
+  cube roots of negative numbers aren't reachable through this branch).
+  Two more bugs surfaced from the same investigation and were fixed in
+  the same pass: `pow(x, 0)` must be `1` for *any* `x` (even `0`,
+  negative, or `NaN`) per IEEE754/C99's dedicated special case, not
+  derivable from the log/exp2 formula (`0*inf`/`NaN*0` both degrade to
+  `NaN`) -- `powf(0.0, 0.0)` and `powf(f32::NAN, 0.0)` were both `NaN`
+  instead of `1.0`. And the negative-base sign check itself first used
+  `x < 0.0` (value-based), which -- same pitfall as acos's earlier fix --
+  disagrees with the bit-based sign exactly at `x = -0.0`
+  (`-0.0 < 0.0` is `false`), silently routing `powf(-0.0, 3.0)` through
+  the wrong branch; fixed with `x.is_sign_negative()` instead. Not fixed:
+  `powf(-1.0, ±inf)` (IEEE754 special-cases this to `1.0`; this crate's
+  formula gives `NaN` there, `0*inf` inside `log2(1.0)*inf`) -- a narrow,
+  rarely-relied-on corner left as a known gap rather than adding more
+  special-case logic for it. accuracy.rs's own `powf` domain filter had
+  also been narrowed to `x > 0.0` only, dodging the whole negative-base
+  case instead of exercising it (the same pattern erf/erfc's filters
+  had) -- widened to `x != 0.0`. Verified bit-exact against std at every
+  case above; a dedicated integer-`y` spot sweep (fuzz sampling almost
+  never lands on an exact integer `y`) found no accuracy cliff in the
+  newly-reachable negative-base path (max ulp 92, same budget as the
+  existing positive-base path, since it reuses the identical
+  log_2/exp2_checked machinery with only a sign correction at the end).
+  mca cost is small: 97.88->98.03 cyc latency (+0.2%), 3.788->3.898
+  cyc/elem throughput (+2.9%).
 
 **sinh_throughput/cosh_throughput** are a second tier for sinh/cosh, added
 after finding that computing `exp(-x)` as `1.0 / exp(x)` (instead of a
@@ -321,7 +358,7 @@ comment); their rows are exhaustive (all 2^32 f32 bit patterns), not fuzz.
                    erfc (|x|<=10)|    0.311   |   109     | (no std erfc)
                   atan2 |    0.136   |    18     |  0.000  |    0
         hypot (bounded) |    0.034   |     1     |  0.000  |    0
-        powf (in-domain)|    0.359   |   123     |  0.000  |    1
+        powf (in-domain)|    0.181   |   127     |  0.000  |    1
      remainder (|x/y|<1000) |    ~1000**  | ~2e9** | (no std remainder)
 ```
 `**` remainder's max ulp stays large even inside the `|x/y|<1000` bound: a
@@ -595,7 +632,7 @@ tan                 |          71.02 |             2.532
 erf                 |         102.74 |             3.163
 erfc                |          78.09 |             2.599
 hypot               |          21.00 |             0.763
-powf                |          97.88 |             3.788
+powf                |          98.03 |             3.898
 remainder           |          33.02 |             0.647
 ```
 sin/cos are the restored single-word Cody-Waite version (identical codegen

@@ -641,9 +641,14 @@ fn main() {
         report("std hypot", &s, t0);
     }
     if run("powf") {
-        // restrict to jodie powf's actual domain: x > 0 (log_2's domain),
-        // and the exponent log2(x)*y kept inside exp2's unchecked range.
-        let pow_domain = |x: f32, y: f32| x > 0.0 && (-126.0..128.0).contains(&(x.log2() * y));
+        // x != 0 (x == 0 is its own exact case, not a fuzz-density target)
+        // and the exponent log2(|x|)*y kept inside exp2's unchecked range.
+        // Negative x is now in-domain too (see powf's own doc comment: a
+        // real result exists whenever y is an integer) -- this used to be
+        // filtered out entirely (`x > 0.0`), which dodged the bug instead
+        // of exercising it, the same pattern erf/erfc's filters had.
+        let pow_domain =
+            |x: f32, y: f32| x != 0.0 && (-126.0..128.0).contains(&(x.abs().log2() * y));
         let s = fuzz2(TWOARG_SAMPLES, pow_domain, powf, pow_u10);
         report("powf", &s, t0);
         let s = fuzz2(TWOARG_SAMPLES, pow_domain, |x: f32, y: f32| x.powf(y), pow_u10);

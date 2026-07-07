@@ -626,6 +626,64 @@ branches, no scalar-only intrinsics unless the vector form exists).
   already-disclosed `|x/y|`-large cancellation issue, unaffected by this
   change). edgecheck extended with `log1p(-0)`, `atanh(-0)`,
   `remainder(-0,3)`, `remainder(0,3)`.
+- **powf(negative x) was always NaN — a much bigger bug than a sign
+  quirk, found while closing out the "Negative-zero audit" idea below,
+  done, tested, kept (2026-07-07).** After the sinf_poly/log1p/atanh/
+  remainder fixes, ran one more sweep checking every remaining public
+  function at `-0.0` (`expm1`, `sinh`, `sinh_throughput`, `tanh`,
+  `asinh`, `atan`, `erf`, `cbrt`, `cbrt_accurate`, `ln`, `log10`, `hypot`,
+  `powf`) — all clean except `powf(-0.0, 3.0)` (`+0.0` instead of
+  `-0.0`). Widening the check to a couple of ordinary negative bases
+  turned up something much bigger: `powf(-2.0, 3.0)` and `powf(-2.0,
+  2.0)` were both `NaN`, not `-8.0`/`4.0`. Root cause: `powf` is
+  `exp2_checked(log2(|x|)*y)`-shaped (well, `log2(x)*y` before this fix —
+  no `abs` at all), and `exp2` of any real argument is always
+  non-negative — this route has *no way* to ever produce a negative
+  result, for any `y`, not just at the `-0.0` singularity. So this
+  wasn't a narrow edge case: *the entire negative-base half of powf's
+  domain* silently returned `NaN` instead of a well-defined answer,
+  completely undocumented (no doc-comment caveat, no readme mention).
+  Fixed by computing the magnitude on `|x|` (unchanged formula otherwise)
+  and reapplying the sign for negative `x` only when `y` is an integer
+  (even -> positive, odd -> negative, via `parity`, reusing
+  `sin_checked`/`cos_checked`'s existing integer-parity helper — no new
+  primitive needed) and `NaN` when `y` isn't an integer (correctly
+  matches std: real roots of negative numbers to a non-integer power
+  aren't representable). Two more real bugs fell out of the same
+  investigation: (1) `pow(x, 0) = 1` for *any* `x`, even `0`/negative/
+  `NaN`, is a dedicated IEEE754/C99 special case the log/exp2 formula
+  can't derive on its own (`0*inf` and `NaN*0` both degrade to `NaN`) —
+  `powf(0.0, 0.0)` and `powf(f32::NAN, 0.0)` were both `NaN` instead of
+  `1.0`, fixed with a trailing `if y == 0.0 { 1.0 } else { r }` override
+  (compute everything unconditionally first, select last — the same
+  no-early-return idiom as the log1p/remainder fix just above, and for
+  the same reason: `cargo run --example mca` is the check that would
+  catch an early-return regression here, not `cargo build`/`test`).
+  (2) The negative-base sign check itself first used `x < 0.0`
+  (value-based) instead of `x.is_sign_negative()` (bit-based) — the
+  identical class of bug as acos's `-0.0` fix earlier this session,
+  since `-0.0 < 0.0` is `false`, silently routing `powf(-0.0, 3.0)`
+  through the *positive* branch. Also widened `accuracy.rs`'s own
+  `powf` domain filter, which had been narrowed to `x > 0.0` only — the
+  same "filter dodges the bug instead of exercising it" pattern already
+  found in erf/erfc's filters this session — to `x != 0.0`. Verified
+  bit-exact against std for every case above (`powf(-2,3)`, `powf(-2,2)`,
+  `powf(-2,3.5)==NaN`, `powf(0,0)`, `powf(-0,0)`, `powf(nan,0)`,
+  `powf(-0,3)`, `powf(-0,2)`, `powf(-0,-1)`). Fuzz sampling almost never
+  lands on an exact integer `y`, so also ran a dedicated integer-`y`
+  spot sweep (401×39 grid over `x`/`y`) to check the newly-reachable
+  negative-base path specifically for an accuracy cliff — none found
+  (max ulp 92, same order of magnitude as the existing positive-base
+  budget, since the fix only adds a sign correction after the existing
+  log_2/exp2_checked machinery, not a new computation path). Not fixed:
+  `powf(-1.0, ±inf)` — IEEE754 special-cases this to `1.0`, but this
+  crate's formula gives `NaN` (`log2(1.0)*inf` degrades to `0*inf`); left
+  as a documented gap rather than adding more special-case logic for a
+  base/exponent combination unlikely to matter in this crate's actual
+  use cases. mca cost is small: 97.88->98.03 cyc latency (+0.2%),
+  3.788->3.898 cyc/elem throughput (+2.9%) — by far the cheapest of this
+  session's correctness fixes relative to its scope (a whole missing
+  half-domain, not just a sign at one point).
 - **erf's tail branch (`erf_poly`) refit — tried, no meaningful headroom
   found, not applied (2026-07-07).** Fourth use of the tuning recipe,
   extended with `erf_tail_c` (scored as the whole `mulsign(1.0 -

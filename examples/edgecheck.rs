@@ -230,6 +230,28 @@ fn main() {
     check("powf(2,1000)", powf(2.0, 1000.0), f32::INFINITY);
     check("powf(2,-1000)", powf(2.0, -1000.0), 0.0);
     check("powf(10,100)", powf(10.0, 100.0), f32::INFINITY);
+    // powf(negative, integer) used to always be NaN: exp2(log2(|x|)*y)
+    // alone can never be negative, so the old formula had no way to
+    // produce a real answer for x < 0.0 at all, even for a well-defined
+    // case like (-2.0)^3.0 = -8.0. Fixed by computing on |x| and
+    // reapplying the sign for integer y (even -> positive, odd ->
+    // negative), matching std/IEEE754. Non-integer y stays NaN (a real
+    // domain limit, not a bug -- e.g. (-8.0)^(1/3) is NaN in f32 too).
+    check("powf(-2,3)", powf(-2.0, 3.0), -8.0);
+    check("powf(-2,2)", powf(-2.0, 2.0), 4.0);
+    check("powf(-2,3.5)", powf(-2.0, 3.5), f32::NAN);
+    // pow(x, 0) = 1 for *any* x, even 0, negative, or NaN -- a dedicated
+    // IEEE754/C99 special case the log/exp2 formula can't derive on its
+    // own (0*inf and NaN*0 both degrade to NaN) -- also used to be wrong.
+    check("powf(0,0)", powf(0.0, 0.0), 1.0);
+    check("powf(-0,0)", powf(-0.0, 0.0), 1.0);
+    check("powf(nan,0)", powf(f32::NAN, 0.0), 1.0);
+    // -0.0's own sign as a base: `x.is_sign_negative()` (bit-based), not
+    // `x < 0.0` (value-based) -- the same acos-style pitfall from earlier
+    // this session, since -0.0 < 0.0 is false. Both are IEEE754-pinned.
+    check("powf(-0,3)", powf(-0.0, 3.0), -0.0);
+    check("powf(-0,2)", powf(-0.0, 2.0), 0.0);
+    check("powf(-0,-1)", powf(-0.0, -1.0), f32::NEG_INFINITY);
     check("remainder(5,3)", remainder(5.0, 3.0), -1.0);
     check("remainder(4,2)", remainder(4.0, 2.0), 0.0);
     // remainder(-0.0, y) used to lose its sign: q is +-0.0 matching x/y's
