@@ -1,5 +1,8 @@
 // Coordinate-descent ULP tuner for polynomial coefficients.
 use jodiemath_rs::*;
+// Scalar (non-SIMD, no portable_simd/nightly needed) 1.0-ulp reference,
+// same crate accuracy.rs uses for its vectorized ground truth.
+use sleef::f64::erf_u10 as erf_ref;
 
 #[inline(always)]
 fn fma(a: f32, b: f32, c: f32) -> f32 {
@@ -117,6 +120,25 @@ fn acos_poly_c(x: f32, c: &[f32]) -> f32 {
     (1.0 - x).sqrt() * poly
 }
 
+// erf's tail branch (see src/lib.rs's erf): scored as the whole
+// mulsign(1.0 - exp2(erf_poly(xa)), x) formula, xa in [0.28, 10] (exactly
+// where this branch is used in the shipped code; the Pade near-zero
+// branch below 0.28 is untouched). Uses f32::exp2 (std) as a stand-in for
+// the shipped exp2_checked -- within this bounded range erf_poly never
+// leaves exp2's safe domain, so the checked/unchecked distinction doesn't
+// matter for tuning purposes.
+#[inline(always)]
+fn erf_tail_c(x: f32, c: &[f32]) -> f32 {
+    let xa = x.abs().min(10.0);
+    let u = fma(c[0], xa, c[1]);
+    let u = fma(u, xa, c[2]);
+    let u = fma(u, xa, c[3]);
+    let u = fma(u, xa, c[4]);
+    let u = fma(u, xa, c[5]);
+    let poly = fma(u, xa, c[6]);
+    mulsign_c(1.0 - poly.exp2(), x)
+}
+
 fn tune(
     name: &str,
     f: &dyn Fn(f32, &[f32]) -> f32,
@@ -216,5 +238,18 @@ fn main() {
         }
         let init = [2.2960134e-3, -1.1146357e-2, 2.6900099e-2, -4.8802612e-2, 8.875567e-2, -2.1458527e-1, 1.5707962];
         tune("acos_poly", &acos_poly_c, &|x| x.acos(), &grid, &init);
+    }
+    if which.contains("erf") {
+        // erf's tail branch is only ever used for xa in [0.28, 10] (see
+        // erf's doc comment).
+        let mut grid = vec![];
+        let mut b = 0.28f32.to_bits();
+        while b < 10.0f32.to_bits() {
+            grid.push(f32::from_bits(b));
+            grid.push(-f32::from_bits(b));
+            b += 3000;
+        }
+        let init = [3.118769e-4, -4.67225e-3, 3.3162573e-2, -1.5214339e-1, -9.1684705e-1, -1.6282598, 3.1332566e-5];
+        tune("erf_tail", &erf_tail_c, &erf_ref, &grid, &init);
     }
 }

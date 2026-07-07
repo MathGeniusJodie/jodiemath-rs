@@ -320,6 +320,28 @@ branches, no scalar-only intrinsics unless the vector form exists).
   infrastructure (a correct, reusable tuner, even though this particular
   run found nothing) rather than reverting it, matching how exp2_c/log2_c/
   asin_mid_c/atan_poly_c are kept as permanent tuners in that file.
+- **erf's tail branch (`erf_poly`) refit — tried, no meaningful headroom
+  found, not applied (2026-07-07).** Fourth use of the tuning recipe,
+  extended with `erf_tail_c` (scored as the whole `mulsign(1.0 -
+  exp2(erf_poly(xa)), x)` formula for xa in [0.28, 10], exactly where this
+  branch is used post the domain-bound fix earlier this session). Needed
+  a real ground-truth reference this crate didn't have wired into tune.rs
+  yet — `sleef::f64::erf_u10` (the scalar, non-SIMD form; the module path
+  is private, the flat `erf_u10` re-export at the crate root is the way
+  in, same as `sleef::f64x::erf_u10` accuracy.rs already uses for its
+  vectorized version) — no nightly/portable_simd needed for the scalar
+  form, unlike accuracy.rs's own sleef usage. Same result shape as
+  acos_poly just above: max ulp unchanged (4→4), avg ulp moved <0.3%
+  (0.386→0.385), confirmed stable across a 10x grid-density increase.
+  Not applied, kept as infrastructure for the same reasons as acos_poly.
+  Between this and acos_poly both landing at "already optimal," the
+  pattern suggests this session's earlier refits (asin, atan) found real
+  headroom specifically because those coefficients hadn't been touched
+  since the original C port, while acos_poly/erf_poly may have already
+  been through more careful tuning historically — worth checking git
+  blame / original-source provenance before spending more tuning passes
+  on functions without first estimating whether they're likely to have
+  slack, rather than tuning everything uniformly.
 - **atan without reciprocal-select**: `y = if a < 1 {a} else {1/a}` then a
   conditional π/2 flip — fine already; alternatively fit atan on [0, ∞) via
   t = x/(1+|x|) rational reduction, one division, no select chain.
