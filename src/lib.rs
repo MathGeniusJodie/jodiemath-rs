@@ -405,7 +405,7 @@ fn reduce_pi(x: f32, qh: f32, ql: f32) -> f32 {
 // see jodiemath-workflow memory).
 #[inline(always)]
 fn parity(q: f32) -> f32 {
-    q - 2.0 * (q * 0.5).floor()
+    fma(-2.0, (q * 0.5).floor(), q)
 }
 
 // Bound for the reduced residual right before it enters sinf_poly. Once the
@@ -745,7 +745,7 @@ pub fn tanh(x: f32) -> f32 {
 /// the cliff so it isn't mistaken for a translation bug.
 #[inline(always)]
 pub fn asinh(x: f32) -> f32 {
-    ln(x + (x * x + 1.0).sqrt())
+    ln(x + fma(x, x, 1.0).sqrt())
 }
 
 /// Straight port of jodiemath's acoshf: ln(x + sqrt(x^2-1)), inherited as-is
@@ -757,7 +757,7 @@ pub fn asinh(x: f32) -> f32 {
 /// sqrt argument would otherwise produce never happens.
 #[inline(always)]
 pub fn acosh(x: f32) -> f32 {
-    ln(x + (x * x - 1.0).sqrt())
+    ln(x + fma(x, x, -1.0).sqrt())
 }
 
 /// Straight port of jodiemath's atanhf: 0.5*ln((1+x)/(1-x)), inherited as-is
@@ -915,7 +915,7 @@ pub fn erfc(x: f32) -> f32 {
 /// their std counterparts.
 #[inline(always)]
 pub fn hypot(x: f32, y: f32) -> f32 {
-    (x * x + y * y).sqrt()
+    fma(x, x, y * y).sqrt()
 }
 
 /// Straight port of jodiemath's powf: exp2(log2(x) * y). Inherits exp2's
@@ -933,7 +933,8 @@ pub fn powf(x: f32, y: f32) -> f32 {
 /// original's identical formula, only reliable while |x/y| stays moderate.
 #[inline(always)]
 pub fn remainder(x: f32, y: f32) -> f32 {
-    x - (x / y).round() * y
+    let q = (x / y).round();
+    fma(-q, y, x)
 }
 
 #[cfg(test)]

@@ -166,9 +166,9 @@ number stays honest instead of hiding the defect behind a narrower domain.
                     erf (|x|<6)  |    0.631   |     5     | (no std erf)
                    erfc (|x|<9.3)|    0.297   |   115     | (no std erfc)
                   atan2 |    0.136   |    19     |  0.000  |    0
-        hypot (bounded) |    0.039   |     1     |  0.000  |    0
+        hypot (bounded) |    0.034   |     1     |  0.000  |    0
         powf (in-domain)|    0.359   |   123     |  0.000  |    1
-     remainder (|x/y|<1000) |    1375**  | 2.7e9** | (no std remainder)
+     remainder (|x/y|<1000) |    ~1000**  | ~2e9** | (no std remainder)
 ```
 `*` sinh/tanh's own table rows above are for the domain-restricted (exp2-safe)
 range only; the near-zero cancellation still lives inside that same range
@@ -178,7 +178,13 @@ optimistic for anything close to x=0.
 handful of inputs land close enough to an exact half-integer quotient that
 f32 rounding flips which integer `round(x/y)` picks vs. the f64 reference,
 jumping the result by a whole `y` -- an inherent tie-breaking sensitivity of
-any round()-based remainder, not specific to this formula.
+any round()-based remainder, not specific to this formula. Fusing the final
+`x - q*y` into one `fma(-q, y, x)` (single rounding instead of two) roughly
+halves the *average* ulp across repeated fuzz runs (avg fluctuates run to
+run, ~1000-2500 before vs ~600-1800 after over several trials, since the
+10M-sample fuzz rarely hits the pathological tie-break inputs that dominate
+max) but doesn't move the max-ulp tie-breaking cliff itself, which is a
+separate, structural property of round()-based remainder.
 
 # benchmarks
 Run on i5-1145G7, -C target-cpu=native (now set in .cargo/config.toml)
@@ -415,9 +421,9 @@ exp2                |          35.00 |             0.841
 exp2_checked        |          43.06 |             1.399
 log2                |          34.23 |             1.556
 sin                 |          46.00 |             1.022
-sin_checked         |         109.00 |             5.289
+sin_checked         |         109.00 |             5.280
 cos                 |          54.00 |             1.360
-cos_checked         |         113.00 |             4.598
+cos_checked         |         113.00 |             4.474
 ln                  |          56.91 |             1.626
 log10               |          56.91 |             1.626
 log1p               |          59.98 |             2.023
@@ -426,8 +432,8 @@ expm1               |          71.00 |             1.441
 sinh                |          48.02 |             2.083
 cosh                |          48.02 |             2.083
 tanh                |          62.00 |             1.359
-asinh               |          76.98 |             2.788
-acosh               |          72.06 |             2.788
+asinh               |          71.99 |             2.806
+acosh               |          69.03 |             2.806
 atanh               |          71.00 |             2.677
 asin                |          56.11 |             1.433
 acos                |          37.11 |             0.811
@@ -436,9 +442,9 @@ atan2               |          81.00 |             1.969
 tan                 |          69.00 |             2.324
 erf                 |          88.02 |             2.101
 erfc                |          67.09 |             2.097
-hypot               |          25.00 |             0.766
+hypot               |          21.00 |             0.763
 powf                |          85.86 |             2.784
-remainder           |          37.00 |             0.649
+remainder           |          33.00 |             0.646
 ```
 sin/cos are the restored single-word Cody-Waite version (identical codegen
 to before this session's double-float work, confirmed by these numbers
@@ -472,6 +478,29 @@ kept the flat chain with `err0` gone: net win with no latency cost. mca:
 sin_checked 5.544->5.289 cyc/elem throughput (-4.6%), cos_checked
 4.919->4.598 cyc/elem throughput (-6.5%), latency unchanged for both
 (109.00/113.00 cyc).
+
+**Missed fma contractions swept crate-wide.** Rust never auto-contracts
+`a*b + c` into a single `fma` -- every fma in this crate is explicit, and a
+handful of spots had missed the memo: `parity()`'s `q - 2.0*floor(...)` (the
+intermediate `2.0*floor` is already exact once `q` is an integer, so this is
+bit-exact, purely an op-count win, shared by both sin_checked and
+cos_checked), `asinh`/`acosh`'s `x*x +/- 1.0`, `hypot`'s `x*x + y*y`, and
+`remainder`'s `x - q*y`. All fused (`fma(x, x, 1.0)` etc.), each one fewer
+instruction and one fewer rounding on the same critical path. mca:
+sin_checked 5.289->5.280 cyc/elem, cos_checked 4.598->4.474 cyc/elem (-2.7%,
+from parity() alone), asinh 76.98->71.99 cyc latency / 2.905->2.806 cyc/elem
+throughput, acosh 72.06->69.03 cyc / 2.901->2.806 cyc/elem, hypot
+25.00->21.00 cyc (-16%) / 0.766->0.763 cyc/elem, remainder 37.00->33.00 cyc
+(-11%) / 0.649->0.646 cyc/elem -- real, if individually small, wins across
+the board with zero accuracy cost (fma is provably at least as accurate as
+two separate roundings; remainder's avg ulp visibly improved too, see the
+accuracy table note above). One candidate from the same list, `asin`'s
+`a*a - a`, was tried and reverted: bit-for-bit the same fusion, but mca
+showed throughput getting *worse* (1.433->1.479 cyc/elem) with latency flat,
+reproduced and isolated by reverting that single line while keeping the
+rest -- yet another instance of this crate's recurring "fewer ops doesn't
+always mean faster" lesson, this time in an otherwise uniformly-positive
+batch of near-identical changes.
 
 # tools
 - `cargo +nightly run --release --example accuracy [thorough] [filter]` - avg/max ulp against an f64

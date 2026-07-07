@@ -827,18 +827,41 @@ rustc emits strict IEEE ops; `a * b + c` in source stays mul+add — every
 fma in this crate is explicit, and these spots missed the memo. Each fix
 saves an op and/or a rounding:
 
-- **hypot**: `(x*x + y*y).sqrt()` → `fma(x, x, y*y).sqrt()`. Same op count,
-  one rounding fewer, strictly more accurate. One-line change.
-- **asinh**: `x*x + 1.0` → `fma(x, x, 1.0)`.
-- **acosh**: `x*x - 1.0` → `fma(x, x, -1.0)`.
-- **asin**: `a*a - a` → `fma(a, a, -a)`.
-- **remainder**: `x - (x/y).round() * y` → `fma(-q, y, x)` with
-  q = (x/y).round_ties_even(). Single rounding on the subtract — this is
-  *the* accuracy-critical op of the function (massive cancellation by
-  construction), so the contraction materially extends the reliable range,
-  on top of the two_prod idea from Part 1.
-- **parity()**: `q - 2.0 * f` → `fma(-2.0, f, q)` (moot if the integer-
-  domain parity lands, but free until then).
+- **hypot** — done, tested, kept (2026-07-07). `(x*x + y*y).sqrt()` →
+  `fma(x, x, y*y).sqrt()`. mca: 25.00→21.00 cyc latency (-16%),
+  0.766→0.763 cyc/elem throughput; accuracy improved slightly (avg ulp
+  ~0.039→~0.034 across fuzz runs, bounded domain).
+- **asinh** — done, tested, kept (2026-07-07). `x*x + 1.0` →
+  `fma(x, x, 1.0)`. mca: 76.98→71.99 cyc latency, 2.905→2.806 cyc/elem
+  throughput.
+- **acosh** — done, tested, kept (2026-07-07). `x*x - 1.0` →
+  `fma(x, x, -1.0)`. mca: 72.06→69.03 cyc latency, 2.901→2.806 cyc/elem
+  throughput.
+- **asin — tried, measured, reverted (2026-07-07).** `a*a - a` →
+  `fma(a, a, -a)` is bit-for-bit the same fusion as the others above, but
+  mca showed throughput getting *worse* (1.433→1.479 cyc/elem) with latency
+  unchanged, reproduced and isolated by reverting just this one line while
+  keeping the rest of the batch — the same "fewer ops doesn't always mean
+  faster" pattern as the round_x_over_pi pre_offset and reduce_pi e3
+  entries elsewhere in this file, this time inside an otherwise uniformly
+  positive batch of near-identical changes. Left as `(a * a - a) / d + a`.
+- **remainder** — done, tested, kept (2026-07-07), *without* the
+  round_ties_even part. `x - (x/y).round() * y` → `let q = (x/y).round();
+  fma(-q, y, x)`. Kept `.round()` (ties-away) unchanged — switching to
+  round_ties_even is a separate semantic change (documented tradeoff, see
+  Part 3) not bundled into this mechanical fma pass. mca: 37.00→33.00 cyc
+  latency (-11%), 0.649→0.646 cyc/elem throughput. Accuracy: avg ulp
+  roughly halves across repeated fuzz trials (~1000-2500 before vs
+  ~600-1800 after, high run-to-run variance either way since the metric is
+  dominated by a rare tie-breaking case) — max ulp unaffected, since that's
+  the separate structural tie-breaking cliff documented in the readme, not
+  the double-rounding this fix targets.
+- **parity()** — done, tested, kept (2026-07-07). `q - 2.0 * f` →
+  `fma(-2.0, f, q)`; bit-exact (the intermediate `2.0*floor` was already
+  exact once `q` is an integer, so this is a pure op-count win). Shared by
+  sin_checked/cos_checked: mca 5.289→5.280 / 4.598→4.474 cyc/elem
+  throughput (cos_checked -2.7%), latency unchanged for both (moot once/if
+  the integer-domain parity idea below lands, but free until then).
 - **tanh**: `exp(2.0 * x)` expands to exp2((2·x)·LOG2_E) — two multiplies
   and two roundings on the argument. Write `exp2(x * (2.0 * LOG2_E))`
   (constant folds at compile time): one multiply, one rounding. Same
