@@ -118,6 +118,15 @@ fn main() {
     check("log1p(0)", log1p(0.0), 0.0);
     check("log1p(-1)", log1p(-1.0), f32::NEG_INFINITY);
     check("log1p(-2)", log1p(-2.0), f32::NAN);
+    // log1p(-0.0) used to lose its sign: `ln(u) + corr` adds two
+    // exactly-zero values of opposite sign at x = +-0.0 (`ln(1.0)` is
+    // `+0.0`, but `corr` correctly carries x's sign there), the same
+    // IEEE754 mechanism as sinf_poly's own `-0.0` bug. Fixed with a
+    // trailing `if x == 0.0 { x } else { normal }` select (log1p is odd
+    // and monotonic through the origin, so `normal`'s sign already
+    // matches x's for every nonzero x -- this only changes the singular
+    // zero case).
+    check("log1p(-0)", log1p(-0.0), -0.0);
 
     check("exp(0)", exp(0.0), 1.0);
     check("expm1(0)", expm1(0.0), 0.0);
@@ -145,6 +154,10 @@ fn main() {
     check("atanh(1)", atanh(1.0), f32::INFINITY);
     check("atanh(-1)", atanh(-1.0), f32::NEG_INFINITY);
     check("atanh(2)", atanh(2.0), f32::NAN);
+    // atanh(-0.0) was wrong purely as a downstream consequence of
+    // log1p(-0.0)'s own bug (see above) -- fell out correct for free once
+    // log1p was fixed, no separate change needed here.
+    check("atanh(-0)", atanh(-0.0), -0.0);
 
     // asin(0)'s zero sign used to come out backwards (-0.0 for +0.0 input)
     // from the trailing `* (-hpi)` flipping an intermediate +0 -- fixed as
@@ -219,4 +232,16 @@ fn main() {
     check("powf(10,100)", powf(10.0, 100.0), f32::INFINITY);
     check("remainder(5,3)", remainder(5.0, 3.0), -1.0);
     check("remainder(4,2)", remainder(4.0, 2.0), 0.0);
+    // remainder(-0.0, y) used to lose its sign: q is +-0.0 matching x/y's
+    // sign, so `-q*y` ends up the opposite sign to x, and `fma(-q,y,x)`
+    // adds two exactly-zero values of opposite sign (same IEEE754
+    // mechanism as sinf_poly/log1p's own `-0.0` bugs). Unlike those,
+    // remainder's result sign does *not* generally track x's sign for
+    // nonzero x (e.g. remainder(2,3) == -1, an IEEE remainder property,
+    // not a bug), so a blanket copysign fix isn't valid here -- fixed
+    // with a trailing `if x == 0.0 { x } else { normal }` select instead
+    // (a no-op for every nonzero x, including remainder(+0.0, y) which
+    // was already correct).
+    check("remainder(-0,3)", remainder(-0.0, 3.0), -0.0);
+    check("remainder(0,3)", remainder(0.0, 3.0), 0.0);
 }

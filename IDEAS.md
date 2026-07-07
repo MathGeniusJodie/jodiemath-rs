@@ -562,6 +562,70 @@ branches, no scalar-only intrinsics unless the vector form exists).
   guarantee once the reduction itself is already degrading near the cliff.
   edgecheck extended with `sin(-0)`, `cos(-0)`, `tan(-0)`,
   `sin_checked(-0)`, `cos_checked(-0)`.
+- **log1p/atanh/remainder's negative-zero sign bugs — the last three
+  findings from the same broad `-0.0` sweep, done, tested, kept
+  (2026-07-07).** `log1p(-0.0)`: `ln(u) + corr` adds two exactly-zero
+  values of opposite sign at `x = +-0.0` (`ln(1.0)` is `+0.0`, but `corr`
+  correctly carries x's sign there) -- identical mechanism to sinf_poly's
+  bug, different call site. `atanh(-0.0)` traced to be a pure downstream
+  consequence: `atanh(x) = 0.5*(log1p(x) - log1p(-x))` reuses log1p
+  directly, so fixing log1p alone fixed atanh too, verified, no separate
+  atanh change needed. `remainder(-0.0, y)`: `fma(-q, y, x)` hits the
+  same opposite-sign-zero addition (`q` is `+-0.0` matching x/y's sign,
+  so `-q*y` ends up opposite x's sign), but remainder's sign does *not*
+  generally track x's sign for nonzero x (`remainder(2.0, 3.0) == -1.0`
+  is a real IEEE remainder property, not a bug), so unlike sinf_poly/
+  log1p, a blanket `copysign(x)` fix would be wrong here.
+  Went through several fix attempts before landing on the right one,
+  each measured rather than assumed:
+  1. `copysign`/equivalent-bitwise-OR for log1p (branchless, valid since
+     log1p is odd/monotonic): compiled fine, log1p's own mca unchanged,
+     but `asinh`/`acosh` (log1p's only in-crate callers) latency roughly
+     *doubled* (55.40->122.42, 110.47->130.27 cyc) for reasons not
+     obviously related to the fix itself.
+  2. A plain trailing `if x == 0.0 { x } else { normal }` select (same
+     shape, no copysign): nearly identical elevated asinh/acosh numbers
+     (120.99/127.75) -- ruled out "copysign specifically" as the cause.
+  3. An early `if x == 0.0 { return x; }` guard at the very top (before
+     computing anything else): this recovered asinh/acosh back to their
+     original baseline (55.04/110.52) almost exactly -- but broke
+     `cargo run --example mca` outright with `llvm-mca failed: ... found
+     an invalid region end directive ... unable to find an active
+     anonymous region`, traced to the early return causing LLVM to
+     tail-duplicate the throughput harness's trailing marker `asm!` call
+     across multiple per-element exit paths once inlined into a
+     partially-scalarized unrolled loop (confirmed by isolating the
+     change to `remainder` alone, and independently confirmed as a real,
+     reproducible source change and not stale-build noise via a fully
+     clean rebuild -- ruling out an earlier false alarm where a stray
+     leftover `mca_target-*.s` file from a previous build had briefly
+     made the *unmodified, committed* baseline itself misreport 122.42
+     instead of the true 55.40, a second instance of this crate's known
+     "manual before/after mca dump can be stale" pitfall). Reverted --
+     an unusable option regardless of its latency win, since it breaks
+     this crate's own measurement tooling.
+  4. Settled on option 2's plain trailing select (`log_2`'s own
+     established "compute the normal path unconditionally, select after,
+     no early returns" idiom, chosen specifically so array loops keep
+     auto-vectorizing) for both log1p and remainder. Compiles cleanly
+     everywhere, `log1p`/`atanh`/`remainder`'s own mca numbers land
+     within noise of their pre-fix baseline, but `asinh`/`acosh` still
+     pay the elevated latency as a real, disclosed side effect --
+     ultimately harmless in practice, since both already computed their
+     own correct sign externally via `mulsign` (log1p is only ever
+     called with a provably-`+0.0` argument in their flow, so this fix
+     provides them literally zero benefit, pure inlining overhead) and
+     their *throughput* -- the metric this crate's vectorization-first
+     design actually prioritizes -- improved instead of regressing
+     (asinh 9.625->7.716, acosh 6.839->6.588 cyc/elem). See readme.md's
+     mca section for the full numbers.
+  Verified bit-exact against std for all three functions at their `-0.0`
+  inputs. Exhaustive accuracy.rs sweeps for log1p/atanh/asinh/acosh all
+  matched their pre-fix documented baseline exactly; remainder has no
+  exhaustive baseline (fuzz-only, dominated by its own pre-existing,
+  already-disclosed `|x/y|`-large cancellation issue, unaffected by this
+  change). edgecheck extended with `log1p(-0)`, `atanh(-0)`,
+  `remainder(-0,3)`, `remainder(0,3)`.
 - **erf's tail branch (`erf_poly`) refit — tried, no meaningful headroom
   found, not applied (2026-07-07).** Fourth use of the tuning recipe,
   extended with `erf_tail_c` (scored as the whole `mulsign(1.0 -

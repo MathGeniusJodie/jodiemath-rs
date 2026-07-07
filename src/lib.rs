@@ -723,13 +723,30 @@ pub fn log10(x: f32) -> f32 {
 /// edges collapse c/u itself to NaN, so one `is_finite` check on the
 /// already-computed correction (not a separate check on u) suppresses both
 /// at once instead of letting it poison the result.
+///
+/// At x = +-0.0, `ln(u) + corr` adds two exactly-zero values of opposite
+/// sign (`ln(1.0)` is `+0.0`, but `corr` correctly carries x's sign
+/// there), which IEEE754 always resolves to `+0.0` -- the same mechanism
+/// as sinf_poly's own `-0.0` bug. Fixed with a trailing `if x == 0.0 { x }
+/// else { normal }` select (compute the normal path unconditionally
+/// first, `log_2`'s own established "no early returns" idiom so array
+/// loops keep auto-vectorizing): log1p is odd and monotonic through the
+/// origin, so for every nonzero x in its domain `normal`'s sign already
+/// equals x's (this is exactly what the correction above exists to
+/// guarantee even for tiny x, where `corr` alone carries the whole
+/// answer), making this select a no-op everywhere except the singular
+/// zero point. A branchless `copysign(x)` was tried first and also
+/// worked, but cost real latency once inlined into asinh/acosh (see
+/// readme.md); this select form measured no better for them, so the
+/// simpler, more idiomatic form was kept instead.
 #[inline(always)]
 pub fn log1p(x: f32) -> f32 {
     let u = 1.0 + x;
     let c = x - (u - 1.0);
     let corr = c / u;
     let corr = if corr.is_finite() { corr } else { 0.0 };
-    ln(u) + corr
+    let normal = ln(u) + corr;
+    if x == 0.0 { x } else { normal }
 }
 
 /// Straight port of jodiemath's expf: exp2(x * log2(e)). Inherits exp2's
@@ -1281,10 +1298,23 @@ pub fn powf(x: f32, y: f32) -> f32 {
 /// round(x/y)*y's absolute error scales with ulp(x), which swamps the true
 /// remainder (at most |y|/2) once |x/y| is large -- inherited from the C
 /// original's identical formula, only reliable while |x/y| stays moderate.
+///
+/// At x = +-0.0 (nonzero finite y), `fma(-q, y, x)` adds two exactly-zero
+/// values of opposite sign (`q` is `+-0.0` matching x/y's sign, so `-q*y`
+/// ends up the *opposite* sign to x), which IEEE754 always resolves to
+/// `+0.0` -- same mechanism as sinf_poly's own `-0.0` bug, but unlike
+/// sinf_poly/log1p, remainder's result sign does *not* generally track
+/// x's sign for nonzero x (e.g. remainder(2.0, 3.0) == -1.0, an IEEE
+/// remainder property, not a bug), so `copysign(x)` isn't a valid
+/// blanket fix here -- guarded with an explicit `x == 0.0` select
+/// instead, correct for both this singularity and the ordinary
+/// remainder(+0.0, y) case (already correctly `+0.0`, so the guard is a
+/// no-op there).
 #[inline(always)]
 pub fn remainder(x: f32, y: f32) -> f32 {
     let q = (x / y).round();
-    fma(-q, y, x)
+    let normal = fma(-q, y, x);
+    if x == 0.0 { x } else { normal }
 }
 
 #[cfg(test)]

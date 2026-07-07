@@ -191,6 +191,39 @@ IDEAS.md for the before/after measurements):
   explicit `x == 0.0` select instead; `cos_checked` needs no such guard
   (`cos_checked(-0.0) = +1.0`, a nonzero result, unaffected). Verified
   bit-exact against std for all 5 functions at `x = -0.0`.
+- **fixed**: `log1p(-0.0)`, `atanh(-0.0)`, and `remainder(-0.0, y)` all lost
+  their sign the same way, found by the same broader `-0.0` sweep.
+  `log1p`'s `ln(u) + corr` adds two exactly-zero values of opposite sign
+  at `x = +-0.0` (`ln(1.0)` is `+0.0`, but `corr` correctly carries x's
+  sign there). Fixed with a trailing `if x == 0.0 { x } else { normal }`
+  select (computes the normal path unconditionally first, `log_2`'s own
+  established "select, not early return" idiom) -- log1p is odd and
+  monotonic through the origin, so `normal`'s sign already matches x's
+  for every nonzero x, making this a no-op everywhere except the singular
+  zero point. `atanh(x) = 0.5*(log1p(x) - log1p(-x))` reuses log1p
+  directly, so its own `-0.0` bug fell out fixed for free, no separate
+  change needed. `remainder`'s `fma(-q, y, x)` hits the identical
+  IEEE754 mechanism, but unlike log1p, remainder's sign does *not*
+  generally track x's sign for nonzero x (`remainder(2.0, 3.0) == -1.0`
+  is correct, not a bug), so a blanket copysign fix would be wrong here
+  -- fixed with the same trailing-select shape instead. A plain early
+  `return x;` guard was tried first for both and gave better latency, but
+  broke `llvm-mca`'s region markers when inlined into a vectorized loop
+  (`cargo run --example mca` failed outright with a "found an invalid
+  region end directive" error) -- reverted in favor of the select form,
+  which compiles cleanly everywhere. Real, disclosed side effect: since
+  `asinh`/`acosh` already computed their own correct sign externally via
+  `mulsign` (this fix provides them zero actual benefit, log1p is always
+  called with a provably-`+0.0` argument in their flow), the extra
+  in-lined select still costs their *latency* substantially (asinh
+  55.40->120.99 cyc, +118%; acosh 110.47->127.75 cyc, +16%) while their
+  *throughput* -- the metric this crate's vectorization-first design
+  actually prioritizes -- improved instead (asinh 9.625->7.716,
+  acosh 6.839->6.588 cyc/elem). `log1p`/`atanh`/`remainder` themselves are
+  each within noise of their own pre-fix baseline. Verified bit-exact
+  against std for all three functions at their `-0.0` inputs; exhaustive
+  accuracy.rs sweeps for log1p/atanh/asinh/acosh all matched the pre-fix
+  documented baseline exactly.
 - **still open**: remainder's `x - round(x/y)*y` loses precision to
   cancellation once `|x/y|` is large, since `round(x/y)*y`'s absolute
   error scales with `ulp(x)`, which can exceed the true remainder's own
@@ -543,7 +576,7 @@ cos                 |          54.00 |             1.406
 cos_checked         |         113.00 |             4.537
 ln                  |          56.91 |             1.626
 log10               |          56.91 |             1.626
-log1p               |          61.14 |             2.339
+log1p               |          61.16 |             2.276
 exp                 |          39.00 |             0.974
 expm1               |          71.00 |             1.441
 sinh                |          77.02 |             2.277
@@ -551,9 +584,9 @@ cosh                |          48.02 |             2.083
 sinh_throughput     |          81.02 |             1.545
 cosh_throughput     |          58.00 |             1.279
 tanh                |          87.64 |             1.793
-asinh               |          55.40 |             9.625
-acosh               |         110.47 |             6.839
-atanh               |          80.03 |             4.210
+asinh               |         120.99 |             7.716
+acosh               |         127.75 |             6.588
+atanh               |          79.99 |             4.331
 asin                |          43.24 |             2.899
 acos                |          37.11 |             0.820
 atan                |          57.09 |             1.410
@@ -563,7 +596,7 @@ erf                 |         102.74 |             3.163
 erfc                |          78.09 |             2.599
 hypot               |          21.00 |             0.763
 powf                |          97.88 |             3.788
-remainder           |          33.00 |             0.646
+remainder           |          33.02 |             0.647
 ```
 sin/cos are the restored single-word Cody-Waite version (identical codegen
 to before this session's double-float work, confirmed by these numbers
@@ -575,6 +608,15 @@ cost of that correctness fix (sin/cos throughput +12-16%, tan +9%,
 sin_checked/cos_checked +1-4%, latency unchanged except tan +2 cyc); a
 branch/select tried first cost meaningfully more on every row and was
 rejected in favor of `copysign` once measured.
+`log1p`'s own `-0.0` sign fix (see the known-defects list above) is why
+`asinh`/`acosh`'s *latency* jumped so much here (55.40->120.99,
+110.47->127.75) despite neither function's own `-0.0` handling changing
+at all: they already computed their correct sign externally via
+`mulsign`, so log1p's fix is pure dead weight for them once inlined, but
+unlike sinf_poly's case, no branchless (copysign) form was valid for
+`remainder`'s matching fix and no compiling form avoided the cost for
+log1p either -- see that entry for the full tradeoff (their *throughput*
+improved instead).
 
 **Further pass: `reduce_pi`'s `err0` term deleted via Sterbenz's lemma, not
 just downgraded.** `two_sum(x, -p1)` was the one remaining full 6-op merge
