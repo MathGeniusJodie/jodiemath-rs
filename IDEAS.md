@@ -516,9 +516,33 @@ branches, no scalar-only intrinsics unless the vector form exists).
 - **atan without reciprocal-select**: `y = if a < 1 {a} else {1/a}` then a
   conditional π/2 flip — fine already; alternatively fit atan on [0, ∞) via
   t = x/(1+|x|) rational reduction, one division, no select chain.
-- **atan2 accuracy**: y/x division error feeds atan directly; a df32 division
-  correction term (`fma` residual of the quotient) into the poly's linear term
-  is cheap insurance if the refit still misses budget.
+- **atan2 accuracy — tried, measured, reverted (2026-07-07).** `d = y/x;
+  e = fma(-d, x, y)/x; corr = e/fma(d,d,1.0)` (atan'(d)*e, a first-order
+  Taylor correction for the division residual) added to `atan(d)` outside
+  atan's own poly (couldn't inject it into atan_poly's internal range
+  reduction without a bigger refactor). First measurement looked like a
+  huge win (avg ulp 0.136→0.0134, ~10x) -- until the max-ulp column
+  showed a `u64::MAX` sentinel, this crate's `ulp_diff` convention for "my
+  result is NaN, the reference isn't." Found the cause by hand: when `d`
+  itself overflows to `inf` (a case `atan(d)` alone already handles
+  correctly, returning π/2), `e` becomes `inf - inf`-shaped and `corr`
+  comes out NaN, contaminating an otherwise-correct result. Guarded with
+  `if corr.is_finite() { corr } else { 0.0 }`, matching the pattern used
+  for every other correction term this session (log1p, acosh, asinh,
+  atan2 itself already has similar shape). Once guarded, the "10x
+  improvement" evaporated entirely: three repeat runs landed at
+  0.136/0.1362/0.1367 avg ulp, max ulp 18 -- statistically indistinguishable
+  from the unmodified baseline (0.1355/18, from the atan_poly refit).
+  Confirms the idea's own original caveat ("only matters once atan's own
+  poly is refit under budget") -- atan's residual poly-fit error already
+  dominates atan2's total error, so removing the division's rounding from
+  the budget doesn't move the needle at all. mca confirmed a real cost for
+  the zero benefit: 57.17→65.14 cyc latency (+13.9%), 1.467→2.096 cyc/elem
+  throughput (+42.9%). Reverted. The NaN-guard bug itself is a useful
+  general lesson even though the idea didn't pan out: a "10x win" in a
+  quick accuracy run is worth being suspicious of, not just accepting,
+  when the max-ulp column shows a sentinel value -- check *why* before
+  trusting the average.
 
 ## exp-family elementary (sinh/cosh/tanh) — currently 2× exp each
 
