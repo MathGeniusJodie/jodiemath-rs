@@ -1088,10 +1088,28 @@ fn asin_small(x: f32) -> f32 {
 ///    with max unchanged, confirming the two objectives pull in different
 ///    directions around this point rather than one dominating the other;
 ///    kept the max-first result since max was the specifically open
-///    residual from fix 3. Not a complete fix (bit-exact-matching a
-///    correctly-rounded reference would need a genuinely different
-///    correction shape, not just retuned coefficients of this one), but
-///    real, measured progress at no cost.
+///    residual from fix 3. This step's own comment previously claimed the
+///    x~0.1 boundary residual "can't be shrunk further by moving
+///    thresholds around" -- untested at the time, and wrong: see fix 5.
+/// 5. The small/mid threshold moved from 0.1 to 0.3 (2026-07-07, later
+///    same day). Re-checked fix 4's own untested claim by actually
+///    probing both branches independently instead of trusting it: the
+///    mid branch's error isn't a narrow spike right at its own domain
+///    edge, it's elevated (up to ~80 ulp) across the whole [0.1, 0.3)
+///    band and only settles below ~40 past that -- while `asin_small`
+///    (an exact-coefficient degree-7 Taylor series) stays at 1-2 ulp all
+///    the way out to x<0.2 and is still fine at 0.3 (its own error only
+///    climbs past there, crossing mid's around x~0.3-0.35). Since both
+///    branches are already computed unconditionally in this branchless
+///    select, moving the threshold is a pure accuracy change, zero perf
+///    cost regardless of where it lands (confirmed: same instructions,
+///    only the comparison constant differs). Result (exhaustive, all
+///    2^32 f32 bit patterns): max ulp 84 -> 41, avg ulp 0.377 -> 0.105
+///    (both improved together, not a tradeoff). Root cause of fix 4's
+///    wrong claim: it reasoned from "the bias scales with x" without
+///    separately measuring where `asin_small` itself stopped being
+///    trustworthy -- the two curves were never actually compared until
+///    now.
 #[inline(always)]
 pub fn asin(x: f32) -> f32 {
     let a = x.abs();
@@ -1105,7 +1123,7 @@ pub fn asin(x: f32) -> f32 {
     let small = asin_small(x);
     let near1 = mulsign(FRAC_PI_2 - (1.0 - a).sqrt() * acos_poly(a), x);
     let r = if a < 0.9 { mid } else { near1 };
-    if a < 0.1 { small } else { r }
+    if a < 0.3 { small } else { r }
 }
 
 // Pade-style rational approximation of atan on [0,1]. Ported from

@@ -375,7 +375,7 @@ comment); their rows are exhaustive (all 2^32 f32 bit patterns), not fuzz.
                   asinh |    0.173   |     4     | (std also imperfect at extreme |x|)
                   acosh |    0.063   |     4     |  0.000  |    1
                   atanh |    0.032   |     3     |  0.037  | 363409
-                   asin |    0.377   |    84     |  0.000  |    0
+                   asin |    0.105   |    41     |  0.000  |    0
                    acos |    0.496   |     4     |  0.000  |    0
                    atan |    0.186   |    18     |  0.000  |    0
        tan (in-domain)  |    0.331   |  2967     |  0.000  |    0
@@ -787,10 +787,11 @@ time in the surprising direction (a small-looking change, a large real win).
 # todo:
 - do principled and thourough analysis of dependency chains and rounding errors to find optimizations
 - perfectly rounded versions
-- asin's max-ulp residual (84, still at the small/mid branch boundary
-  x ~ 0.1 after refitting the mid branch's 4 coefficients): a genuinely
-  different correction shape (not just retuned coefficients) or a wider
-  Taylor branch to close it the rest of the way -- see asin's doc comment
+- asin's max-ulp residual (41, now at the small/mid branch boundary
+  x ~ 0.3 -- widening the Taylor branch's domain from x<0.1 to x<0.3
+  already cut this from 84, see asin's doc comment fix 5; closing it the
+  rest of the way needs a genuinely different correction shape for the
+  mid branch itself, not just a threshold or coefficients)
 - fix (or at least give a "_checked" full-range companion to) the remaining
   inherited accuracy defects in the newly-ported functions: remainder's
   tie-breaking cliff, and the exp-family's (exp/expm1/sinh/cosh/tanh/powf)

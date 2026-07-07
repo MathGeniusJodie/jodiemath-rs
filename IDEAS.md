@@ -394,6 +394,43 @@ branches, no scalar-only intrinsics unless the vector form exists).
   different correction shape, not just retuned coefficients, would be
   needed to go further), but real, measured, free progress on the
   specifically-flagged open residual from the entry above.
+- **asin small/mid threshold widened 0.1 -> 0.3 — done, tested, kept
+  (2026-07-07, later same day), and a case of a documented "can't be
+  fixed this way" claim turning out to be untested and wrong.** The mid
+  branch refit's own doc comment (fix 4, entry above) asserted the
+  x~0.1 boundary residual "can't be shrunk further by moving thresholds
+  around" since the bias "scales with x" — a plausible-sounding claim
+  that was never actually checked against `asin_small`'s own error curve.
+  Probed both branches independently instead of trusting it: the mid
+  branch's error isn't a narrow spike right at x=0.1, it's elevated
+  (~55-82 ulp) across the *whole* `[0.1, 0.3)` band, while `asin_small`
+  (an exact-coefficient degree-7 Taylor series, no fitting involved)
+  stays at 1-2 ulp all the way out to x<0.2 and is still comparable to
+  mid's own error around x=0.3 (that's where the two curves cross).
+  Coordinate-searched the threshold directly (a standalone harness
+  scoring `asin_small` vs. the mid formula against `f64::asin` over
+  `[0.0005, 0.9)`) rather than guessing: max ulp bottoms out around
+  `0.30-0.32` (39-42), degrading sharply on either side (81 at 0.2, 68 at
+  0.34, since asin_small's own truncation error grows fast for `x >
+  0.35`). Picked the clean `0.3` from that flat minimum. Since *both*
+  branches are already computed unconditionally in this branchless
+  select regardless of which one gets chosen, moving the threshold
+  constant is a pure accuracy change with zero perf implication no
+  matter where it lands — confirmed via mca (43.24 cyc / 2.899 cyc/elem,
+  bit-for-bit unchanged) and via `--emit=asm` reasoning (same
+  instructions, only the comparison immediate differs). Exhaustive sweep
+  (all 2^32 f32 bit patterns): max ulp 84 -> 41, avg ulp 0.377 -> 0.105 —
+  both improved together, not a tradeoff, unlike the mid-branch refit
+  above which traded avg for max. `asinh` (same accuracy.rs filter
+  substring match) confirmed unaffected: 0.173/4, bit-for-bit identical
+  to its own pre-change baseline. Lesson worth generalizing: a doc
+  comment's own causal explanation for *why* something can't be improved
+  is itself a claim, not a fact, unless it was actually measured — this
+  crate has plenty of prior entries where trusting analysis over
+  measurement went wrong in the "adopt something that doesn't help"
+  direction, this is the first one this session caught in the opposite
+  direction (a *rejection* that turned out to be wrong, leaving a real,
+  free win on the table until re-checked).
 - **acos/asin shared kernel**: both reduce to sqrt(1−a)·poly; a shared
   computation with different post-transforms would halve the code and enable a
   combined refit at f32-quantized precision.
