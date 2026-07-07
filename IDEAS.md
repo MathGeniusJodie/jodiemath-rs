@@ -1407,6 +1407,21 @@ saves an op and/or a rounding:
   coordinate descent, not just algebra) given the uncertain payoff;
   left as a well-scoped but bigger-than-one-pass follow-up, with the seed
   error numbers above so a future attempt doesn't have to re-derive them.
+  **Separately: the existing correction poly (same ax/3 seed, unchanged)
+  refit — done, tested, kept (2026-07-07), seventh use of this session's
+  tuning recipe and the fourth real win.** A smaller, orthogonal question
+  from the seed-swap idea above: given the *current* seed, are
+  cbrt_normal's 4 correction coefficients themselves at their local
+  optimum? Extended tune.rs with `cbrt_normal_c` (whole formula) against
+  `f64::cbrt` over one octave `[1,2)` (the bit-trick seed's relative error
+  pattern repeats across octaves, so one octave is representative).
+  Applied and verified on the real exhaustive sweep: avg ulp 0.3265 →
+  0.3112 (~4.7%), max ulp unchanged at 3 (not regressed — matches the
+  crate's original documented baseline exactly). `cbrt_accurate`
+  unaffected, as expected (it layers a Newton correction on top that
+  absorbs small residual seed/correction error regardless of the exact
+  coefficients). mca bit-for-bit unchanged (cbrt 35.06 cyc / 1.629
+  cyc/elem, cbrt_accurate 59.06 cyc / 3.129 cyc/elem) — zero perf cost.
 - **powf's tier mismatch**: it composes the *checked* log_2 (pays the full
   denormal/negative/inf select chain) with the *unchecked* exp2 (returns
   garbage outside [-126, 128)). The expensive half buys correctness that

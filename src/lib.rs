@@ -489,7 +489,12 @@ pub fn cos_checked(x: f32) -> f32 {
 /// power of two rounds identically to pre-scaling (same argument as
 /// cbrt_accurate_normal's scale), so this is a pure codegen fix: throughput
 /// 2.247 -> 1.629 cyc/elem, latency unchanged, no accuracy change
-/// (examples/mca.rs).
+/// (examples/mca.rs). The 4 correction coefficients were refit again
+/// (2026-07-07) with examples/tune.rs against the *existing* seed (the
+/// seed itself -- swapping to a cheaper bit-trick -- is a separate,
+/// bigger question, see IDEAS.md): avg ulp 0.3265 -> 0.3112 (~4.7%), max
+/// ulp unchanged at 3, zero perf cost (same instructions, only the 4
+/// literal constants differ).
 #[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
 pub fn cbrt_normal(x: f32) -> f32 {
@@ -500,10 +505,10 @@ pub fn cbrt_normal(x: f32) -> f32 {
     let s2 = s * s;
     let d = fma(s2, s, -a);
     let r = d * rcp;
-    let c1 = -0.33333164f32;
-    let c2 = 0.22220786f32;
-    let c3 = -0.17394418f32;
-    let c4 = 0.1482371f32;
+    let c1 = -0.33333147f32;
+    let c2 = 0.22220612f32;
+    let c3 = -0.17394388f32;
+    let c4 = 0.14823665f32;
     let r2 = r * r;
     let a1 = fma(c2, r, c1);
     let b1 = fma(c4, r, c3);

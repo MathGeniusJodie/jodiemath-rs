@@ -151,6 +151,29 @@ fn erf_near0_c(x: f32, c: &[f32]) -> f32 {
     numer / denom
 }
 
+// cbrt_normal (see src/lib.rs): the degree-3 correction poly's 4
+// coefficients, against the *existing* ax/3-based seed (a separate,
+// bigger question -- swapping to the cheaper (bits>>16)*0x5556 seed --
+// is deferred, see IDEAS.md's cbrt seed entry).
+#[inline(always)]
+fn cbrt_normal_c(x: f32, c: &[f32]) -> f32 {
+    const SIGN_MASK: u32 = 0x8000_0000;
+    let ax = x.to_bits() & !SIGN_MASK;
+    let a = f32::from_bits(ax);
+    let rcp = 1.0 / a;
+    let s = f32::from_bits(ax / 3 + 0x2a509a07u32);
+    let s2 = s * s;
+    let d = fma(s2, s, -a);
+    let r = d * rcp;
+    let r2 = r * r;
+    let a1 = fma(c[1], r, c[0]);
+    let b1 = fma(c[3], r, c[2]);
+    let p = fma(b1, r2, a1);
+    let ss = f32::from_bits(s.to_bits() | (x.to_bits() & SIGN_MASK));
+    let sr = ss * r;
+    fma(sr, p, ss)
+}
+
 // erfc's rational*gaussian tail (see src/lib.rs's erfc): the 8 named
 // coefficients (4 for n, 4 for d) are tuned; the two Horner chains'
 // trailing "+1.0" leading terms are left fixed, matching the shipped
@@ -312,5 +335,20 @@ fn main() {
             0.15177123248577118, 0.7851238250732422, 1.8210692405700684, 2.1067135334014893,
         ];
         tune("erfc", &erfc_c, &erfc_ref, &grid, &init);
+    }
+    if which.contains("cbrt") {
+        // one octave [1,2) is representative: the bit-trick seed's
+        // relative error pattern repeats across octaves (see
+        // cbrt_normal's doc comment -- fitted against the seed's error
+        // range, not a specific magnitude range).
+        let mut grid = vec![];
+        let mut b = 1.0f32.to_bits();
+        while b < 2.0f32.to_bits() {
+            grid.push(f32::from_bits(b));
+            grid.push(-f32::from_bits(b));
+            b += 5;
+        }
+        let init = [-0.33333164, 0.22220786, -0.17394418, 0.1482371];
+        tune("cbrt_normal", &cbrt_normal_c, &|x| x.cbrt(), &grid, &init);
     }
 }
