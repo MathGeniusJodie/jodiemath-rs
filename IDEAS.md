@@ -840,7 +840,27 @@ and measurement disagree (see the Fast2Sum comments).
 - **The e2 and e3 error terms sit at (or below) the already-dropped noise
   floor — try downgrading their two_prods to plain muls.** |e2| ≤ ulp(p2)/2
   ~ x·2^-49 and |e3| ~ x·2^-48·π at large x: the same tier as the terms the
-  comments already justify summing plainly. e2 downgrade: still untested.
+  comments already justify summing plainly.
+  **e2 downgrade: tried, measured, reverted (2026-07-07).** Unlike e3 (see
+  below), the "sits at the noise floor" premise did *not* check out: e2 =
+  the error term of `two_prod(qh, PI_LO)`, and unlike ql (which e3's
+  downgrade could prove bounded to {-1,0,1} in-domain), qh is unbounded —
+  there's no analogous "provably zero" argument here, only "small on
+  average," and the exhaustive sweep confirmed that distinction matters.
+  Downgrading `let (p2, e2) = two_prod(qh, PI_LO)` to a plain
+  `let p2 = qh * PI_LO` (dropping e2 from `tier2` entirely) regressed
+  sin_checked's max ulp *inside the documented `|x| <= 1e6` range*: 2 → 8
+  at `|x|<=10`, 2 → 144 at `|x|<=1000`, 2 → 51,054 at `|x|<=1e6` — not an
+  off-contract-tail-only effect like several other entries in this file,
+  a real in-domain budget violation. Worst-x values landing near small
+  multiples of π (9.42 ≈ 3π, 505.8 ≈ 161π) match this session's other
+  near-zero-sensitivity finding (the 3-deep PI_A..D attempt below): a
+  fixed-tier absolute error becomes a large *relative* error exactly where
+  the reduced residual should be smallest. Reverted before even reaching
+  the off-contract-tail buckets or an mca measurement, since the in-domain
+  regression alone is disqualifying. e3's downgrade below remains the only
+  one of this pair that was actually free — the difference was `ql`'s
+  provable in-domain boundedness, which `qh` never had.
   **e3 downgrade: tried, measured, reverted (2026-07-07).** The "e3 is a
   guaranteed zero" premise checked out exactly as stated — an exhaustive
   scalar sweep over every f32 bit pattern with |x| < 2^25 (past both the
