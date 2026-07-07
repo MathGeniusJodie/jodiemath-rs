@@ -1034,13 +1034,22 @@ pub fn asin(x: f32) -> f32 {
 }
 
 // Pade-style rational approximation of atan on [0,1]. Ported from
-// jodiemath's atanf_poly.
+// jodiemath's atanf_poly; coefficients refit (2026-07-07) with
+// examples/tune.rs's coordinate-descent tuner against f64::atan over
+// [0,1] (exactly atan's own domain for this poly, via a.min(1/a)). Zero
+// perf cost (same instructions, only the 4 literal constants changed):
+// max ulp 19 -> 18 and avg ulp improved too for both atan and atan2
+// (which calls atan directly) -- unlike asin's mid-branch refit, this one
+// didn't trade one metric for the other, both moved the same direction.
+// A denser tuning grid (39M points vs. this file's 25k) converged to the
+// same coefficients, suggesting this is a genuine local optimum for this
+// coordinate-descent scheme, not an artifact of grid resolution.
 #[inline(always)]
 fn atan_poly(x: f32) -> f32 {
-    let a = f32::from_bits(0x3d267031);
-    let b = f32::from_bits(0x3f28513c);
-    let c = f32::from_bits(0x3e2f725f);
-    let d = f32::from_bits(0x3f7da425);
+    let a = f32::from_bits(0x3d26709d);
+    let b = f32::from_bits(0x3f285132);
+    let c = f32::from_bits(0x3e2f7213);
+    let d = f32::from_bits(0x3f7da42d);
     let x2 = x * x;
     (fma(fma(a, x2, b), x2, 1.0) * x) / fma(fma(x2, c, d), x2, 1.0)
 }

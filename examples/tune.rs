@@ -91,6 +91,15 @@ fn asin_mid_c(x: f32, c: &[f32]) -> f32 {
     mulsign_c(sm1, x) * (-std::f32::consts::FRAC_PI_2)
 }
 
+// atan_poly (see src/lib.rs): a Pade form approximating atan(x) directly
+// for x in [0,1] -- atan() calls this on a.min(1/a), always in that
+// range, so that's exactly the grid to tune against.
+#[inline(always)]
+fn atan_poly_c(x: f32, c: &[f32]) -> f32 {
+    let x2 = x * x;
+    (fma(fma(c[0], x2, c[1]), x2, 1.0) * x) / fma(fma(x2, c[2], c[3]), x2, 1.0)
+}
+
 fn tune(
     name: &str,
     f: &dyn Fn(f32, &[f32]) -> f32,
@@ -166,5 +175,16 @@ fn main() {
         }
         let init = [0.0392588, 0.179323, 1.75866, -3.66063];
         tune("asin_mid", &asin_mid_c, &|x| x.asin(), &grid, &init);
+    }
+    if which.contains("atan") {
+        // atan_poly is only ever called on a.min(1/a), i.e. x in [0,1].
+        let mut grid = vec![];
+        let mut b = 1e-7f32.to_bits();
+        while b <= 1.0f32.to_bits() {
+            grid.push(f32::from_bits(b));
+            b += 37;
+        }
+        let init = [0.040634338, 0.65748954, 0.17133473, 0.9907859];
+        tune("atan_poly", &atan_poly_c, &|x| x.atan(), &grid, &init);
     }
 }

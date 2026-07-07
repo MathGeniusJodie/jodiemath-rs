@@ -284,11 +284,26 @@ branches, no scalar-only intrinsics unless the vector form exists).
 - **acos/asin shared kernel**: both reduce to sqrt(1−a)·poly; a shared
   computation with different post-transforms would halve the code and enable a
   combined refit at f32-quantized precision.
-- **atan poly refit + degree probe**: the Padé form costs one division (fine);
-  check whether a quantized refit reaches the 0.5-avg budget (currently
-  ~1e-6 *relative* goal inherited from C — likely several ulp; these ports
-  probably don't meet the stated budget at all and need refits, which is
-  an accuracy project on its own).
+- **atan poly refit — done, tested, kept (2026-07-07)**, same recipe as
+  the asin mid-branch refit just above, extending `examples/tune.rs` with
+  `atan_poly_c`. Turned out atan was already close to a strong local
+  optimum for this coordinate-descent scheme (unlike asin's mid branch,
+  where it wasn't): even a 39M-point grid (vs. the file's normal ~25k)
+  converged to the same coefficients as the coarse grid, and the result
+  was a small win on *every* axis at once — max ulp 19→18 and avg ulp
+  improved too, for both atan and atan2 (atan2 calls atan directly, so it
+  inherited the gain for free). No avg/max tradeoff this time, unlike
+  asin's refit. Confirmed zero perf cost (mca bit-for-bit unchanged: atan
+  57.09/1.410, atan2 57.17/1.467, exactly matching pre-refit). The
+  "likely several ulp, needs a refit" framing this bullet used to have was
+  already stale before this refit — atan's avg ulp (0.188) was already
+  comfortably under the 0.5 budget, only max ulp had real room, and that
+  room turned out to be small (1 ulp) once actually measured against a
+  real coordinate-descent search rather than assumed.
+  **Degree probe: not attempted.** Dropping a term from the Padé form is
+  a separate, bigger change (changes the function's shape, not just its
+  coefficients) — left for a future pass if the 1-ulp ceiling found here
+  ever needs to move further.
 - **atan without reciprocal-select**: `y = if a < 1 {a} else {1/a}` then a
   conditional π/2 flip — fine already; alternatively fit atan on [0, ∞) via
   t = x/(1+|x|) rational reduction, one division, no select chain.

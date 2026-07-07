@@ -223,11 +223,11 @@ comment); their rows are exhaustive (all 2^32 f32 bit patterns), not fuzz.
                   atanh |    0.032   |     3     |  0.037  | 363409
                    asin |    0.377   |    84     |  0.000  |    0
                    acos |    0.496   |     4     |  0.000  |    0
-                   atan |    0.188   |    19     |  0.000  |    0
+                   atan |    0.186   |    18     |  0.000  |    0
        tan (in-domain)  |    0.331   |  2967     |  0.000  |    0
                             erf  |    0.319   |     5     | (no std erf)
                    erfc (|x|<=10)|    0.297   |   115     | (no std erfc)
-                  atan2 |    0.136   |    19     |  0.000  |    0
+                  atan2 |    0.136   |    18     |  0.000  |    0
         hypot (bounded) |    0.034   |     1     |  0.000  |    0
         powf (in-domain)|    0.359   |   123     |  0.000  |    1
      remainder (|x/y|<1000) |    ~1000**  | ~2e9** | (no std remainder)
