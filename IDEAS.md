@@ -588,24 +588,35 @@ and measurement disagree (see the Fast2Sum comments).
 ## sin_checked / cos_checked: reduce_pi
 
 - **`err0` from `two_sum(x, -p1)` is (almost) provably always zero —
-  Sterbenz.** p1 = qh·PI_HI with qh = round(p0) ≈ x/π, so whenever qh ≠ 0,
-  p1 ≈ x·(1 ± 2^-24-ish) — comfortably within Sterbenz's [x/2, 2x] window —
-  making `x - p1` *exact* and err0 ≡ 0. When qh = 0, p1 = 0 and the
-  subtraction is trivially exact too. The only sliver of doubt: |x| right at
-  the qh = 0/±1 boundary (p0 ≈ 0.5, where ties-away rounding can pick qh = 1
-  while x < PI_HI/2·(1+ε), landing a hair outside the Sterbenz window). So:
-  replace the full two_sum (6 ops) with a plain subtract (1 op) and delete
-  err0 from the err chain, then let the exhaustive sweep judge the boundary
-  sliver — or keep a quick_two_sum (3 ops) as the coward's version. This is
-  5 ops off the function and one term off the err reduction.
-- **The `err` sum is a serial 4-add dependency chain.** Rust/LLVM will not
-  reassociate strict FP, so `err0 + e1b + e2b + e3b - e3t` evaluates left to
-  right: 4 sequential adds (~12–16 cycles) before the final `s3 + err`.
-  These are all noise-tier terms whose mutual rounding is irrelevant —
-  manually balance the tree: `(err0 + e1b) + ((e2b + e3b) - e3t)` → depth 2.
-  Combined with the err0 deletion above it becomes `(e1b + e2b) + (e3b - e3t)`,
-  depth 2, two of whose leaves are ready early. Several cycles of latency,
-  zero accuracy risk beyond noise-tier reshuffling.
+  Sterbenz. Done, tested, kept.** p1 = qh·PI_HI with qh = round(p0) ≈ x/π, so
+  whenever qh ≠ 0, p1 ≈ x·(1 ± 2^-24-ish) — comfortably within Sterbenz's
+  [x/2, 2x] window — making `x - p1` *exact* and err0 ≡ 0. When qh = 0, p1 =
+  0 and the subtraction is trivially exact too. The only sliver of doubt —
+  |x| right at the qh = 0/±1 boundary (p0 ≈ 0.5, where ties-away rounding
+  can pick qh = 1 while x < PI_HI/2·(1+ε), landing a hair outside the
+  Sterbenz window) — was checked and never bites: replaced the full two_sum
+  (6 ops) with a plain subtract (1 op) and deleted err0 from the err chain,
+  verified bit-for-bit identical to the two_sum version across three
+  separate full exhaustive accuracy.rs sweeps (every avg/max ulp and
+  worst-x, every bucket, including the off-contract tail). mca: sin_checked
+  5.544→5.289 cyc/elem throughput (-4.6%), cos_checked 4.919→4.598 cyc/elem
+  (-6.5%), latency unchanged for both (109.00/113.00 cyc).
+- **The `err` sum is a serial 4-add dependency chain — rebalancing it
+  regressed latency. Tried, measured, reverted.** Rust/LLVM will not
+  reassociate strict FP, so (pre-err0-deletion) `err0 + e1b + e2b + e3b -
+  e3t` evaluates left to right: 4 sequential adds before the final `s3 +
+  err`. The obvious fix, combined with the err0 deletion above:
+  `(e1b + e2b) + (e3b - e3t)`, depth 2 instead of 4, two of whose leaves are
+  ready early — analytically zero accuracy risk (verified: also bit-exact)
+  and "should" only ever help latency. Measured worse instead: identical
+  throughput to the flat 3-op chain, but +3 cyc latency on *both* functions
+  (109→112 sin_checked, 113→116 cos_checked) — freeing `e1b + e2b` from the
+  critical path apparently let LLVM's scheduler make a different choice
+  elsewhere in the 64-deep latency-chain benchmark that cost more than the
+  shallower dependency saved. Same "analysis says X, measurement disagrees"
+  lesson as the Fast2Sum/full-tree attempts logged in the readme's
+  benchmark section — reverted to the flat left-to-right chain (now 3 ops,
+  err0 gone), which measured best of the three variants tried.
 - **The e2 and e3 error terms sit at (or below) the already-dropped noise
   floor — try downgrading their two_prods to plain muls.** |e2| ≤ ulp(p2)/2
   ~ x·2^-49 and |e3| ~ x·2^-48·π at large x: the same tier as the terms the

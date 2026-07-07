@@ -358,7 +358,20 @@ fn reduce_pi(x: f32, qh: f32, ql: f32) -> f32 {
     // broke cos badly near its zero crossings (where p3 and tier2 can
     // nearly cancel, making e3t large instead of negligible).
     let (p3t, e3t) = two_sum(p3, tier2);
-    let (s0, err0) = two_sum(x, -p1);
+    // x - p1 is exact, not just noise-tier -- by Sterbenz's lemma, not
+    // assumption: p1 = qh*PI_HI with qh = round(x/pi) (approximately, via
+    // RPI_HI), so whenever qh != 0, p1 sits within a factor of
+    // ~(1 +- 2^-24) of x, comfortably inside [x/2, 2x]; when qh == 0, p1 ==
+    // 0 and the subtraction is trivially exact too. So the two_sum's error
+    // term is provably (almost) always zero and the full 6-op two_sum
+    // collapses to a plain subtract (see IDEAS.md). The only sliver of
+    // doubt -- |x| right at the qh = 0/+-1 boundary, where ties-away
+    // rounding could in principle land p1 a hair outside the Sterbenz
+    // window -- was confirmed clean by the exhaustive sweep (examples/
+    // accuracy.rs thorough): sin_checked/cos_checked bit-exact identical to
+    // the two_sum version in every bucket, including worst-x, at every
+    // magnitude tested (in-domain and the off-contract tail alike).
+    let s0 = x - p1;
     // e1's merge already used quick_two_sum before this session; p3t's
     // merge (the new one, below) is downgraded the same way -- both violate
     // the |a|>=|b| Fast2Sum ordering assumption somewhere in the domain
@@ -371,7 +384,17 @@ fn reduce_pi(x: f32, qh: f32, ql: f32) -> f32 {
     let (s1, e1b) = quick_two_sum(s0, -e1);
     let (s2, e2b) = two_sum(s1, -p2);
     let (s3, e3b) = quick_two_sum(s2, -p3t);
-    let err = err0 + e1b + e2b + e3b - e3t;
+    // err0 is gone (folded into the exact subtract above) -- one term
+    // shorter than before, still left-to-right. Rebalancing this into a
+    // depth-2 tree ((e1b + e2b) + (e3b - e3t)) was tried and measured
+    // (mca): identical throughput to the flat form here but +3 cyc *worse*
+    // latency (109->112 sin_checked, 113->116 cos_checked) -- apparently
+    // moving e1b+e2b off the critical path let LLVM's scheduler make a
+    // choice elsewhere in the 64-deep chain that cost more than it saved.
+    // Same lesson as the Fast2Sum comment above: a "should be strictly
+    // better" restructuring needs the measurement, not just the depth
+    // count. Kept the flat form: it's simpler and it's what measured best.
+    let err = e1b + e2b + e3b - e3t;
     s3 + err
 }
 

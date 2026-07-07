@@ -415,9 +415,9 @@ exp2                |          35.00 |             0.841
 exp2_checked        |          43.06 |             1.399
 log2                |          34.23 |             1.556
 sin                 |          46.00 |             1.022
-sin_checked         |         109.00 |             5.544
+sin_checked         |         109.00 |             5.289
 cos                 |          54.00 |             1.360
-cos_checked         |         113.00 |             4.919
+cos_checked         |         113.00 |             4.598
 ln                  |          56.91 |             1.626
 log10               |          56.91 |             1.626
 log1p               |          59.98 |             2.023
@@ -444,6 +444,34 @@ sin/cos are the restored single-word Cody-Waite version (identical codegen
 to before this session's double-float work, confirmed by these numbers
 matching exactly); sin_checked/cos_checked are today's name for the
 double-float version this whole section was benchmarking.
+
+**Further pass: `reduce_pi`'s `err0` term deleted via Sterbenz's lemma, not
+just downgraded.** `two_sum(x, -p1)` was the one remaining full 6-op merge
+left computing a real error term; `p1 = qh*PI_HI` tracks `x` closely enough
+(whenever `qh != 0`, comfortably inside Sterbenz's `[x/2, 2x]` exactness
+window; trivially when `qh == 0`, since `p1` is then exactly `0`) that the
+subtraction is already exact -- `err0` is provably (almost) always zero, not
+just noise-tier like the terms downgraded to `quick_two_sum` above. Replaced
+with a plain subtract; `err0` drops out of the residual sum entirely.
+Verified over three separate full exhaustive accuracy.rs sweeps (every
+avg/max ulp and worst-x bit-for-bit identical to the two_sum version, in
+every bucket including the off-contract tail) that the one flagged sliver of
+doubt -- `|x|` right at the `qh = 0/±1` boundary, where ties-away rounding
+could in principle land `p1` a hair outside the Sterbenz window -- never
+actually bites. A companion idea from the same brainstorm (rebalancing the
+now-4-term `err` sum from a left-to-right chain into a depth-2 tree,
+`(e1b + e2b) + (e3b - e3t)`, on the reasoning that shallower must be faster)
+was tried alongside it and measured *worse*: identical throughput but +3 cyc
+latency both functions (109->112 sin_checked, 113->116 cos_checked) --
+apparently freeing `e1b + e2b` from the critical path let LLVM's scheduler
+make a different choice elsewhere in the 64-deep latency chain that cost
+more than the shorter dependency depth saved. Same lesson as the
+bottleneck-analysis note above: a restructuring that looks strictly better
+by op-count or depth still needs the measurement. Dropped the rebalance,
+kept the flat chain with `err0` gone: net win with no latency cost. mca:
+sin_checked 5.544->5.289 cyc/elem throughput (-4.6%), cos_checked
+4.919->4.598 cyc/elem throughput (-6.5%), latency unchanged for both
+(109.00/113.00 cyc).
 
 # tools
 - `cargo +nightly run --release --example accuracy [thorough] [filter]` - avg/max ulp against an f64
