@@ -768,19 +768,18 @@ pub fn cosh_throughput(x: f32) -> f32 {
     0.5 * (e + 1.0 / e)
 }
 
-/// Straight port of jodiemath's tanhf. See exp's doc comment for the
-/// inherited unchecked-exp2 domain limit (here on exp(2x), so the safe
-/// range is halved). Also inherits the same near-zero cancellation flaw as
-/// sinh above: 2/(exp(2x)+1) is ~1 for small x, so `1.0 - (...)` loses
-/// precision the same way.
+/// tanh(x) = (e^2x - 1) / (e^2x + 1) = expm1(2x) / (expm1(2x) + 2), reusing
+/// expm1's already-correct small-x handling (its own Pade branch below
+/// |x|<0.5) instead of computing exp2(2x) and cancelling `1.0 - (~1.0)`
+/// directly, which lost essentially all precision for small x (a fuzz
+/// sweep found this the same 300-million-ulp-average class of bug as
+/// log1p's, before that fix -- see IDEAS.md). Still inherits exp's
+/// unchecked-domain limit via expm1 (halved range, same as before: expm1
+/// sees 2x).
 #[inline(always)]
 pub fn tanh(x: f32) -> f32 {
-    // exp(2.0 * x) is exp2((2.0 * x) * LOG2_E): two runtime multiplies.
-    // 2.0 * LOG2_E is a compile-time constant, so folding it in up front
-    // (exp2(x * (2.0 * LOG2_E))) drops to one runtime multiply, bit-exact
-    // since 2.0 * LOG2_E is computed exactly (2.0 is a power of two, so
-    // doubling never rounds) -- same real-valued product either way.
-    1.0 - 2.0 / (exp2(x * (2.0 * LOG2_E)) + 1.0)
+    let e = expm1(2.0 * x);
+    e / (e + 2.0)
 }
 
 /// Straight port of jodiemath's asinhf: ln(x + sqrt(x^2+1)), inherited as-is

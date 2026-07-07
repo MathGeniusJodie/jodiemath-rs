@@ -230,9 +230,35 @@ branches, no scalar-only intrinsics unless the vector form exists).
   elsewhere (see readme for the full writeup). tanh wasn't touched by this
   idea — it already only calls `exp` once (via `exp(2x)`), so the
   two-exp-calls framing doesn't apply there.
-- **tanh cancellation fix**: tanh = expm1(2x)/(expm1(2x)+2) — exact-ish for
-  small x, one division, reuses the fixed expm1. Kills the documented
-  small-x flaw branchlessly.
+- **tanh cancellation fix — done, tested, kept (2026-07-07).** tanh =
+  expm1(2x)/(expm1(2x)+2), one division, reuses expm1's existing Pade
+  small-x branch. Like log1p just above, this wasn't a marginal miss: the
+  same crate-wide fuzz sweep that found log1p at 172M avg ulp found tanh at
+  **336,982,029 avg ulp / 868,220,899 max ulp** (worst x ≈ 8.9e-8) from the
+  old `1.0 - 2.0/(exp2(2x·log2e)+1.0)` — the `1.0 - (~1.0)` step lost
+  essentially all precision for small x, exactly the documented flaw.
+  Considered a cheaper direct fix first (resequence the existing exp2 call
+  without a full expm1 delegation) but ruled it out analytically: `y - 1`
+  for `y = exp2(2x·log2e)` suffers the *identical* collapse-to-1.0 problem
+  `1.0 + x` had in log1p (y itself rounds to exactly 1.0 for small x before
+  any subtraction happens), so there's no cheap resequencing here the way
+  Sterbenz gave log1p one — an accurate small-x numerator fundamentally
+  needs Pade-style machinery, which is exactly what expm1 already has.
+  Verified exhaustive (2.2B in-domain samples, accuracy.rs's existing
+  `|2x·log2e| < 126` filter matching tanh's documented halved-range
+  contract): avg/max ulp now 0.1438/6 (worst x ≈ -0.24, an ordinary
+  interior point, not a cancellation site — the residual is inherited from
+  expm1's own up-to-63-ulp worst case, not a new bug). edgecheck's
+  `tanh(0)` and a manual probe of tanh at ±inf/NaN/44/50/100 (all already
+  NaN or garbage before this change, per the unchecked-domain contract,
+  and unchanged after) confirmed no regression outside the documented safe
+  range. mca cost is real and bigger than log1p's: 58.00→87.64 cyc latency
+  (+51%), 1.330→1.793 cyc/elem throughput (+35%) — expm1 unconditionally
+  computes both its Pade and full-exp branches, so tanh now pays for a
+  whole extra exp-equivalent call it didn't before. Kept anyway, same
+  reasoning as log1p: 337-million-ulp average is a correctness bug in a
+  function whose entire useful range centers on zero (tanh's most common
+  use, e.g. activations near 0), not a speed/accuracy trade to weigh.
 - **sinh small-x**: select to x + x³/6 (one fma) below ~0.5, same pattern as
   expm1's existing select.
 - **Direct minimax tanh**: on [0, ~9.02] tanh saturates; a rational P/Q in x²
