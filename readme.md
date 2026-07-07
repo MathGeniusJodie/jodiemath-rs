@@ -431,7 +431,7 @@ exp                 |          39.00 |             0.974
 expm1               |          71.00 |             1.441
 sinh                |          48.02 |             2.083
 cosh                |          48.02 |             2.083
-tanh                |          62.00 |             1.359
+tanh                |          58.00 |             1.330
 asinh               |          71.99 |             2.806
 acosh               |          69.03 |             2.806
 atanh               |          71.00 |             2.677
@@ -501,6 +501,18 @@ reproduced and isolated by reverting that single line while keeping the
 rest -- yet another instance of this crate's recurring "fewer ops doesn't
 always mean faster" lesson, this time in an otherwise uniformly-positive
 batch of near-identical changes.
+
+**tanh's `exp(2.0 * x)` folded its scale into a single multiply.** `exp(y)`
+is `exp2(y * LOG2_E)`, so `exp(2.0 * x)` was two runtime multiplies
+(`2.0 * x`, then `* LOG2_E`); `2.0 * LOG2_E` is a compile-time constant, so
+computing `exp2(x * (2.0 * LOG2_E))` directly drops to one. Bit-exact,
+confirmed by an exhaustive (all 2^32 f32 bit patterns) old-vs-new comparison
+(temporary test, removed after use, same one-off-verification pattern used
+elsewhere in this file) -- `2.0 * x` never rounds (doubling a float is exact
+barring overflow), so both forms round the same real-valued product exactly
+once. mca: 62.00->58.00 cyc latency (-6.5%), 1.359->1.330 cyc/elem
+throughput (-2.1%); sinh/cosh/exp (unaffected controls, don't share this
+code path) stayed exactly at baseline.
 
 # tools
 - `cargo +nightly run --release --example accuracy [thorough] [filter]` - avg/max ulp against an f64

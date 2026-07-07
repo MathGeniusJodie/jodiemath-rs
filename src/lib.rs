@@ -733,7 +733,12 @@ pub fn cosh(x: f32) -> f32 {
 /// precision the same way.
 #[inline(always)]
 pub fn tanh(x: f32) -> f32 {
-    1.0 - 2.0 / (exp(2.0 * x) + 1.0)
+    // exp(2.0 * x) is exp2((2.0 * x) * LOG2_E): two runtime multiplies.
+    // 2.0 * LOG2_E is a compile-time constant, so folding it in up front
+    // (exp2(x * (2.0 * LOG2_E))) drops to one runtime multiply, bit-exact
+    // since 2.0 * LOG2_E is computed exactly (2.0 is a power of two, so
+    // doubling never rounds) -- same real-valued product either way.
+    1.0 - 2.0 / (exp2(x * (2.0 * LOG2_E)) + 1.0)
 }
 
 /// Straight port of jodiemath's asinhf: ln(x + sqrt(x^2+1)), inherited as-is

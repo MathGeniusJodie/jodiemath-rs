@@ -862,11 +862,17 @@ saves an op and/or a rounding:
   sin_checked/cos_checked: mca 5.289→5.280 / 4.598→4.474 cyc/elem
   throughput (cos_checked -2.7%), latency unchanged for both (moot once/if
   the integer-domain parity idea below lands, but free until then).
-- **tanh**: `exp(2.0 * x)` expands to exp2((2·x)·LOG2_E) — two multiplies
-  and two roundings on the argument. Write `exp2(x * (2.0 * LOG2_E))`
-  (constant folds at compile time): one multiply, one rounding. Same
-  pattern anywhere a scale factor meets exp/ln's internal constant —
-  audit powf's `log_2(x) * y` consumers similarly.
+- **tanh** — done, tested, kept (2026-07-07). `exp(2.0 * x)` expanded to
+  `exp2((2*x)*LOG2_E)`: two runtime multiplies (though only one actually
+  rounds, since doubling is exact — the "two roundings" framing above was
+  slightly off). Rewrote as `exp2(x * (2.0 * LOG2_E))`, folding the
+  compile-time-constant `2.0 * LOG2_E` in up front: one runtime multiply.
+  Confirmed bit-exact via an exhaustive (all 2^32 bit patterns) old-vs-new
+  comparison (temporary test, removed after use). mca: 62.00→58.00 cyc
+  latency (-6.5%), 1.359→1.330 cyc/elem throughput (-2.1%); sinh/cosh/exp
+  (unaffected controls) stayed exactly at baseline. Same pattern anywhere a
+  scale factor meets exp/ln's internal constant — powf's `log_2(x) * y`
+  consumers are a candidate for the same audit, still untested.
 
 ## Other functions, specific spots
 
