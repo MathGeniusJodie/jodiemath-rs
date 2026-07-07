@@ -50,7 +50,7 @@ pub fn log_2_normal(x: f32, koff: f32) -> f32 {
     let k = e as f32 + koff; // both integers: exact, and off the poly's critical path
     let s = m - 1.0;
     let c: [f32; 10] = [
-        1.442695,
+        std::f32::consts::LOG2_E, // bit-identical to this literal; not a coincidence
         -0.72134733,
         0.4808985,
         -0.36069715,
@@ -82,6 +82,8 @@ pub fn log_2_normal(x: f32, koff: f32) -> f32 {
 /// for nan). Use exp2_checked for full-range handling; this version is
 /// ~2.7 ns faster in serial latency.
 #[inline(always)]
+#[allow(clippy::approx_constant)] // g0's constant term is a fitted minimax
+// coefficient near ln(2), not ln(2) itself (bit pattern deliberately differs)
 pub fn exp2(x: f32) -> f32 {
     // exp2(floor(x)) * exp2(fract(x)) == exp2(x). exp2int must come from
     // the same floor(x) as f: computing it from x + 383 double-counts the
@@ -105,6 +107,8 @@ pub fn exp2(x: f32) -> f32 {
 }
 
 #[inline(always)]
+#[allow(clippy::approx_constant)] // g0's constant term is a fitted minimax
+// coefficient near ln(2), not ln(2) itself (bit pattern deliberately differs)
 pub fn exp2_checked(x: f32) -> f32 {
     // fully branchless (auto-vectorizes): exp2(x) = P(f) * 2^k1 * 2^k2 with
     // k1 + k2 = k = floor(x). Splitting k keeps both power-of-two factors
@@ -818,7 +822,7 @@ fn acos_poly(x: f32) -> f32 {
 /// Straight port of jodiemath's acosf.
 #[inline(always)]
 pub fn acos(x: f32) -> f32 {
-    const PI: f32 = 3.14159265359;
+    const PI: f32 = std::f32::consts::PI;
     let a = x.abs();
     let y = (1.0 - a).sqrt() * acos_poly(a);
     mulsign(y, x) + if x < 0.0 { PI } else { 0.0 }
