@@ -1147,6 +1147,11 @@ pub fn erf(x: f32) -> f32 {
 /// the exponent never goes below -100*log2(e) =~ -144.3, still inside
 /// exp2_checked's bound), and it's already the crate's existing
 /// correctly-rounded full-range primitive, no new code needed.
+/// n/d's 8 coefficients refit (2026-07-07) with examples/tune.rs against
+/// sleef's erfc reference over the full clamped domain. Zero perf cost
+/// (same instructions): max ulp 123 -> 109 (~11%); avg ulp moved slightly
+/// worse (0.297 -> 0.311, still comfortably under budget), same kind of
+/// max/avg tradeoff as asin's mid-branch refit.
 #[inline(always)]
 pub fn erfc(x: f32) -> f32 {
     let z = if x < 0.0 { -1.0 } else { 1.0 };
@@ -1156,13 +1161,13 @@ pub fn erfc(x: f32) -> f32 {
     // takes the x branch, keeping NaN). This if/else matches the ternary.
     let xa = x.abs();
     let xa = if xa > 10.0 { 10.0 } else { xa };
-    let n = fma(f32::from_bits(0x35c42f59), xa, f32::from_bits(0x3daf42dc));
-    let n = fma(n, xa, f32::from_bits(0x3ee32e3c));
-    let n = fma(n, xa, f32::from_bits(0x3f7a7520));
+    let n = fma(f32::from_bits(0x35c42f59), xa, f32::from_bits(0x3daf42cd));
+    let n = fma(n, xa, f32::from_bits(0x3ee32e39));
+    let n = fma(n, xa, f32::from_bits(0x3f7a7525));
     let n = fma(n, xa, 1.0);
-    let d = fma(f32::from_bits(0x3e1b69eb), xa, f32::from_bits(0x3f48fde0));
-    let d = fma(d, xa, f32::from_bits(0x3fe918cc));
-    let d = fma(d, xa, f32::from_bits(0x4006d465));
+    let d = fma(f32::from_bits(0x3e1b69eb), xa, f32::from_bits(0x3f48fdde));
+    let d = fma(d, xa, f32::from_bits(0x3fe918da));
+    let d = fma(d, xa, f32::from_bits(0x4006d464));
     let d = fma(d, xa, 1.0);
     let y = exp2_checked(-(xa * xa) * LOG2_E) * n / d;
     fma(y, z, w)

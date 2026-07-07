@@ -342,6 +342,22 @@ branches, no scalar-only intrinsics unless the vector form exists).
   blame / original-source provenance before spending more tuning passes
   on functions without first estimating whether they're likely to have
   slack, rather than tuning everything uniformly.
+- **erfc's n/d rational refit — done, tested, kept (2026-07-07), fifth use
+  of the tuning recipe and the second real win (after atan_poly), landing
+  in the "has real headroom" bucket the hypothesis above predicted
+  wrong** (erfc is also a straight C port like acos/erf, yet had real
+  slack — the provenance heuristic isn't a reliable predictor by itself).
+  Extended tune.rs with `erfc_c` (whole formula, all 8 named coefficients
+  free, the two Horner chains' trailing `+1.0` left fixed to match the
+  shipped structure) and a scalar sleef reference (`erfc_u15`, same
+  crate-root re-export pattern as `erf_u10`). Tuner found max 96→81 on
+  its grid with avg getting slightly worse (0.295→0.308) — same
+  max/avg tradeoff shape as asin's mid-branch refit. Applied and verified
+  on the real exhaustive-equivalent sweep: max ulp 123→109 (~11%), avg
+  ulp 0.297→0.311 (still comfortably under the 0.5 budget). mca
+  bit-for-bit unchanged (78.09 cyc / 2.599 cyc/elem) — zero perf cost,
+  same instructions, only the 8 literal constants differ (one of the 8,
+  the leading `n` coefficient, the tuner didn't touch at all).
 - **atan without reciprocal-select**: `y = if a < 1 {a} else {1/a}` then a
   conditional π/2 flip — fine already; alternatively fit atan on [0, ∞) via
   t = x/(1+|x|) rational reduction, one division, no select chain.

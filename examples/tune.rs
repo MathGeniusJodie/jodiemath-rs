@@ -3,6 +3,7 @@ use jodiemath_rs::*;
 // Scalar (non-SIMD, no portable_simd/nightly needed) 1.0-ulp reference,
 // same crate accuracy.rs uses for its vectorized ground truth.
 use sleef::f64::erf_u10 as erf_ref;
+use sleef::f64::erfc_u15 as erfc_ref;
 
 #[inline(always)]
 fn fma(a: f32, b: f32, c: f32) -> f32 {
@@ -139,6 +140,28 @@ fn erf_tail_c(x: f32, c: &[f32]) -> f32 {
     mulsign_c(1.0 - poly.exp2(), x)
 }
 
+// erfc's rational*gaussian tail (see src/lib.rs's erfc): the 8 named
+// coefficients (4 for n, 4 for d) are tuned; the two Horner chains'
+// trailing "+1.0" leading terms are left fixed, matching the shipped
+// structure exactly (not changing the algebraic shape, only retuning
+// what's already parameterized).
+#[inline(always)]
+fn erfc_c(x: f32, c: &[f32]) -> f32 {
+    let z = if x < 0.0 { -1.0 } else { 1.0 };
+    let w = if x < 0.0 { 2.0 } else { 0.0 };
+    let xa = x.abs().min(10.0);
+    let n = fma(c[0], xa, c[1]);
+    let n = fma(n, xa, c[2]);
+    let n = fma(n, xa, c[3]);
+    let n = fma(n, xa, 1.0);
+    let d = fma(c[4], xa, c[5]);
+    let d = fma(d, xa, c[6]);
+    let d = fma(d, xa, c[7]);
+    let d = fma(d, xa, 1.0);
+    let y = (-(xa * xa) * std::f32::consts::LOG2_E).exp2() * n / d;
+    fma(y, z, w)
+}
+
 fn tune(
     name: &str,
     f: &dyn Fn(f32, &[f32]) -> f32,
@@ -251,5 +274,21 @@ fn main() {
         }
         let init = [3.118769e-4, -4.67225e-3, 3.3162573e-2, -1.5214339e-1, -9.1684705e-1, -1.6282598, 3.1332566e-5];
         tune("erf_tail", &erf_tail_c, &erf_ref, &grid, &init);
+    }
+    if which == "erfc" {
+        // erfc's whole domain is xa in [0, 10] (clamped inside the
+        // function itself).
+        let mut grid = vec![];
+        let mut b = 0.0f32.to_bits();
+        while b < 10.0f32.to_bits() {
+            grid.push(f32::from_bits(b));
+            grid.push(-f32::from_bits(b));
+            b += 3000;
+        }
+        let init = [
+            1.461691795157094e-6, 0.08557674288749695, 0.44371211528778076, 0.9783496856689453,
+            0.15177123248577118, 0.7851238250732422, 1.8210692405700684, 2.1067135334014893,
+        ];
+        tune("erfc", &erfc_c, &erfc_ref, &grid, &init);
     }
 }
