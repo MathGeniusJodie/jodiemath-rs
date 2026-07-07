@@ -168,11 +168,41 @@ branches, no scalar-only intrinsics unless the vector form exists).
 
 - **`round_ties_even` in `round_x_over_pi`** (see cross-cutting) — two
   `.round()` calls on the ql critical path become single instructions.
-- **Fused `sincos` / direct `tan`**: `tan(x) = sin(x)/cos(x)` today runs *two*
-  full range reductions. One reduction mod π/2 (octant), then evaluate both
-  the sin-poly and cos-poly of the same r and select/divide: tan gets ~2×
-  faster; a public `sincos` returning both helps rotation-matrix-style users.
-  The division is idle-divider food.
+- **Fused `sincos` / direct `tan` — tried, measured, reverted (2026-07-07),
+  a real numerical wall, not just a missed optimization.** The identity
+  is sound: for x = r + q·π (r in [-π/2, π/2], sin's own reduction),
+  sin(x) = (-1)^q·sin(r) and cos(x) = (-1)^q·cos(r), so the `(-1)^q`
+  factors cancel *exactly* in tan(x) = sin(x)/cos(x) = sin(r)/cos(r) --
+  no parity computation needed at all, just one shared reduction. Fit a
+  dedicated `cosf_poly` via lolremez (`--degree 4 --range 0:(pi/2)^2
+  "(cos(sqrt(x))-1)/x"`, mirroring sinf_poly's own "poly in x²" shape) --
+  the fit itself was excellent in isolation, ~3.6e-10 relative error,
+  *tighter* than sinf_poly's own 6.1e-9 (cos's even series converges
+  faster at a comparable degree). Implemented `tan(x) = sinf_poly(r) /
+  cosf_poly(r)` using sin's shared q/r. Exhaustive sweep: catastrophic
+  regression, avg ulp 0.33→1.05, max ulp ~3000→32,434,460, worst x ≈
+  252.9 (≈80.5π, right next to a tan pole). Root cause, confirmed by
+  direct probe: `cosf_poly` is a `1 + y·R(y)` additive form, and near
+  r = π/2 (cos's own zero -- and exactly where tan's poles put the most
+  weight), `y·R(y)` must land within a hair of exactly -1 for the sum to
+  be small and accurate; a 42%-relative-error result at
+  `cosf_poly(π/2_f32)` despite a ~2e-8 *absolute* error shows the
+  additive form cancelling exactly like every other "near-zero" bug
+  fixed elsewhere this session (log1p, sinh, asinh, acosh, asin) -- just
+  here the "small x" is `r` near the *domain edge* of a fresh poly, not
+  near 0. This is precisely the trap the crate's *existing* `cos()`
+  already engineers around: it phase-shifts its own reduction (a
+  differently-decomposed q, k = round(x/π - 0.5)) specifically so it can
+  reuse `sinf_poly` — already accurate near *its own* comfortable zero at
+  r=0 — instead of ever needing a fresh poly evaluated near a
+  cancellation point. Sharing sin's literal q/r for tan throws that
+  design away and re-introduces the exact problem it was built to avoid.
+  A real fix would need the same kind of Sterbenz/rationalization
+  correction near cos's zero that fixed asinh/acosh/asin (e.g. compute
+  `cosf_poly` via a term that stays well-conditioned as `r → π/2`, not a
+  bare `1 + y·R(y)`), which is a bigger, riskier redesign than this pass
+  attempted -- reverted rather than half-fixed. `cosf_poly` and the new
+  `tan()` were both fully removed, not left disabled.
 - **Reduction mod π/2 instead of π**: residual lands in [−π/4, π/4]; sinf_poly
   drops ~1 term and a cos poly (even, degree 8 → 4 terms) appears. For plain
   sin you then need a select between sin-poly and cos-poly by octant — both
