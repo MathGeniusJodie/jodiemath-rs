@@ -358,6 +358,23 @@ branches, no scalar-only intrinsics unless the vector form exists).
   bit-for-bit unchanged (78.09 cyc / 2.599 cyc/elem) — zero perf cost,
   same instructions, only the 8 literal constants differ (one of the 8,
   the leading `n` coefficient, the tuner didn't touch at all).
+- **erf's near-zero Padé branch refit — tried, no meaningful headroom
+  found, not applied (2026-07-07).** Sixth use of the recipe, extended
+  with `erf_near0_c` (the `numer/denom` formula, |x| < 0.28, the tail
+  branch above that already handled separately). Same negligible-result
+  shape as acos_poly/erf_tail: max ulp unchanged (3→3), avg ulp moved
+  <0.3% (0.637→0.636) — confirmed stable when the grid was widened from
+  ~1M to ~10.5M points (a background run at that density stalled for
+  reasons unrelated to convergence — likely thermal/scheduling
+  contention from an earlier long-running foreground command, not the
+  search itself — and was killed after ~80s without finishing; the
+  smaller grid's already-consistent result across three "no headroom"
+  cases now (this one, acos_poly, erf_tail) was treated as sufficient
+  without waiting on it). Not applied, kept `erf_near0_c` as
+  infrastructure. This session's refit scorecard is now asin/atan/erfc
+  finding real headroom vs. acos_poly/erf_tail/erf_near0 finding none —
+  three wins, three no-ops, no clean predictor found yet for which is
+  which before actually running the tuner.
 - **atan without reciprocal-select**: `y = if a < 1 {a} else {1/a}` then a
   conditional π/2 flip — fine already; alternatively fit atan on [0, ∞) via
   t = x/(1+|x|) rational reduction, one division, no select chain.

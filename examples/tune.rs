@@ -140,6 +140,17 @@ fn erf_tail_c(x: f32, c: &[f32]) -> f32 {
     mulsign_c(1.0 - poly.exp2(), x)
 }
 
+// erf's near-zero Pade branch (see src/lib.rs's erf), used for |x| < 0.28
+// -- that's exactly the grid to tune against; the tail branch above 0.28
+// is untouched.
+#[inline(always)]
+fn erf_near0_c(x: f32, c: &[f32]) -> f32 {
+    let x2 = x * x;
+    let numer = x * fma(c[0], x2, c[1]);
+    let denom = fma(fma(c[2], x2, c[3]), x2, 1.0);
+    numer / denom
+}
+
 // erfc's rational*gaussian tail (see src/lib.rs's erfc): the 8 named
 // coefficients (4 for n, 4 for d) are tuned; the two Horner chains'
 // trailing "+1.0" leading terms are left fixed, matching the shipped
@@ -274,6 +285,17 @@ fn main() {
         }
         let init = [3.118769e-4, -4.67225e-3, 3.3162573e-2, -1.5214339e-1, -9.1684705e-1, -1.6282598, 3.1332566e-5];
         tune("erf_tail", &erf_tail_c, &erf_ref, &grid, &init);
+
+        // erf's near-zero Pade branch, |x| < 0.28.
+        let mut grid = vec![];
+        let mut b = 0f32.to_bits();
+        while b < 0.28f32.to_bits() {
+            grid.push(f32::from_bits(b));
+            grid.push(-f32::from_bits(b));
+            b += 2000;
+        }
+        let init = [0.5910557508468628, 1.128379225730896, 0.18571428954601288, 0.8571428656578064];
+        tune("erf_near0", &erf_near0_c, &erf_ref, &grid, &init);
     }
     if which == "erfc" {
         // erfc's whole domain is xa in [0, 10] (clamped inside the
