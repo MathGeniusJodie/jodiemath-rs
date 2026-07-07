@@ -876,10 +876,28 @@ saves an op and/or a rounding:
   correct). The `a < 1.0` mask is still needed for the π/2 − y select, so
   this saves one blend, not the compare — small but real, and min has
   friendlier port options.
-- **erfc's final `fma(y, z, w)` with z = ±1**: a full fma spent multiplying
-  by a sign. `mulsign(y, x) + w` — xor + add, or with w's select folded as
-  integer ops. Frees an fma-port slot in a function that's drowning in them
-  (two parallel 4-deep Horner chains).
+- **erfc's final `fma(y, z, w)` with z = ±1 — tried, measured, reverted
+  (2026-07-07).** Replaced `z`'s select + `fma(y, z, w)` with
+  `mulsign(y, x) + w`, removing the `z` variable/select entirely on the
+  theory that trading an FMA-port multiply for a `mulsign` xor (LLVM folded
+  it into one `vpternlogd`) plus a plain add would free up the FMA/mul
+  ports this function is "drowning in" (two parallel 4-deep Horner chains).
+  `--emit=asm` confirmed the intended codegen shift happened (the `after`
+  region's final combine is `vpternlogd` + `vaddps` where `before` had
+  `vblendmps` + `fma`), and `erf` (an unaffected control, doesn't touch this
+  code) stayed bit-identical (88.02 cyc / 2.101 cyc/elem both before and
+  after). But mca (`examples/mca.rs`, the crate's trusted harness,
+  reproduced twice) showed erfc's throughput getting *worse*
+  (2.097→2.158 cyc/elem, latency flat at ~67.1 cyc) instead of better — the
+  same "op/port reshuffling doesn't always pay off" pattern as the
+  round_x_over_pi `pre_offset` and `reduce_pi` `e3`/err-chain entries
+  elsewhere in this file. (A follow-up manual `llvm-mca --bottleneck-analysis`
+  pass meant to explain *why* hit a build-caching artifact of its own -- two
+  supposedly before/after dumps came back byte-identical despite a confirmed
+  disassembly difference -- so the mechanism wasn't pinned down this time;
+  the trusted `mca.rs` numbers, reproduced twice, were treated as sufficient
+  grounds to revert without chasing the artifact further.) Reverted; not
+  adopted.
 - **cbrt's seed division `ax / 3`**: u32-by-3 lowers to a magic-multiply
   needing 32×32→64 (vpmuludq + odd/even shuffle dance, ~4–5 uops
   vectorized). The `(bits >> 16) * 0x5556` trick already used in cbrt_fast
