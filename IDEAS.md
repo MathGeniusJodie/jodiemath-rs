@@ -1251,13 +1251,27 @@ saves an op and/or a rounding:
   the trusted `mca.rs` numbers, reproduced twice, were treated as sufficient
   grounds to revert without chasing the artifact further.) Reverted; not
   adopted.
-- **cbrt's seed division `ax / 3`**: u32-by-3 lowers to a magic-multiply
-  needing 32×32→64 (vpmuludq + odd/even shuffle dance, ~4–5 uops
-  vectorized). The `(bits >> 16) * 0x5556` trick already used in cbrt_fast
-  is a single vpmulld — coarser seed, but cbrt_normal's degree-3 correction
-  has ~3% seed error headroom already; check whether the coarser seed's
-  extra error is absorbable (refit the 4 coefficients against the new seed
-  error range). If yes: several uops off both cbrt variants.
+- **cbrt's seed division `ax / 3`** — partially investigated, not yet
+  attempted (2026-07-07). Confirmed the premise two ways before committing
+  to a refit: (1) `--emit=asm` on cbrt_normal's throughput region shows the
+  division really does cost what the idea claims — 4× `vpmuludq` + 2×
+  `vpshufd` for the widening multiply's odd/even lane dance, vs. the
+  `(bits>>16)*0x5556` trick's single `vpmulld`. (2) Measured the two
+  seeds' actual relative error directly (2M-sample sweep over x in [1,2),
+  compared each seed to `f64::cbrt`) rather than trusting cbrt_fast's
+  overall crudeness as a proxy (its correction step is also weak, so it
+  can't isolate the seed's own contribution): `ax/3`-based seed avg/max
+  relative error 1.85%/1.85%, `(bits>>16)*0x5556` 2.85%/2.86% — genuinely
+  ~54% wider, not just a measurement artifact. This means a same-degree
+  refit of the existing 4 correction coefficients is *not* guaranteed to
+  reach cbrt_normal's current budget (avg/max ulp 0.085/1) the way the
+  original idea's phrasing implied ("refit the 4 coefficients against the
+  new seed error range") — it may need a higher-degree correction, which
+  could eat some or all of the seed's instruction savings. Stopped short
+  of the actual refit (needs real numerical fitting, lolremez or extended
+  coordinate descent, not just algebra) given the uncertain payoff;
+  left as a well-scoped but bigger-than-one-pass follow-up, with the seed
+  error numbers above so a future attempt doesn't have to re-derive them.
 - **powf's tier mismatch**: it composes the *checked* log_2 (pays the full
   denormal/negative/inf select chain) with the *unchecked* exp2 (returns
   garbage outside [-126, 128)). The expensive half buys correctness that
