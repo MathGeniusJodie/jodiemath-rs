@@ -100,6 +100,23 @@ fn atan_poly_c(x: f32, c: &[f32]) -> f32 {
     (fma(fma(c[0], x2, c[1]), x2, 1.0) * x) / fma(fma(x2, c[2], c[3]), x2, 1.0)
 }
 
+// acos_poly (see src/lib.rs), scored as the *whole* acos(x) formula for
+// x >= 0 (sqrt(1-x)*acos_poly(x)) rather than the bare poly value -- the
+// sqrt factor's own rounding interacts with the poly, so tuning the poly
+// in isolation could mistune it relative to what actually ships.
+// acos_poly is also reused by asin's near-1 branch, so an improvement
+// here benefits both callers.
+#[inline(always)]
+fn acos_poly_c(x: f32, c: &[f32]) -> f32 {
+    let u = fma(c[0], x, c[1]);
+    let u = fma(u, x, c[2]);
+    let u = fma(u, x, c[3]);
+    let u = fma(u, x, c[4]);
+    let u = fma(u, x, c[5]);
+    let poly = fma(u, x, c[6]);
+    (1.0 - x).sqrt() * poly
+}
+
 fn tune(
     name: &str,
     f: &dyn Fn(f32, &[f32]) -> f32,
@@ -186,5 +203,18 @@ fn main() {
         }
         let init = [0.040634338, 0.65748954, 0.17133473, 0.9907859];
         tune("atan_poly", &atan_poly_c, &|x| x.atan(), &grid, &init);
+    }
+    if which.contains("acos") {
+        // acos/asin's near-1 branch both evaluate this for x = |input| in
+        // [0,1] (acos directly; asin only above a > 0.9, but tuning the
+        // whole [0,1] range keeps the poly consistent for both callers).
+        let mut grid = vec![];
+        let mut b = 0.0f32.to_bits();
+        while b < 1.0f32.to_bits() {
+            grid.push(f32::from_bits(b));
+            b += 10000;
+        }
+        let init = [2.2960134e-3, -1.1146357e-2, 2.6900099e-2, -4.8802612e-2, 8.875567e-2, -2.1458527e-1, 1.5707962];
+        tune("acos_poly", &acos_poly_c, &|x| x.acos(), &grid, &init);
     }
 }

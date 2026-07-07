@@ -304,6 +304,22 @@ branches, no scalar-only intrinsics unless the vector form exists).
   a separate, bigger change (changes the function's shape, not just its
   coefficients) — left for a future pass if the 1-ulp ceiling found here
   ever needs to move further.
+- **acos/asin shared kernel's `acos_poly` refit — tried, no meaningful
+  headroom found, not applied (2026-07-07).** Third use of the
+  `examples/tune.rs` recipe this session, extended with `acos_poly_c`
+  (scored as the whole `sqrt(1-x)*acos_poly(x)` formula, i.e. acos itself
+  for x >= 0, not the bare poly — acos_poly is also asin's near-1 branch,
+  so an improvement here would help both). Unlike asin's mid branch or
+  atan_poly, this one is already essentially at a coordinate-descent local
+  optimum: max ulp stayed at 3 and avg ulp moved by <0.3% (0.957→0.954),
+  confirmed stable across a 10x grid-density increase (10k-point and
+  100k-point grids landed on the same result). Not applied — a change
+  this small isn't distinguishable from grid-sampling noise once it hits
+  the real exhaustive sweep, and doesn't justify the verify/document/
+  commit overhead. Kept `acos_poly_c` in tune.rs as working
+  infrastructure (a correct, reusable tuner, even though this particular
+  run found nothing) rather than reverting it, matching how exp2_c/log2_c/
+  asin_mid_c/atan_poly_c are kept as permanent tuners in that file.
 - **atan without reciprocal-select**: `y = if a < 1 {a} else {1/a}` then a
   conditional π/2 flip — fine already; alternatively fit atan on [0, ∞) via
   t = x/(1+|x|) rational reduction, one division, no select chain.
