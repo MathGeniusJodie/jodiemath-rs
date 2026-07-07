@@ -113,9 +113,11 @@ fn main() {
     check("asinh(2.34e-8) [known cancellation]", asinh(2.34e-8), 0.0);
     check("acosh(1)", acosh(1.0), 0.0);
     check("acosh(0.5)", acosh(0.5), f32::NAN);
-    // acosh's sign-losing overflow (see its doc comment): a large negative
-    // x should be NaN (domain is x >= 1) but comes out +inf instead.
-    check("acosh(-1e20) [known sign loss]", acosh(-1e20), f32::INFINITY);
+    // acosh's sign-losing domain bug (see its doc comment) is fixed with an
+    // explicit domain check -- large negative x now correctly comes out NaN.
+    check("acosh(-1e20)", acosh(-1e20), f32::NAN);
+    check("acosh(-4096.0)", acosh(-4096.0), f32::NAN);
+    check("acosh(-f32::MAX)", acosh(-f32::MAX), f32::NAN);
     check("atanh(0)", atanh(0.0), 0.0);
     check("atanh(1)", atanh(1.0), f32::INFINITY);
     check("atanh(-1)", atanh(-1.0), f32::NEG_INFINITY);

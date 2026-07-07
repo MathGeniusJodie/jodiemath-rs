@@ -989,6 +989,50 @@ saves an op and/or a rounding:
 
 ## Other functions, specific spots
 
+- **acosh's sign-losing domain bug — done, tested, kept (2026-07-07).** Not
+  from this file's brainstorm list originally (it was readme.md's "known
+  defects" backlog, alongside log1p/sinh/tanh above), but the same
+  crate-wide fuzz sweep that found those found acosh at 127,929,448 avg
+  ulp / max ulp reported as `u64::MAX` (an overflow sentinel from comparing
+  a NaN reference against a wrong finite result) at worst x ≈ -1.6e19. Three
+  distinct bugs, all from `x*x` losing information before anyone checks it,
+  found and fixed one at a time as each fix's own exhaustive re-sweep
+  exposed the next:
+  1. Sign loss: squaring erases x's sign, so `sqrt(x²-1)` can't tell +x from
+     -x once |x| > ~4096 (where `x²`'s ulp exceeds 1 and the "-1" vanishes)
+     — `x + sqrt(x²-1)` collapses to ~0 for negative x instead of staying
+     negative, so `ln(...)` silently returns finite garbage instead of the
+     domain-correct NaN. Wrong for roughly the whole range x < -4096, not a
+     narrow edge case. Fixed with an explicit `if x < 1.0 { NaN }` select.
+  2. Premature overflow: valid x above sqrt(f32::MAX) (~1.84e19) makes
+     `x*x` itself overflow to +inf even though the true answer (~ln(2x),
+     at most ~89.6) stays finite. Fixed by rescaling before squaring for
+     x ≥ 2048: `sqrt(x²-1) = x·sqrt(1 - 1/x²)`, where `1/x²` underflows
+     gracefully to 0 instead of `x²` overflowing. Costs one extra division
+     (a second rounding vs. the direct `fma(x,x,-1.0)` form), so kept
+     select-gated to x ≥ 2048 — comfortably below where the direct form
+     starts losing the "-1" term (~4096) but past where the extra rounding
+     stops mattering.
+  3. A second overflow survived fix 2: once x is within 2x of f32::MAX,
+     `x + s` (~2x) itself overflows even though `ln(2x)` (~89) doesn't.
+     Guarded with `ln(x) + LN_2` (same asymptote, no 2x formed) whenever
+     the sum isn't finite.
+  4. Right at the x=1 domain boundary (derivative singularity — any
+     rounding gets amplified into many ulps of a tiny result), fixes 1-3
+     alone left max ulp at 1522/983: `ln(x+s)` there is `ln(1+tiny)`,
+     exactly log1p's own problem. Routed through `log1p((x-1.0)+s)`
+     instead, with `x-1.0` exact by Sterbenz — cut max ulp to 4, matching
+     the residual log1p/tanh/sinh's own fixes leave behind.
+  Verified exhaustively at each step (edgecheck extended with
+  `acosh(-4096)`/`acosh(-f32::MAX)` alongside the existing cases, which had
+  been asserting the *old buggy* `+inf` result — updated to assert the
+  now-correct NaN). Final: avg/max ulp 0.0631/4 (was
+  127,929,448/u64::MAX). mca cost is the largest of this session's four
+  correctness fixes, unsurprising given three independent bugs got fixed
+  in one function: 69.03→110.47 cyc latency (+60%), 2.806→6.839 cyc/elem
+  throughput (+144%). Kept for the same reasoning as log1p/tanh/sinh: a
+  function silently returning `+inf` instead of `NaN`, or `+inf` instead
+  of a valid ~89, across roughly half its domain, is a correctness bug.
 - **atan's range select** — done, tested, kept (2026-07-07), and a much
   bigger win than expected. `let y = if a < 1.0 { a } else { 1.0 / a }` was
   compare+blend on an already-unconditionally-computed reciprocal; for

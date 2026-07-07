@@ -820,16 +820,62 @@ pub fn asinh(x: f32) -> f32 {
     ln(x + fma(x, x, 1.0).sqrt())
 }
 
-/// Straight port of jodiemath's acoshf: ln(x + sqrt(x^2-1)), inherited as-is
-/// including its known flaw -- squaring x erases its sign before the
-/// domain check, so for large-magnitude *negative* x (where the true
-/// answer is NaN, acosh's domain is x >= 1) this returns +inf instead:
-/// x*x overflows to +inf the same for either sign, and x + inf is +inf
-/// regardless of x's sign, so the NaN that a correctly-signed negative
-/// sqrt argument would otherwise produce never happens.
+/// ln(x + sqrt(x^2-1)), domain x >= 1 (NaN elsewhere). Two bugs in the
+/// straight-ported `x*x - 1.0` form, both from the same root cause
+/// (`x*x` losing information well before it looks "wrong"):
+///
+/// 1. Sign loss: squaring erases x's sign, so sqrt(x^2-1) is the same
+///    magnitude for +x and -x. Once |x| is large enough that ulp(x^2)
+///    exceeds 1 (roughly |x| > 4096, far short of actual overflow) the
+///    "-1" term vanishes entirely and sqrt(x^2-1) rounds to exactly |x|,
+///    so `x + sqrt(x^2-1)` collapses to ~0 for negative x instead of
+///    staying reliably negative -- ln of that silently returns finite
+///    garbage (or +inf, once x^2 overflows) instead of the correct NaN.
+///    Not a narrow edge case: wrong for roughly the whole range x < -4096.
+///    Fixed with an explicit domain select (cheap next to the sqrt+ln
+///    chain -- unlike the small-x cancellation fixes elsewhere in this
+///    file, this one trades no accuracy or speed, it was just a missing
+///    check).
+/// 2. Premature overflow: for valid x above sqrt(f32::MAX) (~1.84e19),
+///    `x*x` overflows to +inf even though the true answer (~ln(2x), at
+///    most ~89.6 for any finite f32) stays comfortably finite -- ln(inf)
+///    then wrongly returns +inf. Fixed by rescaling before squaring for
+///    large x: sqrt(x^2-1) = x*sqrt(1 - 1/x^2); `1/x^2` underflows
+///    gracefully to 0 for huge x (giving the correct sqrt(1-0)=1
+///    asymptote) instead of `x^2` overflowing. This rescaled form costs
+///    an extra rounding (the division) that the direct `fma(x,x,-1.0)`
+///    doesn't pay, so it's only used above `x = 2048` -- comfortably
+///    below where the direct form starts losing the "-1" term (~4096, see
+///    point 1) but far enough into "smooth, ~ln(2x)" territory that the
+///    switchover itself isn't a precision cliff; below that, the exact
+///    single-rounding `fma(x,x,-1.0)` form stays in use, most importantly
+///    right at the domain boundary x = 1 where acosh's derivative blows up
+///    and every extra rounding gets amplified.
+/// 3. A third, smaller-range overflow survives fix 2: once `x` itself is
+///    within a factor of 2 of f32::MAX, `s` (now ~x exactly, per fix 2's
+///    own asymptote) makes `x + s` ~2x overflow even though ln(2x) (~89)
+///    is nowhere near overflowing. Guarded with `ln(x) + LN_2` (the same
+///    asymptote, computed without ever forming 2x) whenever the sum isn't
+///    finite.
+/// 4. Right at the domain boundary x = 1 (where acosh's derivative blows
+///    up, so any rounding gets amplified into a lot of ulps of a tiny
+///    result), `ln(x + s)` computes `ln(1 + tiny)` -- exactly log1p's own
+///    reason to exist. `d = (x - 1.0) + s` is `x + s - 1` computed with
+///    `x - 1.0` exact (Sterbenz, x near 1) instead of forming `x + s`
+///    (rounding tiny `s` against `x`'s magnitude) and subtracting 1 from
+///    that afterward; `log1p(d)` then reuses log1p's own Sterbenz
+///    correction on top. Cut max ulp right at the boundary from 1522 to 4
+///    (exhaustive sweep), matching the small residual log1p/tanh/sinh's
+///    own fixes elsewhere in this file leave behind.
 #[inline(always)]
 pub fn acosh(x: f32) -> f32 {
-    ln(x + fma(x, x, -1.0).sqrt())
+    let direct = fma(x, x, -1.0).sqrt();
+    let inv_x2 = 1.0 / (x * x);
+    let rescaled = x * fma(-inv_x2, 1.0, 1.0).sqrt();
+    let s = if x < 2048.0 { direct } else { rescaled };
+    let d = (x - 1.0) + s;
+    let r = if d.is_finite() { log1p(d) } else { ln(x) + LN_2 };
+    if x < 1.0 { f32::NAN } else { r }
 }
 
 /// Straight port of jodiemath's atanhf: 0.5*ln((1+x)/(1-x)), inherited as-is

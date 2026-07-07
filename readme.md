@@ -66,31 +66,37 @@ own log_2/exp2/sin/cos internally rather than re-deriving them from scratch,
 so they inherit those functions' own tradeoffs: exp, expm1, sinh, cosh, tanh,
 powf, erf and erfc all route through the fast *unchecked* exp2, so they share
 its `[-126, 128)` domain limit (see exp's doc comment); tan shares sin/cos's
-`|x| < 2^22*pi` domain. A few also inherit real accuracy defects from the C
-original's naive formulas -- confirmed by hand-tracing the floating-point
-ops and by the exhaustive/fuzz sweep below, not assumed, and identical in
-the C source, so these aren't translation bugs:
-- asin, atanh, asinh and log1p all lose essentially all precision for small
-  `|x|` (e.g. `asinh(2.34e-8)` returns exactly `0` instead of the correct
-  tiny nonzero value) -- a `sqrt(1±x)-1` or `ln(1+tiny)` pattern that a
-  proper libm avoids with a small-x series branch; jodiemath's straight-line
-  formula doesn't have one.
-- sinh and tanh have the same cancellation, for the same reason (subtracting
-  two near-1 `exp()` values right around x=0); cosh doesn't, since it adds
-  instead of subtracting.
-- acosh returns `+inf` instead of `NaN` for large-magnitude *negative* x,
-  since squaring x erases its sign before the domain check ever sees it.
-- erfc's own `|x|<=10` clamp doesn't fully protect its internal exp2 call:
-  for `|x| >= ~9.35` the exponent it computes falls outside exp2's unchecked
-  domain.
-- remainder's `x - round(x/y)*y` loses precision to cancellation once
-  `|x/y|` is large, since `round(x/y)*y`'s absolute error scales with
-  `ulp(x)`, which can exceed the true remainder's own magnitude (at most
-  `|y|/2`).
-See each function's doc comment in src/lib.rs for the specifics; a real fix
-for any of these means redesigning the algorithm (a small-x series branch,
-routing through exp2_checked, etc.), which is out of scope for a straight
-port and left for later.
+`|x| < 2^22*pi` domain. A few originally inherited real accuracy defects
+from the C original's naive formulas -- confirmed by hand-tracing the
+floating-point ops and by the exhaustive/fuzz sweep below, not assumed,
+and identical in the C source, so these weren't translation bugs. Several
+have since been fixed (each still a straight port of the *shape* of the
+original algorithm, just with the specific cancellation/overflow bug
+patched -- see each function's doc comment for the exact mechanism and
+IDEAS.md for the before/after measurements):
+- **fixed**: log1p, tanh and sinh/sinh_throughput all lost essentially all
+  precision for small `|x|` (e.g. the old `sinh` returned exactly `0` well
+  away from zero) from a `ln(1+tiny)` or "subtract two near-1 values"
+  cancellation pattern; each now has a small-x branch (log1p: a Sterbenz
+  correction term; tanh: reuses expm1; sinh: a direct Taylor branch).
+- **fixed**: acosh returned `+inf` instead of `NaN` for large-magnitude
+  negative x (squaring erased the sign before the domain check ever saw
+  it, wrong for roughly the whole range x < -4096) and separately
+  returned `+inf` instead of a small finite value for valid x above
+  sqrt(f32::MAX) (`x*x` overflowing prematurely); both fixed with an
+  explicit domain check and a rescaled/log1p-routed formula that avoids
+  ever squaring or summing something that overflows.
+- **still open**: asin and atanh (and asinh, though its cliff is much
+  narrower than the others', see its doc comment) still lose essentially
+  all precision for small `|x|`, the same `ln(1+tiny)`/cancellation
+  pattern log1p had -- no small-x branch yet.
+- **still open**: erfc's own `|x|<=10` clamp doesn't fully protect its
+  internal exp2 call: for `|x| >= ~9.35` the exponent it computes falls
+  outside exp2's unchecked domain.
+- **still open**: remainder's `x - round(x/y)*y` loses precision to
+  cancellation once `|x/y|` is large, since `round(x/y)*y`'s absolute
+  error scales with `ulp(x)`, which can exceed the true remainder's own
+  magnitude (at most `|y|/2`).
 
 **sinh_throughput/cosh_throughput** are a second tier for sinh/cosh, added
 after finding that computing `exp(-x)` as `1.0 / exp(x)` (instead of a
@@ -153,28 +159,30 @@ future changes instead of just asserted:
  [1e15,1e16)  |           3.2e8 |             2.4e9|           9.7e8 |             2.4e9
 ```
 
-Straight-ported functions (100M-sample fuzz mode; see the overview above for
-each function's real domain, and its doc comment for known inherited
-defects). "everywhere" rows for asin/atanh/asinh/log1p/sinh/tanh/acosh
-deliberately include the region where the known cancellation/sign-loss
-defect lives -- that's the point of measuring them unrestricted, so the
-number stays honest instead of hiding the defect behind a narrower domain.
+Straight-ported functions (100M-sample fuzz mode / exhaustive where noted;
+see the overview above for each function's real domain, and its doc comment
+for known inherited defects and any fixes since). "everywhere" rows for
+asin/atanh/asinh deliberately include the region where the known
+cancellation defect lives -- that's the point of measuring them
+unrestricted, so the number stays honest instead of hiding the defect
+behind a narrower domain. log1p, sinh/sinh_throughput, tanh and acosh had
+the same class of defect but are fixed now (see above); their rows are
+exhaustive (all 2^32 f32 bit patterns), not fuzz.
 ```
                         | jodie avg  | jodie max | std avg | std max
 ------------------------|------------|-----------|---------|--------
                      ln |    0.126   |     3     |  0.000  |    1
                   log10 |    0.286   |     4     |  0.000  |    0
-       log1p (in-domain)|    0.002   |     1     |  0.000  |    0
-   log1p (small |x|, known cancellation)  | catastrophic -- see above
+                  log1p |    0.106   |     4     |  0.000  |    0
       exp (in-domain)   |    0.289   |    64     |  0.000  |    1
     expm1 (in-domain)   |    0.240   |    63     |  0.000  |    0
-     sinh (in-domain, away from 0) |    0.274*  |   63*    |  0.000  |    0
+     sinh (in-domain)   |    0.291   |    64     |  0.000  |    0
      cosh (in-domain)   |    0.274   |    63     |  0.000  |    0
- sinh_throughput (in-domain, away from 0) | 0.274* |  63*    |  0.000  |    0
+ sinh_throughput (in-domain) | 0.293 |    64     |  0.000  |    0
     cosh_throughput (in-domain) |    0.272   |    64     |  0.000  |    0
-     tanh (in-domain, away from 0) |  catastrophic near 0, see above  |  0.000  |    0
+     tanh (in-domain)   |    0.144   |     6     |  0.000  |    0
                   asinh | catastrophic near 0, see above  | (std also imperfect at extreme |x|)
-                  acosh | catastrophic for x<-huge (sign loss), see above
+                  acosh |    0.063   |     4     |  0.000  |    1
                   atanh | catastrophic near 0, see above  |  0.037   |  34384
                    asin | catastrophic near 0, see above  |  0.000  |    0
                    acos |    0.496   |     4     |  0.000  |    0
@@ -187,12 +195,6 @@ number stays honest instead of hiding the defect behind a narrower domain.
         powf (in-domain)|    0.359   |   123     |  0.000  |    1
      remainder (|x/y|<1000) |    ~1000**  | ~2e9** | (no std remainder)
 ```
-`*` sinh/tanh's own table rows above are for the domain-restricted (exp2-safe)
-range only; the near-zero cancellation still lives inside that same range
-(see the "everywhere" note above the table), so treat these two numbers as
-optimistic for anything close to x=0. sinh_throughput inherits the same
-cancellation (identical formula shape near 0), so its row carries the same
-caveat.
 `**` remainder's max ulp stays large even inside the `|x/y|<1000` bound: a
 handful of inputs land close enough to an exact half-integer quotient that
 f32 rounding flips which integer `round(x/y)` picks vs. the f64 reference,
@@ -445,16 +447,16 @@ cos                 |          54.00 |             1.360
 cos_checked         |         113.00 |             4.474
 ln                  |          56.91 |             1.626
 log10               |          56.91 |             1.626
-log1p               |          59.98 |             2.023
+log1p               |          61.14 |             2.339
 exp                 |          39.00 |             0.974
 expm1               |          71.00 |             1.441
-sinh                |          48.02 |             2.083
+sinh                |          77.02 |             2.277
 cosh                |          48.02 |             2.083
-sinh_throughput     |          58.00 |             1.279
+sinh_throughput     |          81.02 |             1.545
 cosh_throughput     |          58.00 |             1.279
-tanh                |          58.00 |             1.330
+tanh                |          87.64 |             1.793
 asinh               |          71.99 |             2.806
-acosh               |          69.03 |             2.806
+acosh               |         110.47 |             6.839
 atanh               |          71.00 |             2.677
 asin                |          56.11 |             1.433
 acos                |          37.11 |             0.811
@@ -579,9 +581,10 @@ time in the surprising direction (a small-looking change, a large real win).
 # todo:
 - do principled and thourough analysis of dependency chains and rounding errors to find optimizations
 - perfectly rounded versions
-- fix (or at least give a "_checked" full-range companion to) the inherited
-  accuracy defects in the newly-ported functions: small-x cancellation in
-  asin/atanh/asinh/log1p/sinh/tanh, acosh's sign-losing overflow, and
+- fix (or at least give a "_checked" full-range companion to) the remaining
+  inherited accuracy defects in the newly-ported functions: small-x
+  cancellation in asin/atanh/asinh (log1p/sinh/tanh already fixed, see
+  above), erfc's own exp2 domain gap, remainder's tie-breaking cliff, and
   erf/erfc/exp-family's dependence on the fast unchecked exp2 -- see the
   overview above and each function's doc comment
 - vary both arguments in quickbench's two-argument benchmarks (atan2, hypot,
