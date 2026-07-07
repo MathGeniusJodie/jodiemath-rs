@@ -148,6 +148,25 @@ pub fn exp2_checked(x: f32) -> f32 {
 }
 // sin(x) ~= x + x^3*p(x^2) on [-pi/2, pi/2], degree-9 minimax (relative
 // error ~6.1e-9), fitted with lolremez. Estrin evaluation, 2 fma chains.
+//
+// At x = +-0.0, x3 = y*x always carries x's own sign (y = x*x is always
+// +0.0, and +0.0 * x doesn't flip sign), but p (the poly's leading
+// coefficient c0 at y=0) is a fixed negative constant -- sin's own
+// curvature -- so p*x3 always ends up with the *opposite* sign to x at
+// this one point. `fma(p, x3, x)` then adds two exactly-zero values of
+// opposite sign, which IEEE754 defines to give +0.0 regardless of
+// operand order or x's own sign, silently losing it (the same mechanism
+// behind the atan2(-0.0,+0.0) bug fixed earlier). A branchy `x == 0.0`
+// select fixed it but cost real throughput (measured, ~12-17% worse on
+// sin/cos/tan) since it's inlined into every caller. `r.copysign(x)`
+// fixes the same bug for free: for every *nonzero* x in this poly's
+// domain, sin is odd and monotonic so the leading `x` term always
+// dominates the correction term `p*x3` in magnitude, meaning r's sign
+// already equals x's sign there -- copysign is a true no-op for all of
+// them and only changes the singular x=+-0.0 case. Bit-exact vs. the
+// branchy version everywhere, cheaper (single sign-copy instruction, no
+// compare/select) on every shared caller (sin, cos, sin_checked,
+// cos_checked, tan).
 #[inline(always)]
 fn sinf_poly(x: f32) -> f32 {
     let c0 = -0.16666660f32;
@@ -160,7 +179,8 @@ fn sinf_poly(x: f32) -> f32 {
     let a = fma(c1, y, c0);
     let b = fma(c3, y, c2);
     let p = fma(b, y2, a);
-    fma(p, x3, x)
+    let r = fma(p, x3, x);
+    r.copysign(x)
 }
 
 // pi split into pieces with trailing zero bits so q*PI_A and q*PI_B are
@@ -445,7 +465,14 @@ pub fn sin_checked(x: f32) -> f32 {
     let pl = parity(ql);
     let flip = if pq == pl { 0 } else { SIGN_MASK };
     let r = f32::from_bits(r.to_bits() ^ flip);
-    sinf_poly(r)
+    let result = sinf_poly(r);
+    // reduce_pi's own multi-term error-compensation chain loses x's sign
+    // at x = +-0.0 (an opposite-signed-zero addition somewhere inside it,
+    // the same IEEE754 mechanism as sinf_poly's own -0.0 fix and the
+    // atan2(-0.0,+0.0) bug), well before sinf_poly ever sees it -- guard
+    // here rather than trace through reduce_pi's whole two_sum/two_prod
+    // chain to find the exact spot.
+    if x == 0.0 { x } else { result }
 }
 #[inline(always)]
 pub fn cos_checked(x: f32) -> f32 {

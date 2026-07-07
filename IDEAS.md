@@ -503,6 +503,65 @@ branches, no scalar-only intrinsics unless the vector form exists).
   methodology: systematically re-checking every instance of a bug
   *pattern* (not just the one instance found) turned up a second, real
   bug with a different mechanism in the same afternoon.
+- **sin/cos/sin_checked/cos_checked/tan's negative-zero sign bug — a
+  broader continuation of the same systematic sweep, done, tested, kept
+  (2026-07-07).** After acos and atan2 both turned up real signed-zero
+  bugs from the same IEEE754 "opposite-signed-zero addition gives `+0.0`"
+  mechanism, swept every odd-symmetric public function at `x = -0.0`
+  against std rather than stopping at two instances. Found `sin(-0.0)`,
+  `cos(-0.0)` (silently — `cos(-0.0) = +1.0` was already right, since
+  it's a nonzero result unaffected by this bug class), `tan(-0.0)`, and
+  `sin_checked(-0.0)` all wrong. Two distinct root causes behind one
+  shared mechanism: `sinf_poly` (the poly core shared by all five
+  functions) computes `fma(p, x3, x)`, and at `x = +-0.0`, `x3 = y*x`
+  correctly carries `x`'s sign (`y = x*x` is always `+0.0`, and
+  `+0.0 * x` doesn't flip sign) but `p` (the poly's fixed leading
+  coefficient `c0` at `y=0`, i.e. sin's own curvature) is a negative
+  constant, so `p*x3`'s sign is always the *opposite* of `x`'s at this
+  one point — the `fma` then adds two exactly-zero values of opposite
+  sign, which IEEE754 always resolves to `+0.0`, silently destroying it.
+  First fix tried: an explicit `if x == 0.0 { x } else { r }` select.
+  Worked (bit-exact), but mca showed a real, unwelcome throughput cost on
+  every one of the five shared callers (sin +16.5%, cos +12.2%,
+  sin_checked +4.9%, cos_checked +1.4%, tan +16.9% cyc/elem, latency +1
+  cyc each) — the branch is inlined into every one of them, so its cost
+  multiplies. Replaced with `r.copysign(x)` instead: for *every nonzero*
+  `x` in this poly's domain, sin is odd and monotonic and the leading `x`
+  term always dominates `p*x3` in magnitude (checked by hand at the
+  domain edge too, `r` near `pi/2`: correction magnitude ~0.57 vs. `x`
+  magnitude ~1.57, same sign, never crosses over), so `r`'s sign already
+  equals `x`'s everywhere except this one singular point — `copysign` is
+  a true no-op for every nonzero input, no accuracy or extra-rounding
+  risk, and compiles to a single sign-copy instead of a compare+select.
+  Bit-exact vs. the branchy version everywhere (confirmed via probe), and
+  strictly cheaper on every one of the five mca rows (sin 1.191→1.151,
+  cos 1.526→1.406, sin_checked 5.537→5.476, cos_checked 4.537→4.537 flat,
+  tan 2.716→2.532 cyc/elem) — still not fully free vs. the pre-bugfix
+  baseline (sin +12.6%, cos +3.4%, sin_checked +3.7%, cos_checked +1.4%,
+  tan +8.9% cyc/elem throughput, latency flat except tan +2 cyc), but the
+  smallest cost found for this correctness fix. `sin_checked` needed a
+  *second*, separate guard: even after `sinf_poly` was fixed,
+  `sin_checked(-0.0)` still failed, because `reduce_pi`'s own
+  multi-term two_sum/two_prod error-compensation chain independently
+  loses `x`'s sign somewhere internal to it (same IEEE754 rule, exact
+  spot not traced — probed down to "reduce_pi's raw output is already
+  `+0.0` by the time sinf_poly sees it" and stopped there rather than
+  walking its ~15 intermediate two_sum/two_prod terms). Guarded at
+  `sin_checked`'s own output with `if x == 0.0 { x } else { result }`
+  instead — `cos_checked` needs no equivalent guard (`cos_checked(-0.0)
+  = +1.0`, nonzero, unaffected). Verified bit-exact against std for all
+  five functions at `x = -0.0`; exhaustive accuracy.rs sweeps for
+  sin/cos/sin_checked/cos_checked all matched the pre-fix documented
+  baseline exactly, bucket for bucket, confirming `copysign` is a true
+  no-op away from the singular zero point. `tan (in-domain)`'s max ulp
+  moved slightly (2967 -> 3057, avg unchanged at 0.331/0.3305) -- this is
+  deep in the already-disclosed, budget-exempt domain-edge blowup zone
+  (worst x ~1.318e7, right at the documented |x|<2^22*pi cliff), not a
+  new qualitative regression, and consistent with `tan`'s residual `r`
+  occasionally landing outside `sinf_poly`'s "leading term dominates"
+  guarantee once the reduction itself is already degrading near the cliff.
+  edgecheck extended with `sin(-0)`, `cos(-0)`, `tan(-0)`,
+  `sin_checked(-0)`, `cos_checked(-0)`.
 - **erf's tail branch (`erf_poly`) refit — tried, no meaningful headroom
   found, not applied (2026-07-07).** Fourth use of the tuning recipe,
   extended with `erf_tail_c` (scored as the whole `mulsign(1.0 -

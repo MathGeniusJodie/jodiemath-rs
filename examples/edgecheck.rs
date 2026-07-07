@@ -73,6 +73,16 @@ fn main() {
     check("cos(0)", cos(0.0), 1.0);
     check("sin(nan)", sin(f32::NAN), f32::NAN);
     check("cos(nan)", cos(f32::NAN), f32::NAN);
+    // sin(-0.0)/tan(-0.0) used to lose their sign: sinf_poly's own fma chain
+    // adds two exactly-zero values of opposite sign at this one input (the
+    // same IEEE754 "+0 + -0 = +0" rule as the atan2 bug above), which
+    // silently flips the correctly-signed -0.0 back to +0.0. Fixed with
+    // `r.copysign(x)` in sinf_poly -- free for every nonzero x (sin is odd
+    // and monotonic there, so r's sign already matches x's), only changes
+    // this singular zero case. cos(-0.0) is unaffected (a nonzero result).
+    check("sin(-0)", sin(-0.0), -0.0);
+    check("cos(-0)", cos(-0.0), 1.0);
+    check("tan(-0)", tan(-0.0), -0.0);
     // sin_checked/cos_checked: nan/+-inf must still come out nan, and every
     // other finite x (including ones far past the sub-ulp-accurate range)
     // must come out finite, never inf -- see sin_checked's doc comment for
@@ -87,6 +97,16 @@ fn main() {
         check_finite(&format!("{n}(1e20)"), f(1e20));
         check_finite(&format!("{n}(1e10)"), f(1e10));
     }
+    // sin_checked(-0.0) used to lose its sign too, via a *different*
+    // mechanism than sinf_poly's own bug above: reduce_pi's multi-term
+    // two_sum/two_prod error-compensation chain loses x's sign somewhere
+    // internally (same IEEE754 rule, not traced to the exact spot), well
+    // before sinf_poly is even reached, so sinf_poly's own copysign fix
+    // can't see the original sign to restore it. Guarded at sin_checked's
+    // own output instead. cos_checked(-0.0) needs no such guard (nonzero
+    // result, and its own reduction shares no sign-losing dependency here).
+    check("sin_checked(-0)", sin_checked(-0.0), -0.0);
+    check("cos_checked(-0)", cos_checked(-0.0), 1.0);
 
     // ln/log10/log1p: same zero/negative/inf edges as log_2 (they're all
     // log_2 rescaled or composed with it).

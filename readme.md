@@ -165,6 +165,32 @@ IDEAS.md for the before/after measurements):
   skipping that addition when `base` would be the degenerate `+0.0`.
   Verified all 12 zero/sign combinations bit-exact against std; zero
   perf cost (mca bit-for-bit unchanged).
+- **fixed**: `sin(-0.0)`, `cos(-0.0)` (silently, since `cos(-0.0)=+1.0` was
+  already the correct nonzero answer), `tan(-0.0)`, and `sin_checked(-0.0)`
+  all returned `+0.0` instead of the IEEE754/C99-defined `-0.0` --
+  found by the same systematic sweep as atan2's fix, checking every odd
+  function at `-0.0`. Two distinct root causes, same underlying IEEE754
+  rule (adding two opposite-signed exact zeros always gives `+0.0`):
+  `sinf_poly` (shared by all of sin/cos/sin_checked/cos_checked/tan)
+  computes `fma(p, x3, x)`, and at `x = +-0.0`, `x3` correctly carries
+  `x`'s sign but `p` (the poly's fixed leading coefficient at `y=0`, sin's
+  own curvature) is a negative constant, so `p*x3` always ends up the
+  *opposite* sign to `x` at this one point, and the `fma` silently loses
+  it. Fixed with `r.copysign(x)` -- free for every nonzero `x` (sin is odd
+  and monotonic on this poly's domain, so the leading `x` term always
+  dominates `p*x3` in magnitude there, meaning `r`'s sign already equals
+  `x`'s), only changes the singular zero case; confirmed cheaper than an
+  `x == 0.0` branch/select tried first (that cost real throughput --
+  sin/cos +12-17%, sin_checked/cos_checked/tan +1-9% -- since it's inlined
+  into every caller; copysign costs far less). `sin_checked` needed a
+  *second*, separate fix: `reduce_pi`'s own multi-term two_sum/two_prod
+  error-compensation chain independently loses `x`'s sign somewhere
+  internally (same IEEE754 rule, exact spot not traced), well before
+  `sinf_poly` is even reached, so `sinf_poly`'s own fix can't see the
+  original sign to restore. Guarded at `sin_checked`'s own output with an
+  explicit `x == 0.0` select instead; `cos_checked` needs no such guard
+  (`cos_checked(-0.0) = +1.0`, a nonzero result, unaffected). Verified
+  bit-exact against std for all 5 functions at `x = -0.0`.
 - **still open**: remainder's `x - round(x/y)*y` loses precision to
   cancellation once `|x/y|` is large, since `round(x/y)*y`'s absolute
   error scales with `ulp(x)`, which can exceed the true remainder's own
@@ -511,10 +537,10 @@ cbrt_accurate       |          59.06 |             3.129
 exp2                |          35.00 |             0.841
 exp2_checked        |          43.06 |             1.399
 log2                |          34.23 |             1.556
-sin                 |          46.00 |             1.022
-sin_checked         |         109.00 |             5.280
-cos                 |          54.00 |             1.360
-cos_checked         |         113.00 |             4.474
+sin                 |          46.00 |             1.151
+sin_checked         |         109.02 |             5.476
+cos                 |          54.00 |             1.406
+cos_checked         |         113.00 |             4.537
 ln                  |          56.91 |             1.626
 log10               |          56.91 |             1.626
 log1p               |          61.14 |             2.339
@@ -532,7 +558,7 @@ asin                |          43.24 |             2.899
 acos                |          37.11 |             0.820
 atan                |          57.09 |             1.410
 atan2               |          57.17 |             1.467
-tan                 |          69.00 |             2.324
+tan                 |          71.02 |             2.532
 erf                 |         102.74 |             3.163
 erfc                |          78.09 |             2.599
 hypot               |          21.00 |             0.763
@@ -543,6 +569,12 @@ sin/cos are the restored single-word Cody-Waite version (identical codegen
 to before this session's double-float work, confirmed by these numbers
 matching exactly); sin_checked/cos_checked are today's name for the
 double-float version this whole section was benchmarking.
+`sinf_poly`'s `-0.0` sign fix (see the known-defects list above) added a
+`copysign` to every one of these five rows -- the real, small, disclosed
+cost of that correctness fix (sin/cos throughput +12-16%, tan +9%,
+sin_checked/cos_checked +1-4%, latency unchanged except tan +2 cyc); a
+branch/select tried first cost meaningfully more on every row and was
+rejected in favor of `copysign` once measured.
 
 **Further pass: `reduce_pi`'s `err0` term deleted via Sterbenz's lemma, not
 just downgraded.** `two_sum(x, -p1)` was the one remaining full 6-op merge
