@@ -1019,15 +1019,30 @@ and measurement disagree (see the Fast2Sum comments).
 
 ## Fast sin / cos
 
-- **The PI_A..D chain is 4 serial fmas; it can be 3-deep.** The two
-  smallest terms are additive corrections: t = fma(q, PI_C, q * PI_D)
-  computes q·PI_C + q·PI_D in one fma + one mul that run *parallel* to the
-  first two chain links, then r = fma(q, -PI_B, fma(q, -PI_A, x)) - t.
-  Cost: t is now rounded (the exact-product property is lost for the C/D
-  tier), adding ~q·2^-24·6e-7 ≈ q·4e-14 error — comparable to the split's
-  own truncation floor (~q·1e-14), so the floor roughly doubles/triples but
-  stays orders under the fast path's budget in its valid range. Saves ~4
-  cycles of reduction latency on the crate's *default* sin/cos.
+- **The PI_A..D chain is 4 serial fmas; it can be 3-deep — tried, measured,
+  reverted (2026-07-07).** Implemented exactly as specified: `t = fma(q,
+  PI_C, q * PI_D)` computed as its own fma+mul (independent of `x`, so it
+  runs parallel to the `x - q*PI_A - q*PI_B` chain), then `r = fma(q,
+  -PI_B, fma(q, -PI_A, x)) - t`. The idea's own error estimate ("the floor
+  roughly doubles/triples") was badly wrong once measured: exhaustive
+  sweep showed `sin (in-domain)` avg ulp 0.0645→1.4818 and max ulp
+  220→866,390,494 — not a "stays orders under budget" doubling, catastrophic.
+  Even well inside the previously-solid range, `|x|<=1000` went from max
+  ulp 2 to 3618 and `|x|<=1e6` from 9 to 231,121. The worst-x values (9.42,
+  502.7) land almost exactly on multiples of π — i.e. sin's *zeros*, which
+  is the mechanism the estimate missed: near a zero the correctly-reduced
+  residual `r` is tiny, so `t`'s new single-shot rounding error (previously
+  spread across two separate exact-fma subtracts, `-PI_C` then `-PI_D`,
+  each landing in `r`'s own shrinking-magnitude context) becomes a large
+  *relative* error in `r` exactly where sin is most sensitive to it,
+  instead of the roughly-constant *absolute* error tier the estimate
+  reasoned about. Reverted before even measuring mca, since the accuracy
+  regression alone rules this out — this crate's own budget has no reading
+  under which sin's max ulp growing 4 million-fold is acceptable for a few
+  cycles of latency. Files under the "measure before trusting an error
+  estimate" lesson repeated throughout this document, just this time the
+  estimate was wrong by many orders of magnitude rather than the usual
+  "sign flipped from expected."
 - **cos's `q = (kb - ROUND_MAGIC) + 0.5` is two serial adds** where sin has
   one. The obvious fold — subtract (ROUND_MAGIC − 0.5) as one constant —
   dies on representability: ulp(1.5·2^23) = 1, so 12582911.5 doesn't exist.
