@@ -1171,7 +1171,10 @@ pub fn erf(x: f32) -> f32 {
 #[inline(always)]
 pub fn erfc(x: f32) -> f32 {
     let z = if x < 0.0 { -1.0 } else { 1.0 };
-    let w = if x < 0.0 { 2.0 } else { 0.0 };
+    // w = 1.0 - z exactly, for both branches (0 = 1-1, 2 = 1-(-1)) --
+    // one subtract instead of a second compare+select on the same
+    // condition z already resolved.
+    let w = 1.0 - z;
     // NaN-preserving clamp: f32::min suppresses NaN (returns the other
     // operand), unlike C's `x>10.f?10.f:x` ternary (false for NaN, so it
     // takes the x branch, keeping NaN). This if/else matches the ternary.

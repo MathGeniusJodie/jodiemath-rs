@@ -416,6 +416,31 @@ branches, no scalar-only intrinsics unless the vector form exists).
   bit-for-bit unchanged (78.09 cyc / 2.599 cyc/elem) — zero perf cost,
   same instructions, only the 8 literal constants differ (one of the 8,
   the leading `n` coefficient, the tuner didn't touch at all).
+- **erfc's `w = if x<0 {2.0} else {0.0}` is a redundant second select —
+  done, tested, kept (2026-07-07).** Found on a fresh look at erfc's
+  current (post-refit) source while re-checking the "shared
+  subexpression" family of ideas. `w` and `z` (`if x<0 {-1.0} else
+  {1.0}`) both derive from the exact same `x < 0.0` condition, and
+  `w = 1.0 - z` holds as an exact identity for *both* outcomes (`1.0 -
+  1.0 = 0.0`, `1.0 - (-1.0) = 2.0`, both exact, no rounding) — not a
+  special case at any particular `x`, a genuine algebraic redundancy:
+  the second compare+select was recomputing information the first select
+  already fully determined. Replaced with one subtract. Verified via a
+  200M-sample bit-exact comparison against the old two-select form
+  (stepping by a stride coprime to 2^32 for broad, distinct coverage —
+  a true 2^32 loop timed out as a plain sequential scalar test, and this
+  is a pure identity that doesn't need literal exhaustiveness the way an
+  approximation's accuracy claim would): zero mismatches. mca showed
+  *zero* change (78.09 cyc / 2.599 cyc/elem, exactly baseline) despite
+  `--emit=asm` showing genuinely different codegen (different register
+  allocation, not byte-identical like the atan2 `bothzero` no-op) — a
+  real source simplification that happened to land on an equal-cost
+  scheduling point rather than a faster one. Kept anyway for the simpler
+  source (one fewer branch, one fewer named constant pair) at proven zero
+  risk and zero regression, matching this crate's precedent of keeping
+  provably-free simplifications even when the runtime win doesn't
+  materialize (see the sin_checked sign-flip entry elsewhere in this
+  file for another "kept for the simpler code" case).
 - **erf's near-zero Padé branch refit — tried, no meaningful headroom
   found, not applied (2026-07-07).** Sixth use of the recipe, extended
   with `erf_near0_c` (the `numer/denom` formula, |x| < 0.28, the tail
