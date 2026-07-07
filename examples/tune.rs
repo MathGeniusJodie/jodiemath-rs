@@ -256,6 +256,43 @@ fn tune(
     );
 }
 
+// Like tune(), but never perturbs coefficient index 0 -- for cases where
+// that coefficient is a mathematically-required exact value (e.g.
+// log_2's leading term, exactly log2(e)), not a free empirical parameter.
+fn tune_fixed0(
+    name: &str,
+    f: &dyn Fn(f32, &[f32]) -> f32,
+    reference: &dyn Fn(f64) -> f64,
+    grid: &[f32],
+    init: &[f32],
+) {
+    let mut c: Vec<f32> = init.to_vec();
+    let mut best = score(f, reference, grid, &c);
+    println!("{name}: start max {} avg {:.5}", best.0, best.1 as f64 / grid.len() as f64);
+    let mut improved = true;
+    while improved {
+        improved = false;
+        for i in 1..c.len() {
+            for delta in [1i32, -1, 2, -2, 4, -4, 8, -8, 16, -16] {
+                let mut trial = c.clone();
+                trial[i] = f32::from_bits((trial[i].to_bits() as i32 + delta) as u32);
+                let s = score(f, reference, grid, &trial);
+                if s < best {
+                    best = s;
+                    c = trial;
+                    improved = true;
+                }
+            }
+        }
+    }
+    println!(
+        "{name}: tuned max {} avg {:.5}  coeffs: {:?}",
+        best.0,
+        best.1 as f64 / grid.len() as f64,
+        c.iter().map(|v| format!("{v:e}")).collect::<Vec<_>>()
+    );
+}
+
 fn main() {
     let which = std::env::args().nth(1).unwrap_or_default();
     if which.contains("exp2") || which.is_empty() {
@@ -267,7 +304,10 @@ fn main() {
             grid.push(-f32::from_bits(b));
             b += 997;
         }
-        let init = [2.1702255e-4, 1.2439688e-3, 9.678841e-3, 5.5483342e-2, 2.4022984e-1, 6.9314698e-1];
+        // current shipped coefficients (src/lib.rs's exp2), not the
+        // pre-tuning starting point this init array used to be -- check
+        // for headroom from where the crate actually is now.
+        let init = [2.1702237e-4, 1.2439679e-3, 9.678826e-3, 5.548333e-2, 2.4022985e-1, 6.93147e-1];
         tune("exp2", &exp2_c, &|x| x.exp2(), &grid, &init);
     }
     if which.contains("log2") || which.is_empty() {
@@ -277,11 +317,15 @@ fn main() {
             grid.push(f32::from_bits(b));
             b += 1499;
         }
+        // current shipped coefficients (src/lib.rs's log_2_normal); c[0]
+        // is std::f32::consts::LOG2_E exactly, not a coincidence (it's
+        // the poly's mathematically-required leading term, log2(1+s)'s
+        // derivative at s=0), so it's excluded from tuning below.
         let init = [
-            1.4426950, -0.72134735, 0.48089824, -0.36069664, 0.28856741,
-            -0.23961740, 0.20460062, -0.19106275, 0.18617496, -0.10994955,
+            std::f32::consts::LOG2_E, -0.72134733, 0.4808985, -0.36069715, 0.288568,
+            -0.23961738, 0.20460059, -0.19106273, 0.18617496, -0.10994955,
         ];
-        tune("log2", &log2_c, &|x| x.log2(), &grid, &init);
+        tune_fixed0("log2", &log2_c, &|x| x.log2(), &grid, &init);
     }
     if which.contains("asin") {
         // asin's mid branch is only ever evaluated for a = |x| in

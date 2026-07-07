@@ -143,6 +143,26 @@ branches, no scalar-only intrinsics unless the vector form exists).
   Still a genuine, if smaller-than-first-reported, improvement. Confirmed
   zero perf cost via mca (71.00 cyc / 1.441 cyc/elem, bit-for-bit
   unchanged) — same instructions, only the 5 literal constants differ.
+- **exp2's and log_2's own polys — checked, zero headroom, confirming
+  they're already at their coordinate-descent local optimum
+  (2026-07-07).** tune.rs already had `exp2_c`/`log2_c` tuners from
+  before this session (evidence in themselves that these two were tuned
+  this way previously) — their `main()` init arrays were stale
+  pre-tuning starting points, not the currently-shipped coefficients,
+  so updated both to match `src/lib.rs` exactly before re-running. Result
+  for both: the tuner's "tuned" output was *bit-identical* to "start" —
+  not just a negligible move like acos_poly/erf_tail/sinf_poly, a
+  literal zero-move local optimum, the strongest confirmation yet that
+  "already been through dedicated tuning before" predicts no further
+  headroom. (log_2's leading coefficient, exactly `LOG2_E` by
+  mathematical necessity — the poly's Taylor-derivative leading term, not
+  an empirical fit — was excluded from tuning via a new `tune_fixed0`
+  helper, to avoid the search ever suggesting breaking that identity.)
+  This session's refit scorecard, final tally: 5 real wins (asin, atan,
+  erfc, cbrt, expm1) vs. 6 no-ops (acos_poly, erf_tail, erf_near0,
+  sinf_poly, exp2, log_2) — every no-op case had a documented prior
+  tuning history; every win was on coefficients that (as far as this
+  session found) hadn't been touched since the original C port.
 
 ## sin / cos / sin_checked / cos_checked / tan
 
