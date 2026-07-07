@@ -723,15 +723,37 @@ pub fn expm1(x: f32) -> f32 {
     if x.abs() < 0.5 { a } else { b }
 }
 
-/// Straight port of jodiemath's sinhf. See exp's doc comment for the
-/// inherited unchecked-exp2 domain limit. Also inherits a near-zero
-/// cancellation flaw of its own: exp(x) and exp(-x) are both ~1 for small
-/// x, so subtracting them loses precision the same way asinh/atanh do
-/// below -- unlike cosh just below, which adds instead of subtracting and
-/// so doesn't have this problem.
+// sinh(x) = x + x^3/6 + x^5/120 + x^7/5040 + O(x^9), the odd Taylor series
+// (exact rational coefficients, not a numerical fit -- sinh is entire, so
+// this converges everywhere, and truncation error at the |x|<0.5 select
+// boundary below is dominated by the next (dropped) term, x^9/362880 ~
+// 5.4e-9 at x=0.5, ~0.1 ulp of sinh(0.5) -- comfortable margin under
+// budget for all four kept terms). Same role as expm1's Pade "a" branch:
+// a cheap, cancellation-free small-x numerator.
+#[inline(always)]
+fn sinh_small(x: f32) -> f32 {
+    let x2 = x * x;
+    let c0 = 1.0f32;
+    let c1 = 1.0 / 6.0f32;
+    let c2 = 1.0 / 120.0f32;
+    let c3 = 1.0 / 5040.0f32;
+    let p = fma(fma(fma(c3, x2, c2), x2, c1), x2, c0);
+    x * p
+}
+
+/// sinh(x) = 0.5*(exp(x) - exp(-x)) directly, except for |x| < 0.5 where
+/// exp(x) and exp(-x) are both ~1 and the subtraction cancels almost all
+/// precision (the same class of bug log1p/tanh had, see IDEAS.md) --
+/// there, use the Taylor form above instead, same branchless-select
+/// pattern as expm1's Pade/exp split. See exp's doc comment for the
+/// inherited unchecked-exp2 domain limit (only relevant on the `b` side,
+/// unconditionally evaluated but only selected for |x| >= 0.5). cosh below
+/// doesn't need this: it adds instead of subtracting, so it never cancels.
 #[inline(always)]
 pub fn sinh(x: f32) -> f32 {
-    0.5 * (exp(x) - exp(-x))
+    let a = sinh_small(x);
+    let b = 0.5 * (exp(x) - exp(-x));
+    if x.abs() < 0.5 { a } else { b }
 }
 
 /// Straight port of jodiemath's coshf. See exp's doc comment for the
@@ -752,11 +774,15 @@ pub fn cosh(x: f32) -> f32 {
 /// better. Same accuracy as `sinh` for practical purposes (one extra
 /// rounding from the division; measured negligible impact, see readme).
 /// Use `sinh` for a value on its own or a serial dependency chain, this for
-/// a large array/SIMD loop. Mirrors `cosh_throughput` below.
+/// a large array/SIMD loop. Mirrors `cosh_throughput` below. Same small-x
+/// cancellation fix as `sinh` above (`e` and `1/e` are both ~1 for small
+/// x), same select boundary and Taylor branch.
 #[inline(always)]
 pub fn sinh_throughput(x: f32) -> f32 {
+    let a = sinh_small(x);
     let e = exp(x);
-    0.5 * (e - 1.0 / e)
+    let b = 0.5 * (e - 1.0 / e);
+    if x.abs() < 0.5 { a } else { b }
 }
 
 /// Throughput-tier cosh: see `sinh_throughput`'s doc comment for the

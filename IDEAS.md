@@ -259,8 +259,31 @@ branches, no scalar-only intrinsics unless the vector form exists).
   reasoning as log1p: 337-million-ulp average is a correctness bug in a
   function whose entire useful range centers on zero (tanh's most common
   use, e.g. activations near 0), not a speed/accuracy trade to weigh.
-- **sinh small-x**: select to x + x³/6 (one fma) below ~0.5, same pattern as
-  expm1's existing select.
+- **sinh small-x — done, tested, kept (2026-07-07).** Same bug class as
+  log1p/tanh, found by the same fuzz sweep: sinh 333,732,587 avg ulp /
+  864,026,619 max ulp (worst x ≈ 5.96e-8), sinh_throughput
+  333,753,185/864,359,817 -- `exp(x)`/`exp(-x)` (or `e`/`1/e`) both round to
+  ~1 for small x, so the subtraction cancels almost everything. Fixed with
+  a genuine `x + x³/6` Taylor branch as sketched, extended to 4 terms (x +
+  x³/6 + x⁵/120 + x⁷/5040 -- exact rational coefficients, not a numerical
+  fit, since sinh is entire and Taylor is trivially available) after
+  checking the 2-term version analytically first: at the |x|<0.5 select
+  boundary, 2 terms alone leave ~5e-4 relative error (~4000 ulp, nowhere
+  near budget), while 4 terms leave ~1e-8 relative (~0.1 ulp, comfortable
+  margin) -- the "(one fma)" in the original idea undersold what's actually
+  needed at that boundary. Shared the same `sinh_small` helper between
+  `sinh` and `sinh_throughput` (both had the identical bug). Verified
+  exhaustive: sinh now 0.2905 avg / 64 max ulp, sinh_throughput 0.2925/64 --
+  both land almost exactly on cosh's own baseline (0.2745/64, cosh never
+  had this bug, both add instead of subtract), confirming the residual
+  max-64 is inherited from exp's own accuracy near its domain edge (worst x
+  ≈ 86, right at the unchecked-exp2 boundary), not a new bug. mca cost, in
+  the same range as tanh's fix: sinh 48.02→77.02 cyc latency (+60%),
+  2.083→2.277 cyc/elem throughput (+9.3%); sinh_throughput 58.00→81.02 cyc
+  (+40%), 1.279→1.545 cyc/elem (+21%) -- both now compute a Taylor branch
+  unconditionally alongside the existing exp-based one. Kept for the same
+  reason as log1p/tanh: 333-million-ulp average is a correctness bug in
+  sinh's most-used range (near zero), not a trade.
 - **Direct minimax tanh**: on [0, ~9.02] tanh saturates; a rational P/Q in x²
   (odd) with clamp — no exp at all, one division. Likely the fastest shape;
   fit feasibility at ≤0.5 avg ulp needs checking (tanh rationals are
