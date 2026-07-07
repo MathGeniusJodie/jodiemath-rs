@@ -446,10 +446,15 @@ matching exactly); sin_checked/cos_checked are today's name for the
 double-float version this whole section was benchmarking.
 
 # tools
-- `cargo run --release --example accuracy [thorough] [filter]` - avg/max ulp against an f64 reference.
-  Default mode fuzzes 100M random f32 bit patterns per function (a few seconds); `thorough` exhaustively
-  sweeps all 2^32 bit patterns instead (every denormal, every NaN payload, both signs -- a few minutes,
-  multi-threaded, refuses to run in a debug build)
+- `cargo +nightly run --release --example accuracy [thorough] [filter]` - avg/max ulp against an f64
+  reference. Requires nightly: the reference is computed via the `sleef` crate's SIMD functions (cheapest
+  ULP bucket available per function, u35 where it exists -- still ~1e8x tighter than f32 needs), which
+  depends on the unstable `portable_simd` feature -- this also means `cargo test`/
+  `cargo build --tests` now need nightly, since Cargo builds all dev-dependencies together regardless of
+  which target you're building. Default mode fuzzes 100M random f32 bit patterns per function (a few
+  seconds); `thorough` exhaustively sweeps all 2^32 bit patterns instead (every denormal, every NaN
+  payload, both signs -- a few minutes). Runs on half the machine's cores at low OS scheduling priority
+  (`nice`) so it doesn't compete with foreground work while iterating; refuses to run in a debug build.
 - `cargo run --release --example quickbench [filter]` - latency (serial dependency chain) + throughput, min of 7 reps
 - `cargo run --release --example edgecheck` - bit-exact checks of edge cases (0, -0, denormals, inf, nan, domain boundaries)
 - `cargo run --release --example tune` - coordinate-descent ulp tuning of polynomial coefficients
