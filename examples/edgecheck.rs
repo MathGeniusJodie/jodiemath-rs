@@ -149,6 +149,13 @@ fn main() {
 
     check("erf(0)", erf(0.0), 0.0);
     check("erfc(0)", erfc(0.0), 1.0);
+    // erfc's clamp used to not fully protect its internal exp2 call for
+    // |x| >= ~9.35 (see its doc comment) -- these used to be inf/huge
+    // garbage instead of the correct near-0 (or near-2 for negative x).
+    check_finite("erfc(9.5)", erfc(9.5));
+    check_finite("erfc(10)", erfc(10.0));
+    check_finite("erfc(-9.5)", erfc(-9.5));
+    check_finite("erfc(-10)", erfc(-10.0));
 
     check("hypot(0,0)", hypot(0.0, 0.0), 0.0);
     check("hypot(3,4)", hypot(3.0, 4.0), 5.0);

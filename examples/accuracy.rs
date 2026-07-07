@@ -606,10 +606,13 @@ fn main() {
         let erf_domain = |x: f32| x.abs() < 6.0;
         let s = measure!(erf_domain, erf, erf_u10);
         report("erf", &s, t0);
-        // erfc clamps to |x|<=10 before its own exp2 call, but that clamp
-        // doesn't fully protect exp2's domain -- see erfc's doc comment for
-        // the ~9.35 threshold this mirrors.
-        let erfc_domain = |x: f32| x.abs() < 9.3;
+        // erfc clamps to |x|<=10 before its own exp2 call; that clamp used
+        // to not fully protect exp2's unchecked domain (see erfc's doc
+        // comment), fixed by routing through exp2_checked instead -- the
+        // domain restriction here now only matches erfc's own clamp
+        // (previously it stopped short at 9.3 specifically to dodge the
+        // since-fixed bug).
+        let erfc_domain = |x: f32| x.abs() <= 10.0;
         let s = measure!(erfc_domain, erfc, erfc_u15);
         report("erfc", &s, t0);
     }

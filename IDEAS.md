@@ -361,9 +361,23 @@ branches, no scalar-only intrinsics unless the vector form exists).
   (for large y) to budget-compliant.
 - **powf integer-y fast path is NOT vectorizable as a branch** — skip; but the
   df version above covers those cases accurately anyway.
-- **erfc tail**: swap the interior `exp` for the fixed direct-reduction exp
-  (or exp2_checked) to close the documented |x| ≥ ~9.35 unreliability; the
-  clamp then becomes unnecessary.
+- **erfc tail — done, tested, kept (2026-07-07).** Swapped the interior
+  `exp(-xa*xa)` for `exp2_checked(-xa*xa*LOG2_E)`. This wasn't a subtle
+  ulp gap: `erfc(9.5)` was `inf`, `erfc(10)` was `9.2e26`, `erfc(-9.5)`
+  was `-inf`, `erfc(-10)` was `-9.2e26` — all should be a clean near-0 (or
+  near-2 for negative x) — confirmed by hand before and after the fix
+  (git-stash A/B), not just inferred from the doc comment. The crate's own
+  fuzz-mode accuracy sweep never caught this: `examples/accuracy.rs`'s
+  `erfc_domain` filter had been narrowed to `|x| < 9.3` specifically to
+  dodge the bug rather than exercise it (widened back to the full `<= 10`
+  clamp now that it's fixed). Kept the `xa` clamp itself — it still
+  protects the degree-4 rational polynomial (n/d) from overflowing at
+  genuinely huge x, a separate concern from the exponent's domain.
+  edgecheck extended with `check_finite` at the four previously-broken
+  points. Real mca cost: 67.09→78.09 cyc latency (+16.4%), 2.097→2.599
+  cyc/elem throughput (+23.9%) — comparable to log1p's fix. Kept for the
+  same reasoning as the small-x cancellation fixes above: `inf` where the
+  answer is a tiny positive number is a correctness bug, not a tuning gap.
 - **erf/erfc joint refit** with f32-quantized coefficients against the actual
   budget (these are relative-1e-6 C ports, same caveat as atan).
 - **hypot**: keep naive per the crate's stated tradeoff; optional

@@ -1095,15 +1095,19 @@ pub fn erf(x: f32) -> f32 {
     if x.abs() < 0.28 { a } else { b }
 }
 
-/// Straight port of jodiemath's erfcf: a rational*gaussian tail, clamped to
-/// |x| <= 10 before evaluation (matching the C original). That clamp is
-/// meant to keep exp(-xa*xa) in exp's safe range, but doesn't fully manage
-/// it: for |x| >= ~9.35, xa*xa >= ~87.4, and exp(-87.4) needs
-/// exp2(-87.4*log2(e)) =~ exp2(-126.1) -- already at, or just past, exp2's
-/// unchecked [-126, 128) domain (see exp's doc comment), so the result is
-/// unreliable (not a clean 0) for that whole tail rather than just far out
-/// past f32's underflow point. Inherited as-is from the C original (same
-/// clamp, same gap); a real fix would need exp2_checked here instead.
+/// A rational*gaussian tail, clamped to |x| <= 10 before evaluation
+/// (matching the C original) -- the polynomial (n/d, degree 4 in xa)
+/// still needs that bound to avoid overflowing for huge x, but the
+/// Gaussian factor no longer does: it used to be `exp(-xa*xa)`, which
+/// routes through the *unchecked* exp2 ([-126, 128) domain), and for
+/// |x| >= ~9.35 (xa*xa >= ~87.4) the exponent `-xa*xa*log2(e)` is already
+/// past -126, so the result was unreliable garbage for that whole tail
+/// instead of a clean 0. Fixed by calling `exp2_checked` directly on the
+/// same exponent instead of going through `exp` -- its wider [-151, 128)
+/// domain comfortably covers the full clamped range (xa in [0,10] means
+/// the exponent never goes below -100*log2(e) =~ -144.3, still inside
+/// exp2_checked's bound), and it's already the crate's existing
+/// correctly-rounded full-range primitive, no new code needed.
 #[inline(always)]
 pub fn erfc(x: f32) -> f32 {
     let z = if x < 0.0 { -1.0 } else { 1.0 };
@@ -1121,7 +1125,7 @@ pub fn erfc(x: f32) -> f32 {
     let d = fma(d, xa, f32::from_bits(0x3fe918cc));
     let d = fma(d, xa, f32::from_bits(0x4006d465));
     let d = fma(d, xa, 1.0);
-    let y = exp(-(xa * xa)) * n / d;
+    let y = exp2_checked(-(xa * xa) * LOG2_E) * n / d;
     fma(y, z, w)
 }
 

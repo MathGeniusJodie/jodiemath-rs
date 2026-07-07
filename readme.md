@@ -111,9 +111,13 @@ IDEAS.md for the before/after measurements):
   and can't be shrunk further just by moving thresholds -- see asin's doc
   comment for what a complete fix (refit or a wider Taylor branch) would
   need.
-- **still open**: erfc's own `|x|<=10` clamp doesn't fully protect its
-  internal exp2 call: for `|x| >= ~9.35` the exponent it computes falls
-  outside exp2's unchecked domain.
+- **fixed**: erfc's own `|x|<=10` clamp didn't fully protect its internal
+  exp2 call: for `|x| >= ~9.35` the exponent it computes fell outside the
+  *unchecked* exp2's domain, returning `inf` or huge finite garbage
+  instead of a clean near-0 (or near-2 for negative x) -- not a subtle
+  ulp issue, e.g. `erfc(9.5)` used to be `inf`. Fixed by routing through
+  `exp2_checked` instead of `exp` for the Gaussian factor; its wider
+  `[-151, 128)` domain comfortably covers the whole clamped range.
 - **still open**: remainder's `x - round(x/y)*y` loses precision to
   cancellation once `|x/y|` is large, since `round(x/y)*y`'s absolute
   error scales with `ulp(x)`, which can exceed the true remainder's own
@@ -208,7 +212,7 @@ comment); their rows are exhaustive (all 2^32 f32 bit patterns), not fuzz.
                    atan |    0.188   |    19     |  0.000  |    0
        tan (in-domain)  |    0.331   |  2967     |  0.000  |    0
                     erf (|x|<6)  |    0.631   |     5     | (no std erf)
-                   erfc (|x|<9.3)|    0.297   |   115     | (no std erfc)
+                   erfc (|x|<=10)|    0.297   |   115     | (no std erfc)
                   atan2 |    0.136   |    19     |  0.000  |    0
         hypot (bounded) |    0.034   |     1     |  0.000  |    0
         powf (in-domain)|    0.359   |   123     |  0.000  |    1
@@ -483,7 +487,7 @@ atan                |          57.09 |             1.410
 atan2               |          57.17 |             1.467
 tan                 |          69.00 |             2.324
 erf                 |          88.02 |             2.101
-erfc                |          67.09 |             2.097
+erfc                |          78.09 |             2.599
 hypot               |          21.00 |             0.763
 powf                |          85.86 |             2.784
 remainder           |          33.00 |             0.646
@@ -605,10 +609,12 @@ time in the surprising direction (a small-looking change, a large real win).
   the mid branch's rational correction (or a wider Taylor branch) to close
   it the rest of the way -- see asin's doc comment
 - fix (or at least give a "_checked" full-range companion to) the remaining
-  inherited accuracy defects in the newly-ported functions: erfc's own
-  exp2 domain gap, remainder's tie-breaking cliff, and
-  erf/erfc/exp-family's dependence on the fast unchecked exp2 -- see the
-  overview above and each function's doc comment
+  inherited accuracy defects in the newly-ported functions: remainder's
+  tie-breaking cliff, erf's own ~0.63-avg-ulp fit gap (needs a refit, not
+  an algebraic fix -- see asin's fix for why the same trick doesn't apply
+  here), and erf/exp-family's dependence on the fast unchecked exp2
+  (erfc already fixed, see above) -- see the overview above and each
+  function's doc comment
 - vary both arguments in quickbench's two-argument benchmarks (atan2, hypot,
   powf, remainder currently fix one argument, which may be letting LLVM
   constant-fold std's side of a couple of comparisons -- see the benchmark
