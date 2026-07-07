@@ -203,6 +203,31 @@ branches, no scalar-only intrinsics unless the vector form exists).
   bare `1 + y·R(y)`), which is a bigger, riskier redesign than this pass
   attempted -- reverted rather than half-fixed. `cosf_poly` and the new
   `tan()` were both fully removed, not left disabled.
+  **Second attempt, same session: tried the "obvious" fix, made it
+  worse.** Instead of a dedicated `cosf_poly`, tried the cofunction
+  identity directly — `cos(r) = sin(pi/2 - |r|)`, reusing `sinf_poly` for
+  both numerator and denominator, no second poly at all. This looked like
+  exactly the right fix (it's *literally* what `cos()` computes, just
+  derived post-hoc from sin's `r` instead of from a dedicated reduction).
+  Measured instead of trusting the symmetry: avg ulp 0.33 → **28.2**, max
+  ulp ~3000 → **3,437,483,831** — worse than the first attempt, not
+  better, same worst-x (≈252.9). Root cause: `FRAC_PI_2 - r.abs()` is a
+  single-precision f32 subtraction, and near a pole `r` is close to
+  `FRAC_PI_2` itself — the exact same catastrophic-cancellation shape
+  being chased, just relocated from evaluating `cosf_poly` near its zero
+  to computing the *input* to `sinf_poly` near zero. `cos()`'s own
+  reduction avoids this because it computes its phase-shifted residual
+  via the *same* Cody-Waite-precision PI_A..D chain used for everything
+  else in this reduction family (effectively a `pi/2` that carries much
+  more than f32's ~24 bits), not a single further subtraction from a
+  bare f32 constant afterward. A real fix would need to synthesize that
+  same multi-word precision for the cofunction transform specifically
+  (splitting FRAC_PI_2 into HI/LO words à la PI_A/PI_B, Sterbenz-correct
+  subtract, etc.) — comparable in complexity to `reduce_pi` itself, not a
+  small delta on top of the first attempt. Reverted again. Two failed
+  attempts at the same underlying idea in one session is a strong signal
+  this needs the full double-float reduction machinery or nothing —
+  worth remembering before a third attempt without that machinery.
 - **Reduction mod π/2 instead of π**: residual lands in [−π/4, π/4]; sinf_poly
   drops ~1 term and a cos poly (even, degree 8 → 4 terms) appears. For plain
   sin you then need a select between sin-poly and cos-poly by octant — both
