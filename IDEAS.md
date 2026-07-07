@@ -776,15 +776,36 @@ and measurement disagree (see the Fast2Sum comments).
   several other rows in the mca/readme tables too, so treat as its own pass
   with a full re-baseline, not a drive-by edit.
 - **parity() is 2× (mul + floor + fma) on the FMA/round ports — move it to
-  the integer domain.** For an integer-valued float q, the parity bit is
-  readable directly from the bit pattern: shift = 150 − exponent_field,
-  bit = (mantissa | 1<<23) >> shift & 1, with shift clamped (for exponent ≥
-  150, i.e. |q| ≥ 2^24, ulp ≥ 2 so q is even and parity = 0 — the clamp
-  gives that for free). Variable per-lane shifts exist (`vpsrlvd`, AVX2).
-  ~5 integer ops per parity vs 3 FP ops, but entirely off the bottleneck
-  ports, and it composes with the sign-flip idea above: parity(qh) ^
-  parity(ql) as an integer bit, shifted to the sign position, xor'd into r.
-  The whole sign story becomes integer-domain and latency-invisible.
+  the integer domain. Tried, measured, reverted (2026-07-07).** Implemented
+  exactly as described: a new `parity_bit(q: f32) -> u32` reads the LSB of
+  an exact-integer float straight out of its bit pattern (shift = 150 −
+  exponent_field into the 24-bit significand, bounds-checked since Rust's
+  `>>` wraps an out-of-range shift count instead of yielding 0 the way some
+  SIMD shift instructions do — needed an explicit `(0..=23).contains(&shift)`
+  select, not just a clamp, to get zero for both |q| ≥ 2^24 *and* q = 0),
+  composed with the sign-flip idea directly: `(parity_bit(qh) ^
+  parity_bit(ql)) << 31` replaces the old `parity()`×2 + float-compare +
+  select chain in both sin_checked and cos_checked (cos_checked additionally
+  XORs `SIGN_MASK` since its exponent is k+1, not k). Correctness: verified
+  bit-exact against the old `parity()` formula on every exact-integer f32 a
+  real caller can produce — 20M small integers both signs, every
+  power-of-two boundary out to f32::MAX, and 5M random large-magnitude
+  integers (field ≥ 151, where the shift goes negative) — all via a
+  temporary `#[test]`, zero mismatches; edgecheck also unaffected. Result
+  (mca, reproduced via git-stash before/after to rule out drift): latency
+  unchanged for both (109.00/113.00 cyc, exactly as expected — parity was
+  already off the critical path, per the sign-flip entry above), but
+  throughput got *worse* for both: sin_checked 5.280→5.412 cyc/elem (+2.5%),
+  cos_checked 4.474→4.502 cyc/elem (+0.6%). Same lesson as the
+  round_x_over_pi `pre_offset` and `reduce_pi` `e3`/err-chain entries
+  elsewhere in this file — trading FP-port ops for more integer ops doesn't
+  automatically win once the actual scheduled simulation (not the port-count
+  story) is checked; here it cost more than it saved despite the "off the
+  bottleneck ports" reasoning being directionally correct in isolation.
+  Reverted (`git checkout -- src/lib.rs`); not adopted. The composed
+  sign-flip half of the idea (skip the float compare, XOR the bits directly)
+  might still be separable from the bit-extraction half and worth an
+  isolated retry, but wasn't tried standalone this round.
 - **cos_checked's `2.0 * par - 1.0` vs sin's `1.0 - 2.0 * par`**: both die
   with the above; noting only that today they're an extra fma each.
 
