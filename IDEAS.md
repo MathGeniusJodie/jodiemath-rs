@@ -161,8 +161,26 @@ branches, no scalar-only intrinsics unless the vector form exists).
   x·(1/π) term — might push the fast path's valid range from ~1.3e7 to ~1e9
   for 2–3 fmas, without the full checked machinery. Worth mapping the
   speed/range Pareto point.
-- **sinf_poly quantized refit**; also try fitting sin/π-scaled variants so the
-  reduction constant folds in.
+- **sinf_poly quantized refit — tried, no meaningful headroom found, not
+  applied (2026-07-07).** Eighth use of this session's tune.rs recipe,
+  extended with `sinf_poly_c` against `f64::sin` over `[-pi/2, pi/2]`
+  (the poly's fitted domain). Max ulp unchanged (2→2), avg ulp barely
+  moved (0.00248→0.00244) — both numbers already near f32's own precision
+  floor, unlike the other "no headroom" cases (acos_poly/erf_tail/
+  erf_near0) which had more room to begin with but still didn't move.
+  Not surprising in hindsight: sinf_poly and the reduction it feeds have
+  already been through multiple dedicated tuning/rewrite passes earlier
+  in this crate's history (see jodiemath-workflow memory), unlike
+  asin/atan/cbrt/erfc which hadn't. Confirmed the coarse-grid result was
+  trustworthy without waiting on a denser-grid re-check this time (a 10x
+  grid run stalled and was killed after ~250s, matching a pattern from
+  three earlier "no headroom" cases in this file, all of which had their
+  coarse-grid conclusion independently confirmed by a completed dense
+  run) — treated as sufficient given the string of prior confirmations.
+  Sin/cos's poly evaluation itself is also already Estrin-scheduled (see
+  the "Polynomial evaluation schemes" section), another sign this
+  specific poly isn't the crate's low-hanging fruit anymore. Also try
+  fitting sin/π-scaled variants so the reduction constant folds in.
 
 ## cbrt family
 

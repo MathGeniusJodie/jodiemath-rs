@@ -174,6 +174,19 @@ fn cbrt_normal_c(x: f32, c: &[f32]) -> f32 {
     fma(sr, p, ss)
 }
 
+// sinf_poly (see src/lib.rs): sin(x) ~= x + x^3*P(x^2) on [-pi/2, pi/2],
+// the shared poly behind sin/cos/sin_checked/cos_checked.
+#[inline(always)]
+fn sinf_poly_c(x: f32, c: &[f32]) -> f32 {
+    let y = x * x;
+    let y2 = y * y;
+    let x3 = y * x;
+    let a = fma(c[1], y, c[0]);
+    let b = fma(c[3], y, c[2]);
+    let p = fma(b, y2, a);
+    fma(p, x3, x)
+}
+
 // erfc's rational*gaussian tail (see src/lib.rs's erfc): the 8 named
 // coefficients (4 for n, 4 for d) are tuned; the two Horner chains'
 // trailing "+1.0" leading terms are left fixed, matching the shipped
@@ -350,5 +363,18 @@ fn main() {
         }
         let init = [-0.33333164, 0.22220786, -0.17394418, 0.1482371];
         tune("cbrt_normal", &cbrt_normal_c, &|x| x.cbrt(), &grid, &init);
+    }
+    if which.contains("sinf") {
+        // sinf_poly's fitted domain, [-pi/2, pi/2].
+        let mut grid = vec![];
+        let mut b = 0f32.to_bits();
+        let hpi = std::f32::consts::FRAC_PI_2.to_bits();
+        while b < hpi {
+            grid.push(f32::from_bits(b));
+            grid.push(-f32::from_bits(b));
+            b += 300;
+        }
+        let init = [-0.16666660, 8.3330662e-3, -1.9809603e-4, 2.6057806e-6];
+        tune("sinf_poly", &sinf_poly_c, &|x| x.sin(), &grid, &init);
     }
 }
