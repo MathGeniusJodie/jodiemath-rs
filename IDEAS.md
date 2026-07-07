@@ -1048,6 +1048,38 @@ saves an op and/or a rounding:
   mca cost, smallest relative jump of this session's five fixes: 71.00→
   80.03 cyc latency (+12.7%), 2.650→4.210 cyc/elem throughput (+58.9%).
   Kept for the same reasoning as the other four.
+- **asinh: two bugs, not one — done, tested, kept (2026-07-07), sixth
+  correctness fix this session.** The doc comment only documented a
+  small-x cliff (812,462,495 avg ulp / max ulp 3,258,111,228 overall), but
+  the exhaustive sweep's actual argmax was x ≈ -3.4028072e38 — a *second*,
+  worse bug: for large negative x, `sqrt(x²+1) ≈ |x|`, so `x +
+  sqrt(x²+1)` nearly cancels, and the result's relative precision is only
+  as good as `sqrt(x²+1)`'s absolute error (easily 20%+ off at that
+  magnitude) — the same structural cancellation as acosh's sign-loss bug,
+  just landing on a wrong-magnitude answer instead of a wrong-domain one,
+  since asinh (unlike acosh) is actually defined for negative x. Fixed
+  both at once by computing on `|x|` and restoring sign with `mulsign`
+  (asinh is odd: `asinh(x) = sign(x)·asinh(|x|)`) — `ax + sqrt(ax²+1)`
+  never cancels since both terms are non-negative, which incidentally also
+  resolves the small-x cliff without a separate branch, since the
+  rationalized `sqrt(ax²+1) - 1 = ax²/(sqrt(ax²+1)+1)` term (computed with
+  `ax²` as its own independent multiply, not extracted from the lossy
+  `ax²+1` sum) feeds `log1p` the same way acosh's `d` does. Also carried
+  over acosh's two overflow guards verbatim (rescale above `ax = 2048`,
+  `ln(ax) + LN_2` fallback near f32::MAX) since the mechanism is
+  identical. Verified exhaustive: avg/max ulp now 0.1734/4 (was
+  812,462,495/3,258,111,228); edgecheck extended with
+  `asinh(±2.34e-8)` (now the correct tiny value, not 0) and
+  `asinh(-1e10) == -asinh(1e10)` / `asinh(-f32::MAX) == -asinh(f32::MAX)`
+  oddness checks. mca cost is a genuine mixed result, first of its kind
+  this session: latency *improved* (71.99→55.40 cyc, -23%) while
+  throughput got much worse (2.806→9.625 cyc/elem, +243%, the largest
+  relative jump of any fix so far) — plausibly the extra `abs`/`mulsign`
+  and the magnitude-based selects cost real throughput but happen to let
+  the scheduler shorten the serial chain, the same kind of
+  non-monotonic-scheduling surprise logged elsewhere in this file, just
+  landing in the "good news" direction on one axis for once. Kept for the
+  same reasoning as the other five fixes.
 - **atan's range select** — done, tested, kept (2026-07-07), and a much
   bigger win than expected. `let y = if a < 1.0 { a } else { 1.0 / a }` was
   compare+blend on an already-unconditionally-computed reciprocal; for

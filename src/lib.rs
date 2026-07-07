@@ -808,16 +808,42 @@ pub fn tanh(x: f32) -> f32 {
     e / (e + 2.0)
 }
 
-/// Straight port of jodiemath's asinhf: ln(x + sqrt(x^2+1)), inherited as-is
-/// from the C original including its known flaw -- for small |x| (below
-/// ~6e-8, half of f32's ulp(1.0)), x + sqrt(x^2+1) rounds down to exactly
-/// 1.0, so ln(...) returns exactly 0 instead of the (tiny but nonzero)
-/// correct answer. A real fix needs a log1p-based small-x branch (like a
-/// proper libm asinh), which is beyond a straight port; this just documents
-/// the cliff so it isn't mistaken for a translation bug.
+/// asinh(x) = ln(x + sqrt(x^2+1)), fixed for two bugs in the straight-ported
+/// form (the doc comment used to describe only the first; the exhaustive
+/// sweep that found it also turned up the second, worse one):
+///
+/// 1. Small-x cliff: for |x| below ~6e-8, `x*x` is already too small to
+///    survive being summed into `x^2+1` (it rounds to exactly 1.0 before
+///    sqrt even runs), so `x + sqrt(x^2+1)` collapses to exactly 1.0 and
+///    `ln(...)` returns exactly 0 instead of the correct tiny nonzero
+///    value. Fixed the standard way: `sqrt(x^2+1) - 1 = x^2 / (sqrt(x^2+1)
+///    + 1)` (rationalized, no cancellation -- `x^2` is computed as its own
+///    multiply here, independent of the lossy `x^2+1` sum, so it keeps
+///    full precision), then `asinh(x) = log1p(x + (sqrt(x^2+1) - 1))`.
+/// 2. Large-negative-x cancellation (the actual worst case: the exhaustive
+///    sweep's argmax was x ~ -3.4e38, not a small-x input): for x very
+///    negative, `sqrt(x^2+1) ~ |x|`, so `x + sqrt(x^2+1)` nearly cancels
+///    to a small value whose *relative* precision is only as good as
+///    `sqrt(x^2+1)`'s absolute error -- easily 20%+ off for large |x|.
+///    Sidestepped entirely by computing on `|x|` (asinh is odd, so
+///    `asinh(x) = sign(x) * asinh(|x|)`, restored with `mulsign`), where
+///    `ax + sqrt(ax^2+1)` never cancels (both terms are non-negative).
+/// Also mirrors acosh's overflow guards: `ax^2` overflowing prematurely
+/// for huge `ax` (rescaled sqrt above `ax = 2048`, matching acosh's
+/// threshold) and the final sum overflowing near f32::MAX (`ln(ax) +
+/// LN_2` fallback, same asymptote as acosh's).
 #[inline(always)]
 pub fn asinh(x: f32) -> f32 {
-    ln(x + fma(x, x, 1.0).sqrt())
+    let ax = x.abs();
+    let small = ax < 2048.0;
+    let direct_sq = fma(ax, ax, 1.0).sqrt();
+    let inv_ax2 = 1.0 / (ax * ax);
+    let rescaled_sq = ax * (1.0 + inv_ax2).sqrt();
+    let sq = if small { direct_sq } else { rescaled_sq };
+    let sm1 = if small { (ax * ax) / (sq + 1.0) } else { sq - 1.0 };
+    let d = ax + sm1;
+    let r = if d.is_finite() { log1p(d) } else { ln(ax) + LN_2 };
+    mulsign(r, x)
 }
 
 /// ln(x + sqrt(x^2-1)), domain x >= 1 (NaN elsewhere). Two bugs in the

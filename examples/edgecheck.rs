@@ -105,12 +105,15 @@ fn main() {
     check("cosh(0)", cosh(0.0), 1.0);
     check("tanh(0)", tanh(0.0), 0.0);
 
-    // asinh/atanh: near-zero cancellation is a known, documented inherited
-    // flaw (see their doc comments) -- exactly 0 here is the documented
-    // wrong answer, not a crash, so this pins down the current (bad but
-    // stable) behavior rather than asserting correctness.
     check("asinh(0)", asinh(0.0), 0.0);
-    check("asinh(2.34e-8) [known cancellation]", asinh(2.34e-8), 0.0);
+    // small-x cancellation (see asinh's doc comment) is fixed: asinh(x) ~ x
+    // for tiny x, no longer collapses to exactly 0.
+    check("asinh(2.34e-8)", asinh(2.34e-8), 2.34e-8);
+    check("asinh(-2.34e-8)", asinh(-2.34e-8), -2.34e-8);
+    // large-negative-x cancellation (also fixed, see doc comment): asinh is
+    // odd, so this must equal -asinh(1e10) exactly.
+    check("asinh(-1e10) == -asinh(1e10)", asinh(-1e10), -asinh(1e10));
+    check("asinh(-f32::MAX)", asinh(-f32::MAX), -asinh(f32::MAX));
     check("acosh(1)", acosh(1.0), 0.0);
     check("acosh(0.5)", acosh(0.5), f32::NAN);
     // acosh's sign-losing domain bug (see its doc comment) is fixed with an
