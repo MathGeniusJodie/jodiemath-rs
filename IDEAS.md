@@ -620,13 +620,64 @@ and measurement disagree (see the Fast2Sum comments).
 - **The e2 and e3 error terms sit at (or below) the already-dropped noise
   floor — try downgrading their two_prods to plain muls.** |e2| ≤ ulp(p2)/2
   ~ x·2^-49 and |e3| ~ x·2^-48·π at large x: the same tier as the terms the
-  comments already justify summing plainly. Better: for the entire
-  moderate range (|x| ≲ 1.4e7), ql ∈ {−1, 0, 1}, and ql·PI_HI is *exact* —
-  e3 is a full fma spent computing a guaranteed zero. Each downgrade saves
-  one fma; the sweep's magnitude-bucketed mode says whether the large-|x|
-  tail notices. (The existing comment establishes the *smallest* tier was
-  free to keep; that's a statement about latency, not about these two fmas'
-  throughput cost.)
+  comments already justify summing plainly. e2 downgrade: still untested.
+  **e3 downgrade: tried, measured, reverted (2026-07-07).** The "e3 is a
+  guaranteed zero" premise checked out exactly as stated — an exhaustive
+  scalar sweep over every f32 bit pattern with |x| < 2^25 (past both the
+  fast path's 2^22·π cliff and this function's 1e6 documented bound) found
+  ql ∈ {-1, 0, 1} for sin / {-1, 0} for cos always, and `fma(ql, PI_HI,
+  -(ql*PI_HI))` was exactly 0.0 every single time — n·PI_HI for n in that
+  set is an exact power-of-two rescale (or zero), unlike e.g. 3·PI_HI.
+  Dropping the two_prod's fma (`p3 = ql * PI_HI`, `tier2 = e2 + c45`
+  instead of `(e2+e3)+c45`) gave the expected shared latency win (mca:
+  sin_checked 109→105 cyc, cos_checked 113→109 cyc, both -4 cyc from one
+  fewer fma on the ql-dependent chain) but failed on two independent axes
+  once measured instead of just reasoned about:
+  1. **llvm-mca's throughput model diverged between the two callers**
+     despite identical source-level reasoning applying to both: sin_checked
+     throughput improved (5.289→4.976 cyc/elem, -5.9%, as expected from
+     fewer total ops) but cos_checked's got *worse* (4.598→5.166 cyc/elem,
+     +12.3%) — confirmed reproducible (deterministic model, re-ran twice,
+     identical). `--resource-pressure --bottleneck-analysis` on the
+     extracted assembly region showed why: cos_checked's simulated
+     "Data Dependencies: Register Dependencies" bottleneck jumped from
+     56.96% to 72.96% of cycles, while sin_checked's stayed flat
+     (74.20%→73.84%) — removing the op tightened the dependency chain in a
+     way that (for cos_checked's specific surrounding inlined code only)
+     let the out-of-order scheduler's register pressure become the new
+     bottleneck, costing more than the removed fma saved. Block RThroughput
+     (the theoretical port-pressure-only estimate) actually *improved* for
+     both (66.0→64.0 cos, 65.0→63.0 sin) — only the full simulated
+     `TotalCycles` (what mca.rs's cyc/elem is actually computed from)
+     caught the regression. Same lesson as the err-chain-rebalancing revert
+     logged below: depth/op-count analysis and the actual scheduled
+     simulation can disagree, and only the latter is trustworthy.
+  2. **The magnitude-bucketed accuracy sweep found a real cliff in the
+     already off-contract tail**, which the "moderate range" caveat
+     anticipated in kind but not in scale: sin_checked's [1e9,1e10) bucket
+     went from avg ulp 0.2520/max 48 to avg ulp 369.97/max 28,432,750; its
+     [1e12,1e13) bucket went from avg ulp 0.2829/max 4021 to avg ulp
+     2,352,582/max 2,029,384,034 (cos_checked's matching buckets moved
+     similarly). Every prior accepted change in this reduction (err0
+     deletion, the ql-rounding switch, the sign-flip-before-poly rewrite)
+     was verified *bit-exact identical in the tail*, not just in the
+     documented range — this crate's de facto bar is "no behavior change
+     outside doc'd bounds," even though nothing formally promises tail
+     behavior. This change breaks that bar badly. Mechanism: past |x| ~
+     2^25, qh's own ulp exceeds 1, so ql (its correction) is no longer
+     bounded to {-1,0,1} and n·PI_HI for large n is *not* exact — exactly
+     the regime the "moderate range" phrase in the original idea flagged,
+     just with a much bigger error multiplier than "the tail notices" let
+     on. There's no branchless way to keep the in-domain fma-skip without
+     this cost: a select on "is ql small" would need the fma computed in
+     every lane anyway (for the lanes where it isn't small), so it can't
+     be cheaper than always computing it.
+  Net: in-domain (|x| ≤ 1e6, confirmed via accuracy.rs, bit-exact/no
+  measurable change there) this is free exactly as reasoned, but the
+  combination of a caller-dependent throughput regression and a severe
+  tail cliff makes it a net loss once measured on the crate's actual bar
+  (mca both directions + full magnitude-bucketed sweep, not just the
+  documented-range analysis). Reverted; not adopted.
 - **The fractional residual is already computed and then thrown away —
   the biggest structural option.** `rem - ql` (round_x_over_pi, line ~310)
   *is* the residual in units of π, to the accuracy of the whole forward
