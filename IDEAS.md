@@ -230,6 +230,28 @@ branches, no scalar-only intrinsics unless the vector form exists).
   cyc/elem throughput (+48.2%). Kept for the same reasoning as the other
   six: the avg-ulp fix alone is a correctness fix by any reasonable bar,
   even though the max-ulp story isn't fully resolved.
+- **asin's x→1 residual, closed the same session — done, tested, kept
+  (2026-07-07), a direct continuation of the fix above.** Rather than a
+  refit, reused acos's *already-fitted* `acos_poly` via the identity
+  `asin(x) = π/2 − acos(x)`: for a ≥ 0, `acos(a) = sqrt(1-a)·acos_poly(a)`
+  is exactly acos's own well-conditioned formula (a shrinking sqrt factor
+  times a smooth bounded poly, no cancelling subtraction), and `π/2 -
+  acos(a)` doesn't cancel either since acos(a) is small near a=1 while
+  π/2 is O(1) — no new poly fit needed, gated to `a > 0.9`. Verified
+  exhaustive: max ulp 468→121 (avg ulp barely moved, 0.328→0.325, already
+  in budget). The worst case *relocated* rather than vanishing — to the
+  small/mid branch boundary (x ≈ 0.1) — confirming the theory that both
+  residuals share the same root cause (the mid branch's ~3e-5 relative
+  bias, which scales with x and therefore can't be shrunk by moving
+  thresholds, only by refitting the mid branch or extending the Taylor
+  branch with more terms). mca: a genuine mixed result, latency actually
+  *improved* on top of the accuracy gain (89.02→43.24 cyc, -51%) while
+  throughput got worse (2.124→2.899 cyc/elem, +36.5%) — three branches
+  computed unconditionally costs real throughput, but apparently let the
+  scheduler shorten the critical path further, the same non-monotonic-
+  scheduling surprise logged elsewhere in this file (asinh's fix showed
+  the identical shape). Net win on 3 of 4 measured axes (avg ulp, max ulp,
+  latency), real cost on the fourth (throughput) — kept.
 - **acos/asin shared kernel**: both reduce to sqrt(1−a)·poly; a shared
   computation with different post-transforms would halve the code and enable a
   combined refit at f32-quantized precision.

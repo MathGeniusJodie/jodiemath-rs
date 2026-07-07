@@ -98,14 +98,19 @@ IDEAS.md for the before/after measurements):
   `sqrt(x^2+1)-1` term routed through log1p, then restoring the sign with
   `mulsign`; also gained the same overflow guards as acosh for huge `|x|`.
 - **fixed** (mostly): asin had the same near-zero cancellation as the
-  others (rationalized the same way), plus a second, separate issue once
-  that was fixed: the rational correction's own fit has a small persistent
-  relative bias that cancellation had been masking, dominating right where
-  the true answer is smallest. Added a genuine small-x Taylor branch below
-  `|x| < 0.1`. avg ulp now comfortably under budget (0.328); max ulp
-  (468, at x -> 1, a derivative singularity) is real progress from 852
-  million but not fully closed -- see its doc comment for why and what a
-  complete fix would need.
+  others (rationalized the same way), plus two further, separate issues
+  found one at a time as each fix's own re-sweep exposed the next: the
+  rational correction's own fit has a small persistent relative bias that
+  cancellation had been masking (fixed with a small-x Taylor branch below
+  `|x| < 0.1`), and that same bias gets amplified by the sqrt singularity
+  in asin's derivative right at x -> 1 (fixed by reusing acos's own
+  well-conditioned formula, `asin(x) = pi/2 - acos(x)`, above `|x| > 0.9`).
+  avg ulp comfortably under budget (0.325); max ulp down to 121 (from 852
+  million) but not fully closed -- the same relative bias now shows up at
+  the small/mid branch boundary (x ~ 0.1) instead, since it scales with x
+  and can't be shrunk further just by moving thresholds -- see asin's doc
+  comment for what a complete fix (refit or a wider Taylor branch) would
+  need.
 - **still open**: erfc's own `|x|<=10` clamp doesn't fully protect its
   internal exp2 call: for `|x| >= ~9.35` the exponent it computes falls
   outside exp2's unchecked domain.
@@ -198,7 +203,7 @@ comment); their rows are exhaustive (all 2^32 f32 bit patterns), not fuzz.
                   asinh |    0.173   |     4     | (std also imperfect at extreme |x|)
                   acosh |    0.063   |     4     |  0.000  |    1
                   atanh |    0.032   |     3     |  0.037  | 363409
-                   asin |    0.328   |   468     |  0.000  |    0
+                   asin |    0.325   |   121     |  0.000  |    0
                    acos |    0.496   |     4     |  0.000  |    0
                    atan |    0.188   |    19     |  0.000  |    0
        tan (in-domain)  |    0.331   |  2967     |  0.000  |    0
@@ -472,7 +477,7 @@ tanh                |          87.64 |             1.793
 asinh               |          55.40 |             9.625
 acosh               |         110.47 |             6.839
 atanh               |          80.03 |             4.210
-asin                |          89.02 |             2.124
+asin                |          43.24 |             2.899
 acos                |          37.11 |             0.811
 atan                |          57.09 |             1.410
 atan2               |          57.17 |             1.467
@@ -595,9 +600,10 @@ time in the surprising direction (a small-looking change, a large real win).
 # todo:
 - do principled and thourough analysis of dependency chains and rounding errors to find optimizations
 - perfectly rounded versions
-- asin's max-ulp residual (468) right at x=1: a dedicated near-1 series
-  branch (or refit) to close it the rest of the way -- see asin's doc
-  comment for why it's still there after the small-x/cancellation fixes
+- asin's max-ulp residual (121, now at the small/mid branch boundary
+  x ~ 0.1, after the near-1 fix moved the worst case there): a refit of
+  the mid branch's rational correction (or a wider Taylor branch) to close
+  it the rest of the way -- see asin's doc comment
 - fix (or at least give a "_checked" full-range companion to) the remaining
   inherited accuracy defects in the newly-ported functions: erfc's own
   exp2 domain gap, remainder's tie-breaking cliff, and

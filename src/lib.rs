@@ -980,17 +980,28 @@ fn asin_small(x: f32) -> f32 {
 ///    shape as sinh's fix -- no refit of the rational correction needed,
 ///    since it's only inaccurate in the regime the Taylor branch now
 ///    covers instead.
-/// Result after both fixes: avg ulp 0.328, comfortably under budget. Max
-/// ulp is still 468 (down from 852 million, but not under the stated
-/// ≤2 -- a known, not fully closed, residual), concentrated right at the
-/// x=1 boundary: asin's derivative has a sqrt singularity there, so the
-/// rational correction's own ~1e-6-relative-accuracy fit gets amplified
-/// into real ulp error in exactly the way the small-x cancellation used to
-/// (a different symptom of the same "this fit wasn't tuned for x=0/x=1
-/// extremes" root cause) -- closing it fully would need either a refit or
-/// a dedicated near-1 series branch (asin(x) via acos(x)'s better-
-/// conditioned sqrt(1-x) form, say), left as a follow-up rather than
-/// bundled into this fix.
+/// After fixes 1-2, avg ulp was 0.328 (in budget) but max ulp still 468,
+/// concentrated right at the x=1 boundary: asin's derivative has a sqrt
+/// singularity there, so the rational correction's own ~1e-6-relative fit
+/// gets amplified into real ulp error, the same mechanism as the small-x
+/// cliff just manifesting at the *other* extreme the fit wasn't tuned for.
+/// 3. Closed with a third branch above `a > 0.9`, reusing acos_poly (no
+///    new fit): `asin(x) = pi/2 - acos(x)`, and for a >= 0, `acos(a) =
+///    sqrt(1-a) * acos_poly(a)` is exactly acos's own well-conditioned
+///    formula (a shrinking sqrt factor times a smooth bounded poly, no
+///    subtraction between comparable-magnitude values) -- computing
+///    `pi/2 - acos(a)` doesn't cancel either, since acos(a) is small near
+///    a=1 while pi/2 is O(1). Sign restored the same way as the other two
+///    branches, via `mulsign`. Result: max ulp 468 -> 121 (avg ulp barely
+///    moved, 0.328 -> 0.325, since it was already in budget). The
+///    remaining worst case moved to the *other* branch boundary (x ~ 0.1,
+///    the small/mid transition) -- same root cause (the mid branch's own
+///    ~3e-5 relative bias), now the largest surviving residual since
+///    that bias scales with x and can't be shrunk further by moving
+///    thresholds around; a full fix would need the mid branch refit or
+///    widened *and* extended (asin's Taylor series converges too slowly
+///    approaching x=1 to just push the small-x cutoff out), left as a
+///    further follow-up rather than chased in this same pass.
 #[inline(always)]
 pub fn asin(x: f32) -> f32 {
     let a = x.abs();
@@ -1000,9 +1011,11 @@ pub fn asin(x: f32) -> f32 {
     let a2 = (a * a - a) / d + a;
     let sq = (1.0 - a2).sqrt();
     let sm1 = -a2 / (sq + 1.0);
-    let big = mulsign(sm1, x) * (-FRAC_PI_2);
+    let mid = mulsign(sm1, x) * (-FRAC_PI_2);
     let small = asin_small(x);
-    if a < 0.1 { small } else { big }
+    let near1 = mulsign(FRAC_PI_2 - (1.0 - a).sqrt() * acos_poly(a), x);
+    let r = if a < 0.9 { mid } else { near1 };
+    if a < 0.1 { small } else { r }
 }
 
 // Pade-style rational approximation of atan on [0,1]. Ported from
