@@ -1101,15 +1101,29 @@ pub fn atan(x: f32) -> f32 {
     mulsign(y, x)
 }
 
-/// Straight port of jodiemath's atan2f.
+/// atan2(y, x). `atan2(-0.0, +0.0)` used to come out `+0.0` instead of
+/// IEEE754/C99's defined `-0.0`: when `x` is exactly `+0.0`, `base`
+/// degenerates to exactly `+0.0`, and the final `base + mulsign(...)`
+/// combines it with the (correctly `-0.0`-signed) correction term --
+/// but IEEE754 addition of two *opposite*-signed zeros is defined to
+/// give `+0.0` regardless of operand order (only same-signed zeros, or a
+/// zero plus a genuine nonzero value, preserve the expected sign), so
+/// the correction's sign silently vanished. Every other zero/sign
+/// combination avoids this: `x = -0.0` makes `hpisignx` flip sign too
+/// (so the correction becomes a real nonzero `+-PI`, not a degenerate
+/// zero), and whenever `x` is genuinely nonzero, `base` is a real
+/// nonzero-ish angle, not an exact zero, so the addition never hits the
+/// opposite-sign-zero case. Fixed by skipping the addition entirely when
+/// `base` would be that exact `+0.0` -- `nonzerox` already selects
+/// between the two shapes, so no new branch, just moved.
 #[inline(always)]
 pub fn atan2(y: f32, x: f32) -> f32 {
     let nonzerox = x != 0.0;
     let nonzeroy = y != 0.0;
     let bothzero = !nonzerox && !nonzeroy;
     let hpisignx = if nonzerox || bothzero { mulsign(FRAC_PI_2, x) } else { 0.0 };
-    let base = if nonzerox { atan(y / x) } else { 0.0 };
-    base + mulsign(FRAC_PI_2 - hpisignx, y)
+    let correction = mulsign(FRAC_PI_2 - hpisignx, y);
+    if nonzerox { atan(y / x) + correction } else { correction }
 }
 
 /// Straight port of jodiemath's tanf: sin(x)/cos(x), same domain limits as

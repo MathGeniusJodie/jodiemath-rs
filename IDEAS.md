@@ -464,6 +464,45 @@ branches, no scalar-only intrinsics unless the vector form exists).
   the "ideal" `FRAC_PI_2` there is acos_poly's own pre-existing,
   unrelated fit imprecision — present before this fix too, not
   introduced by it).
+- **atan2's negative-zero sign bug — a direct follow-up to acos's, found
+  by systematically checking every other `mulsign` call site in the file
+  for the same disagreement shape, done, tested, kept (2026-07-07).**
+  Grepped for all `mulsign` call sites after fixing acos, then tested
+  each caller (asin, atan, atan2, erf) at zero/sign combinations against
+  std rather than reasoning through the boolean logic by hand (atan2 in
+  particular has genuinely intricate, *legitimate* signed-zero semantics
+  per IEEE754/C99, unlike acos where any negative result is simply
+  wrong — hand-tracing that risked missing a real distinction). asin,
+  atan and erf all checked out clean (asin and atan don't reach a
+  mulsign call site at the affected inputs; erf is a straightforward odd
+  function with no companion domain-correction term to disagree with).
+  atan2 didn't: `atan2(-0.0, +0.0)` came out `+0.0` instead of the
+  IEEE754/C99-defined `-0.0`. Different root cause from acos's (not a
+  mulsign-vs-comparison disagreement): when `x` is exactly `+0.0`, `base`
+  degenerates to exactly `+0.0`, and the final `base + mulsign(...)`
+  combines it with a correctly `-0.0`-signed correction term -- but
+  IEEE754 addition of two *opposite*-signed zeros is defined to give
+  `+0.0` regardless of operand order (only same-signed zeros, or a zero
+  plus a genuinely nonzero value, preserve the expected sign), silently
+  destroying the correction's sign. Every other zero/sign combination
+  avoids this by construction: `x = -0.0` makes the correction's own
+  `hpisignx` term flip sign too (turning the correction into a real
+  nonzero `+-PI`, not a degenerate zero), and whenever `x` is genuinely
+  nonzero, `base` is a real nonzero-ish angle rather than an exact zero,
+  so the addition never lands on the opposite-sign-zero case. Fixed by
+  skipping the addition entirely when `base` would be that exact `+0.0`
+  (`nonzerox` already selects between the two shapes, so this moved an
+  existing branch rather than adding one). Verified all 12 zero/sign
+  input combinations bit-exact against std (the only inputs IEEE754/C99
+  actually pin down exactly; general nonzero inputs were never meant to
+  be bit-exact with std, only within budget, and stayed exactly at
+  baseline: avg/max ulp 0.135/18 unchanged). mca confirmed zero perf
+  cost (57.17 cyc / 1.467 cyc/elem, bit-for-bit unchanged) -- same
+  computation, just restructured which branch does the addition.
+  edgecheck extended with all 12 combinations. Worth noting as
+  methodology: systematically re-checking every instance of a bug
+  *pattern* (not just the one instance found) turned up a second, real
+  bug with a different mechanism in the same afternoon.
 - **erf's tail branch (`erf_poly`) refit — tried, no meaningful headroom
   found, not applied (2026-07-07).** Fourth use of the tuning recipe,
   extended with `erf_tail_c` (scored as the whole `mulsign(1.0 -

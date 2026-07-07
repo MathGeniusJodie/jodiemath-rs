@@ -153,7 +153,20 @@ fn main() {
     check("atan(-inf)", atan(f32::NEG_INFINITY), -std::f32::consts::FRAC_PI_2);
     check("atan2(1,0)", atan2(1.0, 0.0), std::f32::consts::FRAC_PI_2);
     check("atan2(-1,0)", atan2(-1.0, 0.0), -std::f32::consts::FRAC_PI_2);
+    // atan2(-0.0, +0.0) used to lose its sign (IEEE754's "+0 + -0 = +0"
+    // addition rule silently flipped the correctly-signed -0.0 back to
+    // +0.0) -- IEEE754/C99 specify this exactly, so all 12 zero/sign
+    // combinations are checked bit-exact against std here.
+    check("atan2(0,0)", atan2(0.0, 0.0), 0.0);
+    check("atan2(-0,0)", atan2(-0.0, 0.0), -0.0);
+    check("atan2(0,-0)", atan2(0.0, -0.0), std::f32::consts::PI);
+    check("atan2(-0,-0)", atan2(-0.0, -0.0), -std::f32::consts::PI);
+    check("atan2(0,1)", atan2(0.0, 1.0), 0.0);
+    check("atan2(-0,1)", atan2(-0.0, 1.0), -0.0);
     check("atan2(0,-1)", atan2(0.0, -1.0), std::f32::consts::PI);
+    check("atan2(-0,-1)", atan2(-0.0, -1.0), -std::f32::consts::PI);
+    check("atan2(1,-0)", atan2(1.0, -0.0), std::f32::consts::FRAC_PI_2);
+    check("atan2(-1,-0)", atan2(-1.0, -0.0), -std::f32::consts::FRAC_PI_2);
     check("tan(0)", tan(0.0), 0.0);
 
     check("erf(0)", erf(0.0), 0.0);

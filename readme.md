@@ -154,6 +154,17 @@ IDEAS.md for the before/after measurements):
   normalizing `-0.0` to `+0.0` before `mulsign` sees it (`x + 0.0`, exact
   and a no-op for every other input). Essentially free (mca unchanged,
   37.11 cyc latency both before and after).
+- **fixed**: `atan2(-0.0, +0.0)` returned `+0.0` instead of the
+  IEEE754/C99-defined `-0.0` -- found by systematically checking every
+  other `mulsign` call site for the same bug shape after fixing acos.
+  Different mechanism than acos's: when `x` is exactly `+0.0`, the
+  formula's `base` term degenerates to exactly `+0.0`, and combining it
+  with the correctly-signed `-0.0` correction via `base + mulsign(...)`
+  hits IEEE754's rule that adding two *opposite*-signed zeros always
+  gives `+0.0`, silently destroying the correction's sign. Fixed by
+  skipping that addition when `base` would be the degenerate `+0.0`.
+  Verified all 12 zero/sign combinations bit-exact against std; zero
+  perf cost (mca bit-for-bit unchanged).
 - **still open**: remainder's `x - round(x/y)*y` loses precision to
   cancellation once `|x/y|` is large, since `round(x/y)*y`'s absolute
   error scales with `ulp(x)`, which can exceed the true remainder's own
