@@ -559,12 +559,24 @@ and measurement disagree (see the Fast2Sum comments).
   the ql critical chain. Fix: `const PRE_OFFSET: bool` generic /
   two monomorphized variants of round_x_over_pi, so sin's version simply
   doesn't have the add.
-- **Both `.round()` calls (`p0.round()`, `rem.round()`) are ties-away** —
-  multi-instruction lowering, and both sit on the serial chain toward ql
-  (the documented last-ready value). Any consistent rounding works here
-  (q just has to be *an* integer near x/π), so `round_ties_even` = single
-  `vroundps` each. This is probably several cycles off sin_checked's
-  latency for free.
+- **Both `.round()` calls (`p0.round()`, `rem.round()`) are ties-away —
+  partially done, tested, kept (2026-07-06).** "Any consistent rounding
+  works here" turned out true for `ql = rem.round_ties_even()` but *false*
+  for `qh = p0.round_ties_even()`: switching qh alone (independent of ql's
+  rounding mode) regressed cos_checked's max ulp from 2 to 6 inside its
+  documented |x|≤1e6 accurate range (worst x ≈ 252.9), while leaving
+  sin_checked completely untouched everywhere except the already
+  off-contract [1e15,∞) tail — isolated via three exhaustive accuracy.rs
+  sweeps (both changed / qh-only / ql-only). Mechanism: qh is computed from
+  `p0` alone, identically for both callers regardless of `pre_offset`, but
+  cos's `pre_offset = -0.5` (folded into `lo`, not into qh's input) means
+  qh's rare exact-half-integer ties interact badly with that offset in a way
+  sin's `pre_offset = 0` never does — a repeat of the "analysis says any
+  rounding is fine, measurement disagrees" lesson from Fast2Sum. Kept ql's
+  change only (qh stays `f32::round`): zero regression anywhere in-domain
+  for either function, real win — mca: sin_checked 114.00→109.00 cyc latency
+  (5.793→5.544 cyc/elem throughput), cos_checked 118.00→113.00 cyc latency
+  (5.093→4.919 cyc/elem throughput), all ~3.5-4.4% faster.
 - **The −0.5 fold's ulp ceiling is a happy coincidence worth a comment, not
   a fix**: `lo ~ x·2^-24.8`, so ulp(lo) exceeds 0.5 once |x| ≳ 2^47 — beyond
   that cos's phase offset partially rounds away inside `lo` too, the same

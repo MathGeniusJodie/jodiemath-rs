@@ -306,9 +306,29 @@ fn round_x_over_pi(x: f32, pre_offset: f32) -> (f32, f32) {
     let s = e0 + x * RPI_LO;
     // pre_offset folded in here (not into p0 -- see the bug note above)
     let lo = fma(x, RPI_TINY, s) + pre_offset;
+    // ql: ties-to-even instead of f32::round's ties-away-from-zero -- q only
+    // needs to be *an* integer within 0.5 of the true residual, so any
+    // consistent nearest-rounding rule keeps the qh/ql double-rounding
+    // correct in principle (IDEAS.md's claim), and round_ties_even lowers to
+    // a single vroundps instead of round's multi-instruction sequence, on
+    // ql, the last-ready value out of this function (see reduce_pi).
+    //
+    // qh stays f32::round (ties-away), NOT round_ties_even, despite the same
+    // "any consistent rule" argument applying to it too in principle --
+    // measured exception, not applied uniformly: qh's tie-break is shared
+    // unmodified between sin (pre_offset=0) and cos (pre_offset=-0.5), and
+    // switching qh alone to ties-even regressed cos_checked's max ulp from 2
+    // to 6 within its |x|<=1e6 documented-accurate range (worst x ~252.9),
+    // while leaving sin_checked untouched -- cos's -0.5 folded into `lo`
+    // (not into qh's own input p0) makes qh's rare exact-tie cases interact
+    // badly with the offset in a way sin's never does. Isolated via the
+    // exhaustive accuracy.rs sweep (both changed vs. each alone): ql alone
+    // reproduces zero regression anywhere in-domain for either function
+    // (only the already off-contract [1e15,∞) tail moves at all, and only
+    // in its already-garbage average, never its max ulp or worst x).
     let qh = p0.round();
     let rem = (p0 - qh) + lo;
-    let ql = rem.round();
+    let ql = rem.round_ties_even();
     (qh, ql)
 }
 
