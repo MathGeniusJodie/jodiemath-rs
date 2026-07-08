@@ -115,6 +115,8 @@ fn main() {
         "cos_checked",
         "sinpi",
         "cospi",
+        "sind",
+        "cosd",
         "ln",
         "log10",
         "log1p",

@@ -131,6 +131,12 @@ throughput_fn!(thr_sinpi, "sinpi_throughput", sinpi);
 latency_fn!(lat_cospi, "cospi_latency", cospi);
 throughput_fn!(thr_cospi, "cospi_throughput", cospi);
 
+latency_fn!(lat_sind, "sind_latency", sind);
+throughput_fn!(thr_sind, "sind_throughput", sind);
+
+latency_fn!(lat_cosd, "cosd_latency", cosd);
+throughput_fn!(thr_cosd, "cosd_throughput", cosd);
+
 latency_fn!(lat_ln, "ln_latency", ln);
 throughput_fn!(thr_ln, "ln_throughput", ln);
 
@@ -249,6 +255,8 @@ fn main() {
         lat_cos_checked, thr_cos_checked;
         lat_sinpi, thr_sinpi;
         lat_cospi, thr_cospi;
+        lat_sind, thr_sind;
+        lat_cosd, thr_cosd;
         lat_ln, thr_ln;
         lat_log10, thr_log10;
         lat_log1p, thr_log1p;

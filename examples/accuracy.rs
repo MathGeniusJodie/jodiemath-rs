@@ -104,6 +104,29 @@ fn cospi_ref(v: F64xN) -> F64xN {
         s * sign
     })
 }
+// sind/cosd's own point (see their doc comments): q=round(x/180),
+// d=x-q*180 keeps the residual small and precise, so d*pi/180 is a
+// small, accurate angle -- computing x*pi/180 directly (the naive
+// reference) reintroduces the same imprecision-at-large-x problem
+// sinpi_ref's own comment describes. Mirror the reduction here too.
+fn sind_ref(v: F64xN) -> F64xN {
+    trig_safe(v, |x: F64xN| {
+        let q = (x / F64xN::splat(180.0)).round();
+        let d = x - q * F64xN::splat(180.0);
+        let s = sin_u35(d * F64xN::splat(std::f64::consts::PI / 180.0));
+        let sign = F64xN::splat(1.0) - F64xN::splat(2.0) * parity_f64(q);
+        s * sign
+    })
+}
+fn cosd_ref(v: F64xN) -> F64xN {
+    trig_safe(v, |x: F64xN| {
+        let q = (x / F64xN::splat(180.0) - F64xN::splat(0.5)).round() + F64xN::splat(0.5);
+        let d = x - q * F64xN::splat(180.0);
+        let s = sin_u35(d * F64xN::splat(std::f64::consts::PI / 180.0));
+        let sign = F64xN::splat(2.0) * parity_f64(q - F64xN::splat(0.5)) - F64xN::splat(1.0);
+        s * sign
+    })
+}
 
 fn ulp_diff(a: f32, b: f32) -> u64 {
     fn ord(x: f32) -> i64 {
@@ -548,6 +571,18 @@ fn main() {
         report("sinpi (|x|<1e6)", &s, t0);
         let s = measure!(sinpi_domain, cospi, cospi_ref);
         report("cospi (|x|<1e6)", &s, t0);
+    }
+    if run("sind") {
+        // sind/cosd's own exact-reduction range is ~4.7e7 (see their doc
+        // comments, limited by 180.0's trailing zero bits, unlike
+        // sinpi/cospi's full-f32-range exactness) -- |x|<1e6 is
+        // comfortably inside that and keeps this test's own f64-based
+        // reference trustworthy too.
+        let sind_domain = |x: f32| x.abs() < 1e6;
+        let s = measure!(sind_domain, sind, sind_ref);
+        report("sind (|x|<1e6)", &s, t0);
+        let s = measure!(sind_domain, cosd, cosd_ref);
+        report("cosd (|x|<1e6)", &s, t0);
     }
 
     if run("ln") {

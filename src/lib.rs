@@ -388,6 +388,70 @@ pub fn cospi(x: f32) -> f32 {
     f32::from_bits(s.to_bits() ^ parity)
 }
 
+// 1/180: precomputed reciprocal for the magic-round trick, same idiom as
+// sin's own FRAC_1_PI.
+const INV_180: f32 = 1.0 / 180.0;
+// pi/180, applied only to the *small* (|d|<=90) reduced residual, never
+// to the original x -- same "small correction multiplied by an
+// irrational constant is fine" reasoning as exp10's own reduction.
+const DEG_TO_RAD_SMALL: f32 = std::f32::consts::PI / 180.0;
+
+/// sin(x*pi/180), argument in degrees. `180.0` has 18 trailing zero
+/// mantissa bits (only needs 6 significant bits, since 180 = 4*45), so
+/// unlike `pi` it needs no multi-word Cody-Waite split at all -- a
+/// single constant `180.0` keeps `q*180.0` exact for `q` up to ~2^18,
+/// far beyond any realistic input. `q = round(x/180)` (the coarse
+/// `x*INV_180` multiply only needs to land on the right *integer*, same
+/// reasoning as `exp10`'s own `k`), `d = x - q*180.0` stays small and
+/// exact (Sterbenz), and `d*DEG_TO_RAD_SMALL` only multiplies the
+/// *small* residual by an irrational constant (not the original,
+/// possibly large, `x`) -- avoiding exactly the "recombine a small
+/// correction with something large" pitfall `exp10`'s own doc comment
+/// describes, since here the multiply happens *before* any combination
+/// with `q`, not after. Reuses `sinf_poly` directly (its domain is
+/// `[-pi/2,pi/2]`, and `d` in `[-90,90]` scaled by `DEG_TO_RAD_SMALL`
+/// lands exactly there), same as `sinpi`.
+///
+/// Unlike `sinpi` (exact for the *entire* f32 range, since a plain
+/// integer `q` never needs more precision than f32 already gives it),
+/// this reduction is only exact while `q*180.0` stays representable --
+/// `180.0`'s 18 trailing zero mantissa bits keep that true for `|q|`
+/// up to ~2^18 (`|x|` up to ~4.7e7), comfortably past any realistic
+/// input but not the *entire* range the way `sinpi` achieves. Past that,
+/// `d` stops being small and `d*DEG_TO_RAD_SMALL` could land far outside
+/// `sinf_poly`'s fitted domain -- confirmed by a direct probe
+/// (`sind(1e10)` returned `36046.176`, nonsense, before this clamp was
+/// added). Fixed the same way `sin_checked`/`cos_checked` guard their own
+/// poly input (`POLY_SAFE_BOUND`): clamp the radian residual to
+/// `[-1000, 1000]` before `sinf_poly` sees it. This guarantees the same
+/// contract `sin_checked` documents for its own far tail: always finite
+/// for finite input (confirmed out to `f32::MAX`, never inf/nan), *not*
+/// a guarantee of numerical correctness that far out -- past the exact
+/// boundary the output is bounded-but-wrong, same as any fast tier in
+/// this crate past its own documented exact range.
+#[inline(always)]
+pub fn sind(x: f32) -> f32 {
+    let qb = fma(x, INV_180, ROUND_MAGIC);
+    let q = qb - ROUND_MAGIC;
+    let d = fma(-q, 180.0, x);
+    let s = sinf_poly((d * DEG_TO_RAD_SMALL).clamp(-POLY_SAFE_BOUND, POLY_SAFE_BOUND));
+    let parity = qb.to_bits() << 31;
+    f32::from_bits(s.to_bits() ^ parity)
+}
+
+/// cos(x*pi/180), argument in degrees -- see `sind`'s doc comment for
+/// the reduction (including its exactness limit and safety clamp); same
+/// `-0.5`/`+0.5` quadrant-offset idiom `cos`/`cospi` already use.
+#[inline(always)]
+pub fn cosd(x: f32) -> f32 {
+    let kb = fma(x, INV_180, -0.5) + ROUND_MAGIC;
+    let q = (kb - ROUND_MAGIC) + 0.5;
+    let d = fma(-q, 180.0, x);
+    let s = sinf_poly((d * DEG_TO_RAD_SMALL).clamp(-POLY_SAFE_BOUND, POLY_SAFE_BOUND));
+    let parity = !kb.to_bits() << 31;
+    f32::from_bits(s.to_bits() ^ parity)
+}
+
 // q = round(x/pi) must be an *exact* integer for x - q*pi to land accurately
 // in [-pi/2, pi/2]. A single-f32 q (tried first, and again after a
 // native-round detour -- see jodiemath-workflow memory, 2026-07-06) is a

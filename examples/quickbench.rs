@@ -87,6 +87,8 @@ fn main() {
     bench!("std cos", |x: f32| x.cos());
     bench!("sinpi", sinpi);
     bench!("cospi", cospi);
+    bench!("sind", sind);
+    bench!("cosd", cosd);
 
     bench!("ln", ln);
     bench!("std ln", |x: f32| x.ln());

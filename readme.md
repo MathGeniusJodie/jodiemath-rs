@@ -22,6 +22,8 @@ All functions auto-vectorize, it's a hard requirement
  cos_checked (|x|<=1e6) |    0.081   |     3     |  0.000  |    1
          sinpi (|x|<1e6)|    0.336   |     2     | (no std sinpi)
          cospi (|x|<1e6)|    0.094   |     2     | (no std cospi)
+          sind (|x|<1e6)|    0.119   |     2     | (no std sind)
+          cosd (|x|<1e6)|    0.067   |     2     | (no std cosd)
 ```
 
 ```
@@ -86,6 +88,8 @@ exp10_checked | 17.5 ns |     -   |  -
           tan | 23.5 ns | 27.3 ns | 1.2x
         sinpi |  9.0 ns |     -   |  -
         cospi | 10.7 ns |     -   |  -
+         sind | 10.8 ns |     -   |  -
+         cosd | 12.6 ns |     -   |  -
           erf | 21.0 ns |     -   |  -
          erfc | 22.9 ns |     -   |  -
         hypot |  8.4 ns | 13.9 ns | 1.7x
@@ -126,6 +130,8 @@ exp10_checked | 0.57 ns  |     -   |  -
           tan | 0.76 ns  |  9.07 ns | 11.9x
         sinpi | 0.18 ns  |     -    |  -
         cospi | 0.25 ns  |     -    |  -
+         sind | 0.24 ns  |     -    |  -
+         cosd | 0.31 ns  |     -    |  -
           erf | 0.70 ns  |     -    |  -
          erfc | 0.68 ns  |     -    |  -
         hypot | 0.24 ns  |  2.92 ns | 12.0x
@@ -150,6 +156,8 @@ cos                 |          54.00 |             1.406
 cos_checked         |         113.00 |             4.537
 sinpi               |          38.00 |             0.925
 cospi               |          46.00 |             1.150
+sind                |          46.00 |             1.151
+cosd                |          54.00 |             1.406
 ln                  |          56.91 |             1.626
 log10               |          56.91 |             1.626
 log1p               |          61.16 |             2.276

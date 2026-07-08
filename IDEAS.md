@@ -906,11 +906,6 @@ legitimate direction here, unlike on most targets.
   tradeoff for callers who need std-grade hypot without std-grade scalar
   code.
 
-- **sind/cosd (argument in degrees)**: same exact-reduction shape as
-  `sinpi`/`cospi` (now implemented, see git history/src/lib.rs) — q =
-  round(x/180), r = x - q*180 isn't quite as free (180 isn't a power of
-  2, so q*180 needs its own care), but mod-180 still avoids needing an
-  irrational-constant reduction. Falls out of the same idea if wanted.
 
 - **sigmoid/logistic**: 1/(1 + exp(-x)) — one exp tier + one division
   (idle divider), or expm1-based near 0 if the cancellation check demands

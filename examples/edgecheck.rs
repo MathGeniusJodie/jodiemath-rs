@@ -129,6 +129,28 @@ fn main() {
     check_finite("sinpi(1e20)", sinpi(1e20));
     check_finite("cospi(1e20)", cospi(1e20));
 
+    // sind/cosd: argument in degrees. Exact reduction only up to ~4.7e7
+    // (180.0's own trailing-zero-bit limit, see sind's doc comment) --
+    // unlike sinpi/cospi, not the entire f32 range -- but still
+    // guaranteed finite (never inf/nan) for any finite input, via the
+    // same POLY_SAFE_BOUND clamp sin_checked/cos_checked use.
+    check("sind(0)", sind(0.0), 0.0);
+    check("sind(-0)", sind(-0.0), -0.0);
+    check("cosd(0)", cosd(0.0), 1.0);
+    check("sind(90)", sind(90.0), 1.0);
+    check("sind(180)", sind(180.0), -0.0);
+    check("cosd(180)", cosd(180.0), -1.0);
+    check("sind(-90)", sind(-90.0), -1.0);
+    check("sind(nan)", sind(f32::NAN), f32::NAN);
+    check("cosd(nan)", cosd(f32::NAN), f32::NAN);
+    check("sind(inf)", sind(f32::INFINITY), f32::NAN);
+    check("sind(-inf)", sind(f32::NEG_INFINITY), f32::NAN);
+    check("cosd(inf)", cosd(f32::INFINITY), f32::NAN);
+    check_finite("sind(f32::MAX)", sind(f32::MAX));
+    check_finite("cosd(f32::MAX)", cosd(f32::MAX));
+    check_finite("sind(1e10)", sind(1e10));
+    check_finite("cosd(1e10)", cosd(1e10));
+
     // ln/log10/log1p: same zero/negative/inf edges as log_2 (they're all
     // log_2 rescaled or composed with it).
     check("ln(0)", ln(0.0), f32::NEG_INFINITY);
