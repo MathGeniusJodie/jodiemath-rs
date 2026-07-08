@@ -1549,9 +1549,17 @@ branches, no scalar-only intrinsics unless the vector form exists).
   file but the 10-constant log poly + reduction constants in a fused loop
   can still spill at unroll factors LLVM likes; inspect `-C target-cpu`
   variants' loop bodies, not just the kernel in isolation.
-- **`clamp` codegen**: verify `f32::clamp` lowers to vmaxps+vminps in the
-  POLY_SAFE_BOUND path and not a select chain (its NaN-propagation semantics
-  happen to match maxps/minps operand-order behavior — confirm LLVM knows).
+- **`clamp` codegen — verified, confirmed correct, no change needed
+  (2026-07-07).** Checked `sin_checked`'s `.clamp(-POLY_SAFE_BOUND,
+  POLY_SAFE_BOUND)` directly in `--emit=asm` output (fresh, not from
+  memory of an earlier related investigation this session): the scalar
+  latency region lowers to exactly `vmaxss`+`vminss` (2 instructions, no
+  branch), and the vectorized throughput region lowers to exactly
+  `vmaxps`+`vminps` (2 instructions, packed `ymm` width, no branch/call)
+  — both regions confirm LLVM already knows `f32::clamp`'s NaN-
+  propagation semantics match hardware min/max's own operand-order
+  behavior, exactly as this entry hoped. No codegen risk here, nothing to
+  fix; this was purely a verification, and it passed.
 - **Integer division in cbrt's seed**: `ax / 3` becomes a mulhi sequence —
   fine on AVX2+, but the `(bits >> 16) * 0x5556` trick in cbrt_fast is
   cheaper if the extra seed error is absorbable by the correction poly;
