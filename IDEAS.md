@@ -721,11 +721,11 @@ legitimate direction here, unlike on most targets.
   Heavy; only worth it if a real use case needs |x/y| > 2^24.
 
 
-- **pown / rsqrt API additions**: pown(x, i32) via repeated squaring for
-  exact integer powers (vectorizes if the exponent is uniform); rsqrt =
-  1/sqrt (divider idle, likely just works at ~1 ulp). New surface, not
-  optimization of existing functions. (exp10/exp10_checked, the third
-  idea originally grouped here, are now implemented -- see git history.)
+- **pown API addition**: pown(x, i32) via repeated squaring for exact
+  integer powers (vectorizes if the exponent is uniform). New surface,
+  not optimization of existing functions. (exp10/exp10_checked and
+  rsqrt, the other two ideas originally grouped here, are now
+  implemented -- see git history.)
 
 ## Backlog round 2 (2026-07-08) — also untested
 

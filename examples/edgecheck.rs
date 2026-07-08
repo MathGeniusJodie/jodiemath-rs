@@ -314,6 +314,16 @@ fn main() {
     // finite-overflow tradeoff.
     check("hypot(inf,nan)", hypot(f32::INFINITY, f32::NAN), f32::INFINITY);
     check("hypot(nan,inf)", hypot(f32::NAN, f32::INFINITY), f32::INFINITY);
+
+    check("rsqrt(1)", rsqrt(1.0), 1.0);
+    check("rsqrt(4)", rsqrt(4.0), 0.5);
+    check("rsqrt(0)", rsqrt(0.0), f32::INFINITY);
+    check("rsqrt(-0)", rsqrt(-0.0), f32::NEG_INFINITY);
+    check("rsqrt(-1)", rsqrt(-1.0), f32::NAN);
+    check("rsqrt(inf)", rsqrt(f32::INFINITY), 0.0);
+    check("rsqrt(-inf)", rsqrt(f32::NEG_INFINITY), f32::NAN);
+    check("rsqrt(nan)", rsqrt(f32::NAN), f32::NAN);
+
     check("powf(2,3)", powf(2.0, 3.0), 8.0);
     check("powf(1,5)", powf(1.0, 5.0), 1.0);
     // powf used to return plausible-looking finite garbage instead of

@@ -128,6 +128,7 @@ fn main() {
     bench!("erfc", erfc);
     bench!("hypot", |x: f32| hypot(x, 1.0));
     bench!("std hypot", |x: f32| x.hypot(1.0));
+    bench!("rsqrt", rsqrt);
     bench!("powf", |x: f32| powf(x, 2.0));
     bench!("std powf", |x: f32| x.powf(2.0));
     bench!("remainder", |x: f32| remainder(x, 3.0));

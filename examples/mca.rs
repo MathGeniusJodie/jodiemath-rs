@@ -138,6 +138,7 @@ fn main() {
         "erf",
         "erfc",
         "hypot",
+        "rsqrt",
         "powf",
         "powf_checked",
         "remainder",

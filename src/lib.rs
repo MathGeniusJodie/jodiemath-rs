@@ -1919,6 +1919,25 @@ pub fn erfc(x: f32) -> f32 {
     fma(y, z, w)
 }
 
+/// 1/sqrt(x). Unlike most functions in this crate, no bit-trick seed or
+/// fitted correction poly needed: `sqrt` and division are each already
+/// correctly-rounded IEEE754 hardware operations (`x.sqrt()` isn't a
+/// software approximation), so composing them directly costs at most
+/// ~1 ulp (one rounding from each op) with zero special-casing --
+/// `x <= 0.0` (including `-0.0`), `x.is_nan()`, and `x == inf` all
+/// already give the right answer (`+inf`/`inf`, `NaN`, `0.0`
+/// respectively) purely from IEEE754 semantics, the same "let the
+/// hardware ops already handle it" reasoning CLAUDE.md's own "use a
+/// library function, don't reinvent the wheel" principle points at
+/// directly. (The crate's older `rsqrt_approx` -- a single Quake-style
+/// bit-trick seed with no correction, ~1e4 ulp -- is a different,
+/// deliberately-rough exploratory function kept for the `_approx_plot`
+/// test suite, not a candidate replacement for this one.)
+#[inline(always)]
+pub fn rsqrt(x: f32) -> f32 {
+    1.0 / x.sqrt()
+}
+
 /// Straight port of jodiemath's hypotf: naive sqrt(x^2+y^2), no anti-overflow
 /// rescaling (unlike std's hypot) -- trades the overflow/underflow edge cases
 /// for vectorizability, same tradeoff this crate makes for cbrt/sin/cos vs.

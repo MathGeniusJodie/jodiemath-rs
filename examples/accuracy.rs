@@ -717,6 +717,16 @@ fn main() {
         let s = fuzz2(TWOARG_SAMPLES, |_, _| true, |y: f32, x: f32| y.atan2(x), atan2_u35);
         report("std atan2", &s, t0);
     }
+    if run("rsqrt") {
+        // x > 0.0 only (0/negative/nan/inf are all correct "for free" via
+        // plain IEEE754 semantics, see rsqrt's own doc comment -- not a
+        // fuzz-density target). f64's own sqrt (a real op, not a sleef
+        // reference) is precise enough ground truth for verifying f32-level
+        // rsqrt accuracy.
+        let rsqrt_domain = |x: f32| x > 0.0 && x.is_finite();
+        let s = measure!(rsqrt_domain, rsqrt, |v: F64xN| F64xN::splat(1.0) / v.sqrt());
+        report("rsqrt", &s, t0);
+    }
     if run("hypot") {
         // naive x*x+y*y overflows f32 once |x| or |y| exceeds ~sqrt(f32::MAX)
         // (~1.8e19), and underflows (or flushes clean to 0, losing the
