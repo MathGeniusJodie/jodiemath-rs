@@ -903,6 +903,14 @@ fn main() {
         let s = fuzz2(TWOARG_SAMPLES, remainder_domain, remainder, remainder_ref);
         report("remainder", &s, t0);
     }
+    if run("remainder_unchecked") {
+        // remainder_unchecked's own contract: x != 0.0, y finite. Same
+        // reliable-range/near-tie exclusions as remainder's own sweep above.
+        let remainder_domain =
+            |x: f32, y: f32| x != 0.0 && y != 0.0 && y.is_finite() && (x / y).abs() < 1000.0 && !near_tie(x, y);
+        let s = fuzz2(TWOARG_SAMPLES, remainder_domain, remainder_unchecked, remainder_ref);
+        report("remainder_unchecked (+)", &s, t0);
+    }
     if run("remainder_checked") {
         // remainder_checked() self-corrects q by one when x/y's own
         // division rounding pushed it to the wrong integer, which holds up

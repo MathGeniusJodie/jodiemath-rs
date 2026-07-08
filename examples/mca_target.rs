@@ -278,6 +278,15 @@ throughput_fn!(thr_remainder, "remainder_throughput", {
     move |x: f32| remainder(x, y)
 });
 
+latency_fn!(lat_remainder_unchecked, "remainder_unchecked_latency", {
+    let y = black_box(3.0);
+    move |x: f32| remainder_unchecked(x, y)
+});
+throughput_fn!(thr_remainder_unchecked, "remainder_unchecked_throughput", {
+    let y = black_box(3.0);
+    move |x: f32| remainder_unchecked(x, y)
+});
+
 latency_fn!(lat_remainder_checked, "remainder_checked_latency", {
     let y = black_box(3.0);
     move |x: f32| remainder_checked(x, y)
@@ -357,6 +366,7 @@ fn main() {
         lat_pown, thr_pown;
         lat_powf_checked, thr_powf_checked;
         lat_remainder, thr_remainder;
+        lat_remainder_unchecked, thr_remainder_unchecked;
         lat_remainder_checked, thr_remainder_checked;
     );
     black_box(&arr_out);

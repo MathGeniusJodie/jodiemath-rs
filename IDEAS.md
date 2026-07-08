@@ -1366,6 +1366,28 @@ brainstorm backlog lives at the bottom of this file.
   `run()` closure) in the same commit, so this is no longer a trap for
   the next session. Commit `ecc8df8`.
 
+- **remainder_unchecked, implemented (2026-07-08), same follow-up idea
+  applied to remainder's smaller edge-case surface.** `remainder`'s own
+  branches are much thinner than `powf`'s (one `x == 0.0` sign-
+  preservation select, one `y.is_infinite() && x.is_finite()` no-
+  reduction select, vs. powf's whole negative-base parity chain), so this
+  was a smaller-magnitude bet than `powf_unchecked` going in, but cheap
+  to check (matching the "test with mca first" workflow): `remainder_unchecked(x,y)
+  = fma(-(x/y).round(), y, x)`, domain "x != 0.0, y finite". Bit-identical
+  to `remainder` over 100M in-domain fuzz samples. Real, if modest, win
+  on both axes: mca latency 34.03→33.00 cyc (-3.0%), throughput
+  0.729→0.646 cyc/elem (-11.4%); quickbench confirmed (3 reproducible
+  runs, identical each time): latency 9.04→8.01 ns (-11.4%), throughput
+  0.157→0.146 ns (-7.0%). Full harness treatment: codegen_check clean,
+  edgecheck.rs regression-guard entries, accuracy.rs domain-restricted
+  sweep (0/0 avg/max ulp, matching `remainder`'s own bounded-domain
+  reading exactly since the formula is identical), readme tables updated.
+  Smaller win than `powf_unchecked`'s (-25%/-34%) since there was simply
+  less edge-case work to remove, but the same pattern paid off again —
+  worth checking any other two-argument function with even a couple of
+  unconditional edge-case selects the next time this backlog runs dry.
+  Commit `<pending>`.
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED

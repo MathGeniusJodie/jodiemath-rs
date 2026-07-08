@@ -484,6 +484,12 @@ fn main() {
     );
     check("remainder(5,3)", remainder(5.0, 3.0), -1.0);
     check("remainder(4,2)", remainder(4.0, 2.0), 0.0);
+    // remainder_unchecked: contract is x != 0.0, y finite -- must match
+    // remainder inside that domain (verified more thoroughly via a
+    // 100M-sample fuzz, not preserved in-repo; permanent regression guard).
+    check("remainder_unchecked(5,3)", remainder_unchecked(5.0, 3.0), remainder(5.0, 3.0));
+    check("remainder_unchecked(4,2)", remainder_unchecked(4.0, 2.0), remainder(4.0, 2.0));
+    check("remainder_unchecked(-5,3)", remainder_unchecked(-5.0, 3.0), remainder(-5.0, 3.0));
     // remainder(-0.0, y) used to lose its sign: q is +-0.0 matching x/y's
     // sign, so `-q*y` ends up the opposite sign to x, and `fma(-q,y,x)`
     // adds two exactly-zero values of opposite sign (same IEEE754

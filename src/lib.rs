@@ -2436,6 +2436,17 @@ pub fn remainder(x: f32, y: f32) -> f32 {
     if y.is_infinite() && x.is_finite() { x } else { r }
 }
 
+/// remainder without domain checks: valid for `x != 0.0` and `y` finite
+/// (not `+-inf`) -- skips the two special-case selects [`remainder`]'s own
+/// doc comment describes (the `x == 0.0` sign-preservation guard and the
+/// `y` infinite/`x` finite no-reduction case). Mirrors this crate's other
+/// `_unchecked` cores; see [`remainder`] for the full-domain-safe version.
+#[inline(always)]
+pub fn remainder_unchecked(x: f32, y: f32) -> f32 {
+    let q = (x / y).round();
+    fma(-q, y, x)
+}
+
 /// Self-correcting variant of [`remainder`]: detects when `x/y`'s own
 /// division rounding pushed `q` to the wrong side of a half-integer tie
 /// (see [`remainder`]'s doc comment for the failure mode -- a rare but

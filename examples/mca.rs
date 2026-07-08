@@ -158,6 +158,7 @@ fn main() {
         "pown",
         "powf_checked",
         "remainder",
+        "remainder_unchecked",
         "remainder_checked",
     ];
 

@@ -164,5 +164,6 @@ fn main() {
     // black_box'd 2nd arg, same reasoning as powf just above.
     let remainder_y = std::hint::black_box(3.0);
     bench!("remainder", move |x: f32| remainder(x, remainder_y));
+    bench!("remainder_unchecked", move |x: f32| remainder_unchecked(x, remainder_y));
     bench!("remainder_checked", move |x: f32| remainder_checked(x, remainder_y));
 }

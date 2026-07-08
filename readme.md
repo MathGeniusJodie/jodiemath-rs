@@ -118,8 +118,9 @@ hypot_unchecked |  5.0 ns |     -   |  -
       powf (*)| 20.7 ns | 16.8 ns | 0.8x
 powf_unchecked | 18.7 ns | 16.8 ns | 0.9x
  powf_checked | 26.9 ns | 16.8 ns | 0.6x
- remainder (*)|  9.3 ns |     -   |  -
-remainder_checked| 12.7 ns |     -   |  -
+ remainder (*)|  9.0 ns |     -   |  -
+remainder_unchecked|  8.0 ns |     -   |  -
+remainder_checked| 12.6 ns |     -   |  -
 ```
 (*) atan2/hypot/powf/remainder's jodie numbers jumped here vs. older
 recordings of this table -- not a regression, a benchmark fix: a literal
@@ -185,6 +186,7 @@ hypot_unchecked | 0.17 ns  |     -    |  -
 powf_unchecked | 0.70 ns  |  5.86 ns | 8.3x
  powf_checked | 1.46 ns  |  5.86 ns | 4.0x
  remainder (*)| 0.16 ns  |     -    |  -
+remainder_unchecked| 0.15 ns  |     -    |  -
 remainder_checked| 0.29 ns  |     -    |  -
 ```
 (*) see the latency table's own footnote above -- same benchmark fix,
@@ -244,6 +246,7 @@ powf                |         105.03 |             4.662
 powf_unchecked      |          79.05 |             3.095
 powf_checked        |         106.31 |             7.359
 remainder           |          34.03 |             0.729
+remainder_unchecked |          33.00 |             0.646
 remainder_checked   |          50.03 |             1.424
 ```
 
