@@ -8,8 +8,6 @@ pub struct Df32(pub f32, pub f32);
 // ── Helpers ──────────────────────────────────────────────────────────
 
 const SIGN_MASK: u32 = 0x80000000;
-const EXPONENT_MASK: u32 = 0x7f800000;
-const MANTISSA_MASK: u32 = 0x007fffff;
 
 #[inline(always)]
 fn fma(a: f32, b: f32, c: f32) -> f32 {
