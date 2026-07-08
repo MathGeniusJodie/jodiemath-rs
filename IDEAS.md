@@ -1514,12 +1514,37 @@ branches, no scalar-only intrinsics unless the vector form exists).
   present and no `call`/scalar `ss`-suffixed math in the hot loop. The
   scale-param duplication incident and the saturating-cast lesson (memory)
   were both silent codegen regressions this would have caught.
-- **Baseline target audit**: decide and document the compile target
-  (x86-64-v3? +fma is already assumed in the godbolt header). Without
-  `-C target-feature=+fma` the entire crate's accuracy story is *wrong*
-  (mul_add falls back to a libm call — slow AND differently rounded); a
-  `compile_error!`/build.rs check that fma is enabled would make the
-  invalid build state unrepresentable.
+- **Baseline target audit's `compile_error!` half — done, tested, kept
+  (2026-07-07).** `.cargo/config.toml` sets `target-cpu=native`, but that
+  setting is silently *overridden* (not merged) by an environment
+  `RUSTFLAGS` variable -- a well-known Cargo gotcha some CI/build setups
+  hit unknowingly, with no build error and no runtime symptom beyond
+  quietly-wrong accuracy/perf numbers (`f32::mul_add` falls back to a
+  ~2x-slower, differently-rounded software path without FMA). Added a
+  `#[cfg(not(target_feature = "fma"))] compile_error!(...)` guard at the
+  top of `src/lib.rs`, with a clear message naming the cause and the fix.
+  `target_feature = "fma"` is a standard cfg the compiler sets whenever
+  FMA is actually enabled, regardless of *how* (config.toml, RUSTFLAGS,
+  `--target`, `-C target-feature=`), so the check is robust to all of
+  them, not just the RUSTFLAGS-override case that motivated it. Verified
+  three ways: (1) normal `cargo build`/`cargo check` (respecting
+  `.cargo/config.toml`) compile silently, unaffected; (2) an explicit
+  `RUSTFLAGS="" cargo check --target x86_64-unknown-linux-gnu` (simulating
+  the exact override scenario) now fails loudly and immediately with the
+  guard's message, instead of silently building broken code; (3) hit a
+  real, unexpected snag along the way -- the guard broke `cargo test`'s
+  doctest step specifically, since `rustdoc --test`'s own compilation of
+  the library doesn't inherit `.cargo/config.toml`'s rustflags the same
+  way `cargo build`/`check` do (a separate, pre-existing Cargo/rustdoc
+  gap, unrelated to whether FMA is "really" needed there — there are no
+  actual doctests in this crate, `cargo test`'s doc-test step still has
+  to compile the library to confirm that). Fixed by adding `not(doctest)`
+  to the cfg condition (`cfg(doctest)` is true specifically during
+  rustdoc's doctest-compilation pass) -- re-verified all three scenarios
+  still behave correctly after the fix. The "decide and document the
+  compile target" half of this idea (x86-64-v3 vs whatever) is a
+  separate, softer question not addressed here -- this entry only closes
+  the "make the invalid state unrepresentable" half.
 - **Register-pressure check at zmm width**: AVX-512 doubles the register
   file but the 10-constant log poly + reduction constants in a fused loop
   can still spill at unroll factors LLVM likes; inspect `-C target-cpu`

@@ -1,5 +1,29 @@
 // godbolt flags -C opt-level=3 -C target_feature=+fma
 
+// This crate's entire accuracy and performance story depends on `fma`
+// (see the function just below) compiling to a single hardware
+// instruction. Without FMA, `f32::mul_add` falls back to a ~2x-slower
+// libm call that also rounds *differently* (two roundings instead of
+// one) -- every ulp figure in this crate's doc comments, readme.md, and
+// examples/accuracy.rs assumes the single-rounding hardware form.
+// `.cargo/config.toml` sets `target-cpu=native` for exactly this reason,
+// but that setting is silently overridden (not merged) by a `RUSTFLAGS`
+// environment variable, a well-known Cargo gotcha -- some CI/build
+// setups export `RUSTFLAGS` directly, which would disable FMA with no
+// build error and no runtime symptom beyond quietly-wrong accuracy
+// numbers. Fail loudly at compile time instead: `target_feature = "fma"`
+// is set by the compiler whenever FMA is actually enabled, regardless of
+// how that happened (config.toml, RUSTFLAGS, --target, etc.), so this
+// check is robust to all of them.
+#[cfg(all(not(target_feature = "fma"), not(doctest)))]
+compile_error!(
+    "jodiemath-rs requires hardware FMA (target-feature=+fma or target-cpu=native) -- \
+     without it, f32::mul_add falls back to a slower, differently-rounded software path \
+     and every accuracy/perf figure in this crate's docs is invalid. Build with \
+     `RUSTFLAGS=\"-C target-cpu=native\"` or ensure .cargo/config.toml's rustflags \
+     aren't being overridden by an environment RUSTFLAGS variable."
+);
+
 mod doublefloat;
 use doublefloat::Df32;
 
