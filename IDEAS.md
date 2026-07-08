@@ -275,6 +275,33 @@ brainstorm backlog lives at the bottom of this file.
   `src/lib.rs` untouched, `tune.rs`'s scratch scipy-seed addition also
   reverted.
 
+- **acos_poly: Df32 leading (constant) term, pi/2 split into an exact
+  hi+lo pair (2026-07-08)**: `fma(u, x, 1.5707963)` (single f32-rounded
+  pi/2) replaced with `fma(u, x, PI_2_HI) + PI_2_LO` (same trick as
+  `LN2_HI`/`LN2_LO`, `PI_2_HI`/`PI_2_LO` together capturing pi/2 to
+  ~1e-12 instead of f32's own ~1e-7). With the *same* 6 leading
+  coefficients unchanged: a real but genuinely mixed result -- `acos`
+  avg ulp improved dramatically (0.4961→0.0675, ~7.3x) but max ulp got
+  *worse* (4→5), and `asin` (which reuses this poly) got worse on
+  *both* (avg 0.0303→0.0376, max 9→12). Retuning the 6 leading
+  coefficients for the new split-constant structure (`tune.rs`'s
+  `acos_poly_df_c`, coordinate-descended from the shipped values)
+  recovered `asin` back to baseline exactly (avg/max statistically
+  unchanged) and kept `acos`'s avg win, but `acos`'s own max ulp still
+  regressed, now 4→6 (exhaustive-confirmed both fuzz and thorough sweep
+  agree). This is exactly the tradeoff shape the *first* `acos_poly`
+  entry in this file already tested and rejected (an unconstrained
+  joint objective that improves the joint score by letting acos's own
+  protected max ulp regress) — `acos`'s own accuracy has been treated as
+  a protected invariant in this codebase since that entry, not something
+  to trade away for a joint or single-caller average-ulp win. Also a
+  real mca cost on both functions for the extra `+PI_2_LO` add: asin
+  59.03/0.968→63.03/1.039 cyc lat/throughput (+6.8%/+7.3%), acos
+  37.11/0.820→41.11/0.858 (+10.8%/+4.6%) — and `asin` pays that cost for
+  *zero* net accuracy benefit once retuned back to baseline. Not
+  adopted; reverted (`src/lib.rs` and `tune.rs`'s scratch addition both
+  restored).
+
 - **atan2 division-residual correction (2026-07-07, re-tested 2026-07-08
   after atan_poly's degree bump, same conclusion holds)**: added a
   first-order Taylor correction (`atan'(d)*e`) for atan2's `y/x` division
@@ -719,13 +746,6 @@ legitimate direction here, unlike on most targets.
   the fit could buy back exactly the boundary cases that show up as
   max-ulp outliers.
 
-- **Df32 leading coefficients**: for polys whose *leading* coefficient's
-  own f32 rounding dominates the fit error (check: does the infinite-
-  precision minimax beat the f32-quantized one by a lot?), store c0 (or
-  the constant term) as a hi+lo pair applied with one extra fma. 1-op
-  accuracy lever, cheaper than a whole Df32 evaluation. atan_poly's
-  denominator constant and acos_poly's pi/2 term are candidates (pi/2
-  is famously not well-representable in f32).
 
 - **Centered-variable refits**: exp2's f lives in [0,1) — refit in
   g = f − 0.5 so coefficients shrink and their individual f32 roundings
