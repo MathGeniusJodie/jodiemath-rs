@@ -287,6 +287,32 @@ fn cbrt_shiftmul_c(x: f32, c: &[f32]) -> f32 {
     fma(sr, p, ss)
 }
 
+// cbrt_throughput (see src/lib.rs): experimental positive-only 2-iteration
+// Halley-style inverse-cbrt refinement with a magic bit-trick seed.
+// c[0]'s bits are the seed subtrahend (shipped: 0xd461ff81), c[1]/c[2] are
+// the two Halley iterations' own f32 multiplier constants.
+// Tried and rejected (2026-07-08), IDEAS.md's "tune cbrt_throughput's
+// magic constants" idea: unlike cbrt_normal, this function's error does
+// NOT repeat across octaves (checked directly: max ulp ranges ~7 to ~52
+// depending which octave is sampled), so a single-octave grid tune looked
+// slightly better on-grid (max 16->12) but was real-world *worse* on the
+// full fuzz sweep (avg 6.73->7.01, max 74->76) -- not representative. A
+// proper ~60-octave grid tune found an even worse tradeoff: max ulp did
+// drop (68->43 on-grid) but avg ulp exploded (6.83->22.73), because
+// `score()`'s tuple ordering `(max, sum)` optimizes max first and only
+// uses avg as a tiebreak -- fine for cbrt_normal's smooth error surface,
+// but for this rougher one it happily wrecks the average to shave the
+// worst case. Not adopted either way; src/lib.rs unchanged. Kept as
+// reference infrastructure (`which.contains("cbrtthroughput")`), same as
+// cbrt_shiftmul_c below.
+#[inline(always)]
+fn cbrt_throughput_c(x: f32, c: &[f32]) -> f32 {
+    let r = f32::from_bits(c[0].to_bits().wrapping_sub(x.to_bits() / 3));
+    let r = fma(r * r, (r * r) * x, r * c[1]);
+    let r = fma(r * r, (r * r) * x, r * c[2]);
+    r * r * x
+}
+
 // sinf_poly (see src/lib.rs): sin(x) ~= x + x^3*P(x^2) on [-pi/2, pi/2],
 // the shared poly behind sin/cos/sin_checked/cos_checked.
 #[inline(always)]
@@ -810,6 +836,30 @@ fn main() {
         }
         let init = [-0.33333147, 0.22220612, -0.17394388, 0.14823665];
         tune("cbrt_shiftmul", &cbrt_shiftmul_c, &|x| x.cbrt(), &grid, &init);
+    }
+    if which.contains("cbrtthroughput") {
+        // Unlike cbrt_normal, cbrt_throughput's error does NOT repeat
+        // across octaves (checked directly -- max ulp ranges from ~7 to
+        // ~52 depending which octave is sampled), so a single-octave grid
+        // isn't representative here. Sample log-uniformly across ~60
+        // octaves instead (positive only, same as above).
+        let mut grid = vec![];
+        let mut e = -30i32;
+        while e < 30 {
+            let mut b = (2.0f32.powi(e)).to_bits();
+            let bmax = (2.0f32.powi(e + 1)).to_bits();
+            while b < bmax {
+                grid.push(f32::from_bits(b));
+                b += (bmax - (2.0f32.powi(e)).to_bits()) / 20;
+            }
+            e += 1;
+        }
+        let init = [
+            f32::from_bits(0xd461ff81),
+            f32::from_bits(0x3fb6e3d7),
+            f32::from_bits(0x3fe09c2a),
+        ];
+        tune("cbrt_throughput", &cbrt_throughput_c, &|x| x.cbrt(), &grid, &init);
     }
     if which.contains("sinf") {
         // sinf_poly's fitted domain, [-pi/2, pi/2].

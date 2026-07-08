@@ -622,6 +622,42 @@ brainstorm backlog lives at the bottom of this file.
   is **not** ruled out by this finding — left open below, split out from
   the exp2 case.
 
+- **Tune cbrt_throughput's magic constants (2026-07-08), tested and
+  rejected on two different grids — a real methodological finding about
+  `tune.rs` itself, not just this one function.** Added `cbrt_throughput_c`
+  and a `cbrtthroughput` tune.rs target (kept as reference infra, same
+  precedent as `cbrt_shiftmul_c`). First attempt reused `cbrt_normal`'s
+  own single-octave-is-representative grid — looked like a win on-grid
+  (max ulp 16→12) but a direct octave-by-octave accuracy check showed
+  this function's error does *not* repeat across octaves the way
+  `cbrt_normal`'s does (max ulp ranges from ~7 to ~52 depending which
+  octave gets sampled) — and implementing the "tuned" constants for real
+  confirmed the grid was misleading: full fuzz sweep got *worse*, not
+  better (avg 6.73→7.01, max 74→76). Reverted immediately, tried again
+  with a properly wide ~60-octave grid instead — this exposed a second,
+  more general problem: `score()` returns `(max, sum)` and `tune()`'s `if
+  s < best` uses Rust's default tuple ordering, which compares `max`
+  *first* and only falls back to `sum` (~avg) as a tiebreak. For
+  `cbrt_normal`'s smooth, octave-periodic error surface this never
+  mattered (minimizing max there also happens to minimize avg), but for
+  `cbrt_throughput`'s rougher landscape the search happily wrecked the
+  average to shave the worst case: max ulp did drop (68→43 on-grid) but
+  avg ulp *exploded* (6.83→22.73) — a real, severe regression by this
+  crate's own primary metric, hidden by a max-first comparison that never
+  surfaces it. Not adopted either way; `src/lib.rs` unchanged. **General
+  lesson for any future `tune.rs` use, beyond just cbrt_throughput: (1)
+  before trusting a single-octave (or any partial-domain) grid as
+  "representative," check directly whether the target function's error
+  actually repeats across the domain the way the assumption requires —
+  it's a real, checkable property, not something to inherit from a
+  different function's own comment; (2) `tune()`'s max-first tuple
+  comparison is a silent trap for any function whose error surface isn't
+  smooth/uniform — it can trade away average accuracy for a better
+  worst-case number without ever showing that tradeoff in the printed
+  output, so a real end-to-end fuzz check of any "tuned" result (not just
+  trusting tune.rs's own reported numbers) is not optional, it's load-
+  bearing.**
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
@@ -933,12 +969,6 @@ legitimate direction here, unlike on most targets.
   use was inherited, then the poly tuned around it. A basin-hopping pass
   over (seed offset, c1..c4) jointly targets avg 0.31 → lower at zero
   runtime cost.
-
-- **Tune cbrt_throughput's magic constants**: the experimental 2-iteration
-  Halley-ish form (5.5 avg ulp) has never seen the coordinate-descent
-  tuner. Its 3 magic constants + 2 fma constants are all free parameters;
-  even landing at ~2-3 avg would make it a legitimate documented tier
-  instead of an experiment.
 
 ### atan / asin / acos
 
