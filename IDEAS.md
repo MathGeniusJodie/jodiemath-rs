@@ -1096,6 +1096,45 @@ brainstorm backlog lives at the bottom of this file.
   check can still be a five-minute scipy script — worth doing before
   assuming either way.**
 
+- **Compensated-Horner accuracy tier for erfc (2026-07-08), tested and
+  rejected — and it finally pinpointed exactly where erfc's real
+  bottleneck lives, closing the loop on three separate prior
+  "not investigated further" notes in this file.** The backlog's atan
+  half was already moot (atan's max ulp is 3 now, not the stale "18" the
+  entry cited — fixed by the atan_poly degree bump long before this
+  pass). For erfc: reused the crate's existing `Df32`/two_sum/two_prod
+  machinery (already used elsewhere for `reduce_pi`, `log2_df`, etc. —
+  no new infrastructure needed) to evaluate erfc's n/d rational in
+  double-float instead of plain f32 Horner, leaving `exp2_checked`/
+  `xa*xa` untouched. Result: avg ulp improved modestly (0.3104→0.2671,
+  ~14%) but max ulp was flat (102→105, worst `x` still ≈8.6-9.0) — the
+  *exact* same shape as the domain-split rejection above: tighter
+  evaluation helps the average, doesn't touch the worst case. This time,
+  chased the "not investigated further" root cause directly instead of
+  leaving it open a fourth time: computed `-(xa*xa)*LOG2_E` (erfc's own
+  exponent expression, plain f32 arithmetic) against the exact f64 value
+  at the actual worst-case `x`'s — found up to **87 ulp of error in the
+  exponent itself**, before `exp2_checked` even runs. This is exactly
+  what this file's own already-tested-and-rejected "erfc: exact exponent
+  via two_prod" entry (above) already fixed and measured (avg/max ulp
+  0.3106/109 → 0.3055/93) — three independent approaches (log-space
+  refit, domain-split, and now compensated-Horner) all converge on the
+  same already-diagnosed cause, none of them touching it because none
+  correct the exponent computation itself. Not re-implementing the
+  two_prod fix (already tried, already judged not worth its mca cost
+  given erfc's max ulp was already so far over any nominal budget that
+  closing part of the gap doesn't change its practical
+  characterization); not implementing compensated-Horner either, since
+  it doesn't reach the actual bottleneck. No code changed. **General
+  lesson: when the same symptom (fits the average, doesn't move the
+  max, same worst-case `x` every time) shows up across three unrelated
+  fixes in a row, stop proposing a fourth fix in the same spot and
+  instead directly measure the *specific upstream computation* the
+  refits keep failing to touch — a five-minute direct comparison against
+  an exact f64 reference at the known worst-case inputs settled in
+  minutes what three separate refit attempts across this session
+  couldn't.**
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
@@ -1275,13 +1314,6 @@ legitimate direction here, unlike on most targets.
   disagree by up to 2x. A weight of 1/ulp(f(x)) (piecewise-constant) in
   the fit could buy back exactly the boundary cases that show up as
   max-ulp outliers.
-
-
-- **Compensated-Horner accuracy tier**: run the poly with error-free
-  transformations (two_prod/two_sum per step, like reduce_pi does for the
-  reduction) to get a near-correctly-rounded result at ~2-3x cost.
-  As `_checked`-style opt-in tiers for the max-ulp offenders (atan: 18,
-  erfc: 109) rather than a default.
 
 - **Worst-case patch lists**: functions whose exhaustive sweep leaves a
   literal handful of failing inputs could compare-select against the known
