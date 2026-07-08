@@ -159,6 +159,18 @@ fn main() {
     // fix introduced and then fixed with exp2_checked's own k1/k2 split;
     // pinned here so it can't silently come back.
     check_finite("exp(88.37628)", exp(88.37628));
+
+    check("exp10(0)", exp10(0.0), 1.0);
+    check("exp10(1)", exp10(1.0), 10.0);
+    check("exp10(2)", exp10(2.0), 100.0);
+    check("exp10_checked(0)", exp10_checked(0.0), 1.0);
+    check("exp10_checked(1)", exp10_checked(1.0), 10.0);
+    check("exp10_checked(inf)", exp10_checked(f32::INFINITY), f32::INFINITY);
+    check("exp10_checked(-inf)", exp10_checked(f32::NEG_INFINITY), 0.0);
+    check("exp10_checked(nan)", exp10_checked(f32::NAN), f32::NAN);
+    check_finite("exp10_checked(38.5)", exp10_checked(38.5));
+    check("exp10_checked(-45)", exp10_checked(-45.0), 1e-45);
+
     check("expm1(0)", expm1(0.0), 0.0);
     check("sinh(0)", sinh(0.0), 0.0);
     check("cosh(0)", cosh(0.0), 1.0);

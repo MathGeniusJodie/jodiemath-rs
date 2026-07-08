@@ -41,8 +41,9 @@ use rand::RngExt;
 // bucket at all (exact-ish by construction).
 use sleef::f64x::{
     acos_u35, acosh_u10, asin_u35, asinh_u10, atan2_u35, atan_u35, atanh_u10, cbrt_u35, cos_u35,
-    cosh_u35, erf_u10, erfc_u15, exp2_u35, exp_u10, expm1_u10, hypot_u35, log10_u10, log1p_u10,
-    log2_u35, log_u35, pow_u10, remainder as remainder_ref, sin_u35, sinh_u35, tan_u35, tanh_u35,
+    cosh_u35, erf_u10, erfc_u15, exp10_u35, exp2_u35, exp_u10, expm1_u10, hypot_u35, log10_u10,
+    log1p_u10, log2_u35, log_u35, pow_u10, remainder as remainder_ref, sin_u35, sinh_u35, tan_u35,
+    tanh_u35,
 };
 use std::simd::num::SimdFloat;
 use std::simd::{Select, Simd, StdFloat};
@@ -431,6 +432,15 @@ fn main() {
         report("exp2_checked", &s, t0);
         let s = measure!(exp2_domain, |x: f32| x.exp2(), exp2_u35);
         report("std exp2", &s, t0);
+        // exp10/exp10_checked's own domains, mirroring exp2/exp2_checked's
+        // unchecked-vs-checked split: x*log2(10) must stay in exp2's own
+        // [-126,128) (unchecked) or exp2_checked's wider [-151,128).
+        let exp10_domain = |x: f32| (-126.0..128.0).contains(&(x * std::f32::consts::LOG2_10));
+        let exp10_checked_domain = |x: f32| (-151.0..128.0).contains(&(x * std::f32::consts::LOG2_10));
+        let s = measure!(exp10_domain, exp10, exp10_u35);
+        report("exp10", &s, t0);
+        let s = measure!(exp10_checked_domain, exp10_checked, exp10_u35);
+        report("exp10_checked", &s, t0);
     }
     if run("sin") {
         // unchecked sin's documented exact-integer range: |x| < 2^22 * pi

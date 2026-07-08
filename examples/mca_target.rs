@@ -104,6 +104,12 @@ throughput_fn!(thr_exp2, "exp2_throughput", exp2);
 latency_fn!(lat_exp2_checked, "exp2_checked_latency", exp2_checked);
 throughput_fn!(thr_exp2_checked, "exp2_checked_throughput", exp2_checked);
 
+latency_fn!(lat_exp10, "exp10_latency", exp10);
+throughput_fn!(thr_exp10, "exp10_throughput", exp10);
+
+latency_fn!(lat_exp10_checked, "exp10_checked_latency", exp10_checked);
+throughput_fn!(thr_exp10_checked, "exp10_checked_throughput", exp10_checked);
+
 latency_fn!(lat_log2, "log2_latency", |x: f32| log_2_normal(x, 0.0));
 throughput_fn!(thr_log2, "log2_throughput", log_2);
 
@@ -234,6 +240,8 @@ fn main() {
         lat_cbrt_fast, thr_cbrt_fast;
         lat_exp2, thr_exp2;
         lat_exp2_checked, thr_exp2_checked;
+        lat_exp10, thr_exp10;
+        lat_exp10_checked, thr_exp10_checked;
         lat_log2, thr_log2;
         lat_sin, thr_sin;
         lat_sin_checked, thr_sin_checked;

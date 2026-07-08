@@ -170,6 +170,96 @@ pub fn exp2_checked(x: f32) -> f32 {
     let p = fma(q, t1 * f, t1);
     p * t2
 }
+
+/// 10^x. Naively rounding `x*LOG2_10` once before `exp2_checked` even
+/// starts loses precision that grows with `|x|` (the same flaw `exp`'s
+/// own doc comment describes for `exp2(x*LOG2_E)`). Fixed the same way
+/// as `exp`: `k = round(x*LOG2_10)` (only needs to land on the right
+/// *integer*, a coarse multiply is fine for that), then reduce `x`
+/// itself (not `x*LOG2_10`) via a Cody-Waite split of `LOG10_2` (already
+/// defined for `log10`'s own fix): `d = x - k*LOG10_2_HI - k*LOG10_2_LO`
+/// stays small and precisely known in `x`'s own units (mirrors `exp`'s
+/// `r = x - k*LN2_HI - k*LN2_LO`).
+///
+/// Unlike `exp`, this can't just hand `k + d*LOG2_10` to `exp2_checked`
+/// as a single combined argument -- that recombination itself
+/// reintroduces the exact bug being fixed: adding the *small* correction
+/// `d*LOG2_10` to the *large* integer `k` (up to ~127) forces the sum to
+/// round to `k`'s own coarse ulp (e.g. ulp(75) ~ 9e-6), silently
+/// discarding precision the careful reduction above just earned (found
+/// empirically -- an early version measured max ulp 45, traced to
+/// exactly this recombination step, not the reduction itself, which
+/// checked out accurate to ~1e-11 in isolation). Fixed by never forming
+/// that combined value at all: `exp2_checked`'s own internal split (its
+/// own doc comment: "any split k=k1+k2 ... works") is reproduced here
+/// directly against this function's *own* precisely-known integer `k`
+/// and fractional `f` (floor-adjusted from the round-based reduction
+/// into `exp2_checked`'s own `[0,1)` convention), instead of recombining
+/// them into one f32 and letting `exp2_checked` re-derive (and re-round)
+/// its own `k`/`f` from that already-lossy sum.
+#[inline(always)]
+pub fn exp10_checked(x: f32) -> f32 {
+    // Clamped before the reduction starts (matching exp2_checked's own
+    // early-clamp pattern) so +-inf can't poison `d = x - kr*LOG10_2`
+    // with an inf-inf NaN -- NaN itself passes through unaffected
+    // (f32::clamp preserves NaN in the receiver), and the bound is wide
+    // enough that it never touches a genuinely in-range x (exp2_checked's
+    // own clamp downstream still does the real range-limiting).
+    let x = x.clamp(-1000.0, 1000.0);
+    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+    let kb = fma(x, std::f32::consts::LOG2_10, ROUND_MAGIC);
+    let kr = kb - ROUND_MAGIC; // round(x*log2(10)), coarse multiply is fine
+    let d = fma(-kr, LOG10_2_HI, x);
+    let d = fma(-kr, LOG10_2_LO, d);
+    let fr = d * std::f32::consts::LOG2_10; // small, precise correction in log2 units, in [-0.5, 0.5]
+    // floor-adjust (kr, fr) from round's [-0.5,0.5] convention to
+    // exp2_checked's own floor-based [0,1) convention -- both ops exact
+    // or near-exact since they only ever combine values of comparable
+    // magnitude (unlike the rejected single-combine above).
+    let adjust = if fr < 0.0 { 1.0 } else { 0.0 };
+    let k = kr - adjust;
+    let f = fr + adjust;
+    let k = k.clamp(-151.0, 128.0);
+    const ROUND_MAGIC2: f32 = 12582912.0;
+    let k1b = fma(k, 0.5, ROUND_MAGIC2) - (ROUND_MAGIC2 - 383.0);
+    let k2b = (k + 766.0) - k1b;
+    let t1 = f32::from_bits((k1b.to_bits() << 8) & EXPONENT_MASK);
+    let t2 = f32::from_bits((k2b.to_bits() << 8) & EXPONENT_MASK);
+    let f2 = f * f;
+    let g0 = fma(2.4022985e-1, f, 6.93147e-1);
+    let g1 = fma(9.678826e-3, f, 5.548333e-2);
+    let g2 = fma(2.1702237e-4, f, 1.2439679e-3);
+    let h = fma(g2, f2, g1);
+    let q = fma(h, f2, g0);
+    let p = fma(q, t1 * f, t1);
+    p * t2
+}
+
+/// Same reduction as [`exp10_checked`], but a single exponent-field
+/// construction (no k1/k2 split) instead of two -- faster, narrower-
+/// domain tier, same pairing as `exp2`/`exp2_checked`. Valid while `k`
+/// (see `exp10_checked`'s own doc comment) stays in `[-126,128)`.
+#[inline(always)]
+pub fn exp10(x: f32) -> f32 {
+    const ROUND_MAGIC: f32 = 12582912.0;
+    let kb = fma(x, std::f32::consts::LOG2_10, ROUND_MAGIC);
+    let kr = kb - ROUND_MAGIC;
+    let d = fma(-kr, LOG10_2_HI, x);
+    let d = fma(-kr, LOG10_2_LO, d);
+    let fr = d * std::f32::consts::LOG2_10;
+    let adjust = if fr < 0.0 { 1.0 } else { 0.0 };
+    let k = kr - adjust;
+    let f = fr + adjust;
+    let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
+    let f2 = f * f;
+    let g0 = fma(2.4022985e-1, f, 6.93147e-1);
+    let g1 = fma(9.678826e-3, f, 5.548333e-2);
+    let g2 = fma(2.1702237e-4, f, 1.2439679e-3);
+    let h = fma(g2, f2, g1);
+    let q = fma(h, f2, g0);
+    fma(q, exp2int * f, exp2int)
+}
+
 // sin(x) ~= x + x^3*p(x^2) on [-pi/2, pi/2], degree-9 minimax (relative
 // error ~6.1e-9), fitted with lolremez. Estrin evaluation, 2 fma chains.
 //

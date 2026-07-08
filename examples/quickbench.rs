@@ -75,6 +75,8 @@ fn main() {
     bench!("exp2", exp2);
     bench!("exp2_checked", exp2_checked);
     bench!("std exp2", |x: f32| x.exp2());
+    bench!("exp10", exp10);
+    bench!("exp10_checked", exp10_checked);
     bench!("log_2", log_2);
     bench!("std log2", |x: f32| x.log2());
     bench!("sin", sin);

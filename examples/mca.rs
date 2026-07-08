@@ -106,6 +106,8 @@ fn main() {
         "cbrt_fast",
         "exp2",
         "exp2_checked",
+        "exp10",
+        "exp10_checked",
         "log2",
         "sin",
         "sin_checked",

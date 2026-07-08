@@ -13,6 +13,8 @@ All functions auto-vectorize, it's a hard requirement
           cbrt_accurate |    0.000   |     1     |    0    |    0
                    exp2 |    0.030   |     1     |  0.000  |    1
            exp2_checked |    0.016   |     1     |  0.000  |    1
+                  exp10 |    0.034   |     2     | (no std exp10)
+          exp10_checked |    0.034   |     2     | (no std exp10)
                    log2 |    0.003   |     3     |  0.000  |    1
         sin (|x|<1.3e7) |    0.065   |   1183    |  0.003  |    1
         cos (|x|<1.3e7) |    0.293   |   2780    |  0.002  |    1
@@ -61,6 +63,8 @@ cbrt_accurate | 17.0 ns | 22.0 ns | 1.3x
   cos_checked | 30.3 ns | 12.8 ns | 0.4x
          exp2 |  8.5 ns | 13.3 ns | 1.6x
  exp2_checked | 13.3 ns | 13.3 ns | 1.0x
+        exp10 | 12.1 ns |     -   |  -
+exp10_checked | 17.5 ns |     -   |  -
          log2 | 13.1 ns | 14.9 ns | 1.1x
           sin | 10.9 ns | 12.9 ns | 1.2x
   sin_checked | 29.2 ns | 12.9 ns | 0.4x
@@ -99,6 +103,8 @@ cbrt_accurate | 0.67 ns  | 3.93 ns | 5.9x
   cos_checked | 1.61 ns  | 3.41 ns | 2.1x
          exp2 | 0.23 ns  | 3.13 ns | 13.7x
  exp2_checked | 0.48 ns  | 3.13 ns | 6.6x
+        exp10 | 0.33 ns  |     -   |  -
+exp10_checked | 0.57 ns  |     -   |  -
          log2 | 0.53 ns  | 4.10 ns | 7.8x
           sin | 0.22 ns  | 3.10 ns | 14.4x
   sin_checked | 1.49 ns  | 3.10 ns | 2.1x
@@ -135,6 +141,8 @@ cbrt                |          35.06 |             1.629
 cbrt_accurate       |          59.06 |             3.129
 exp2                |          35.00 |             0.841
 exp2_checked        |          43.06 |             1.399
+exp10               |          52.00 |             1.565
+exp10_checked       |          72.06 |             2.736
 log2                |          34.23 |             1.556
 sin                 |          46.00 |             1.151
 sin_checked         |         109.02 |             5.476
