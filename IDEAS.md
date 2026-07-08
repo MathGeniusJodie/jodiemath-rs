@@ -260,14 +260,24 @@ brainstorm backlog lives at the bottom of this file.
   `src/lib.rs` untouched, `tune.rs`'s scratch scipy-seed addition also
   reverted.
 
-- **atan2 division-residual correction (2026-07-07)**: added a first-order
-  Taylor correction (`atan'(d)*e`) for atan2's `y/x` division rounding.
-  First measurement looked like a 10x win (avg ulp 0.136→0.0134) until the
-  max-ulp column showed a NaN sentinel — `d=inf` made the correction NaN.
-  After guarding with `corr.is_finite()`, the "10x win" evaporated entirely
-  (0.136 vs 0.1362, statistically identical) — atan's own poly-fit error
-  already dominates atan2's total error. Real cost for zero benefit: latency
-  +13.9%, throughput +42.9%. Reverted.
+- **atan2 division-residual correction (2026-07-07, re-tested 2026-07-08
+  after atan_poly's degree bump, same conclusion holds)**: added a
+  first-order Taylor correction (`atan'(d)*e`) for atan2's `y/x` division
+  rounding. First measurement looked like a 10x win (avg ulp 0.136→0.0134)
+  until the max-ulp column showed a NaN sentinel — `d=inf` made the
+  correction NaN. After guarding with `corr.is_finite()`, the "10x win"
+  evaporated entirely (0.136 vs 0.1362, statistically identical) —
+  atan's own poly-fit error already dominates atan2's total error. Real
+  cost for zero benefit: latency +13.9%, throughput +42.9%. Reverted.
+  Re-tested after `atan_poly` dropped from max ulp 18 to 4 (2026-07-08,
+  same session as the degree bump) on the theory that "atan's own error
+  dominates" might no longer hold at the lower error level — it still
+  does: avg/max ulp unchanged (0.0684/3 → 0.0693/3, noise-level), and the
+  cost was almost identically bad (latency +13.1%, throughput +41.8%,
+  nearly the exact same percentages as the original 2026-07-07 test).
+  Even atan's much-improved ~4 ulp residual still swamps a sub-ulp
+  division-rounding correction. Reverted again; this dependency is now
+  closed for good barring a much larger atan accuracy improvement.
 
 - **exp: replace the k1/k2 split with a k-clamp (2026-07-08)**: the
   framing ("split exists only because round can push k to 128, an
@@ -880,7 +890,3 @@ legitimate direction here, unlike on most targets.
   LOG2_E) had before exp's Cody-Waite fix; do it properly from day one
   with a LOG10_2_HI/LO-style split (constants already exist for log10).
 
-- **atan2_checked**: revisit the rejected division-residual correction now
-  that atan_poly is a 3/3 rational (2026-07-08, max ulp 18 -> 4) instead
-  of 2/2 — the rejection reason was "atan's own error dominates," which
-  no longer clearly holds at this much lower error level.
