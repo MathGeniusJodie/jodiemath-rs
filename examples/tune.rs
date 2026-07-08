@@ -110,6 +110,44 @@ fn log2_c(x: f32, c: &[f32]) -> f32 {
     fma(p, s, k)
 }
 
+// IDEAS.md's "atanh-form reduction" idea, tried and rejected (2026-07-08):
+// t = (m-1)/(m+1) is an *odd* series in t (half the domain of s = m-1,
+// ~0.172 vs ~0.414, thanks to odd symmetry), so log2(m) = c_const*t*Q(t^2)
+// needs far fewer coefficients than log_2's shipped s*P(s) for the same
+// *mathematical* accuracy (scipy: degree-4 Q, 5 coefficients, hits max
+// relative error 1.2e-11 vs the shipped degree-9/10-coefficient form's
+// 4.1e-9 -- a real ~1000x tighter fit with half the coefficients).
+// Implemented directly in src/lib.rs and measured for real: accuracy
+// actually regressed slightly (fuzz avg 0.003->0.0053, max 3->5 --
+// log_2 was already deep in pure-rounding-noise territory, far past the
+// point where a tighter *mathematical* fit moves the *measured* ulp), and
+// latency got much *worse*, not better: mca 34.23->49.05 cyc (+43%),
+// with throughput barely moving (1.556->1.521, ~2%). The one division
+// this form needs (t = s/(m+1)) depends on `s`, available from the very
+// first step of the critical path, so unlike cbrt's early-starting rcp
+// there's no independent work for it to hide behind -- its latency (this
+// file's own atanh/tanh entries put a division around ~11 cyc) plus the
+// reduced-but-still-serial poly evaluation came out *slower* overall than
+// the original's longer but division-free chain. Reverted; src/lib.rs
+// unchanged. c[0] is Q(0) = atanh'(0)/1 = 1.0 exactly (mathematically
+// required, like log_2_normal's own c[0]), tuned with tune_fixed0.
+// c_const = 2*log2(e) is likewise exact, not a free parameter.
+const LOG2_ATANH_CONST: f32 = 2.0 * std::f32::consts::LOG2_E;
+#[inline(always)]
+fn log2_atanh_c(x: f32, c: &[f32]) -> f32 {
+    let e = (x.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23;
+    let m = f32::from_bits((x.to_bits() as i32).wrapping_sub(e << 23) as u32);
+    let k = e as f32;
+    let s = m - 1.0;
+    let t = s / (m + 1.0);
+    let u = t * t;
+    let u2 = u * u;
+    let r0 = fma(c[1], u, c[0]);
+    let r1 = fma(c[3], u, c[2]);
+    let q = fma(c[4], u2 * u2, fma(r1, u2, r0));
+    fma(t * q, LOG2_ATANH_CONST, k)
+}
+
 fn score(
     f: &dyn Fn(f32, &[f32]) -> f32,
     reference: &dyn Fn(f64) -> f64,
@@ -507,6 +545,20 @@ fn main() {
             -0.23961738, 0.20460059, -0.19106273, 0.18617496, -0.10994955,
         ];
         tune_fixed0("log2", &log2_c, &|x| x.log2(), &grid, &init);
+    }
+    if which.contains("log2atanh") {
+        let mut grid = vec![];
+        let mut b = 0x0080_0000u32;
+        while b < 0x7f80_0000 {
+            grid.push(f32::from_bits(b));
+            b += 1499;
+        }
+        // scipy-derived seed (least_squares minimax fit of Q(u) against
+        // atanh(t)/t, u=t^2, t=(m-1)/(m+1) over m in [sqrt2/2, sqrt2)) --
+        // not zero-seeded, see this file's own zero-seed-trap lesson.
+        // c[0] = 1.0 exactly (Q(0) = atanh'(0) = 1), excluded from tuning.
+        let init = [1.0, 0.33333333, 0.20000162, 0.14269426, 0.11772234];
+        tune_fixed0("log2_atanh", &log2_atanh_c, &|x| x.log2(), &grid, &init);
     }
     if which.contains("lnlog10") {
         let mut grid = vec![];

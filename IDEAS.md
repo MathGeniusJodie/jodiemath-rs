@@ -658,6 +658,38 @@ brainstorm backlog lives at the bottom of this file.
   trusting tune.rs's own reported numbers) is not optional, it's load-
   bearing.**
 
+- **log_2: atanh-form reduction, `t=(m-1)/(m+1)`, `log2(m)=c·t·Q(t²)`
+  (2026-07-08), implemented and measured — mathematically a huge win,
+  practically a clear loss on both axes.** Confirmed the backlog's core
+  claim first with a quick scipy fit: a degree-4 `Q` (5 coefficients) over
+  `t∈[-0.172,0.172]` (odd symmetry, half the domain of `s=m-1`'s ~0.414)
+  hits max relative error 1.2e-11 — about 1000x tighter than the shipped
+  degree-9/10-coefficient `s·P(s)` form's 4.1e-9, with half the
+  coefficients. Implemented directly in `log_2_normal` and measured for
+  real: accuracy actually got slightly *worse* (fuzz avg ulp
+  0.0030→0.0053, max 3→5) — `log_2` was already deep in pure f32-rounding-
+  noise territory (avg 0.003 ulp), far past where a tighter *mathematical*
+  fit moves the *measured* result. Latency got substantially worse, not
+  better: mca 34.23→49.05 cyc (+43%), with throughput barely moving
+  (1.556→1.521, only ~2%). Root cause: the one division this form needs
+  (`t = s/(m+1)`) depends on `s`, available from the very first step of
+  the critical path — unlike cbrt's early-starting `rcp` (independent of
+  the seed/correction chain, so its latency hides behind other work),
+  there's nothing here for the division to overlap with, so its latency
+  (~11 cyc per this file's other division-cost notes) plus the reduced-
+  but-still-serial poly evaluation came out slower overall than the
+  original's longer, division-free chain. Reverted; `src/lib.rs`
+  unchanged (kept `log2_atanh_c` in `tune.rs` as reference infra, same
+  precedent as `cbrt_shiftmul_c`/`cbrt_throughput_c`). **General lesson,
+  same shape as the exp2-centering and cbrt_throughput-tuning entries
+  above: a dramatically tighter *mathematical* approximation doesn't
+  automatically translate into a better *measured* result once a function
+  is already accurate enough that f32 rounding, not polynomial degree, is
+  the binding constraint — and "one division buys half the poly" only
+  pays off if the division can start early enough to overlap with other
+  work; a division gated on the very first reduction step never gets that
+  chance.**
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
@@ -719,13 +751,6 @@ legitimate direction here, unlike on most targets.
   if a LUT idea below ever survives screening.
 
 ## log_2 / ln / log10
-
-- **atanh-form reduction**: t = (m-1)/(m+1), log2(m) = (2/ln2)·atanh(t),
-  an *odd* series in t — poly in t² needs ~5 coefficients where s = m-1
-  needs 10 (t is bounded by ~0.172 vs s's ~0.414, and odd symmetry halves
-  the terms). One division buys ~half the poly and one less Estrin level.
-  Division-on-critical-path caveat as above; the classic tradeoff every
-  libm makes the other way, but this CPU's idle divider may flip it.
 
 - **log1p small-|x| dedicated poly branch**: log1p currently always pays a
   full ln poly + division; a Taylor/minimax branch for |x| < 0.25 (like
