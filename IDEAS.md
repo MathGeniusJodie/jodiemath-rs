@@ -609,6 +609,26 @@ branches, no scalar-only intrinsics unless the vector form exists).
   denser tuning grid (closer to exhaustive) or accepting the Horner
   form's accuracy as a hard constraint while searching for a different
   Estrin-compatible coefficient set — not attempted further this round.
+- **erf_poly: Horner -> Estrin restructuring — done, tested, kept
+  (2026-07-07), immediate retry of the acos_poly idea just above on a
+  different poly with the same 6-deep-Horner shape.** `erf_poly` (erf's
+  tail branch, degree-6, 7 coefficients) is the same "odd one out" shape
+  acos_poly was, but with one important difference: it's used by exactly
+  one caller (`erf` itself), so there's no cross-function accuracy
+  guarantee to protect the way asin's use of acos_poly was — lower risk
+  to try. Applied the identical Estrin regrouping (3 fma's deep instead
+  of 6, same coefficients, 2 extra plain multiplies for `x²`/`x⁴`).
+  Unlike the acos_poly attempt, this one turned out to be genuinely
+  accuracy-neutral: exhaustive sweep avg/max ulp exactly unchanged
+  (0.319/5, matching the pre-change documented baseline precisely) —
+  fma reassociation doesn't uniformly cost accuracy, it has to be
+  checked per poly rather than assumed either way from one data point.
+  mca showed an even better result than acos_poly's own attempt: both
+  latency *and* throughput improved together (102.74->91.74 cyc, -10.7%;
+  3.163->2.871 cyc/elem, -9.2%) rather than trading a little throughput
+  for latency. `erfc` (same accuracy.rs filter substring, doesn't even
+  use `erf_poly`) confirmed unaffected as a sanity check: 0.311/109,
+  bit-for-bit matching its own pre-change baseline. Kept.
 - **atan poly refit — done, tested, kept (2026-07-07)**, same recipe as
   the asin mid-branch refit just above, extending `examples/tune.rs` with
   `atan_poly_c`. Turned out atan was already close to a strong local

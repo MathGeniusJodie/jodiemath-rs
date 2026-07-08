@@ -134,6 +134,14 @@ IDEAS.md for the before/after measurements):
   turned out to be more accurate than plain exp2 even within the
   previously-tested range (avg ulp 0.631 -> 0.319, moving erf from
   *over* budget to comfortably under it).
+- **improved**: `erf_poly` (erf's tail poly) regrouped from a 6-deep
+  Horner chain to Estrin (3 fma's deep instead of 6), the same
+  restructuring tried on `acos_poly` immediately before it. Unlike that
+  attempt, this one is accuracy-neutral on the exhaustive sweep (avg/max
+  ulp exactly unchanged, 0.319/5) -- fma reassociation doesn't always
+  cost accuracy, it has to be checked per poly. mca: 102.74->91.74 cyc
+  latency (-10.7%), 3.163->2.871 cyc/elem throughput (-9.2%), both axes
+  improved together.
 - **fixed**: powf composed the *checked* log_2 with the *unchecked* exp2 --
   the expensive half bought correctness the cheap half then threw away.
   Unlike erf/erfc, the doc comment here was already honest about the
@@ -681,7 +689,7 @@ acos                |          37.11 |             0.820
 atan                |          57.09 |             1.410
 atan2               |          57.17 |             1.467
 tan                 |          71.02 |             2.532
-erf                 |         102.74 |             3.163
+erf                 |          91.74 |             2.871
 erfc                |          78.09 |             2.599
 hypot               |          21.11 |             0.766
 powf                |          98.03 |             3.898

@@ -1258,16 +1258,33 @@ pub fn tan(x: f32) -> f32 {
 }
 
 // degree-6 minimax poly feeding erf's exp2-based tail (|x| >= 0.28). Ported
-// from jodiemath's erff_poly.
+// from jodiemath's erff_poly. Regrouped from a 6-deep Horner chain to
+// Estrin (2026-07-07, same restructuring tried on acos_poly immediately
+// before this) -- 3 fma's deep instead of 6, same 6 fma's total plus 2
+// extra plain multiplies for x^2/x^4, same coefficients unchanged. Unlike
+// acos_poly's attempt, this one turned out to be accuracy-neutral on the
+// exhaustive sweep (avg/max ulp exactly unchanged, 0.319/5) -- fma
+// reassociation doesn't always cost accuracy, it has to be checked per
+// poly, not assumed either way. mca: 102.74->91.74 cyc latency (-10.7%),
+// 3.163->2.871 cyc/elem throughput (-9.2%) -- both axes improved
+// together here, unlike acos_poly's case (small throughput cost there).
 #[inline(always)]
 fn erf_poly(x: f32) -> f32 {
-    let u = 3.118769e-4f32;
-    let u = fma(u, x, -4.67225e-3);
-    let u = fma(u, x, 3.3162573e-2);
-    let u = fma(u, x, -1.5214339e-1);
-    let u = fma(u, x, -9.1684705e-1);
-    let u = fma(u, x, -1.6282598);
-    fma(u, x, 3.1332566e-5)
+    let a6 = 3.118769e-4f32;
+    let a5 = -4.67225e-3f32;
+    let a4 = 3.3162573e-2f32;
+    let a3 = -1.5214339e-1f32;
+    let a2 = -9.1684705e-1f32;
+    let a1 = -1.6282598f32;
+    let a0 = 3.1332566e-5f32;
+    let x2 = x * x;
+    let x4 = x2 * x2;
+    let b0 = fma(a1, x, a0);
+    let b1 = fma(a3, x, a2);
+    let b2 = fma(a5, x, a4);
+    let c0 = fma(b1, x2, b0);
+    let c1 = fma(a6, x2, b2);
+    fma(c1, x4, c0)
 }
 
 /// A Pade approximant near 0 (where the tail form loses precision to
