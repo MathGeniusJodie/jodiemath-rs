@@ -1135,6 +1135,33 @@ brainstorm backlog lives at the bottom of this file.
   minutes what three separate refit attempts across this session
   couldn't.**
 
+- **atan_poly Horner→Estrin restructuring (2026-07-08), tested and
+  rejected — the one poly in this family that hadn't had this exact
+  audit yet, and it measured backwards on every axis.** `sinf_poly` and
+  `erf_poly` are already Estrin (adopted); `acos_poly`'s and erfc's n/d
+  rational's own Estrin attempts were already tried and rejected
+  (accuracy cost); `atan_poly` itself — a 3/3 rational, still plain
+  3-deep Horner in both numerator and denominator — was the one
+  remaining untested case in this recurring audit. Regrouped both
+  chains into 2-deep Estrin (same coefficients, pure reassociation, no
+  new division, no algorithmic change). Real fuzz: avg ulp 0.0681→0.0721
+  (worse), max ulp 3→5 (worse) — already disqualifying on its own. mca
+  made the case unambiguous regardless: latency did improve modestly
+  (61.09→58.09 cyc, -4.9%) but throughput got severely worse
+  (1.491→3.819 cyc/elem, **+156%**, more than 2.5x) — a much larger,
+  more one-sided regression than any other Estrin attempt in this file
+  has shown, for a smaller latency win than several of the successful
+  ones. Not adopted; `src/lib.rs`/`mca_target.rs`/`mca.rs`/
+  `accuracy.rs` scratch reverted, nothing kept as reference infra (the
+  test function is a handful of lines, cheap to reproduce). This closes
+  out the "audit every Horner-chain poly in this crate for an Estrin
+  win" line of investigation this file has run across several
+  iterations — every candidate has now been tried at least once
+  (`sinf_poly`/`erf_poly` adopted, `acos_poly`/erfc's n/d/`asin_small`/
+  `sinh_small`/`atan_poly` all rejected), so this specific recurring
+  audit is complete; a genuinely new poly would need to exist before
+  it's worth revisiting.
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
