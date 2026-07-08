@@ -279,9 +279,22 @@ branches, no scalar-only intrinsics unless the vector form exists).
 
 ## cbrt family
 
-- **Quantized/descent refit of the 4 correction coefficients** in cbrt_normal
-  (`run_descent` exists but used random sampling; drive it with the exhaustive
-  sweep instead).
+- **Quantized/descent refit of the 4 correction coefficients** in
+  cbrt_normal -- already done, and the legacy tool this entry pointed at
+  removed as dead code (2026-07-07). The random-sampling `run_descent`
+  this entry named was a leftover early exploratory tool: unused (its
+  only caller, `#[test] fn descent2`, was already commented out) and
+  fully superseded by `examples/tune.rs`'s later, proper coordinate
+  descent (`cbrt_normal_c`, driven by an exhaustive grid, not random
+  samples -- exactly what this entry asked for). The current shipped
+  `cbrt_normal` coefficients (`-0.33333147, 0.22220612, -0.17394388,
+  0.14823665`) already came from that tuner, from an earlier session
+  (see readme.md/jodiemath-workflow memory). Deleted `run_descent` and
+  the commented-out `descent2` test (with it, the now-unused `use
+  rand::Rng`/`use rand::RngExt` imports in that module) -- confirmed
+  dead via the compiler's own "never used" warning, not just unreferenced
+  in this file. `rand` itself stays a dev-dependency (still actively used
+  by `examples/accuracy.rs`).
 - **Seed constant joint search — tried, measured, rejected (2026-07-07):
   degree-2 (dropping c4) can't come close to budget, at any seed.** Wrote
   a standalone (isolated, not touching the shipped code) joint search:
