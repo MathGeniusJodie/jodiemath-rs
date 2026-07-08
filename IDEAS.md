@@ -1317,8 +1317,28 @@ legitimate direction here, unlike on most targets.
   set of coefficient vectors that round correctly at every domain point is
   an intersection of half-planes (linear in the coefficients) — an LP/
   interval search can find the *global* optimum rather than a local one.
-  Realistic for sinf_poly (4 coeffs), cbrt's correction (4), expm1's Pade
-  (5), atan_poly (4).
+  Tested on cbrt's correction poly (4 coeffs): modeled the downstream
+  error-propagation tolerance for cbrt_normal's `ss*(1+r*p(r))` combine as a
+  per-sample-point linear constraint, ran `scipy.optimize.linprog` to find
+  the coefficient vector needing the least tolerance headroom (`t=0.56`,
+  i.e. a feasible fit using only 56% of a conservative 1-ulp budget
+  everywhere sampled) — genuinely a different search technique from
+  least-squares/coordinate-descent, and it delivered on its own promise: a
+  real domain-matched fuzz + exhaustive sweep confirmed max ulp 3 -> 2. But
+  avg ulp got *worse*, 0.3125 -> 0.4487 (confirmed both quick-fuzz and
+  exhaustive, stable, ~43% relative regression) — same failure shape as
+  the acos_poly basin-hop: an LP feasibility search finds a *vertex* of the
+  feasible polytope, which is inherently a minimax-flavored (Chebyshev-like)
+  solution that trades typical-case error for a tighter worst-case bound,
+  the opposite of this crate's established priority (this exact poly's own
+  last shipped refit explicitly optimized avg ulp with max ulp held
+  constant, not the reverse). A secondary L1-minimization pass at a looser
+  fixed tolerance just reconverges to the plain analytic Taylor
+  coefficients (no rounding-awareness), which the doc comment already shows
+  is worse on avg than the current tuned poly. Rejected; reverted. Still
+  realistic to try on sinf_poly (4 coeffs) or expm1's Pade (5) if a
+  worst-case bound ever becomes the binding constraint there instead of
+  avg ulp -- but don't expect a free lunch on avg ulp from this technique.
 
 - **Batch/slice API tier (`exp2_slice(&[f32], &mut [f32])` etc.)**: the
   crate's whole perf story assumes the *caller's* loop auto-vectorizes;
