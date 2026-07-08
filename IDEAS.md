@@ -1386,7 +1386,7 @@ brainstorm backlog lives at the bottom of this file.
   less edge-case work to remove, but the same pattern paid off again —
   worth checking any other two-argument function with even a couple of
   unconditional edge-case selects the next time this backlog runs dry.
-  Commit `<pending>`.
+  Commit `f623569`.
 
 ---
 
