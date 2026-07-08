@@ -267,6 +267,25 @@ brainstorm backlog lives at the bottom of this file.
   happened, but mca showed throughput getting *worse* (2.097→2.158
   cyc/elem) instead of better. Reverted.
 
+- **atanh via a single log1p call, `0.5*log1p(2x/(1-x))` instead of
+  `0.5*(log1p(x)-log1p(-x))` (2026-07-08)**: algebraically equivalent (the
+  identity checks out, and unlike the backlog's framing no `mulsign` turned
+  out to be needed at all — the direct formula handles every edge, incl.
+  signed zero, x=±1, and |x|>1, for free). Implemented and fuzzed: **real
+  regression**, max ulp 3→31303 (avg only 0.031→0.046, so this is very much
+  a tail-only blowup, worst x≈-0.999998). Root cause: the two-log1p form
+  passes x and -x to log1p *completely unrounded* (they're the literal
+  input, no arithmetic before the call), so whatever error exists is only
+  log1p's own baseline error for that input. The one-log1p form instead
+  computes u=2x/(1-x) via a division that rounds once — a tiny, ordinary
+  rounding error — but log1p's derivative 1/(1+u) diverges as u→-1 (exactly
+  atanh's own singularity, which u inherits), so that tiny upstream
+  rounding error gets amplified by ~5 orders of magnitude before log1p even
+  starts its own computation. Halving the op count traded away the
+  "feed log1p an exact literal" property that was quietly doing a lot of
+  work. Reverted immediately (before mca — the accuracy regression alone
+  disqualifies it).
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
@@ -447,13 +466,6 @@ legitimate direction here, unlike on most targets.
   actually degrades, don't trust the inherited threshold) was never done.
 
 ## hypot / misc
-
-- **atanh via single log1p**: atanh(x) = 0.5·log1p(2x/(1−x)) on |x| with
-  mulsign, replacing *two* full log1p/ln evaluations with one plus a
-  division (1−|x| is exact by Sterbenz for |x| ≥ 0.5, and well-conditioned
-  below). Roughly halves atanh's dominant cost; check accuracy near
-  x → 1 (division amplifies) and tiny x (log1p's small branch idea above
-  compounds with this).
 
 - **remainder_checked beyond 2^24**: double-float q (qh, ql) like
   sin_checked's reduction, with two correction candidates instead of one.
