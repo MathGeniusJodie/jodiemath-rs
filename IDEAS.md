@@ -121,6 +121,21 @@ brainstorm backlog lives at the bottom of this file.
 
 ## log_2 / ln / log10
 
+- **Integer koff: fold the tiny-branch exponent offset into `e` as an
+  integer add before the int->float convert (2026-07-08)**: changed
+  `let k = e as f32 + koff;` (koff: f32, 0.0 or -24.0) to `let k = (e +
+  koff) as f32;` (koff: i32, 0 or -24) across `log_2_normal`/`ln_normal`/
+  `log10_normal`/`log2_df` (a public signature change, `koff: f32` ->
+  `i32`, updated at the one `mca_target.rs` call site too). Verified
+  bit-exact (expected -- both forms compute the same exact-integer sum,
+  just in a different order) and mca showed **zero measurable change on
+  any axis, to the reported decimal** (log2/ln/log10/powf all identical
+  before and after) -- LLVM already performs this exact reordering
+  itself regardless of the source-level int-then-convert vs. convert-
+  then-add ordering, so the "micro-optimization" was already happening
+  for free. Reverted rather than keep a public API signature change
+  (`f32`->`i32`) for literally zero benefit.
+
 - **ln_normal/log10_normal: fuse the trailing `+ k*LN2_LO` into the
   preceding fma, `fma(k, LN2_LO, fma(p, s, k_hi))` instead of `fma(p, s,
   k_hi) + k * LN2_LO` (2026-07-08)**: the backlog framed this as "one op
@@ -767,10 +782,6 @@ legitimate direction here, unlike on most targets.
   everything downstream (asinh/acosh/atanh/log1p/powf all route through
   these).
 
-- **Integer koff**: the tiny-branch offset is applied as a float add
-  (`e as f32 + koff`); folding it into `e` as an integer subtract before
-  the convert drops a float op from the k path. k is off the critical
-  path, so this is a throughput-only micro-candidate.
 
 ### exp family
 
