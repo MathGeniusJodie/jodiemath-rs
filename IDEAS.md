@@ -1462,7 +1462,7 @@ brainstorm backlog lives at the bottom of this file.
   `_normal`/`_checked`-adjacent pair in a family gets this treatment,
   check its siblings in the same family too — `cbrt`/`cbrt_normal` and
   `cbrt_accurate`/`cbrt_accurate_normal` are structurally the same
-  pattern, and both paid off equally well. Commit `<pending>`.
+  pattern, and both paid off equally well. Commit `c80e1fa`.
 
 ---
 
