@@ -16,6 +16,7 @@ All functions auto-vectorize, it's a hard requirement
                   exp10 |    0.034   |     2     | (no std exp10)
           exp10_checked |    0.034   |     2     | (no std exp10)
                    log2 |    0.003   |     3     |  0.000  |    1
+   log2_unchecked (+)   |    0.006   |     3     | (bit-identical to log2 on its domain)
         sin (|x|<1.3e7) |    0.065   |   1183    |  0.003  |    1
         cos (|x|<1.3e7) |    0.293   |   2780    |  0.002  |    1
  sin_checked (|x|<=1e6) |    0.036   |     2     |  0.000  |    1
@@ -30,7 +31,9 @@ All functions auto-vectorize, it's a hard requirement
                         | jodie avg  | jodie max | std avg | std max
 ------------------------|------------|-----------|---------|--------
                      ln |    0.117   |     3     |  0.000  |    1
+    ln_unchecked (+)    |    0.235   |     3     | (bit-identical to ln on its domain)
                   log10 |    0.127   |     3     |  0.000  |    0
+  log10_unchecked (+)   |    0.255   |     3     | (bit-identical to log10 on its domain)
                   log1p |    0.106   |     4     |  0.000  |    0
         exp (in-domain) |    0.091   |     4     |  0.000  |    1
       expm1 (in-domain) |    0.138   |     6     |  0.000  |    0
@@ -72,10 +75,13 @@ cbrt_accurate | 17.0 ns | 22.0 ns | 1.3x
         exp10 | 12.1 ns |     -   |  -
 exp10_checked | 17.5 ns |     -   |  -
          log2 | 13.1 ns | 14.9 ns | 1.1x
+log2_unchecked |  8.5 ns |     -   |  -
           sin | 10.9 ns | 12.9 ns | 1.2x
   sin_checked | 29.2 ns | 12.9 ns | 0.4x
            ln | 15.3 ns | 14.5 ns | 0.9x
+  ln_unchecked |  8.8 ns |     -   |  -
         log10 | 14.3 ns | 16.6 ns | 1.2x
+log10_unchecked|  8.8 ns |     -   |  -
         log1p | 16.5 ns | 21.1 ns | 1.3x
           exp |  9.9 ns |  9.5 ns | 1.0x
         expm1 | 11.3 ns | 13.7 ns | 1.2x
@@ -117,10 +123,13 @@ cbrt_accurate | 0.67 ns  | 3.93 ns | 5.9x
         exp10 | 0.33 ns  |     -   |  -
 exp10_checked | 0.57 ns  |     -   |  -
          log2 | 0.53 ns  | 4.10 ns | 7.8x
+log2_unchecked | 0.23 ns  |     -    |  -
           sin | 0.22 ns  | 3.10 ns | 14.4x
   sin_checked | 1.49 ns  | 3.10 ns | 2.1x
            ln | 0.55 ns  | 3.82 ns | 7.0x
+  ln_unchecked | 0.26 ns  |     -    |  -
         log10 | 0.53 ns  | 5.30 ns | 10.1x
+log10_unchecked| 0.26 ns  |     -    |  -
         log1p | 0.60 ns  | 6.28 ns | 10.4x
           exp | 0.31 ns  | 2.47 ns | 8.0x
         expm1 | 0.46 ns  | 5.56 ns | 12.1x
@@ -160,6 +169,7 @@ exp2_checked        |          43.06 |             1.399
 exp10               |          52.00 |             1.565
 exp10_checked       |          72.06 |             2.736
 log2                |          34.23 |             1.556
+log2_unchecked      |          34.23 |             0.958
 sin                 |          46.00 |             1.151
 sin_checked         |         109.02 |             5.476
 cos                 |          54.00 |             1.406
@@ -169,7 +179,9 @@ cospi               |          46.00 |             1.150
 sind                |          46.00 |             1.151
 cosd                |          54.00 |             1.406
 ln                  |          56.91 |             1.626
+ln_unchecked        |          38.22 |             1.084
 log10               |          56.91 |             1.626
+log10_unchecked     |          38.22 |             1.084
 log1p               |          61.16 |             2.276
 exp                 |          42.00 |             1.327
 expm1               |          74.00 |             1.779

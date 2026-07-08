@@ -441,6 +441,11 @@ fn main() {
     if run("log") {
         let s = measure!(everywhere, log_2, log2_u35);
         report("log_2", &s, t0);
+        // positive_normal: log_2_unchecked's documented contract (see its
+        // doc comment) -- undefined for zero/negative/denormal/inf/nan.
+        let positive_normal = |x: f32| x >= f32::MIN_POSITIVE && x.is_finite();
+        let s = measure!(positive_normal, log_2_unchecked, log2_u35);
+        report("log_2_unchecked (+)", &s, t0);
         let s = measure!(everywhere, |x: f32| x.log2(), log2_u35);
         report("std log2", &s, t0);
     }
@@ -588,12 +593,18 @@ fn main() {
     if run("ln") {
         let s = measure!(everywhere, ln, log_u35);
         report("ln", &s, t0);
+        let positive_normal = |x: f32| x >= f32::MIN_POSITIVE && x.is_finite();
+        let s = measure!(positive_normal, ln_unchecked, log_u35);
+        report("ln_unchecked (+)", &s, t0);
         let s = measure!(everywhere, |x: f32| x.ln(), log_u35);
         report("std ln", &s, t0);
     }
     if run("log10") {
         let s = measure!(everywhere, log10, log10_u10);
         report("log10", &s, t0);
+        let positive_normal = |x: f32| x >= f32::MIN_POSITIVE && x.is_finite();
+        let s = measure!(positive_normal, log10_unchecked, log10_u10);
+        report("log10_unchecked (+)", &s, t0);
         let s = measure!(everywhere, |x: f32| x.log10(), log10_u10);
         report("std log10", &s, t0);
     }

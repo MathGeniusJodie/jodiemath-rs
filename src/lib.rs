@@ -100,6 +100,20 @@ pub fn log_2_normal(x: f32, koff: f32) -> f32 {
     fma(p, s, k)
 }
 
+/// log_2 without domain checks: valid for positive normal finite x only
+/// (no handling for zero, negative, denormal, inf, or nan -- those give a
+/// plausible-looking but wrong finite value instead of NaN/-inf). Mirrors
+/// exp2/exp2_checked's fast/full-safety split, just with the "safe by
+/// default" name (`log_2`) already taken by the checked tier, so this one
+/// gets the `_unchecked` suffix instead. Drops the denormal-rescale
+/// multiply and both post-hoc selects log_2 pays on every call (branchless
+/// selects still cost real ops even when the branch not taken is a no-op
+/// value), at the cost of undefined output outside the stated domain.
+#[inline(always)]
+pub fn log_2_unchecked(x: f32) -> f32 {
+    log_2_normal(x, 0.0)
+}
+
 /// exp2 without domain checks: valid for x in [-126, 128), i.e. normal
 /// (non-denormal, finite, nonzero) results only. Outside that range the
 /// exponent construction wraps around and the result is garbage (including
@@ -992,6 +1006,14 @@ pub fn ln_normal(x: f32, koff: f32) -> f32 {
     fma(k, LN2_LO, fma(p, s, k_hi))
 }
 
+/// ln without domain checks: valid for positive normal finite x only, see
+/// log_2_unchecked for the general rationale (same fast/full-safety split,
+/// same reason for the `_unchecked` suffix instead of `ln`/`ln_checked`).
+#[inline(always)]
+pub fn ln_unchecked(x: f32) -> f32 {
+    ln_normal(x, 0.0)
+}
+
 /// log10(x), same Cody-Waite-combine approach as ln (see ln's own doc
 /// comment for why this avoids the naive `log_2(x) * LOG10_2`'s double
 /// rounding).
@@ -1044,6 +1066,13 @@ pub fn log10_normal(x: f32, koff: f32) -> f32 {
     let p = fma(r2, s4, r0);
     let k_hi = k * LOG10_2_HI; // exact, see LN2_HI's comment (same trick)
     fma(k, LOG10_2_LO, fma(p, s, k_hi))
+}
+
+/// log10 without domain checks: valid for positive normal finite x only,
+/// see log_2_unchecked for the general rationale.
+#[inline(always)]
+pub fn log10_unchecked(x: f32) -> f32 {
+    log10_normal(x, 0.0)
 }
 
 /// ln(1+x), accurate for small |x| (unlike the naive `ln(1.0 + x)`, which

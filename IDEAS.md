@@ -565,6 +565,36 @@ brainstorm backlog lives at the bottom of this file.
   call `ln_normal`/`log10_normal`, so this fix is local to the two public
   functions, not felt downstream.
 
+- **log_2_unchecked/ln_unchecked/log10_unchecked, implemented (2026-07-08)**:
+  the log family's "checked" public functions (`log_2`, `ln`, `log10`) pay
+  a denormal-rescale multiply + two post-hoc selects on every call, even
+  though the underlying `*_normal` cores (already existing, previously
+  `#[doc(hidden)]`) don't need any of that for positive normal finite
+  input. Exposed each core directly as a new public one-argument function
+  (`log_2_unchecked(x) = log_2_normal(x, 0.0)`, etc. — the `koff`
+  denormal-offset parameter is always exactly 0.0 for this contract, so
+  it's fully applied rather than exposed), same fast/full-safety split as
+  `exp2`/`exp2_checked`, just with the safe name already taken by the
+  no-suffix function, hence the `_unchecked` suffix instead of a bare
+  `log_2`/`ln`/`log10` swap. Verified bit-for-bit identical to the checked
+  versions over 99.2M positive-normal samples directly (not just
+  aggregate-ulp-similar) — expected, since it's the literal same core
+  function called with the same always-correct koff, so there is zero
+  accuracy risk by construction; exhaustive sweep confirms matching max
+  ulp on both sides (log_2 3→3, ln 3→3, log10 3→3; the *avg* ulp numbers
+  differ because the checked functions' "everywhere" sweep average also
+  includes free/exact special-cased inputs like negatives→NaN that the
+  domain-restricted unchecked sweep doesn't get to include — not a real
+  accuracy difference, confirmed by the direct bit-for-bit check). Real,
+  substantial speed win: mca throughput log2 1.556→0.958 cyc/elem (-38%),
+  ln/log10 1.626→1.084 (-33%); ln/log10 latency 56.91→38.22 cyc (-33%,
+  log2's own latency number was already measuring the unchecked core per
+  this file's own mca_target.rs convention, so no further latency win
+  there specifically). Confirmed on real wall-clock too via quickbench
+  (e.g. log10 throughput 0.422→0.261 ns, latency 10.08→8.83 ns). Backlog
+  entry for the remaining half of this idea (hypot/atan2 unchecked tiers)
+  left open above.
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
@@ -794,12 +824,11 @@ legitimate direction here, unlike on most targets.
   the count is tiny and stable; record which functions actually have
   concentrated misses first.
 
-- **Unchecked tiers for the log family and others**: log_2/ln/log10 pay
-  denormal-rescale + two special-case selects on every call; a
-  `log_2_unchecked` (positive-normal-only contract, like exp2 vs
-  exp2_checked) drops ~4 ops + 2 selects. Same argument for a
-  `hypot`/`atan2` that skips inf special cases. The tier split is already
-  this crate's established pattern; it just hasn't been applied uniformly.
+- **Unchecked tiers for hypot/atan2 and others**: same argument as
+  log_2_unchecked/ln_unchecked/log10_unchecked (implemented, see above) —
+  a `hypot`/`atan2` that skips inf special cases would drop real ops the
+  same way. The tier split is already this crate's established pattern;
+  it just hasn't been applied uniformly everywhere it could be.
 
 - **FTZ/DAZ feature flag**: under a cargo feature declaring "caller runs
   with FTZ+DAZ on" (the common game/audio configuration), every denormal

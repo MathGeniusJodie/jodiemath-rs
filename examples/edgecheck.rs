@@ -29,6 +29,11 @@ fn main() {
     check("log_2(1e-39)", log_2(1e-39), (1e-39f32 as f64).log2() as f32);
     check("log_2(min_denorm)", log_2(f32::from_bits(1)), (f32::from_bits(1) as f64).log2() as f32);
     check("log_2(1)", log_2(1.0), 0.0);
+    // log_2_unchecked: only test inside its documented domain (positive
+    // normal finite) -- must match log_2 exactly there, bit for bit.
+    check("log_2_unchecked(1)", log_2_unchecked(1.0), 0.0);
+    check("log_2_unchecked(f32::MAX)", log_2_unchecked(f32::MAX), log_2(f32::MAX));
+    check("log_2_unchecked(f32::MIN_POSITIVE)", log_2_unchecked(f32::MIN_POSITIVE), log_2(f32::MIN_POSITIVE));
     // exp2 (unchecked): only test inside its documented domain [-126, 128)
     check("exp2(127.9999)", exp2(127.9999), (127.9999f32 as f64).exp2() as f32);
     check("exp2(-125.9)", exp2(-125.9), ((-125.9f32) as f64).exp2() as f32);
@@ -156,8 +161,16 @@ fn main() {
     check("ln(0)", ln(0.0), f32::NEG_INFINITY);
     check("ln(-1)", ln(-1.0), f32::NAN);
     check("ln(1)", ln(1.0), 0.0);
+    // ln_unchecked/log10_unchecked: same contract as log_2_unchecked, must
+    // match ln/log10 exactly on positive normal finite input.
+    check("ln_unchecked(1)", ln_unchecked(1.0), 0.0);
+    check("ln_unchecked(f32::MAX)", ln_unchecked(f32::MAX), ln(f32::MAX));
+    check("ln_unchecked(f32::MIN_POSITIVE)", ln_unchecked(f32::MIN_POSITIVE), ln(f32::MIN_POSITIVE));
     check("log10(0)", log10(0.0), f32::NEG_INFINITY);
     check("log10(100)", log10(100.0), 2.0);
+    check("log10_unchecked(100)", log10_unchecked(100.0), 2.0);
+    check("log10_unchecked(f32::MAX)", log10_unchecked(f32::MAX), log10(f32::MAX));
+    check("log10_unchecked(f32::MIN_POSITIVE)", log10_unchecked(f32::MIN_POSITIVE), log10(f32::MIN_POSITIVE));
     check("log1p(0)", log1p(0.0), 0.0);
     check("log1p(-1)", log1p(-1.0), f32::NEG_INFINITY);
     check("log1p(-2)", log1p(-2.0), f32::NAN);

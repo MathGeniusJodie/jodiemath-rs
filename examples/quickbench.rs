@@ -78,6 +78,7 @@ fn main() {
     bench!("exp10", exp10);
     bench!("exp10_checked", exp10_checked);
     bench!("log_2", log_2);
+    bench!("log_2_unchecked", log_2_unchecked);
     bench!("std log2", |x: f32| x.log2());
     bench!("sin", sin);
     bench!("sin_checked", sin_checked);
@@ -91,8 +92,10 @@ fn main() {
     bench!("cosd", cosd);
 
     bench!("ln", ln);
+    bench!("ln_unchecked", ln_unchecked);
     bench!("std ln", |x: f32| x.ln());
     bench!("log10", log10);
+    bench!("log10_unchecked", log10_unchecked);
     bench!("std log10", |x: f32| x.log10());
     bench!("log1p", log1p);
     bench!("std log1p", |x: f32| x.ln_1p());
