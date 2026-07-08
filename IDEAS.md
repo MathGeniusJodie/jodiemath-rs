@@ -94,6 +94,22 @@ brainstorm backlog lives at the bottom of this file.
   already dominates atan2's total error. Real cost for zero benefit: latency
   +13.9%, throughput +42.9%. Reverted.
 
+- **exp: replace the k1/k2 split with a k-clamp (2026-07-08)**: the
+  framing ("split exists only because round can push k to 128, an
+  out-of-contract case since exp is unchecked everywhere else") was wrong
+  — k=128 is reachable from ordinary in-domain x (x*log2e in [127.5,128)
+  is still inside the documented [-126,128) range), and the split isn't
+  there to avoid inf for out-of-contract inputs, it's there to give the
+  *correct* answer for this legitimate slice of the domain. Verified by a
+  temporary exhaustive-ish (every 97th f32 bit pattern) old-vs-new
+  comparison: first mismatch at x=88.376686 (comfortably inside the ~88.7
+  ceiling), old=2.4071711e38 (correct, matches e^x), new=1.2035856e38 —
+  exactly half, i.e. clamping k to 127 silently drops a whole factor of 2
+  for real in-domain inputs near the top of the range. Never reached mca;
+  killed by the fast falsification step the task description recommends
+  (fuzz/scratch-test before the expensive latency/throughput cycle). Not
+  adopted; reverted before touching mca.
+
 ## Codegen & build hygiene
 
 - **Forcing zmm-width (AVX-512) codegen (2026-07-07)**: confirmed this CPU
@@ -288,20 +304,6 @@ legitimate direction here, unlike on most targets.
   touching these anyway.
 
 ## exp family
-
-- **exp: force c1 = 1.0 exactly and refit**: c0 is already pinned to 1.0
-  but c1 = 1.0000000647 — for tiny r the poly returns 1 + c1·r + ...,
-  so exp(x) near 0 carries a systematic ~6e-8 relative bias. Pinning both
-  and refitting c2..c5 (e^r = 1 + r + r²·P(r) form) should cut small-x
-  error at zero cost. Same trick sinf_poly already uses (exact leading
-  term).
-
-- **exp: replace the k1/k2 split with a k-clamp**: the split exists only
-  because `round` can push k to 128 (the exp(88.37628)=inf bug). exp is
-  *unchecked* everywhere else, so a single `k.min(127.0)` (one vminps)
-  preserving the garbage-outside-domain contract would save the whole
-  k1b/k2b/t2 chain (~4 ops + a multiply). Check the k = -126 underflow
-  side before trusting it (may need `.clamp(-126.0, 127.0)`).
 
 - **tanh: direct rational x·P(x²)/Q(x²)**: replaces expm1(2x) + division
   (which drags in the whole exp reduction+poly) with one even rational fit

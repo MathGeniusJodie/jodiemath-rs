@@ -254,6 +254,22 @@ fn erfc_c(x: f32, c: &[f32]) -> f32 {
     fma(y, z, w)
 }
 
+// exp's e^r poly (see src/lib.rs's exp) with c0 AND c1 both forced to
+// exactly 1.0 (hardcoded, not tuned) instead of just c0 -- only c2..c5 (4
+// values, named c[0..4] here) are free. Matches the shipped Estrin
+// evaluation order exactly (l0 = 1+r needs no fma since both its
+// coefficients are exactly 1.0).
+#[inline(always)]
+fn exp_r_c(r: f32, c: &[f32]) -> f32 {
+    let r2 = r * r;
+    let r4 = r2 * r2;
+    let l0 = r + 1.0;
+    let l1 = fma(c[1], r, c[0]);
+    let l2 = fma(c[3], r, c[2]);
+    let r0 = fma(l1, r2, l0);
+    fma(l2, r4, r0)
+}
+
 fn tune(
     name: &str,
     f: &dyn Fn(f32, &[f32]) -> f32,
@@ -606,5 +622,19 @@ fn main() {
         }
         let init = [-1.9999927, -120.0, -12.000030, 59.999996, -120.0];
         tune("expm1_near0", &expm1_near0_c, &|x| x.exp_m1(), &grid, &init);
+    }
+    if which.contains("exp_r") {
+        // exp's reduced-argument domain, r in [-ln2/2, ln2/2].
+        let bound = std::f32::consts::LN_2 / 2.0;
+        let mut grid = vec![];
+        let mut b = 0f32.to_bits();
+        while b < bound.to_bits() {
+            grid.push(f32::from_bits(b));
+            grid.push(-f32::from_bits(b));
+            b += 42000;
+        }
+        let init =
+            [0.49998869147306002, 0.1666632564456679, 0.041917526482916918, 0.0083811120373467017];
+        tune("exp_r (c0=c1=1 forced)", &exp_r_c, &|x| x.exp(), &grid, &init);
     }
 }

@@ -934,19 +934,18 @@ pub fn exp(x: f32) -> f32 {
     let k = fma(x, LOG2_E, 0.0).round();
     let r = fma(-k, LN2_HI, x);
     let r = fma(-k, LN2_LO, r);
-    let c: [f32; 6] = [
-        1.0, // forced exact (was 1.0000000754895702) so exp(0) == 1.0 exactly
-        1.0000000647031426,
-        0.49998869147306002,
-        0.1666632564456679,
-        0.041917526482916918,
-        0.0083811120373467017,
-    ];
+    // c0 and c1 both forced exactly 1.0 (were 1.0 and 1.0000000647031426):
+    // exp(r) = 1 + r + r^2*P(r) for tiny r, so a c1 off from 1.0 by even
+    // ~6e-8 relative is a systematic bias right where exp(x) is most
+    // commonly called (x near 0). l0 = r + 1.0 needs no fma since both its
+    // coefficients are now exactly 1.0. c2..c5 coordinate-descent refit
+    // for this constraint (examples/tune.rs's exp_r_c/"exp_r").
+    let c: [f32; 4] = [4.9999008e-1, 1.6666375e-1, 4.1917525e-2, 8.3811125e-3];
     let r2 = r * r;
     let r4 = r2 * r2;
-    let l0 = fma(c[1], r, c[0]);
-    let l1 = fma(c[3], r, c[2]);
-    let l2 = fma(c[5], r, c[4]);
+    let l0 = r + 1.0;
+    let l1 = fma(c[1], r, c[0]);
+    let l2 = fma(c[3], r, c[2]);
     let r0 = fma(l1, r2, l0);
     let p = fma(l2, r4, r0);
     const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23

@@ -26,13 +26,13 @@ All functions auto-vectorize, it's a hard requirement
                      ln |    0.126   |     3     |  0.000  |    1
                   log10 |    0.286   |     4     |  0.000  |    0
                   log1p |    0.106   |     4     |  0.000  |    0
-        exp (in-domain) |    0.289   |    64     |  0.000  |    1
-      expm1 (in-domain) |    0.240   |    63     |  0.000  |    0
-       sinh (in-domain) |    0.291   |    64     |  0.000  |    0
-       cosh (in-domain) |    0.274   |    63     |  0.000  |    0
-sinh_throughput (in-domain)| 0.293   |    64     |  0.000  |    0
-cosh_throughput (in-domain)| 0.272   |    64     |  0.000  |    0
-       tanh (in-domain) |    0.144   |     6     |  0.000  |    0
+        exp (in-domain) |    0.091   |     4     |  0.000  |    1
+      expm1 (in-domain) |    0.138   |     6     |  0.000  |    0
+       sinh (in-domain) |    0.080   |     5     |  0.000  |    1
+       cosh (in-domain) |    0.076   |     4     |  0.000  |    0
+sinh_throughput (in-domain)| 0.084   |     7     |  0.000  |    1
+cosh_throughput (in-domain)| 0.061   |     4     |  0.000  |    0
+       tanh (in-domain) |    0.148   |     9     |  0.000  |    0
                   asinh |    0.173   |     4     | 
                   acosh |    0.063   |     4     |  0.000  |    1
                   atanh |    0.032   |     3     | 
@@ -137,13 +137,13 @@ cos_checked         |         113.00 |             4.537
 ln                  |          56.91 |             1.626
 log10               |          56.91 |             1.626
 log1p               |          61.16 |             2.276
-exp                 |          39.00 |             0.974
-expm1               |          71.00 |             1.441
-sinh                |          77.02 |             2.277
-cosh                |          48.02 |             2.083
-sinh_throughput     |          81.02 |             1.545
-cosh_throughput     |          58.00 |             1.279
-tanh                |          87.64 |             1.793
+exp                 |          51.00 |             1.648
+expm1               |          82.09 |             2.158
+sinh                |          63.00 |             3.839
+cosh                |          62.00 |             3.357
+sinh_throughput     |          71.00 |             2.326
+cosh_throughput     |          70.00 |             1.913
+tanh                |          98.74 |             2.522
 asinh               |         120.99 |             7.716
 acosh               |         127.75 |             6.588
 atanh               |          79.99 |             4.331
