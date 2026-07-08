@@ -174,6 +174,38 @@ fn cbrt_normal_c(x: f32, c: &[f32]) -> f32 {
     fma(sr, p, ss)
 }
 
+// cbrt_normal_c, but with cbrt_fast's shift-multiply seed
+// ((ax>>16)*0x5556 + 0x2a4ddef1, cbrt_fast's own constants, reused as-is)
+// instead of the division-based ax/3 + 0x2a509a07 -- checking whether the
+// existing degree-3 correction poly, refit for this cheaper-but-cruder
+// seed's different error distribution, can still meet cbrt's budget.
+// Tried and rejected (2026-07-07): even after retuning, best found is
+// max ulp 33 / avg 5.07 on a coarse grid, ~16x over budget (avg<=1,
+// max<=2) -- see IDEAS.md's cbrt seed entry. Kept as reference
+// infrastructure (`which.contains("cbrtshift")`), not deleted, since it's
+// small and inert unless invoked; a future attempt would need freshly-
+// derived seed constants for this specific poly-degree combination
+// rather than reusing cbrt_fast's own (tuned for its different
+// downstream Newton-refinement structure, not a degree-3 correction).
+#[inline(always)]
+fn cbrt_shiftmul_c(x: f32, c: &[f32]) -> f32 {
+    const SIGN_MASK: u32 = 0x8000_0000;
+    let ax = x.to_bits() & !SIGN_MASK;
+    let a = f32::from_bits(ax);
+    let rcp = 1.0 / a;
+    let s = f32::from_bits((ax >> 16) * 0x5556u32 + 0x2a4ddef1u32);
+    let s2 = s * s;
+    let d = fma(s2, s, -a);
+    let r = d * rcp;
+    let r2 = r * r;
+    let a1 = fma(c[1], r, c[0]);
+    let b1 = fma(c[3], r, c[2]);
+    let p = fma(b1, r2, a1);
+    let ss = f32::from_bits(s.to_bits() | (x.to_bits() & SIGN_MASK));
+    let sr = ss * r;
+    fma(sr, p, ss)
+}
+
 // sinf_poly (see src/lib.rs): sin(x) ~= x + x^3*P(x^2) on [-pi/2, pi/2],
 // the shared poly behind sin/cos/sin_checked/cos_checked.
 #[inline(always)]
@@ -536,6 +568,19 @@ fn main() {
         }
         let init = [-0.33333147, 0.22220612, -0.17394388, 0.14823665];
         tune("cbrt_normal", &cbrt_normal_c, &|x| x.cbrt(), &grid, &init);
+    }
+    if which.contains("cbrtshift") {
+        // coarser grid for a fast first-pass screen of the shift-multiply
+        // seed variant -- refine with the dense grid only if promising.
+        let mut grid = vec![];
+        let mut b = 1.0f32.to_bits();
+        while b < 2.0f32.to_bits() {
+            grid.push(f32::from_bits(b));
+            grid.push(-f32::from_bits(b));
+            b += 500;
+        }
+        let init = [-0.33333147, 0.22220612, -0.17394388, 0.14823665];
+        tune("cbrt_shiftmul", &cbrt_shiftmul_c, &|x| x.cbrt(), &grid, &init);
     }
     if which.contains("sinf") {
         // sinf_poly's fitted domain, [-pi/2, pi/2].

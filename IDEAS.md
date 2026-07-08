@@ -351,11 +351,36 @@ branches, no scalar-only intrinsics unless the vector form exists).
 - **cbrt_accurate: Halley instead of Newton** from a cheaper seed — one Halley
   step from the bit seed + deg-1 correction might match Newton-from-deg-3 with
   less total width. The df32 machinery already exists.
-- **Integer-division-free seed**: `ax / 3` is an integer div; LLVM turns
-  constant division into mulhi, which vectorizes on AVX2 (`vpmulhuw` tricks)
-  but check codegen — the `(x.to_bits()>>16)*0x5556` variant in cbrt_fast
-  exists precisely for this; measure whether the full-width div actually
-  vectorizes well or needs that form in cbrt_normal too.
+- **Integer-division-free seed — codegen confirmed as predicted, but the
+  cheaper seed doesn't hold budget under cbrt_normal's own poly degree
+  (2026-07-07).** Checked `cbrt_normal`'s `ax / 3` fresh in `--emit=asm`:
+  it does vectorize cleanly, exactly as this entry hoped -- the
+  throughput region shows the classic constant-division-by-multiply-high
+  sequence (2x `vpmuludq` + `vpshufd` + `vpermt2d` + `vpsrld`, 5
+  instructions, no real `div`), not a per-lane scalar fallback.
+  `cbrt_fast`'s `(bits>>16)*0x5556` alternative is genuinely cheaper in
+  raw instruction count, confirmed the same way (1 `vpsrld` + 1 native
+  `vpmulld` + 1 add, ~3 instructions) -- native 32-bit multiply-low needs
+  none of division's widening/shuffle/merge dance. So the codegen
+  question resolves in favor of trying the cheaper seed. But swapping
+  `cbrt_normal`'s seed to that form (keeping its sign-safe wrapper and
+  degree-3 correction poly, only the seed construction changed) and
+  refitting the poly's 4 coefficients via coordinate descent for the new
+  seed's error distribution doesn't recover cbrt's budget: best found
+  (even after retuning, coarse grid) is max ulp 33 / avg 5.07, ~16x over
+  budget (avg<=1, max<=2) -- the seed itself is just too coarse for a
+  degree-3 correction to fully compensate, at least reusing `cbrt_fast`'s
+  own magic constants (`0x2a4ddef1`/`0x5556`, presumably tuned for
+  `cbrt_fast`'s own different downstream double-Newton-refinement
+  structure, not for this poly-correction shape). Not adopted. A further
+  attempt would need to jointly re-derive the seed's own magic constants
+  for this specific combination (same spirit as the rejected "seed
+  constant joint search" entry above, but with degree-3 kept instead of
+  cut to degree-2) -- bigger scope than this pass, not attempted.
+  `examples/tune.rs` gained `cbrt_shiftmul_c` / `which.contains(
+  "cbrtshift")` as reference infrastructure for that future attempt, not
+  deleted since it's small and inert unless invoked. No `src/lib.rs`
+  changes.
 
 ## asin / acos / atan / atan2
 
