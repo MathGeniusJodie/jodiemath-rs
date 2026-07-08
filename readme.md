@@ -56,6 +56,7 @@ cosh_throughput (in-domain)| 0.061   |     4     |  0.000  |    0
     atan2_unchecked (+) |    0.069   |     3     | (bit-identical to atan2 on its domain)
         hypot (bounded) |    0.034   |     1     |  0.000  |    0
 hypot_unchecked (bounded, +) | 0.034 |     1     | (bit-identical to hypot on its domain)
+       hypot_checked |    0.015   |     1     | (no std comparison needed, no domain restriction)
                   rsqrt |    0.260   |     1     | (no std rsqrt)
           pown (|n|<=8) |    0.158   |    11     | (no std pown)
          pown (|n|<=64) |    0.209   |    90     | (no std pown)
@@ -108,6 +109,7 @@ atan2_unchecked | 18.1 ns |     -   |  -
          erfc | 22.9 ns |     -   |  -
       hypot (*) |  5.1 ns | 13.9 ns | 2.7x
 hypot_unchecked |  5.0 ns |     -   |  -
+  hypot_checked | 19.9 ns | 11.9 ns | 0.6x
         rsqrt |  6.7 ns |     -   |  -
          pown | 50.3 ns |     -   |  -
          powf | 24.2 ns |  3.2 ns | 0.1x
@@ -163,6 +165,7 @@ atan2_unchecked | 0.48 ns  |     -    |  -
          erfc | 0.68 ns  |     -    |  -
   hypot (*) | 0.17 ns  |  2.42 ns | 14.2x
 hypot_unchecked | 0.17 ns  |     -    |  -
+  hypot_checked | 0.40 ns  |  2.72 ns | 6.8x
         rsqrt | 0.31 ns  |     -    |  -
          pown | 1.24 ns  |     -    |  -
          powf | 0.95 ns  |  0.07 ns | 0.07x
@@ -215,6 +218,7 @@ tan                 |          71.02 |             2.532
 erf                 |          91.74 |             2.871
 erfc                |          78.09 |             2.599
 hypot               |          21.11 |             0.766
+hypot_checked       |          57.19 |             1.178
 rsqrt               |          28.00 |             1.381
 pown                |         176.00 |             3.805
 powf                |          98.03 |             3.898

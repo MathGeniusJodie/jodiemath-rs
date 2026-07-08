@@ -143,6 +143,7 @@ fn main() {
     bench!("hypot", move |x: f32| hypot(x, hypot_y));
     bench!("std hypot", move |x: f32| x.hypot(hypot_y));
     bench!("hypot_unchecked", move |x: f32| hypot_unchecked(x, hypot_y));
+    bench!("hypot_checked", move |x: f32| hypot_checked(x, hypot_y));
     bench!("rsqrt", rsqrt);
     bench!("powf", |x: f32| powf(x, 2.0));
     bench!("std powf", |x: f32| x.powf(2.0));

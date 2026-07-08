@@ -871,6 +871,49 @@ brainstorm backlog lives at the bottom of this file.
   and its `.size` directive) is a third, deterministic option worth
   reaching for before giving up on quantifying a change.**
 
+- **hypot_checked with branchless exponent rescale, implemented
+  (2026-07-08)**: extracts the larger argument's exponent via bit tricks,
+  rescales both arguments by an exact power of two before squaring (so
+  `x*x+y*y` can never overflow, and the dominant term never underflows —
+  if the *smaller* term flushes to 0 after scaling, its true contribution
+  was already negligible at f32 precision, so nothing real is lost),
+  scales the sqrt'd result back. Fully branchless (selects only), no
+  early returns, still auto-vectorizes. Validated the bit-trick math in a
+  Python prototype *before* writing any Rust (this session's now-standard
+  discipline) — good thing too, since the first design had a real bug: an
+  `is_zero = m == 0.0` check (`m = ax.max(ay)`) wrongly triggers for
+  `hypot_checked(NaN, 0.0)`, because `f32::max` silently returns the
+  *non-NaN* operand when only one side is NaN, so `m` comes out `0.0` and
+  the code would wrongly take the "both zero" branch and discard the
+  NaN. Fixed by checking `ax == 0.0 && ay == 0.0` directly (NaN
+  comparisons are always false, so this correctly excludes the NaN case)
+  — the exponent extraction still degrades to a garbage-but-finite scale
+  in that case, but the NaN itself propagates through the unconditional
+  multiply regardless of what that scale becomes, so the *final* result
+  still comes out correctly. The backlog's own "e odd needs a sqrt2
+  factor" hint pointed at the right fix but not quite the right framing:
+  rounding the scale exponent down to the nearest *even* value (`es =
+  2*(e>>1)`, Rust's `>>` on `i32` is arithmetic/floor shift) isn't just
+  about avoiding a sqrt2 correction, it's what keeps the scale factor's
+  own exponent within the representable *normal* range for every valid
+  `m` — using `e` directly can require constructing `2^-127`, which has
+  no normal single-word encoding at all (past the denormal boundary),
+  silently corrupting the bit pattern instead of computing the intended
+  reciprocal. Verified in Python first (~1M samples spanning the full
+  exponent range plus every zero/NaN/inf combination, max ulp 1,
+  zero mismatches), then in the real Rust implementation via
+  accuracy.rs's fuzz2 over the *entire* domain (no restriction needed,
+  unlike hypot's own overflow-avoidance domain limit): avg ulp 0.0149,
+  max ulp 1, 10M samples. Real, substantial cost vs. the naive `hypot`
+  (mca latency 21.11→57.19 cyc, +171%; throughput 0.766→1.178, +54%) —
+  expected and accepted, matching this crate's established checked/
+  unchecked tier pattern (the naive `hypot` explicitly documents *not*
+  handling overflow/underflow at all, so this isn't a regression, it's a
+  new capability). Still meaningfully faster than `std::hypot` on
+  throughput (0.403ns vs 2.72ns, quickbench) for the same correctness
+  guarantee, though slower on latency (19.94ns vs 11.87ns) — a real,
+  known tradeoff, not hidden.
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
@@ -1162,13 +1205,4 @@ legitimate direction here, unlike on most targets.
   threshold) applies automatically after the round-1 degree-7 idea or any
   refit. Bookkeeping entry so the follow-through isn't forgotten.
 
-### hypot / atan2 / new surface
-
-- **hypot_checked with branchless exponent rescale**: extract
-  max(exp(x), exp(y)) with integer ops, scale both inputs by 2^-e via
-  exponent-field subtraction (exact), sqrt, scale back by 2^(e/2)... e
-  odd needs a sqrt2 factor — cleaner: scale by 2^-2⌊e/2⌋. All bit tricks
-  + selects, fully vectorizable, kills the documented overflow/underflow
-  tradeoff for callers who need std-grade hypot without std-grade scalar
-  code.
 

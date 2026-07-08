@@ -782,6 +782,11 @@ fn main() {
         // overflow/underflow-avoidance domain restriction as hypot itself.
         let s = fuzz2(TWOARG_SAMPLES, hypot_domain, hypot_unchecked, hypot_u35);
         report("hypot_unchecked (+)", &s, t0);
+        // hypot_checked has no overflow/underflow tradeoff to work around
+        // (that's the whole point), so it gets the full domain -- every
+        // finite magnitude, zero, inf, and nan.
+        let s = fuzz2(TWOARG_SAMPLES, |_, _| true, hypot_checked, hypot_u35);
+        report("hypot_checked", &s, t0);
     }
     if run("pown") {
         // pown(x, n) takes an i32 exponent, not the f32/f64 pair shape
