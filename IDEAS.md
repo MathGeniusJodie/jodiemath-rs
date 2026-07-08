@@ -68,6 +68,54 @@ brainstorm backlog lives at the bottom of this file.
 
 ## log_2 / ln / log10
 
+- **ln_normal/log10_normal: fuse the trailing `+ k*LN2_LO` into the
+  preceding fma, `fma(k, LN2_LO, fma(p, s, k_hi))` instead of `fma(p, s,
+  k_hi) + k * LN2_LO` (2026-07-08)**: the backlog framed this as "one op
+  shorter and strictly one fewer rounding" (the standalone `k * LN2_LO`
+  multiply plus the final add are two separate roundings; fusing them
+  into one outer fma removes one). True in isolation, but measured
+  outcomes on both axes were negative or flat: mca latency got
+  *deterministically worse* by exactly 1 cycle on both functions
+  (ln/log10 55.86→56.86 cyc, reproduced twice, not noise — same
+  "removing an op frees the scheduler to make a worse choice elsewhere"
+  pattern logged repeatedly elsewhere in this file), throughput was a
+  wash (ln 1.714→1.709, log10 1.714→1.714 exactly unchanged). Worse,
+  the predicted accuracy win didn't materialize either: a 100M-sample
+  fuzz (paired via `git stash`) gave avg/max ulp 0.1168/3 → 0.1168/3
+  (ln) and 0.1271/3 → 0.1270/3 (log10) — identical within sampling
+  noise. Root cause: `k * LN2_LO` doesn't depend on the poly result, so
+  it was already computed off the critical path in parallel with the
+  fma before this change; the "extra rounding" it removes is on a term
+  small enough (LN2_LO is the tiny low word of the Cody-Waite split)
+  that it isn't actually contributing to the measured ulp in practice.
+  Reverted; `src/lib.rs` restored to `fma(p, s, k_hi) + k * LN2_LO`.
+
+- **log1p small-|x| (<0.25) dedicated Taylor/minimax branch, screened via
+  a partially-implemented `tune.rs` scratch infra found already in the
+  working tree (2026-07-08)**: the backlog's framing ("free perf-wise if
+  it replaces work rather than adding a third arm") doesn't hold given
+  this crate's established branchless-select convention (`asin`/`acos`'s
+  own history documents this explicitly: every domain branch is
+  computed *unconditionally*, then blended with a select) — `log1p`
+  currently has exactly one arm (the `ln(u)+corr` formula, used for
+  every x), so adding a small-x poly branch would be a strict *addition*
+  of a whole extra poly evaluation to every call, not a replacement.
+  Confirmed the accuracy upside is marginal anyway before spending more
+  effort: `log1p` restricted to `|x|<0.25` currently measures avg/max
+  ulp 0.0732/4 (accuracy.rs fuzz, ad hoc probe); the
+  WIP tune.rs candidate (`log1p_small_c`, a 9-coefficient Horner fit
+  directly against `x.ln_1p()`, forced c0=1.0) reached max 3/avg 0.0683
+  on tune.rs's own coarser grid — a small, unconfirmed-at-full-density
+  edge, not obviously worth a whole extra poly's cost on every call.
+  Not implemented in `src/lib.rs`; the found WIP infra in `examples/
+  tune.rs` (`log1p_small_c` + the `"log1p_small"` tuning branch) was
+  reverted rather than committed, since it was never brought to a
+  real verdict and this session's reasoning already closes the question
+  well enough to not re-attempt without new information (e.g. an actual
+  measured throughput/latency cost from implementing it, if someone
+  wants to check whether the extra branch is cheap enough to be worth
+  0.3-1 ulp).
+
 - **Direct minimax refits for ln/log10, tuned against their own objective
   instead of log_2's rescaled coefficients (2026-07-08)**: coordinate-
   descended `ln_poly_c`/`log10_poly_c` (new permanent `tune.rs`
