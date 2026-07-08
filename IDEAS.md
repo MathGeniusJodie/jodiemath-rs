@@ -710,6 +710,42 @@ brainstorm backlog lives at the bottom of this file.
   work; a division gated on the very first reduction step never gets that
   chance.**
 
+- **erf: joint boundary+coefficients refit (2026-07-08), screened cheaply
+  before investing in a full joint optimizer — no headroom, matching
+  what the separate fixed-boundary refits had already found.** The
+  backlog's premise: the inherited 0.28 Pade/tail crossover was never
+  swept as a free parameter, only refit-at-fixed-boundary (per this
+  file's own asin-crossover precedent, moving the threshold itself can
+  sometimes unlock headroom a fixed-boundary refit can't reach). Added a
+  temporary boundary-parameterized `erf` variant and swept 8 candidate
+  thresholds (0.20 through 0.40) against the *current, unrefit*
+  coefficients first, cheaply, via accuracy.rs's existing fuzz
+  infrastructure (100M samples each) — before spending time building a
+  full joint boundary+coefficient optimizer. Result: max ulp sits at a
+  flat 5 across the whole 0.26–0.32 range (current 0.28 already
+  comfortably inside it), only degrading outside that window (0.24→8,
+  0.20→52, 0.35→8, 0.40→24) — a wide, flat plateau, not a narrow optimum
+  the inherited value happens to miss. Combined with the backlog's own
+  already-noted finding (both branches refit *separately* at 0.28 found
+  no headroom), two independent pieces of evidence now agree this
+  function is already near its accuracy ceiling for this degree-6-tail +
+  Pade-near-zero architecture, regardless of exactly where the boundary
+  sits. Didn't build the full joint optimizer (existing `tune.rs` infra
+  for `erf_tail_c`/`erf_near0_c` already hardcodes the 0.28 boundary into
+  each grid's construction, so a true joint search would need new
+  infrastructure) — the cheap screen already answers the question with
+  reasonable confidence, and the effort/expected-payoff ratio for
+  building the fuller version doesn't look favorable given both signals
+  point the same way. Not implemented; `src/lib.rs`/`accuracy.rs` scratch
+  additions reverted, nothing shipped. **General lesson: when a
+  refit-oriented idea has an inexpensive proxy check available (here,
+  sweeping the free parameter alone against unrefit coefficients, using
+  infrastructure that already exists), run that first — it can settle
+  the question well enough to skip building a bigger joint optimizer
+  entirely, the same way this file's scipy pre-checks have repeatedly
+  settled centered-refit and rational-form questions before any Rust
+  was written.**
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
@@ -866,24 +902,11 @@ legitimate direction here, unlike on most targets.
 
 ## erf / erfc
 
-- **erfc in log space**: fit log2(erfc(x)·2^(x²·log2e))'s rational part —
-  i.e. fold the n/d rational *into* the exp2_checked exponent as an
-  additive poly: erfc(x) = exp2(-x²·LOG2_E + R(x)). One exp2_checked call,
-  no division, no separate rational, and the huge dynamic range (down to
-  ~1e-45) lives where it's linear. erf's own tail already validates the
-  exp2(poly) shape (max 5 there vs erfc's 109). Denormal outputs still
-  round coarsely — check whether the 109 is actually *output-ulp-at-
-  denormal* noise before crediting any fix.
-
 - **erfc domain split**: if log-space fails, two rationals ([0,2] /
   [2,10]) with one select — both arms computed branchlessly, so ~2x the
-  poly cost; only worth it if 109 → single digits.
-
-- **erf: joint boundary+coefficients refit**: the 0.28 Pade/tail boundary
-  was inherited, both branches were refit *separately* at fixed boundary
-  (no headroom found, see above) — but moving the boundary itself while
-  refitting both (the asin fix-5 lesson: measure where each branch
-  actually degrades, don't trust the inherited threshold) was never done.
+  poly cost; only worth it if 109 → single digits (the log-space attempt
+  above already found the single-poly approach doesn't converge at a
+  practical degree, so this fallback is the natural next thing to try).
 
 ## hypot / misc
 
