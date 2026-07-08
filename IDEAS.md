@@ -1227,6 +1227,25 @@ brainstorm backlog lives at the bottom of this file.
   total degree" framing applies to any particular case without
   checking.**
 
+- **cos (fast tier) dedicated even poly in r² (2026-07-08): quick scipy
+  check confirms the backlog's own "probably dies" prediction was
+  correct — a validated-not-refuted case, worth recording since this
+  session has found predictions wrong at least as often as right.** The
+  entry itself already predicted failure (relative error blows up near
+  cos's zeros for an absolute-error-fit even poly) without implementing
+  anything, just recording the reasoning. Checked directly: fit a
+  degree-6 even poly for `cos(r)` over `r ∈ [-pi/2,pi/2]` (Taylor-seeded)
+  and measured relative error specifically near the domain edge (within
+  0.05 of `±pi/2`, where `cos(r)` shrinks to ~1e-6) vs. the rest of the
+  domain: 6.8e-5 near the edge vs. 2.8e-5 elsewhere — measurably worse
+  near the zero, and the absolute error there (1.36e-6) doesn't shrink
+  with the true value the way it would need to for the relative error
+  to stay flat, confirming it diverges (unbounded relative error) at the
+  exact zero itself. Not implemented (no Rust written, no mca run) —
+  the accuracy failure was already the backlog's own stated reason not
+  to pursue this, and the quick check confirms rather than refutes it,
+  so there's nothing more to gain from a full implementation.
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
@@ -1248,9 +1267,14 @@ legitimate direction here, unlike on most targets.
   exp2/log_2 (see above), but fpminimax solves the coefficient-quantization
   problem *jointly* (lattice reduction over the f32 grid), which routinely
   beats round-then-tune, especially at higher degree. Candidates where max
-  ulp is the open residual: acos_poly (max 4), atan_poly (max 18), erfc's
-  n/d (max 109), exp's degree-5 (max 4-8 via callers). Would need
-  `sollya` installed.
+  ulp is the open residual: acos_poly (max 4), erfc's n/d (max ~100, root
+  cause since traced to the exponent computation, not the poly -- see
+  tried-and-rejected log, so a tighter poly fit alone won't fix it), exp's
+  degree-5 (max 4-8 via callers). (atan_poly's own max ulp is 3 now, not
+  the "18" this entry originally cited -- fixed by the degree bump earlier
+  this session, no longer an open residual.) `sollya` is not installed on
+  this machine (`which sollya` finds nothing) -- would need it added
+  first, a bigger step than this loop should take unilaterally.
 
 - **Simulated annealing / basin-hopping over coefficient space**: same
   motivation as above but no new tooling — perturb 2-3 coefficients at
@@ -1280,22 +1304,9 @@ legitimate direction here, unlike on most targets.
 
 ## log_2 / ln / log10
 
-- **log1p small-|x| dedicated poly branch**: log1p currently always pays a
-  full ln poly + division; a Taylor/minimax branch for |x| < 0.25 (like
-  asin_small) selected against the existing path could beat it on accuracy
-  where log1p matters most, and is free perf-wise if it replaces work
-  rather than adding a third arm. Feeds asinh/acosh/atanh accuracy too.
-
 - **Shared denormal-rescale helper**: log_2/ln/log10 triplicate the
   tiny/xs/koff dance. Pure hygiene, no perf claim — only worth doing if
   touching these anyway.
-
-## exp family
-
-- **tanh via the shared-reduction even/odd trick**: tanh currently reuses
-  `expm1(2x)` (already a single exp evaluation, not two), so the sinh/cosh
-  version of this idea (now adopted, see git history/src/lib.rs's
-  `exp_pos_neg`) doesn't directly apply here.
 
 ## sin / cos / tan
 
@@ -1340,13 +1351,6 @@ legitimate direction here, unlike on most targets.
   behavior at Y directly (a handful of spot-check values) — here it took
   under a minute and would have saved the whole implementation effort.**
 
-- **cos (fast tier): dedicated even poly in r²**: q = round(x/pi) same as
-  sin, cos(x) = ±cos(r) with cos poly = even, killing the -0.5/+0.5
-  offset ops and the x³ multiply. Known risk (why sleef does't do it):
-  near r = ±pi/2, cos's value → 0 while an absolute-error even fit stays
-  O(2^-24), so *relative* error blows up near cos's zeros — exactly the
-  failure the shifted-sin form avoids. Probably dies for that reason;
-  listed so the reasoning is recorded rather than re-derived.
 
 - **cbrt: rational correction, (1+r)^(-1/3) ≈ P(r)/Q(r), 2/2 with the same
   4 coefficients as the shipped degree-3 poly (2026-07-08)**: scipy
