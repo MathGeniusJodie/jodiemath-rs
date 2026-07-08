@@ -366,6 +366,122 @@ fn main() {
         let init = [2.2960134e-3, -1.1146357e-2, 2.6900099e-2, -4.8802612e-2, 8.875567e-2, -2.1458527e-1, 1.5707962];
         tune("acos_poly", &acos_poly_c, &|x| x.acos(), &grid, &init);
     }
+    if which.contains("asinacos") {
+        // asin now calls acos_poly_c directly for a >= 0.25 (pi/2 -
+        // acos_poly_c(a), sign-restored) instead of a separate fit -- but
+        // acos_poly_c was only ever tuned against *acos*'s own ulp error.
+        // acos(x) shrinks to 0 as x->1 while asin(x) grows to pi/2 there,
+        // so the same absolute poly error gets a very different *relative*
+        // (ulp) weight depending on which caller's output magnitude it's
+        // measured against -- a poly tuned purely for acos's hardest
+        // region (x->1, where acos's own value is tiny) may be leaving
+        // accuracy on the table specifically for asin's use. Score jointly
+        // (worst of the two callers' ulp error at each point) instead.
+        let mut grid = vec![];
+        let mut b = 0.0f32.to_bits();
+        while b < 1.0f32.to_bits() {
+            grid.push(f32::from_bits(b));
+            b += 10000;
+        }
+        let init = [2.2960134e-3, -1.1146357e-2, 2.6900099e-2, -4.8802612e-2, 8.875567e-2, -2.1458527e-1, 1.5707962];
+        let joint_score = |c: &[f32]| -> (u64, u64) {
+            let mut sum = 0u64;
+            let mut max = 0u64;
+            for &x in &grid {
+                let got = acos_poly_c(x, c);
+                let d_acos = ulp_diff(got, x.acos() as f32);
+                let d_asin = if x >= 0.25 {
+                    let asin_got = std::f32::consts::FRAC_PI_2 - got;
+                    ulp_diff(asin_got, x.asin() as f32)
+                } else {
+                    0
+                };
+                let d = d_acos.max(d_asin);
+                sum += d;
+                max = max.max(d);
+            }
+            (max, sum)
+        };
+        let mut c: Vec<f32> = init.to_vec();
+        let mut best = joint_score(&c);
+        println!("acos_asin_joint: start max {} avg {:.5}", best.0, best.1 as f64 / grid.len() as f64);
+        let mut improved = true;
+        while improved {
+            improved = false;
+            for i in 0..c.len() {
+                for delta in [1i32, -1, 2, -2, 4, -4, 8, -8, 16, -16] {
+                    let mut trial = c.clone();
+                    trial[i] = f32::from_bits((trial[i].to_bits() as i32 + delta) as u32);
+                    let s = joint_score(&trial);
+                    if s < best {
+                        best = s;
+                        c = trial;
+                        improved = true;
+                    }
+                }
+            }
+        }
+        println!(
+            "acos_asin_joint: tuned max {} avg {:.5}  coeffs: {:?}",
+            best.0,
+            best.1 as f64 / grid.len() as f64,
+            c.iter().map(|v| format!("{v:e}")).collect::<Vec<_>>()
+        );
+        // Constrained variant: minimize asin's own error while requiring
+        // acos's own max ulp never exceeds its current shipped best (4 on
+        // this grid) -- checks whether asin can improve *without* costing
+        // acos anything, rather than accepting a cross-function tradeoff.
+        let acos_cap = {
+            let mut m = 0u64;
+            for &x in &grid {
+                let got = acos_poly_c(x, &init);
+                m = m.max(ulp_diff(got, x.acos() as f32));
+            }
+            m
+        };
+        let asin_only_score = |c: &[f32]| -> Option<(u64, u64)> {
+            let mut sum = 0u64;
+            let mut max = 0u64;
+            let mut acos_max = 0u64;
+            for &x in &grid {
+                let got = acos_poly_c(x, c);
+                acos_max = acos_max.max(ulp_diff(got, x.acos() as f32));
+                if x >= 0.25 {
+                    let asin_got = std::f32::consts::FRAC_PI_2 - got;
+                    let d = ulp_diff(asin_got, x.asin() as f32);
+                    sum += d;
+                    max = max.max(d);
+                }
+            }
+            if acos_max > acos_cap { None } else { Some((max, sum)) }
+        };
+        let mut c: Vec<f32> = init.to_vec();
+        let mut best = asin_only_score(&c).expect("init must satisfy its own cap");
+        println!("acos_capped_asin: start max {} avg {:.5} (acos cap {})", best.0, best.1 as f64 / grid.len() as f64, acos_cap);
+        let mut improved = true;
+        while improved {
+            improved = false;
+            for i in 0..c.len() {
+                for delta in [1i32, -1, 2, -2, 4, -4, 8, -8, 16, -16] {
+                    let mut trial = c.clone();
+                    trial[i] = f32::from_bits((trial[i].to_bits() as i32 + delta) as u32);
+                    if let Some(s) = asin_only_score(&trial) {
+                        if s < best {
+                            best = s;
+                            c = trial;
+                            improved = true;
+                        }
+                    }
+                }
+            }
+        }
+        println!(
+            "acos_capped_asin: tuned max {} avg {:.5}  coeffs: {:?}",
+            best.0,
+            best.1 as f64 / grid.len() as f64,
+            c.iter().map(|v| format!("{v:e}")).collect::<Vec<_>>()
+        );
+    }
     if which.contains("erf") {
         // erf's tail branch is only ever used for xa in [0.28, 10] (see
         // erf's doc comment).

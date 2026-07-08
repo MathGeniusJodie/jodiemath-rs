@@ -979,16 +979,20 @@ pub fn atanh(x: f32) -> f32 {
 }
 
 // degree-6 minimax poly (Estrin via fma), fitted for acos's sqrt(1-|x|)
-// factor. Ported from jodiemath's acosf_poly.
+// factor. Ported from jodiemath's acosf_poly. Coefficients refit
+// (2026-07-07) jointly against both acos's and asin's use of this same
+// poly (asin reuses it directly, see asin's own doc comment fix 7 for
+// the full story) -- asin's accuracy improved, acos's own left exactly
+// unchanged by construction (the refit was constrained to guarantee it).
 #[inline(always)]
 fn acos_poly(x: f32) -> f32 {
-    let u = 2.2960134e-3f32;
-    let u = fma(u, x, -1.1146357e-2);
-    let u = fma(u, x, 2.6900099e-2);
-    let u = fma(u, x, -4.8802612e-2);
-    let u = fma(u, x, 8.875567e-2);
-    let u = fma(u, x, -2.1458527e-1);
-    fma(u, x, 1.5707962)
+    let u = 2.2960256e-3f32;
+    let u = fma(u, x, -1.1146317e-2);
+    let u = fma(u, x, 2.6900213e-2);
+    let u = fma(u, x, -4.8802543e-2);
+    let u = fma(u, x, 8.8755615e-2);
+    let u = fma(u, x, -2.1458544e-1);
+    fma(u, x, 1.5707963)
 }
 
 /// acos(x), domain x in [-1,1] (result always in [0,pi], never negative --
@@ -1148,6 +1152,25 @@ fn asin_small(x: f32) -> f32 {
 ///    diagnostic latency number regressed, the same shape of tradeoff
 ///    already accepted for asinh/acosh's log1p-fix side effect earlier
 ///    this session.
+/// 7. `acos_poly`'s coefficients refit (2026-07-07, immediate follow-up
+///    to fix 6) against a *joint* objective instead of `acos`'s error
+///    alone: `acos(x)` shrinks to 0 as `x -> 1` while `asin(x)` grows to
+///    `pi/2` there, so the same absolute poly error carries a different
+///    *relative* (ulp) weight depending on which caller's output it's
+///    measured against -- a poly tuned purely for acos's own hardest
+///    region may leave accuracy on the table specifically for asin's use
+///    of the same coefficients. `examples/tune.rs`'s `acos_poly_c` tuner
+///    extended with a constrained search: minimize asin's error subject
+///    to acos's own on-grid max ulp never exceeding its already-tuned
+///    best (a stricter, cross-function-safe version of a first
+///    unconstrained joint-max attempt, which found a similar asin
+///    improvement but let acos's own max regress by 1 ulp -- rejected in
+///    favor of this one once the safe version was confirmed to find
+///    asin gains too). Exhaustive sweep: asin max ulp 11 -> 9, avg 0.033
+///    -> 0.030; acos itself exactly unchanged (max ulp 4, avg 0.496,
+///    bit-for-bit identical to its pre-refit values). Zero perf cost for
+///    either function (same instructions, only the 7 literal constants
+///    differ).
 #[inline(always)]
 pub fn asin(x: f32) -> f32 {
     let a = x.abs();

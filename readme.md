@@ -290,7 +290,7 @@ IDEAS.md for the before/after measurements):
   found once this session). mca cost is negligible: atan2 unchanged
   (57.17/1.467), hypot +0.5%/+0.4% (21.00->21.11 cyc, 0.763->0.766
   cyc/elem), remainder unchanged (33.02/0.647).
-- **improved**: `asin`'s worst-case accuracy, in two rounds. First, the
+- **improved**: `asin`'s worst-case accuracy, in three rounds. First, the
   small/mid Taylor threshold widened `0.1 -> 0.3` after re-checking (and
   disproving) a prior doc comment's own untested claim that the residual
   "can't be shrunk by moving thresholds" -- max ulp 84 -> 41, zero perf
@@ -307,8 +307,16 @@ IDEAS.md for the before/after measurements):
   branch also removed independent work the scalar chain could previously
   use to fill cycles otherwise spent waiting on the sqrt. Kept: both
   accuracy and throughput (this crate's prioritized metric) improved by a
-  wide margin, only the secondary latency number regressed -- see asin's
-  own doc comment (fixes 5-6) for the full investigation.
+  wide margin, only the secondary latency number regressed. Third,
+  `acos_poly`'s coefficients refit against a *joint* objective (`acos`'s
+  own error plus asin's use of the same poly, since the two callers'
+  outputs scale oppositely near x=1, giving the same absolute poly error
+  a different ulp weight for each) with a constraint that acos's own
+  on-grid max ulp may never regress -- max ulp 11 -> 9, avg 0.033 ->
+  0.030 for asin, `acos` itself exactly unchanged (max ulp 4, avg 0.496,
+  bit-for-bit identical). Zero perf cost throughout (same instructions,
+  only literal constants changed in every round) -- see asin's own doc
+  comment (fixes 5-7) for the full investigation.
 
 **sinh_throughput/cosh_throughput** are a second tier for sinh/cosh, added
 after finding that computing `exp(-x)` as `1.0 / exp(x)` (instead of a
@@ -394,7 +402,7 @@ comment); their rows are exhaustive (all 2^32 f32 bit patterns), not fuzz.
                   asinh |    0.173   |     4     | (std also imperfect at extreme |x|)
                   acosh |    0.063   |     4     |  0.000  |    1
                   atanh |    0.032   |     3     |  0.037  | 363409
-                   asin |    0.033   |    11     |  0.000  |    0
+                   asin |    0.030   |     9     |  0.000  |    0
                    acos |    0.496   |     4     |  0.000  |    0
                    atan |    0.186   |    18     |  0.000  |    0
        tan (in-domain)  |    0.331   |  2967     |  0.000  |    0
@@ -806,11 +814,12 @@ time in the surprising direction (a small-looking change, a large real win).
 # todo:
 - do principled and thourough analysis of dependency chains and rounding errors to find optimizations
 - perfectly rounded versions
-- asin's max-ulp residual (11, down from 84 via two rounds of fixes --
-  widening the small-branch threshold, then removing the `mid` branch
-  entirely in favor of reusing acos's own full-domain poly, see asin's
-  doc comment fixes 5-6; closing the rest of the way needs a genuinely
-  different correction shape, not just a threshold)
+- asin's max-ulp residual (9, down from 84 via three rounds of fixes --
+  widening the small-branch threshold, removing the `mid` branch entirely
+  in favor of reusing acos's own full-domain poly, then a joint acos/asin
+  refit of that poly's coefficients, see asin's doc comment fixes 5-7;
+  closing the rest of the way needs a genuinely different correction
+  shape, not just a threshold or coefficients)
 - asin's latency regressed 43.24->59.03 cyc as a side effect of fix 6
   above (throughput improved a lot, 2.899->0.968 cyc/elem, and accuracy
   improved a lot too; only latency got worse) -- worth a closer look if

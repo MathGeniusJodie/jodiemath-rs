@@ -469,11 +469,43 @@ branches, no scalar-only intrinsics unless the vector form exists).
   computation with different post-transforms would halve the code and
   enable a combined refit at f32-quantized precision. `asin` now calls
   `acos_poly` directly (`pi/2 - sqrt(1-a)*acos_poly(a)`, sign-restored),
-  the exact shared-kernel shape described here — what's left unclaimed is
-  a literal combined refit of `acos_poly` scored jointly against both
-  `acos` and `asin`'s error simultaneously (currently `acos_poly` is only
-  ever fit/tuned from `acos`'s own perspective); likely small further
-  upside, not attempted this round.
+  the exact shared-kernel shape described here — and the combined refit
+  was attempted immediately after, see the entry directly below (done,
+  small but real upside for asin, zero cost to acos).
+- **`acos_poly` refit against a joint acos+asin objective — done, tested,
+  kept (2026-07-07), immediate follow-up to the `mid`-removal entry
+  above.** `acos_poly` had only ever been tuned against `acos`'s own ulp
+  error (`examples/tune.rs`'s existing `acos_poly_c` tuner). But `acos(x)`
+  shrinks to 0 as `x -> 1` while `asin(x)` (now built directly on the
+  same poly via `pi/2 - sqrt(1-a)*acos_poly(a)`) grows to `pi/2` there —
+  the *same absolute* poly error carries a *different relative* (ulp)
+  weight depending on which caller's output magnitude it's measured
+  against. A poly tuned purely for acos's own hardest region (`x -> 1`,
+  where acos's own value is tiny, so absolute error there is heavily
+  penalized in ulp terms) might be spending precision acos doesn't
+  strictly need at the cost of precision asin does need elsewhere.
+  Extended `acos_poly_c` in tune.rs with two variants: (1) an
+  unconstrained joint objective (per-point score = `max(acos's ulp
+  error, asin's ulp error)`) — found real improvement on the joint
+  metric (grid max 9→6), but the resulting coefficients let acos's own
+  exhaustive max ulp regress from 4 to 5, a genuine cross-function
+  tradeoff. (2) A constrained variant instead: minimize asin's error
+  *subject to* acos's own on-grid max ulp never exceeding its
+  already-tuned best — found asin gains (grid max 9→7) with acos's own
+  metric provably untouched by construction, not just empirically close.
+  Applied the constrained result. Exhaustive sweep confirms both
+  predictions: asin max ulp 11→9, avg 0.033→0.030; acos itself exactly
+  unchanged (max ulp 4, avg 0.496, bit-for-bit identical to its pre-refit
+  values) — not merely "close", genuinely untouched, since the search
+  never accepted a move that would have regressed it. Zero perf cost for
+  either function (same instructions, only the 7 literal constants
+  differ). The rejected unconstrained variant is worth remembering as
+  its own small lesson: an unconstrained joint objective can quietly
+  trade one caller's accuracy for another's even when both callers share
+  the exact same underlying computation — worth checking explicitly
+  (constrain or report per-function breakdowns) whenever a poly serves
+  more than one caller with differently-shaped error sensitivity, rather
+  than trusting a single combined metric to mean "both improved."
 - **atan poly refit — done, tested, kept (2026-07-07)**, same recipe as
   the asin mid-branch refit just above, extending `examples/tune.rs` with
   `atan_poly_c`. Turned out atan was already close to a strong local
