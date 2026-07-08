@@ -1534,11 +1534,40 @@ branches, no scalar-only intrinsics unless the vector form exists).
 
 ## Codegen & build hygiene
 
-- **CI asm grep** (restating from Part 1 because it gates everything else):
-  compile a `#[no_mangle]` loop per public function, assert `vfmadd.*[yz]mm`
-  present and no `call`/scalar `ss`-suffixed math in the hot loop. The
-  scale-param duplication incident and the saturating-cast lesson (memory)
-  were both silent codegen regressions this would have caught.
+- **CI asm grep — done, added as `examples/codegen_check.rs`, and it
+  found a real bug in itself before it ever caught a real regression
+  (2026-07-07).** Reuses `mca.rs`'s own `--emit=asm` pipeline (same `.s`
+  file, same `# LLVM-MCA-BEGIN <name>_throughput`/`END` region markers
+  `mca_target.rs` already tags every public function with) and greps
+  each region for two known failure signatures from this crate's own
+  history (jodiemath-workflow memory): a `call` instruction (libm
+  fallback / de-vectorized loop) and `cvttsd2si`/`cvttss2si` (the
+  saturating-cast incident — a float→int `as` cast lowering to a scalar
+  per-lane extract instead of a packed instruction), plus a sanity check
+  that at least one genuinely packed (`ymm`/`zmm`-width) arithmetic
+  instruction is present at all (so a fully-optimized-away region can't
+  pass by vacuous truth). First run: 35 regions checked, only
+  `nop_throughput` "failed" — a real false positive, since it's the
+  harness's own deliberately-arithmetic-free identity baseline, not a
+  real function; excluded by name. Every real function passed clean on
+  that first run — **but before trusting a clean pass on already-clean
+  code, validated the checker actually detects what it claims to**:
+  temporarily reintroduced the exact historical saturating-cast pattern
+  into a scratch copy of `hypot` (`(x as i64 as f32) * 0.0`, discarded
+  immediately after) and re-ran the checker. It did *not* fail — a real
+  bug in the checker itself, not a false negative from the test case:
+  `--emit=asm` showed the cast really did de-vectorize to a `vcvttss2si`
+  per lane (confirmed the synthetic regression was genuine, not a no-op
+  LLVM optimized away), but the checker's own pattern match used
+  `starts_with("cvttss2si")`, missing the AVX-encoded mnemonic's `v`
+  prefix (`vcvttss2si`) entirely. Fixed to `contains(...)` instead of
+  `starts_with(...)`, re-ran with the synthetic regression still in
+  place — now correctly caught it. Reverted the scratch `hypot` change
+  (confirmed via `git diff` showing zero remaining changes to
+  `src/lib.rs`) and re-ran clean: all 35 regions pass. This is a coarse,
+  best-effort net (documented in the tool's own header comment), not a
+  full codegen verifier — it only catches these two specific known
+  failure classes, not vectorization quality in general.
 - **Baseline target audit's `compile_error!` half — done, tested, kept
   (2026-07-07).** `.cargo/config.toml` sets `target-cpu=native`, but that
   setting is silently *overridden* (not merged) by an environment
