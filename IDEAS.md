@@ -1569,4 +1569,28 @@ legitimate direction here, unlike on most targets.
   the bookkeeping entry with a definitive negative answer rather than
   leaving it open.
 
+- **asin_small: one more Taylor term (2026-07-08), immediate follow-up to
+  the crossover check above -- real avg win, max ulp unmoved, real perf
+  cost, rejected**: since the crossover investigation just above found
+  `asin`'s max ulp (9) sitting *inside* `asin_small`'s own truncation
+  error right at its domain edge, the natural next question is whether
+  the Taylor series itself (not the crossover) is the fixable part. Added
+  the next exact term (`35/1152 * x^9`, one more fma in the Horner chain).
+  Exhaustive sweep: avg ulp improved a real 16% (0.0303 -> 0.0254), but
+  max ulp stayed exactly 9 -- just relocated from x=0.24595731 (inside
+  `asin_small`'s domain) to x=0.3321139 (inside the `big`/acos_poly
+  branch's domain). The two branches were tied co-bottlenecks at 9 ulp
+  each at their respective worst points; fixing one just exposes the
+  other, unchanged, as the new reported max. mca confirmed a real cost for
+  that non-improvement: latency 59.03 -> 63.03 cyc (+6.8%), throughput
+  0.968 -> 1.044 cyc/elem (+7.9%), both worse, matching the plain +1-fma
+  op-count change. Fails the bar cleanly (no max-ulp win, and a real perf
+  penalty for the avg-only gain). Not adopted; reverted. **General lesson:
+  when two independent branches happen to tie at the same max-ulp value,
+  improving either one in isolation looks like it "didn't help" not
+  because the fix was wrong, but because the *other*, untouched branch was
+  always going to cap the reported number regardless -- worth checking
+  which branch a worst-case x actually falls in before assuming a fix to
+  that branch will move the crate-wide statistic.**
+
 
