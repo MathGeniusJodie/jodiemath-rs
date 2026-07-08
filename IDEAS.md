@@ -83,6 +83,25 @@ brainstorm backlog lives at the bottom of this file.
   x≈1) is where the actual headroom would need to come from, not this
   branch.
 
+- **tanh: direct rational x·P(x²)/Q(x²) over the whole [0, ~9.02] domain
+  (2026-07-08), doesn't converge at a practical degree**: the backlog
+  framed this as "~6-8 fmas total," but a scipy `least_squares` fit of
+  this exact shape needed **13 free coefficients** (P deg 13 / Q deg 12)
+  to reach ~6.5e-8 max abs error (the scale needed for a few-ulp result)
+  over the full domain — far more than any poly in this crate, the same
+  wide-dynamic-range convergence problem already found for erfc's log-
+  space idea. Tried splitting into two domains instead (matching erfc's
+  own "domain split" fallback pattern): [0,4] converges beautifully with
+  a 3/3 rational (7 coefficients, max abs err 1.7e-8), but [4,9.02] (the
+  near-saturation tail) needs its own 3/3 (another 7 coefficients, max
+  abs err 4.4e-7, borderline) to get there — 14 coefficients total across
+  two branches plus a select, all evaluated unconditionally per this
+  crate's branchless convention. That's likely *more* total work than
+  the current `expm1(2x)/(expm1(2x)+2)` route, especially now that `exp`
+  itself is much faster after this session's magic-round fix — the
+  backlog's assumed win doesn't obviously hold once `exp`'s own cost
+  dropped. Not implemented; no code changed.
+
 ## cbrt family
 
 - **Seed constant joint search, degree-2 poly (2026-07-07)**:
@@ -527,18 +546,10 @@ legitimate direction here, unlike on most targets.
 
 ## exp family
 
-- **tanh: direct rational x·P(x²)/Q(x²)**: replaces expm1(2x) + division
-  (which drags in the whole exp reduction+poly) with one even rational fit
-  on [0, ~9.02] (tanh saturates to 1.0f32 past that; clamp handles the
-  tail, same POLY_SAFE_BOUND pattern). One division, ~6-8 fmas total,
-  odd symmetry via mulsign. Likely both faster *and* more accurate than
-  the current route; the standard ML-workload tanh shape.
-
 - **tanh via the shared-reduction even/odd trick**: tanh currently reuses
   `expm1(2x)` (already a single exp evaluation, not two), so the sinh/cosh
   version of this idea (now adopted, see git history/src/lib.rs's
-  `exp_pos_neg`) doesn't directly apply here — this is really the
-  separate "tanh: direct rational" idea below, not a variant of this one.
+  `exp_pos_neg`) doesn't directly apply here.
 
 ## sin / cos / tan
 
