@@ -1509,7 +1509,7 @@ brainstorm backlog lives at the bottom of this file.
   — `powf_checked`/`remainder` — that was never listed there to begin
   with). With this, `powf` now has all three tiers (`powf_unchecked`,
   `powf`, `powf_checked_unchecked`, `powf_checked`) any `cbrt`-shaped
-  function in this crate could have. Commit `<pending>`.
+  function in this crate could have. Commit `982135d`.
 
 ---
 
