@@ -224,6 +224,22 @@ brainstorm backlog lives at the bottom of this file.
   4→5 acos regression). The extra degree of freedom buys nothing beyond
   what degree 6 already offers under this objective; not worth the
   latency cost of even testing in `src/lib.rs`. Not adopted.
+  **Re-checked 2026-07-08 (later, same day) with a proper scipy seed**
+  instead of 0.0, per this file's own Cross-cutting tuner-methodology
+  finding (the zero-seed trap that also affected `atan_poly`'s degree
+  bump) — this time real, if modest, headroom showed up: implemented
+  directly in `src/lib.rs` and measured against the real crate (not just
+  `tune.rs`'s grid), `acos` avg/max ulp 0.4962/4 → 0.4904/3 (genuine
+  improvement, *not* the previously-seen regression) and `asin` avg
+  improved slightly with max ulp unchanged at 9. But unlike `atan_poly`'s
+  dramatic 18→4 cut, this is a 1-ulp acos improvement with no max-ulp
+  movement at all for `asin` — for a similar-sized real mca cost (asin
+  59.03/0.968 → 63.03/1.039 cyc lat/throughput, +6.8%/+7.3%; acos
+  37.11/0.820 → 41.11/0.862, +10.8%/+5.1%). Judged not worth it at this
+  magnitude (unlike `tanh`'s domain-hole fix or `atan`'s large cut, there
+  isn't a strong enough gain to justify the cost here). Reverted;
+  `src/lib.rs` untouched, `tune.rs`'s scratch scipy-seed addition also
+  reverted.
 
 - **atan2 division-residual correction (2026-07-07)**: added a first-order
   Taylor correction (`atan'(d)*e`) for atan2's `y/x` division rounding.
