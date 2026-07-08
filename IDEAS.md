@@ -1162,6 +1162,42 @@ brainstorm backlog lives at the bottom of this file.
   audit is complete; a genuinely new poly would need to exist before
   it's worth revisiting.
 
+- **Rational (P/Q) refits for log_2/acos_poly (2026-07-08), ruled out —
+  one by strong analogy to an already-confirmed result, the other by a
+  reproducible numerical dead end before any coefficients could even be
+  tested.** For `log_2`: any direct P/Q rational (in `s = m-1`, the
+  crate's existing decomposition variable) needs a new division sitting
+  in exactly the same critical-path position the already-tested atanh-
+  form idea's division occupied — right after `s` is computed, with
+  nothing independent to overlap it against (that idea measured +43%
+  latency for exactly this reason). Since the position and dependency
+  structure don't change based on which variable the rational is
+  expressed in, this was ruled out by analogy without needing a fresh
+  mca run: the same fundamental problem applies regardless of fit
+  quality. For `acos_poly`: structurally more promising going in (`acos`
+  already has a `sqrt` in its critical path that a new division might
+  genuinely overlap, unlike `log_2`'s case) — but a scipy `least_squares`
+  fit of a degree-2/2 and degree-3/3 rational against `acos(x)/sqrt(1-x)`
+  (seeded from the shipped poly's own coefficients, not zero) failed to
+  converge within 60s for *both* degrees, a clear, reproducible
+  numerical dead end (checked the rational-evaluation code for bugs
+  directly — Horner ordering and the fixed leading-1.0 denominator term
+  both traced correctly by hand). Not chased further (e.g. with a more
+  robust solver or a different parameterization) given the effort/
+  payoff ratio once the fit itself won't cooperate; no Rust written for
+  either. **General lesson: (1) once a specific "new division's exact
+  critical-path position" has been measured as fatal for one function,
+  the same structural argument rules out the same idea for a different
+  function using the same variable/position, without needing to
+  re-measure via mca — but only if the position is genuinely the same,
+  which is worth double-checking, not just assumed; (2) a rational
+  refit's *fit* can fail outright (not just fail to beat a poly) for
+  some target-function shapes, even seeded well — this is a distinct,
+  earlier failure mode from the ones this file has logged so far (which
+  were all "fits fine, doesn't help enough" or "fits fine, costs too
+  much"), worth recognizing quickly (a short timeout) rather than
+  letting an optimizer grind indefinitely.**
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
@@ -1205,9 +1241,8 @@ legitimate direction here, unlike on most targets.
   so e.g. sinf_poly's 4 coeffs → 2/2 rational could cut fma count and
   Estrin depth at the cost of one division. Latency risk (division sits on
   the critical path, and unlike cbrt's rcp it can't start early), so this
-  is a throughput idea, not a latency one. Candidates: log_2's degree-9
-  (the deg-8 poly cut failed, but a 4/4 rational was never tried),
-  acos_poly, erf_poly.
+  is a throughput idea, not a latency one. Candidates: sinf_poly, erf_poly
+  (log_2 and acos_poly checked and ruled out, see tried-and-rejected log).
 
 - **Batch/slice API tier (`exp2_slice(&[f32], &mut [f32])` etc.)**: the
   crate's whole perf story assumes the *caller's* loop auto-vectorizes;
