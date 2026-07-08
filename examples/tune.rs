@@ -302,6 +302,19 @@ fn expm1_near0_c(x: f32, c: &[f32]) -> f32 {
     numer / denom
 }
 
+// expm1_near0_c with the numerator bumped from degree 3 to degree 5 (one
+// more odd term, x*(c0*x^4+c1*x^2+c2) instead of x*(c0*x^2+c1)) -- for the
+// "expm1 Pade degree bump" idea, screening whether the extra numerator
+// degree buys real headroom over the shipped 5-coefficient form's max ulp
+// 3 (in the |x|<0.5 branch). Denominator left at its shipped degree 3.
+#[inline(always)]
+fn expm1_near0_deg5_c(x: f32, c: &[f32]) -> f32 {
+    let x2 = x * x;
+    let numer = x * fma(fma(c[0], x2, c[1]), x2, c[2]);
+    let denom = fma(x, fma(x, x + c[3], c[4]), c[5]);
+    numer / denom
+}
+
 // erfc's rational*gaussian tail (see src/lib.rs's erfc): the 8 named
 // coefficients (4 for n, 4 for d) are tuned; the two Horner chains'
 // trailing "+1.0" leading terms are left fixed, matching the shipped
@@ -780,6 +793,10 @@ fn main() {
         }
         let init = [-1.9999927, -120.0, -12.000030, 59.999996, -120.0];
         tune("expm1_near0", &expm1_near0_c, &|x| x.exp_m1(), &grid, &init);
+        // degree-5-numerator bump: c[0] (the new x^5 term) starts at 0.0
+        // so this starts bit-identical to the shipped degree-3 form.
+        let init = [0.0, -1.9999927, -120.0, -12.000030, 59.999996, -120.0];
+        tune("expm1_near0_deg5", &expm1_near0_deg5_c, &|x| x.exp_m1(), &grid, &init);
     }
     if which.contains("exp_r") {
         // exp's reduced-argument domain, r in [-ln2/2, ln2/2].

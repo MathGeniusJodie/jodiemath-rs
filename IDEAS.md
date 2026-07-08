@@ -37,6 +37,18 @@ brainstorm backlog lives at the bottom of this file.
   poly's domain. Max ulp unchanged (2→2), avg ulp barely moved
   (0.00248→0.00244) — already near f32's precision floor. Not applied.
 
+- **expm1 Pade degree bump, numerator degree 3 → 5 (2026-07-08)**: added a
+  new odd term (new `expm1_near0_deg5_c` in `tune.rs`, `"expm1_near0"`
+  arg), seeded at 0.0 so it starts bit-identical to the shipped 5-
+  coefficient form. Coordinate descent left the new coefficient at exactly
+  0.0 and every other coefficient unmoved — a zero-move local optimum,
+  same signature as the `exp2`/`log_2` coefficient-refit entry above and
+  this session's `acos_poly8`/ln/log10 refits. No headroom found on
+  `tune.rs`'s own grid (known to be coarser than `accuracy.rs`'s exhaustive
+  sweep, but a *zero*-move result doesn't need the denser sweep to trust —
+  there's nothing for it to reveal). Not adopted; `src/lib.rs` never
+  touched.
+
 ## cbrt family
 
 - **Seed constant joint search, degree-2 poly (2026-07-07)**:
@@ -358,11 +370,6 @@ legitimate direction here, unlike on most targets.
   entire exp evaluation from sinh/cosh and both from tanh-via-expm1 if
   kept. sinh_throughput/cosh_throughput's 1/e division route becomes
   obsolete if this works.
-
-- **expm1 Pade degree bump**: 5 coeffs → 6-7 (numerator degree +1) to chase
-  max ulp 3 → 2 in the |x|<0.5 branch. Horner depth unchanged
-  (ceil(log2) boundary), so near-zero perf cost. Screen with lolremez
-  first per the established recipe.
 
 ## sin / cos / tan
 
