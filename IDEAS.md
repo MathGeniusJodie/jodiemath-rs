@@ -1073,6 +1073,29 @@ brainstorm backlog lives at the bottom of this file.
   integration (edgecheck bit-exact on all special values, codegen_check
   clean, quickbench, mca, readme) done; commit follows.
 
+- **Centered-variable refit for erfc's xa ∈ [0,10] (2026-07-08), tested
+  and rejected — confirms the exp2-centering finding transfers here too,
+  despite erfc's very different function shape.** This was explicitly
+  split out from the exp2-centering rejection earlier in this file as
+  "worth checking independently" since erfc's target (a P/Q rational
+  fitting `erfc(xa)·exp(xa²)`) decays/grows across many orders of
+  magnitude, unlike exp2's bounded, monotonic `R(f)` — a real reason the
+  same conclusion might not transfer. Checked directly with scipy: fit
+  the same degree-4/4 rational shape both uncentered (max relerr
+  3.74e-7, matching the shipped form) and centered at the domain
+  midpoint (`g = xa − 5`, max relerr 2.72e-5) — centering is **~73x
+  worse**, not better, confirming the exp2 finding does transfer despite
+  the different function shape. Not chased further (erfc's own domain-
+  split experiment already separately established the real max-ulp
+  bottleneck lives outside the rational entirely, so even a *successful*
+  centering refit wouldn't have moved the crate's actual accuracy
+  number). Not implemented, no code written beyond the scipy check.
+  **General lesson: "this function's shape looks different enough that
+  a prior rejection might not transfer" is a reasonable thing to flag
+  for later checking (as the original exp2 entry did), but the actual
+  check can still be a five-minute scipy script — worth doing before
+  assuming either way.**
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
@@ -1253,15 +1276,6 @@ legitimate direction here, unlike on most targets.
   the fit could buy back exactly the boundary cases that show up as
   max-ulp outliers.
 
-
-- **Centered-variable refit for erfc's xa ∈ [0,10] (hugely off-center
-  today)**: the same idea tried for exp2 (above, rejected) — untested here.
-  erfc's correction is a P/Q rational, not a plain monomial poly, and its
-  target decays across many orders of magnitude over the domain, a very
-  different shape from exp2's monotonic-but-bounded R(f) — the exp2
-  rejection's reasoning (no interior point beats the domain's own edge
-  minimum) doesn't obviously transfer, so this is still worth checking
-  independently rather than assuming it fails the same way.
 
 - **Compensated-Horner accuracy tier**: run the poly with error-free
   transformations (two_prod/two_sum per step, like reduce_pi does for the
