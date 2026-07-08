@@ -1016,6 +1016,41 @@ brainstorm backlog lives at the bottom of this file.
   sibling functions share a reassociation, check accuracy for *both*
   separately, don't assume symmetry.**
 
+- **Three-interval atan reduction (2026-07-08), tested and rejected —
+  a genuinely great accuracy result completely swamped by a severe
+  speed regression, matching the risk already flagged going in.**
+  Scipy check first: a degree-2/2 rational fit over `u` in
+  `[-tan(pi/8), tan(pi/8)]` (the shared reduced domain both the
+  direct-`r<t` and transformed-`r>=t` branches land in) reaches 8.7e-10
+  max relative error — tighter than the shipped degree-3/3's 1.87e-8,
+  with 2 fewer coefficients. Coordinate-descended `atan_three_c` in
+  `tune.rs` (seeded from the scipy fit) against the real `x.atan()`
+  objective: max ulp 3 / avg 0.275, matching or marginally beating the
+  shipped 3/3's max 3 / avg 0.286 — the accuracy case was fully
+  confirmed. Implemented for real and measured via mca: catastrophic,
+  not just "a real cost" — latency 61.09→104.94 cyc (+72%), throughput
+  1.491→2.974 cyc/elem (+99%, essentially doubled). Root cause exactly
+  as flagged when this idea was first considered: the `u`-transform's
+  own division must resolve *before* the (still-a-rational) poly's own
+  division can even start for every input landing in the upper half
+  (`r>=t`, roughly half the domain) — two sequential divisions instead
+  of one, each carrying independent full division latency with no
+  chance to overlap, unlike cbrt's early-starting `rcp` or any of the
+  other "division buys a smaller poly" ideas that worked out. Not
+  adopted; `src/lib.rs`/`mca_target.rs`/`mca.rs` scratch reverted,
+  `atan_three_c` kept in `tune.rs` as reference infra given how clean the
+  accuracy result was (a future attempt restructuring *which* interval
+  needs the extra division, or finding a division-free reformulation of
+  the transform, could still reuse this fit). **General lesson: a
+  correctly-flagged division-on-critical-path risk can turn out to be
+  much worse in practice than "a real cost" — here it nearly doubled
+  throughput cost, not a modest tradeoff — reinforcing that this
+  specific failure mode (new division gated on a value only available
+  partway through an existing division-containing pipeline) deserves a
+  quick mca check *before* investing in the accuracy side of any such
+  idea, not just after, once enough instances of it have piled up in
+  this file.**
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
@@ -1269,13 +1304,6 @@ legitimate direction here, unlike on most targets.
   ports), likely better latency (divider's ~11 cyc + dependency removed).
   Opposite tradeoff to everything else here, so it's a per-caller tier
   question, not a replacement.
-
-- **Three-interval atan reduction**: on top of a.min(1/a), split [0,1] at
-  tan(pi/8) using atan(x) = pi/8 + atan((x−t)/(1+t·x)) for the upper part
-  — argument range shrinks to ±tan(pi/8) ≈ 0.414, poly degree drops
-  ~2 levels. Costs one division (idle divider) + one select + one
-  constant add. The standard next step every scalar libm takes; never
-  tried here.
 
 - **Retune asin's 0.25 crossover after any acos_poly change**: fix 5's
   lesson (measure both branches' actual curves, don't trust the inherited

@@ -250,6 +250,39 @@ fn atan_poly_c(x: f32, c: &[f32]) -> f32 {
     (fma(fma(c[0], x2, c[1]), x2, 1.0) * x) / fma(fma(x2, c[2], c[3]), x2, 1.0)
 }
 
+// IDEAS.md's "Three-interval atan reduction" idea, tried and rejected
+// (2026-07-08): on top of a.min(1/a) (giving r in [0,1]), split further
+// at t=tan(pi/8) -- atan(r) = poly(r) for r<t directly, or pi/8 + poly(u)
+// for r>=t via u=(r-t)/(1+t*r) (both r and u land in [0,t], a much
+// smaller domain than atan_poly's full [0,1], letting a degree-2/2
+// rational match or beat the shipped degree-3/3's accuracy with 2 fewer
+// coefficients -- scipy check: 8.7e-10 max relerr over [-t,t] vs the
+// shipped 3/3's 1.87e-8 over [0,1], confirmed for real ulp too: this
+// tuned to max 3/avg 0.275, matching/beating shipped's max 3/avg 0.286).
+// The accuracy case fully held up -- but implemented for real, mca
+// showed a severe regression, not a modest cost: latency 61.09->104.94
+// cyc (+72%), throughput 1.491->2.974 (+99%, nearly doubled). Root
+// cause: the u-transform's own division sits *before* the (still-a-
+// rational) poly's own division for every r>=t (about half the domain),
+// two sequential full-latency divisions instead of one, with nothing to
+// overlap them against -- the same risk pattern that sank the log_2
+// atanh-form idea, here worse than expected even having been flagged in
+// advance. Not adopted; kept as reference infra given how clean the
+// accuracy result was on its own.
+const ATAN_T: f32 = 0.41421356237309503; // tan(pi/8)
+#[inline(always)]
+fn atan_three_c(x: f32, c: &[f32]) -> f32 {
+    let r = x; // caller already reduces to a.min(1/a) in [0,1]
+    let below = r < ATAN_T;
+    let u = (r - ATAN_T) / fma(ATAN_T, r, 1.0);
+    let arg = if below { r } else { u };
+    let arg2 = arg * arg;
+    let numer = fma(fma(c[0], arg2, c[1]), arg2, 1.0) * arg;
+    let denom = fma(fma(arg2, c[2], c[3]), arg2, 1.0);
+    let p = numer / denom;
+    if below { p } else { std::f32::consts::FRAC_PI_8 + p }
+}
+
 // Degree bump on atan_poly: 3/3 instead of 2/2 (one more term each in
 // numer/denom). c = [a2, a1, a0, b2, b1, b0]; a2/b2 start at 0.0 so this
 // starts bit-identical to the shipped 2/2 form.
@@ -755,6 +788,12 @@ fn main() {
         // Fed as the coordinate-descent starting point instead of 0.0.
         let init7d = [0.00883003, 0.28497791, 1.12717105, 0.05016619, 0.57181574, 1.46050425];
         tune("atan_poly7 (3/3, scipy seed)", &atan_poly7_c, &|x| x.atan(), &grid, &init7d);
+
+        // Three-interval reduction: scipy-derived degree-2/2 seed (fit
+        // over u in [-tan(pi/8), tan(pi/8)] against atan(u) directly, not
+        // zero-seeded).
+        let init3 = [0.0616303, 0.75416583, 0.22413336, 1.08749911];
+        tune("atan_three", &atan_three_c, &|x| x.atan(), &grid, &init3);
     }
     if which.contains("acos") {
         // acos/asin's near-1 branch both evaluate this for x = |input| in
