@@ -108,6 +108,27 @@ fn main() {
     check("sin_checked(-0)", sin_checked(-0.0), -0.0);
     check("cos_checked(-0)", cos_checked(-0.0), 1.0);
 
+    // sinpi/cospi: argument in half-turns, q=round(x)/r=x-q both exact in
+    // f32, so (unlike sin/cos) there's no accuracy cliff anywhere -- these
+    // pin the full-range "always finite, exact at exact half-integers"
+    // guarantee described in sinpi's own doc comment.
+    check("sinpi(0)", sinpi(0.0), 0.0);
+    check("sinpi(-0)", sinpi(-0.0), -0.0);
+    check("cospi(0)", cospi(0.0), 1.0);
+    check("sinpi(0.5)", sinpi(0.5), 1.0);
+    check("sinpi(1)", sinpi(1.0), -0.0);
+    check("cospi(1)", cospi(1.0), -1.0);
+    check("sinpi(-0.5)", sinpi(-0.5), -1.0);
+    check("sinpi(nan)", sinpi(f32::NAN), f32::NAN);
+    check("cospi(nan)", cospi(f32::NAN), f32::NAN);
+    check("sinpi(inf)", sinpi(f32::INFINITY), f32::NAN);
+    check("sinpi(-inf)", sinpi(f32::NEG_INFINITY), f32::NAN);
+    check("cospi(inf)", cospi(f32::INFINITY), f32::NAN);
+    check_finite("sinpi(f32::MAX)", sinpi(f32::MAX));
+    check_finite("cospi(f32::MAX)", cospi(f32::MAX));
+    check_finite("sinpi(1e20)", sinpi(1e20));
+    check_finite("cospi(1e20)", cospi(1e20));
+
     // ln/log10/log1p: same zero/negative/inf edges as log_2 (they're all
     // log_2 rescaled or composed with it).
     check("ln(0)", ln(0.0), f32::NEG_INFINITY);

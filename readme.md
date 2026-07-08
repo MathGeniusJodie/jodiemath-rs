@@ -18,6 +18,8 @@ All functions auto-vectorize, it's a hard requirement
         cos (|x|<1.3e7) |    0.293   |   2780    |  0.002  |    1
  sin_checked (|x|<=1e6) |    0.036   |     2     |  0.000  |    1
  cos_checked (|x|<=1e6) |    0.081   |     3     |  0.000  |    1
+         sinpi (|x|<1e6)|    0.336   |     2     | (no std sinpi)
+         cospi (|x|<1e6)|    0.094   |     2     | (no std cospi)
 ```
 
 ```
@@ -78,6 +80,8 @@ cbrt_accurate | 17.0 ns | 22.0 ns | 1.3x
          atan | 14.0 ns | 19.3 ns | 1.4x
         atan2 | 14.1 ns | 23.7 ns | 1.7x
           tan | 23.5 ns | 27.3 ns | 1.2x
+        sinpi |  9.0 ns |     -   |  -
+        cospi | 10.7 ns |     -   |  -
           erf | 21.0 ns |     -   |  -
          erfc | 22.9 ns |     -   |  -
         hypot |  8.4 ns | 13.9 ns | 1.7x
@@ -114,6 +118,8 @@ cbrt_accurate | 0.67 ns  | 3.93 ns | 5.9x
          atan | 0.33 ns  |  6.32 ns | 19.2x
         atan2 | 0.35 ns  |  9.97 ns | 28.2x
           tan | 0.76 ns  |  9.07 ns | 11.9x
+        sinpi | 0.18 ns  |     -    |  -
+        cospi | 0.25 ns  |     -    |  -
           erf | 0.70 ns  |     -    |  -
          erfc | 0.68 ns  |     -    |  -
         hypot | 0.24 ns  |  2.92 ns | 12.0x
@@ -134,6 +140,8 @@ sin                 |          46.00 |             1.151
 sin_checked         |         109.02 |             5.476
 cos                 |          54.00 |             1.406
 cos_checked         |         113.00 |             4.537
+sinpi               |          38.00 |             0.925
+cospi               |          46.00 |             1.150
 ln                  |          56.91 |             1.626
 log10               |          56.91 |             1.626
 log1p               |          61.16 |             2.276

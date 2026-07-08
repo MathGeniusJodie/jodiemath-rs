@@ -257,6 +257,47 @@ pub fn cos(x: f32) -> f32 {
     f32::from_bits(s.to_bits() ^ parity)
 }
 
+/// sin(pi*x), argument in half-turns instead of radians. Unlike `sin`'s
+/// own reduction (which needs a multi-constant Cody-Waite pi split
+/// because pi itself isn't exactly representable), `sinpi`'s reduction
+/// is *exact*: q = round(x) and r = x - q are both plain f32 operations
+/// with no rounding error to correct for (q is an exact integer by
+/// construction, and r = x - q is exact whenever |x| and |q| are within
+/// a factor of 2 -- the same Sterbenz argument this crate already
+/// relies on elsewhere, e.g. `exp`'s `x - k*LN2_HI`). `pi*r` then lands
+/// exactly in `[-pi/2, pi/2]`, `sinf_poly`'s own fitted domain, so this
+/// reuses that poly directly with no new fit needed. No accuracy cliff
+/// anywhere in f32 (unlike `sin`'s ~1.3e7 or even `sin_checked`'s
+/// ~1e13): past `|x| ~ 2^23`, every representable f32 is already an
+/// exact integer, so `r` becomes exactly 0 and the result is exactly 0
+/// everywhere out to `f32::MAX` (correct, since `sin(pi*integer) == 0`)
+/// -- parity may not track a meaningful odd/even distinction that far
+/// out (individual integers aren't even distinguishable by adjacent
+/// floats anymore), so the *sign* of that 0 isn't guaranteed, but the
+/// magnitude is exact.
+#[inline(always)]
+pub fn sinpi(x: f32) -> f32 {
+    let qb = x + ROUND_MAGIC;
+    let q = qb - ROUND_MAGIC;
+    let r = x - q;
+    let s = sinf_poly(std::f32::consts::PI * r);
+    let parity = qb.to_bits() << 31;
+    f32::from_bits(s.to_bits() ^ parity)
+}
+
+/// cos(pi*x), argument in half-turns -- see `sinpi`'s doc comment for why
+/// this reduction is exact and shares `sinf_poly` directly, same
+/// full-range-accurate (no cliff) guarantee.
+#[inline(always)]
+pub fn cospi(x: f32) -> f32 {
+    let kb = (x - 0.5) + ROUND_MAGIC;
+    let q = (kb - ROUND_MAGIC) + 0.5;
+    let r = x - q;
+    let s = sinf_poly(std::f32::consts::PI * r);
+    let parity = !kb.to_bits() << 31;
+    f32::from_bits(s.to_bits() ^ parity)
+}
+
 // q = round(x/pi) must be an *exact* integer for x - q*pi to land accurately
 // in [-pi/2, pi/2]. A single-f32 q (tried first, and again after a
 // native-round detour -- see jodiemath-workflow memory, 2026-07-06) is a

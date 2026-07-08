@@ -45,7 +45,7 @@ use sleef::f64x::{
     log2_u35, log_u35, pow_u10, remainder as remainder_ref, sin_u35, sinh_u35, tan_u35, tanh_u35,
 };
 use std::simd::num::SimdFloat;
-use std::simd::{Select, Simd};
+use std::simd::{Select, Simd, StdFloat};
 use std::time::Instant;
 
 const LANES: usize = 8;
@@ -71,6 +71,37 @@ fn cos_ref(v: F64xN) -> F64xN {
 }
 fn tan_ref(v: F64xN) -> F64xN {
     trig_safe(v, tan_u35)
+}
+// sinpi/cospi's own point: q=round(x), r=x-q is *exact*, so pi*r is a
+// small, precisely-representable angle -- computing pi*x directly (the
+// naive reference) reintroduces the argument-reduction imprecision
+// sinpi/cospi exist to avoid, and would give a *wrong* reference right
+// at sin's own zeros (any tiny rounding error in a large pi*x is a huge
+// *relative* error exactly where the true value is ~0). Mirror the same
+// reduction here, just in f64, so the reference is trustworthy at any
+// magnitude the exact-in-f32 reduction is (all of f32, in principle;
+// this harness still only trusts it up to where f64 keeps q exact,
+// i.e. far beyond f32's own 2^24 limit).
+fn parity_f64(q: F64xN) -> F64xN {
+    q - F64xN::splat(2.0) * (q * F64xN::splat(0.5)).floor()
+}
+fn sinpi_ref(v: F64xN) -> F64xN {
+    trig_safe(v, |x: F64xN| {
+        let q = x.round();
+        let r = x - q;
+        let s = sin_u35(r * F64xN::splat(std::f64::consts::PI));
+        let sign = F64xN::splat(1.0) - F64xN::splat(2.0) * parity_f64(q);
+        s * sign
+    })
+}
+fn cospi_ref(v: F64xN) -> F64xN {
+    trig_safe(v, |x: F64xN| {
+        let q = (x - F64xN::splat(0.5)).round() + F64xN::splat(0.5);
+        let r = x - q;
+        let s = sin_u35(r * F64xN::splat(std::f64::consts::PI));
+        let sign = F64xN::splat(2.0) * parity_f64(q - F64xN::splat(0.5)) - F64xN::splat(1.0);
+        s * sign
+    })
 }
 
 fn ulp_diff(a: f32, b: f32) -> u64 {
@@ -489,6 +520,24 @@ fn main() {
         report("cos_checked (all f32)", &s, t0);
         let s = measure!(everywhere, |x: f32| x.cos(), cos_ref);
         report("std cos (all f32)", &s, t0);
+    }
+    if run("sinpi") {
+        // sinpi/cospi's own reduction (q=round(x), r=x-q, both exact in
+        // f32) is valid over the *entire* f32 range -- but this test's
+        // reference (x*pi computed directly in f64, then a standard
+        // sin/cos) reintroduces exactly the argument-reduction precision
+        // problem sinpi/cospi exist to avoid, once x is large enough that
+        // even f64 can't represent x*pi to within a fraction of a half-
+        // turn. Restricting to |x|<1e6 keeps the reference itself
+        // trustworthy (f64 has 29 more mantissa bits than f32, plenty of
+        // headroom at this scale); edgecheck.rs separately verifies the
+        // large-x "exactly 0, never inf/nan" tail behavior without
+        // relying on a precise reference there.
+        let sinpi_domain = |x: f32| x.abs() < 1e6;
+        let s = measure!(sinpi_domain, sinpi, sinpi_ref);
+        report("sinpi (|x|<1e6)", &s, t0);
+        let s = measure!(sinpi_domain, cospi, cospi_ref);
+        report("cospi (|x|<1e6)", &s, t0);
     }
 
     if run("ln") {

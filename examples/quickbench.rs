@@ -83,6 +83,8 @@ fn main() {
     bench!("cos", cos);
     bench!("cos_checked", cos_checked);
     bench!("std cos", |x: f32| x.cos());
+    bench!("sinpi", sinpi);
+    bench!("cospi", cospi);
 
     bench!("ln", ln);
     bench!("std ln", |x: f32| x.ln());

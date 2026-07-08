@@ -834,15 +834,11 @@ legitimate direction here, unlike on most targets.
   tradeoff for callers who need std-grade hypot without std-grade scalar
   code.
 
-- **sinpi/cospi (argument in half-turns)**: q = round(x) and r = x − q are
-  *both exact* in plain f32 — the entire multi-word reduction apparatus
-  evaporates, leaving round + subtract + poly. Full-range accurate (no
-  cliff anywhere, even at f32::MAX), faster than the fast tier, and the
-  poly is a trivial refit of sinf_poly onto [-1/2, 1/2] scaled by pi.
-  Callers doing phase accumulation in turns (audio, FFT twiddles) get
-  strictly better everything. Probably the highest value-per-effort new
-  function possible in this crate. sind/cosd (degrees, mod 180 exact for
-  the same reason) falls out of the same shape if wanted.
+- **sind/cosd (argument in degrees)**: same exact-reduction shape as
+  `sinpi`/`cospi` (now implemented, see git history/src/lib.rs) — q =
+  round(x/180), r = x - q*180 isn't quite as free (180 isn't a power of
+  2, so q*180 needs its own care), but mod-180 still avoids needing an
+  irrational-constant reduction. Falls out of the same idea if wanted.
 
 - **sigmoid/logistic**: 1/(1 + exp(-x)) — one exp tier + one division
   (idle divider), or expm1-based near 0 if the cancellation check demands
