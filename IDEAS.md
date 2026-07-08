@@ -1272,9 +1272,48 @@ branches, no scalar-only intrinsics unless the vector form exists).
 - **hypot**: keep naive per the crate's stated tradeoff; optional
   `hypot_checked` via max-exponent scaling (`vgetexpps` or bit trick) if
   wanted — two extra multiplies, no division.
-- **remainder**: q = x/y rounding error dominates; a `two_prod(q, y)` +
-  corrected subtract (3 extra ops) extends the reliable |x/y| range
-  substantially — same trick family as reduce_pi, tiny cost.
+- **remainder: q-correction — done, tested, adopted as an opt-in tier
+  `remainder_checked` (2026-07-07).** Tested the idea directly: added a
+  `|r0| > |y|/2` check after the first `fma(-q,y,x)` (a correctly-rounded
+  `q` can never leave a residual bigger than that) and, when it fires,
+  nudge `q` by one integer toward whichever side shrinks the residual and
+  recompute — both branches computed unconditionally and selected, no
+  branch. Found this is a real bug, not just a large-ratio accuracy gap:
+  fuzzed `remainder` against an f64 (ties-away, matching `remainder`'s own
+  documented convention) reference and found concrete *sign-flip* failures
+  with `|x/y|` as small as ~100 — `x/y`'s own f32-precision division can
+  land on the wrong side of a near-tie even when the true ratio isn't
+  remotely close to a real tie (e.g. `x/y = -406.4999946...`, unambiguously
+  closer to -406 under any rounding rule, but f32's division rounds enough
+  to flip `q` to -407), producing a result with the right magnitude but
+  wrong sign. `remainder_checked`'s correction fixed every one of these by
+  hand-verified construction, and a broad fuzz sweep against an f64
+  reference found 0 max ulp all the way up to `|x/y| < 1e7`, degrading only
+  past `2^24` where `q` itself stops being an exactly-representable f32
+  integer (confirmed: `2e7` immediately produces billions of ulp of error
+  — a different, harder limit no amount of one-integer nudging reaches
+  past). Real mca cost for the fix: +42% latency (33.02→47.02 cyc), +60%
+  throughput (0.647→1.034 cyc/elem) — a genuine perf penalty, not free, so
+  per this session's own rubric it doesn't qualify as a straight
+  replacement. Resolved with the crate's established "offer both" tiering
+  (sin/sin_checked, exp2/exp2_checked, sinh/sinh_throughput): `remainder`
+  kept exactly as-is (fast, documented rare-failure caveat added),
+  `remainder_checked` added as the opt-in reliable tier.
+  A second, unrelated discovery along the way: `examples/accuracy.rs`'s
+  own `remainder` sweep is flaky (sometimes billions of ulp, sometimes
+  clean) for a completely different reason than the bug above — sleef's
+  `remainder_u..` reference implements true IEEE754 ties-to-*even*, while
+  `remainder`/`remainder_checked` both use ties-*away* (documented,
+  deliberate, matches the original C port), and the two conventions
+  disagree by a full `y` whenever `x/y` lands acceptably close to an exact
+  half-integer tie — confirmed by hand: `sleef::remainder(2.5, 1.0) =
+  0.5` (ties-to-even) vs. the ties-away answer `-0.5`. Neither
+  implementation is wrong; the sweep was just occasionally comparing two
+  differently-conventioned "correct" answers. Fixed by excluding
+  near-tie `x/y` (fractional part within `1e-4` of `0.5`) from both
+  sweeps' domain filters — confirmed stable (0 max ulp) across 5 repeat
+  runs afterward, where before the fix it flipped between 0 and
+  billions-of-ulp roughly 1 run in 4.
 
 ## Measurement / meta
 

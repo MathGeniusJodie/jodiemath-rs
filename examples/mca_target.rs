@@ -190,6 +190,13 @@ throughput_fn!(thr_powf, "powf_throughput", |x: f32| powf(x, 2.0));
 latency_fn!(lat_remainder, "remainder_latency", |x: f32| remainder(x, 3.0));
 throughput_fn!(thr_remainder, "remainder_throughput", |x: f32| remainder(x, 3.0));
 
+latency_fn!(lat_remainder_checked, "remainder_checked_latency", |x: f32| remainder_checked(
+    x, 3.0
+));
+throughput_fn!(thr_remainder_checked, "remainder_checked_throughput", |x: f32| {
+    remainder_checked(x, 3.0)
+});
+
 fn main() {
     // smoke test only: exercises every marked function once so `cargo run
     // --release --example mca_target` succeeds on its own. The interesting
@@ -244,6 +251,7 @@ fn main() {
         lat_hypot, thr_hypot;
         lat_powf, thr_powf;
         lat_remainder, thr_remainder;
+        lat_remainder_checked, thr_remainder_checked;
     );
     black_box(&arr_out);
 }

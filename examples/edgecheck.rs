@@ -287,4 +287,32 @@ fn main() {
     check("remainder(3,inf)", remainder(3.0, f32::INFINITY), 3.0);
     check("remainder(-3,inf)", remainder(-3.0, f32::INFINITY), -3.0);
     check("remainder(inf,3)", remainder(f32::INFINITY, 3.0), f32::NAN);
+    // remainder_checked shares remainder's special-case handling (same
+    // trailing selects) on top of its wider-range q correction -- same
+    // edge cases should hold identically.
+    check("remainder_checked(5,3)", remainder_checked(5.0, 3.0), -1.0);
+    check("remainder_checked(4,2)", remainder_checked(4.0, 2.0), 0.0);
+    check("remainder_checked(-0,3)", remainder_checked(-0.0, 3.0), -0.0);
+    check("remainder_checked(0,3)", remainder_checked(0.0, 3.0), 0.0);
+    check("remainder_checked(3,inf)", remainder_checked(3.0, f32::INFINITY), 3.0);
+    check("remainder_checked(-3,inf)", remainder_checked(-3.0, f32::INFINITY), -3.0);
+    check("remainder_checked(inf,3)", remainder_checked(f32::INFINITY, 3.0), f32::NAN);
+    // the actual point of remainder_checked: a case where q's own division
+    // rounding would land on the wrong integer for the plain formula.
+    check(
+        "remainder_checked(1e7,3)",
+        remainder_checked(1.0e7, 3.0),
+        remainder_ref_exact(1.0e7, 3.0),
+    );
+}
+
+/// f64-computed exact reference for a single spot-check triple, used only
+/// to pin remainder_checked's wider-range behavior in edgecheck (not a
+/// general-purpose reference -- see examples/accuracy.rs for the real
+/// fuzz-tested sweep against sleef).
+fn remainder_ref_exact(x: f32, y: f32) -> f32 {
+    let xd = x as f64;
+    let yd = y as f64;
+    let q = (xd / yd).round();
+    (xd - q * yd) as f32
 }

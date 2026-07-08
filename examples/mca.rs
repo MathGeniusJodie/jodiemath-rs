@@ -134,6 +134,7 @@ fn main() {
         "hypot",
         "powf",
         "remainder",
+        "remainder_checked",
     ];
 
     println!();
