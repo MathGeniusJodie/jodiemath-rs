@@ -282,9 +282,31 @@ branches, no scalar-only intrinsics unless the vector form exists).
 - **Quantized/descent refit of the 4 correction coefficients** in cbrt_normal
   (`run_descent` exists but used random sampling; drive it with the exhaustive
   sweep instead).
-- **Seed constant joint search**: the magic 0x2a509a07 and the poly were tuned
-  separately; a joint pass (seed ± few ulp × coefficient descent) may buy the
-  max-2-ulp headroom needed to drop c4.
+- **Seed constant joint search — tried, measured, rejected (2026-07-07):
+  degree-2 (dropping c4) can't come close to budget, at any seed.** Wrote
+  a standalone (isolated, not touching the shipped code) joint search:
+  for each of 41 seed offsets around the shipped `0x2a509a07` (every
+  other value in `-40..=40`), coordinate-descended a degree-2 poly (3
+  coefficients, one fewer than shipped) against `f64::cbrt` over a grid
+  spanning `x in [1,2)` (representative of every octave). First attempt
+  used a naive coefficient starting point (`[-0.3333, 0.2, -0.1]`) and
+  got catastrophic results (max ulp 2607, avg 921) — looked like the
+  search was just failing to converge, so retried from a much better
+  starting point (the shipped degree-3's own first 3 coefficients,
+  simply dropping c4) with 4x more coordinate-descent rounds allowed.
+  Still nowhere close: best found across all 41 seeds was max ulp 112,
+  avg 29 — over 50x worse than the shipped degree-3's budget (avg 0.33,
+  max 2), confirming this isn't a search-quality artifact but a genuine
+  expressiveness gap: 3 coefficients (degree-2) can't correct this seed's
+  error to budget regardless of which seed is chosen. Also moot as a perf
+  idea even if it *had* worked: degree-2 via Horner (`fma(fma(c2,r,c1),
+  r,c0)`) is 2 fma's at depth 2, vs. the shipped degree-3's 3 fma's *also*
+  at depth 2 (`ceil(log2(3))==ceil(log2(4))==2`, the same "doesn't cross
+  a power-of-2 boundary" non-savings already documented elsewhere in this
+  file) — dropping c4 would only ever have saved one throughput-only op,
+  never latency. Not adopted; no changes to shipped code (tested in an
+  isolated standalone copy, same pattern as the sin_checked/cos_checked
+  clamp-idea rejection earlier this session).
 - **AVX-512 `vgetexpps/vgetmantps/vscalefps`** kills cbrt's tiny/scale select
   dance and cbrt_accurate's three-way rescale entirely: reduce mantissa to
   [1,2), cbrt it, scale by e/3 via vscalef with the e mod 3 residue folded
