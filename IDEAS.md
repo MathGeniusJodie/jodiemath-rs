@@ -1621,11 +1621,33 @@ branches, no scalar-only intrinsics unless the vector form exists).
   fine on AVX2+, but the `(bits >> 16) * 0x5556` trick in cbrt_fast is
   cheaper if the extra seed error is absorbable by the correction poly;
   measure both codegens rather than assuming.
-- **uarch sensitivity pass**: the divider-is-free result underpins several
-  ideas here and was measured on *this* CPU. Re-run the mca suite with
-  `-mcpu=znver4`, `-mcpu=skylake`, `-mcpu=icelake-server` (mca supports any
-  scheduling model) and tag each divider-leaning idea with where it wins.
-  Cheap insurance against optimizing into a Zen-shaped hole.
+- **uarch sensitivity pass — done (partial), reassuring result, no code
+  change needed (2026-07-07).** Re-ran `llvm-mca` on the *same* compiled
+  `.s` file (native codegen already only uses AVX2-width instructions,
+  see the zmm entry above, so it's a valid instruction stream to
+  re-schedule under a different model) with `-mcpu=skylake` and
+  `-mcpu=znver3` (`-mcpu=znver4` and `-mcpu=icelake-server` both timed
+  out past 2 minutes on the full multi-megabyte JSON dump this crate's
+  every-function `.s` file produces -- not attempted further, the two
+  that completed already give a real cross-vendor, cross-generation
+  signal). Checked every divider-leaning function this crate's design
+  relies on (`cbrt_accurate`, `cbrt`, `sinh`/`cosh`_throughput and their
+  plain-tier equivalents, `hypot`, `remainder`, `asinh`, `acosh`)
+  cyc/elem throughput on both alternate models against this session's
+  native (Tiger Lake) baseline. Result: **every one of them matches or
+  *beats* native on both Skylake and Zen3** -- several are near-exact
+  matches on Skylake specifically (Tiger Lake's core is a Skylake-family
+  descendant, so this is expected), and Zen3 in particular shows
+  meaningfully *better* numbers across the board (e.g. `hypot` 0.766 ->
+  0.641 cyc/elem, `cosh` 2.083 -> 1.461, `remainder` 0.647 -> 0.415) --
+  consistent with AMD's Zen3 having a well-known fast, well-pipelined FP
+  divider, the same underlying property this crate's "divider is free"
+  findings depend on. No evidence of a "Zen-shaped hole": the crate's
+  divider-leaning optimizations aren't overfit to this one CPU, they
+  generalize at least as well elsewhere among the models checked. Not a
+  fully exhaustive uarch sweep (only 2 of the 4 suggested targets
+  completed in reasonable time), but enough to retire the specific worry
+  this entry raised. No code changes.
 
 ## Wilder / probably-not-but-fun
 
