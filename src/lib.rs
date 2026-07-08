@@ -1858,6 +1858,18 @@ pub fn atan2(y: f32, x: f32) -> f32 {
     if bothinf { inf_result } else { r }
 }
 
+/// atan2 without the x==0/both-zero/both-infinite special cases: contract
+/// is x != 0.0 (and not both x and y infinite). Drops the nonzerox/
+/// nonzeroy/bothzero selects and the whole bothinf branch atan2 pays on
+/// every call -- see its own doc comment for exactly what those handle.
+/// Bit-identical to atan2 whenever the contract holds.
+#[inline(always)]
+pub fn atan2_unchecked(y: f32, x: f32) -> f32 {
+    let hpisignx = mulsign(FRAC_PI_2, x);
+    let correction = mulsign(FRAC_PI_2 - hpisignx, y);
+    atan(y / x) + correction
+}
+
 /// Straight port of jodiemath's tanf: sin(x)/cos(x), same domain limits as
 /// this crate's sin/cos (see their doc comments).
 #[inline(always)]
@@ -1993,6 +2005,16 @@ pub fn erfc(x: f32) -> f32 {
 #[inline(always)]
 pub fn rsqrt(x: f32) -> f32 {
     1.0 / x.sqrt()
+}
+
+/// hypot without the +-inf special case: contract is x, y both finite (or
+/// both NaN-safe, since NaN propagates through fma/sqrt on its own) --
+/// see hypot's own doc comment for the one case this drops (+-inf paired
+/// with a NaN, where IEEE754/C99 defines +inf as the answer regardless).
+/// Bit-identical to hypot whenever neither argument is infinite.
+#[inline(always)]
+pub fn hypot_unchecked(x: f32, y: f32) -> f32 {
+    fma(x, x, y * y).sqrt()
 }
 
 /// Straight port of jodiemath's hypotf: naive sqrt(x^2+y^2), no anti-overflow

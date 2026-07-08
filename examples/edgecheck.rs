@@ -315,6 +315,15 @@ fn main() {
     check("atan2(inf,-inf)", atan2(f32::INFINITY, f32::NEG_INFINITY), 3.0 * std::f32::consts::FRAC_PI_4);
     check("atan2(-inf,inf)", atan2(f32::NEG_INFINITY, f32::INFINITY), -std::f32::consts::FRAC_PI_4);
     check("atan2(-inf,-inf)", atan2(f32::NEG_INFINITY, f32::NEG_INFINITY), -3.0 * std::f32::consts::FRAC_PI_4);
+    // atan2_unchecked: contract is x != 0.0, not both infinite -- must
+    // match atan2 exactly wherever that contract holds.
+    check("atan2_unchecked(1,2)", atan2_unchecked(1.0, 2.0), atan2(1.0, 2.0));
+    check("atan2_unchecked(-1,2)", atan2_unchecked(-1.0, 2.0), atan2(-1.0, 2.0));
+    check("atan2_unchecked(1,-2)", atan2_unchecked(1.0, -2.0), atan2(1.0, -2.0));
+    check("atan2_unchecked(-1,-2)", atan2_unchecked(-1.0, -2.0), atan2(-1.0, -2.0));
+    check("atan2_unchecked(0,1)", atan2_unchecked(0.0, 1.0), atan2(0.0, 1.0));
+    check("atan2_unchecked(-0,1)", atan2_unchecked(-0.0, 1.0), atan2(-0.0, 1.0));
+    check("atan2_unchecked(inf,1)", atan2_unchecked(f32::INFINITY, 1.0), atan2(f32::INFINITY, 1.0));
     check("tan(0)", tan(0.0), 0.0);
 
     check("erf(0)", erf(0.0), 0.0);
@@ -344,6 +353,12 @@ fn main() {
     // finite-overflow tradeoff.
     check("hypot(inf,nan)", hypot(f32::INFINITY, f32::NAN), f32::INFINITY);
     check("hypot(nan,inf)", hypot(f32::NAN, f32::INFINITY), f32::INFINITY);
+    // hypot_unchecked: contract is x, y both finite -- must match hypot
+    // exactly wherever that contract holds.
+    check("hypot_unchecked(0,0)", hypot_unchecked(0.0, 0.0), 0.0);
+    check("hypot_unchecked(3,4)", hypot_unchecked(3.0, 4.0), 5.0);
+    check("hypot_unchecked(-3,4)", hypot_unchecked(-3.0, 4.0), 5.0);
+    check("hypot_unchecked(nan,1)", hypot_unchecked(f32::NAN, 1.0), f32::NAN);
 
     check("rsqrt(1)", rsqrt(1.0), 1.0);
     check("rsqrt(4)", rsqrt(4.0), 0.5);

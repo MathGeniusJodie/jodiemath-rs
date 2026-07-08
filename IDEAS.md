@@ -815,6 +815,62 @@ brainstorm backlog lives at the bottom of this file.
   `src/lib.rs`; kept `cbrt_normal_joint_c` in `tune.rs` as reference infra
   (same precedent as `cbrt_shiftmul_c`/`cbrt_throughput_c`).
 
+- **atan2_unchecked/hypot_unchecked, implemented (2026-07-08)**: same
+  argument as `log_2_unchecked`/etc. — `atan2` pays `nonzerox`/`nonzeroy`/
+  `bothzero` bookkeeping, a select for `hpisignx`, a select for the main
+  formula, and a whole extra `bothinf` branch on every call; `hypot` pays
+  one `is_infinite` check. New functions with the domain contract "x !=
+  0.0, not both infinite" (atan2) / "x, y both finite" (hypot) drop all of
+  that. Verified bit-identical to the checked versions over ~99M samples
+  directly. Speed picture needed more care than usual to pin down
+  honestly: mca couldn't be used at all here (see below), and the
+  existing quickbench entries for both functions turned out to already be
+  measuring the wrong thing. **Two real measurement problems found and
+  fixed along the way, both worth remembering for any future two-argument
+  function's benchmark entry:**
+  1. quickbench's existing `atan2`/`hypot` entries fixed the 2nd argument
+     to a literal `1.0` — exactly readme.md's own already-documented todo
+     item ("may be letting LLVM constant-fold... a couple of
+     comparisons"). It's not hypothetical: a compile-time-constant 2nd
+     arg lets LLVM prove `nonzerox`/`is_infinite` statically and fold
+     `atan2`'s/`hypot`'s own special-case branches away entirely, making
+     the "checked" entry measure close to the *unchecked* cost already —
+     confirmed directly (first attempt showed the unchecked variant as a
+     *wash or even slightly worse*, the opposite of the real effect).
+     Fixed by `black_box`-ing the 2nd argument in both functions' own
+     quickbench entries (a real, deliberate change to their long-standing
+     readme numbers, not a regression — noted inline in readme.md).
+  2. Even after that fix, mca still couldn't measure either function:
+     `atan2`/`hypot`'s real (non-early-return, standard branchless-select)
+     conditional logic, once genuinely runtime-dependent instead of
+     compile-time-foldable, trips the same llvm-mca region-marker
+     corruption this file's top-of-mca_target.rs comment describes for
+     log1p's early return — for *both* latency (expected, matches the
+     documented "call the branchless core for latency" convention, which
+     is exactly what `_unchecked` already is) *and*, unexpectedly,
+     throughput too (the array-loop context didn't if-convert this
+     particular branch combination cleanly either). Abandoned the mca
+     route entirely for this pair rather than chase the exact codegen
+     trigger.
+  With mca unusable and wall-clock quickbench too noisy on this thermal-
+  throttling-prone machine to give a clean signal on its own (paired
+  same-run differences leaned consistently toward `atan2_unchecked` being
+  faster or tied across 8 runs, never meaningfully slower; `hypot` showed
+  no consistent direction either way), fell back to a third method:
+  directly counting instructions in `--emit=asm` output for a black-boxed
+  wrapper around each function. This gave a clean, deterministic (not
+  noisy) answer neither of the other two tools could: `atan2_unchecked`
+  compiles to 37 instructions vs `atan2`'s 70 (-47%); `hypot_unchecked`
+  compiles to 10 vs `hypot`'s 20 (-50%). Adopted on that basis — a real,
+  substantial, verified reduction in compiled work, even though the
+  wall-clock benefit is apparently too small to reliably separate from
+  this machine's own measurement noise. **General lesson: when both mca
+  and quickbench give an unreliable signal for a specific function shape,
+  a direct instruction count from `--emit=asm` (compile a black-boxed
+  wrapper, grep/count real instruction lines between the function's start
+  and its `.size` directive) is a third, deterministic option worth
+  reaching for before giving up on quantifying a change.**
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
@@ -1025,12 +1081,6 @@ legitimate direction here, unlike on most targets.
   cluster). Fragile (any refit invalidates the list) and only sane where
   the count is tiny and stable; record which functions actually have
   concentrated misses first.
-
-- **Unchecked tiers for hypot/atan2 and others**: same argument as
-  log_2_unchecked/ln_unchecked/log10_unchecked (implemented, see above) —
-  a `hypot`/`atan2` that skips inf special cases would drop real ops the
-  same way. The tier split is already this crate's established pattern;
-  it just hasn't been applied uniformly everywhere it could be.
 
 - **FTZ/DAZ feature flag**: under a cargo feature declaring "caller runs
   with FTZ+DAZ on" (the common game/audio configuration), every denormal

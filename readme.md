@@ -53,7 +53,9 @@ cosh_throughput (in-domain)| 0.061   |     4     |  0.000  |    0
                    erf  |    0.319   |     5     | (no std erf)
          erfc (|x|<=10) |    0.311   |   109     | (no std erfc)
                   atan2 |    0.069   |     3     |  0.000  |    0
+    atan2_unchecked (+) |    0.069   |     3     | (bit-identical to atan2 on its domain)
         hypot (bounded) |    0.034   |     1     |  0.000  |    0
+hypot_unchecked (bounded, +) | 0.034 |     1     | (bit-identical to hypot on its domain)
                   rsqrt |    0.260   |     1     | (no std rsqrt)
           pown (|n|<=8) |    0.158   |    11     | (no std pown)
          pown (|n|<=64) |    0.209   |    90     | (no std pown)
@@ -95,7 +97,8 @@ log10_unchecked|  8.8 ns |     -   |  -
          asin | 19.4 ns |  4.1 ns | 0.2x
          acos | 13.0 ns |  4.0 ns | 0.3x
          atan | 14.0 ns | 19.3 ns | 1.4x
-        atan2 | 14.1 ns | 23.7 ns | 1.7x
+      atan2 (*) | 18.2 ns | 23.7 ns | 1.3x
+atan2_unchecked | 18.1 ns |     -   |  -
           tan | 23.5 ns | 27.3 ns | 1.2x
         sinpi |  9.0 ns |     -   |  -
         cospi | 10.7 ns |     -   |  -
@@ -103,12 +106,18 @@ log10_unchecked|  8.8 ns |     -   |  -
          cosd | 12.6 ns |     -   |  -
           erf | 21.0 ns |     -   |  -
          erfc | 22.9 ns |     -   |  -
-        hypot |  8.4 ns | 13.9 ns | 1.7x
+      hypot (*) |  5.1 ns | 13.9 ns | 2.7x
+hypot_unchecked |  5.0 ns |     -   |  -
         rsqrt |  6.7 ns |     -   |  -
          pown | 50.3 ns |     -   |  -
          powf | 24.2 ns |  3.2 ns | 0.1x
     remainder | 12.7 ns |     -   |  -
 ```
+(*) atan2/hypot's jodie numbers jumped here vs, older recordings of this
+table -- not a regression, a benchmark fix: a literal `1.0` 2nd argument
+let LLVM fold away their own special-case branches at compile time,
+silently hiding the real cost (see readme's own former todo note on this).
+Both now use a `black_box`'d 2nd argument for an honest number.
 
 ```
 Throughput (independent array evals over [f32; 4096], examples/quickbench.rs; lower is better)
@@ -143,7 +152,8 @@ log10_unchecked| 0.26 ns  |     -    |  -
          asin | 0.46 ns  |  4.01 ns | 8.7x
          acos | 0.26 ns  |  4.01 ns | 15.6x
          atan | 0.33 ns  |  6.32 ns | 19.2x
-        atan2 | 0.35 ns  |  9.97 ns | 28.2x
+  atan2 (*) | 0.48 ns  | 10.33 ns | 21.5x
+atan2_unchecked | 0.48 ns  |     -    |  -
           tan | 0.76 ns  |  9.07 ns | 11.9x
         sinpi | 0.18 ns  |     -    |  -
         cospi | 0.25 ns  |     -    |  -
@@ -151,12 +161,15 @@ log10_unchecked| 0.26 ns  |     -    |  -
          cosd | 0.31 ns  |     -    |  -
           erf | 0.70 ns  |     -    |  -
          erfc | 0.68 ns  |     -    |  -
-        hypot | 0.24 ns  |  2.92 ns | 12.0x
+  hypot (*) | 0.17 ns  |  2.42 ns | 14.2x
+hypot_unchecked | 0.17 ns  |     -    |  -
         rsqrt | 0.31 ns  |     -    |  -
          pown | 1.24 ns  |     -    |  -
          powf | 0.95 ns  |  0.07 ns | 0.07x
     remainder | 0.22 ns  |     -    |  -
 ```
+(*) see the latency table's own footnote above -- same benchmark fix,
+not a regression.
 
 ```
 theoretical cost from llvm-mca (-mcpu=native, 100 iterations)
@@ -230,7 +243,8 @@ remainder           |          33.02 |             0.647
 # todo:
 - do principled and thourough analysis of dependency chains and rounding errors to find optimizations
 - perfectly rounded versions
-- vary both arguments in quickbench's two-argument benchmarks (atan2, hypot,
-  powf, remainder currently fix one argument, which may be letting LLVM
+- vary both arguments in quickbench's two-argument benchmarks (powf,
+  remainder currently fix one argument, which may be letting LLVM
   constant-fold std's side of a couple of comparisons -- see the benchmark
-  notes above)
+  notes above; atan2/hypot fixed already, their 2nd argument is now
+  black_box'd instead of a literal)

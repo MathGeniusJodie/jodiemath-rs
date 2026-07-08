@@ -124,14 +124,25 @@ fn main() {
     bench!("std acos", |x: f32| x.acos());
     bench!("atan", atan);
     bench!("std atan", |x: f32| x.atan());
-    bench!("atan2", |x: f32| atan2(x, 1.0));
-    bench!("std atan2", |x: f32| x.atan2(1.0));
+    // black_box'd 2nd arg (not a literal 1.0): a compile-time-constant 2nd
+    // arg lets LLVM fold away atan2's own special-case branches entirely,
+    // silently hiding their real cost -- this matters here specifically
+    // because it would otherwise make atan2_unchecked look like a wash
+    // instead of the real win it is. See readme.md's own todo note on
+    // this exact fixed-argument limitation.
+    let atan2_x2 = std::hint::black_box(1.0);
+    bench!("atan2", move |x: f32| atan2(x, atan2_x2));
+    bench!("std atan2", move |x: f32| x.atan2(atan2_x2));
+    bench!("atan2_unchecked", move |x: f32| atan2_unchecked(x, atan2_x2));
     bench!("tan", tan);
     bench!("std tan", |x: f32| x.tan());
     bench!("erf", erf);
     bench!("erfc", erfc);
-    bench!("hypot", |x: f32| hypot(x, 1.0));
-    bench!("std hypot", |x: f32| x.hypot(1.0));
+    // black_box'd 2nd arg, same reasoning as atan2 above.
+    let hypot_y = std::hint::black_box(1.0);
+    bench!("hypot", move |x: f32| hypot(x, hypot_y));
+    bench!("std hypot", move |x: f32| x.hypot(hypot_y));
+    bench!("hypot_unchecked", move |x: f32| hypot_unchecked(x, hypot_y));
     bench!("rsqrt", rsqrt);
     bench!("powf", |x: f32| powf(x, 2.0));
     bench!("std powf", |x: f32| x.powf(2.0));

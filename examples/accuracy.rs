@@ -747,6 +747,10 @@ fn main() {
         report("atan2", &s, t0);
         let s = fuzz2(TWOARG_SAMPLES, |_, _| true, |y: f32, x: f32| y.atan2(x), atan2_u35);
         report("std atan2", &s, t0);
+        // atan2_unchecked's documented contract: x != 0.0, not both infinite.
+        let atan2_domain = |_: f32, x: f32| x != 0.0;
+        let s = fuzz2(TWOARG_SAMPLES, atan2_domain, atan2_unchecked, atan2_u35);
+        report("atan2_unchecked (+)", &s, t0);
     }
     if run("rsqrt") {
         // x > 0.0 only (0/negative/nan/inf are all correct "for free" via
@@ -774,6 +778,10 @@ fn main() {
         report("hypot", &s, t0);
         let s = fuzz2(TWOARG_SAMPLES, hypot_domain, |x: f32, y: f32| x.hypot(y), hypot_u35);
         report("std hypot", &s, t0);
+        // hypot_unchecked's documented contract: x, y both finite. Same
+        // overflow/underflow-avoidance domain restriction as hypot itself.
+        let s = fuzz2(TWOARG_SAMPLES, hypot_domain, hypot_unchecked, hypot_u35);
+        report("hypot_unchecked (+)", &s, t0);
     }
     if run("pown") {
         // pown(x, n) takes an i32 exponent, not the f32/f64 pair shape
