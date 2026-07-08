@@ -369,6 +369,21 @@ brainstorm backlog lives at the bottom of this file.
   showed throughput getting *worse* (1.433→1.479 cyc/elem) with latency
   unchanged. Reverted; left as `a*a - a`.
 
+- **Small-poly Estrin audit, asin_small/sinh_small 3-deep Horner → 2-deep
+  Estrin (2026-07-08)**: `let lo = fma(c1,x2,c0); let hi = fma(c3,x2,c2);
+  fma(hi, x4, lo)` instead of the nested Horner chain. Unlike the fma-
+  contraction idea above, this one isn't bit-exact (fma reassociation
+  changes rounding, as it does roughly half the time elsewhere in this
+  file) — and it measured backwards on every axis that matters: `sinh`
+  got *worse* on both mca latency (58.00→59.00 cyc) and throughput
+  (2.523→2.588 cyc/elem), plus a real accuracy cost (avg ulp 0.0805→
+  0.0843, `cosh` itself unaffected since it doesn't call `sinh_small`).
+  `asin` was a genuine mixed result — latency improved (59.03→56.00 cyc,
+  -5.1%) but throughput got worse (0.968→1.033 cyc/elem, +6.7%) *and*
+  max ulp regressed (9→10, `acos` unaffected, doesn't call `asin_small`).
+  Neither survives on net. Reverted; exactly the "sometimes measures
+  backwards" outcome the backlog itself predicted for this idea.
+
 ## Other spots
 
 - **atan2's `bothzero`/`hpisignx` boolean simplification (2026-07-07)**:
@@ -622,11 +637,6 @@ legitimate direction here, unlike on most targets.
   sin_checked's reduction, with two correction candidates instead of one.
   Heavy; only worth it if a real use case needs |x/y| > 2^24.
 
-
-- **Small-poly Estrin audit (asin_small, sinh_small)**: both are 3-deep
-  Horner in x²; Estrin gets them to 2-deep + one extra multiply. Latency-
-  only candidates, and the asin fusion note above shows these sometimes
-  measure backwards — cheap to test, low expected value.
 
 - **exp10 / pown / rsqrt API additions**: exp10 = exp2(x·LOG2_10) with a
   Cody-Waite combine (same shape as ln's fix, in reverse); pown(x, i32)
