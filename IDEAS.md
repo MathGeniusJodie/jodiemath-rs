@@ -115,6 +115,22 @@ brainstorm backlog lives at the bottom of this file.
   variant (kept; not recorded here) that protected acos's metric by
   construction.
 
+- **acos_poly degree 6 → 7, i.e. an 8th coefficient (2026-07-08)**: the
+  backlog framed this as "one fma of throughput for a whole extra degree
+  of freedom" (implicitly assuming Estrin, which acos_poly isn't —
+  it's shipped Horner, so an 8th term would cost one full extra depth
+  level too, not just one throughput fma). Turned out moot regardless:
+  coordinate-descending a new `acos_poly8_c` (new permanent `tune.rs`
+  infra, `"acos8"` arg) against the same joint acos+asin objective as the
+  entry directly above, starting from the shipped 7 coefficients plus a
+  prepended 0.0, converged with **that 8th coefficient at exactly 0.0** —
+  the search found no use for the extra degree at all. The remaining 7
+  coefficients it did move to match, bit-for-bit, the *already-rejected*
+  unconstrained joint-objective result immediately above (same known
+  4→5 acos regression). The extra degree of freedom buys nothing beyond
+  what degree 6 already offers under this objective; not worth the
+  latency cost of even testing in `src/lib.rs`. Not adopted.
+
 - **atan2 division-residual correction (2026-07-07)**: added a first-order
   Taylor correction (`atan'(d)*e`) for atan2's `y/x` division rounding.
   First measurement looked like a 10x win (avg ulp 0.136→0.0134) until the
@@ -392,12 +408,6 @@ legitimate direction here, unlike on most targets.
   equal cost.
 
 ## asin / acos / atan
-
-- **acos_poly degree 6 → 7**: 7 → 8 coefficients stays at Estrin depth 3
-  (ceil(log2 8)), so it's one fma of throughput for a whole extra degree of
-  freedom. acos max ulp 4 and asin max 9 both trace to this one poly; the
-  joint-constrained refit recipe already exists in tune.rs. The cheapest
-  untried accuracy lever in the file.
 
 - **atan_poly degree bump (2/2 → 3/3 rational, or higher)**: max ulp 18 is
   the crate's worst in-budget-relevant offender after erfc; the 2026-07-07

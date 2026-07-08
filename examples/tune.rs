@@ -176,6 +176,21 @@ fn acos_poly_c(x: f32, c: &[f32]) -> f32 {
     (1.0 - x).sqrt() * poly
 }
 
+// Degree-7 (8-coefficient) version of acos_poly_c, for the "acos_poly
+// degree 6 -> 7" idea: one more Horner term/fma than shipped, screening
+// whether the extra degree of freedom buys real accuracy headroom.
+#[inline(always)]
+fn acos_poly8_c(x: f32, c: &[f32]) -> f32 {
+    let u = fma(c[0], x, c[1]);
+    let u = fma(u, x, c[2]);
+    let u = fma(u, x, c[3]);
+    let u = fma(u, x, c[4]);
+    let u = fma(u, x, c[5]);
+    let u = fma(u, x, c[6]);
+    let poly = fma(u, x, c[7]);
+    (1.0 - x).sqrt() * poly
+}
+
 // erf's tail branch (see src/lib.rs's erf): scored as the whole
 // mulsign(1.0 - exp2(erf_poly(xa)), x) formula, xa in [0.28, 10] (exactly
 // where this branch is used in the shipped code; the Pade near-zero
@@ -602,6 +617,72 @@ fn main() {
         }
         println!(
             "acos_capped_asin: tuned max {} avg {:.5}  coeffs: {:?}",
+            best.0,
+            best.1 as f64 / grid.len() as f64,
+            c.iter().map(|v| format!("{v:e}")).collect::<Vec<_>>()
+        );
+    }
+    if which.contains("acos8") {
+        // Same joint (worst-of-acos/asin) scoring as "asinacos" above, but
+        // for the degree-7 (8-coefficient) acos_poly8_c -- one extra
+        // coefficient prepended (0.0) as the starting point, so coordinate
+        // descent starts from a value bit-identical to the shipped degree-6
+        // poly and only has to find where the new degree helps.
+        let mut grid = vec![];
+        let mut b = 0.0f32.to_bits();
+        while b < 1.0f32.to_bits() {
+            grid.push(f32::from_bits(b));
+            b += 10000;
+        }
+        let init = [
+            0.0,
+            2.2960256e-3,
+            -1.1146317e-2,
+            2.6900213e-2,
+            -4.8802543e-2,
+            8.8755615e-2,
+            -2.1458544e-1,
+            1.5707963,
+        ];
+        let joint_score = |c: &[f32]| -> (u64, u64) {
+            let mut sum = 0u64;
+            let mut max = 0u64;
+            for &x in &grid {
+                let got = acos_poly8_c(x, c);
+                let d_acos = ulp_diff(got, x.acos() as f32);
+                let d_asin = if x >= 0.25 {
+                    let asin_got = std::f32::consts::FRAC_PI_2 - got;
+                    ulp_diff(asin_got, x.asin() as f32)
+                } else {
+                    0
+                };
+                let d = d_acos.max(d_asin);
+                sum += d;
+                max = max.max(d);
+            }
+            (max, sum)
+        };
+        let mut c: Vec<f32> = init.to_vec();
+        let mut best = joint_score(&c);
+        println!("acos8_asin_joint: start max {} avg {:.5}", best.0, best.1 as f64 / grid.len() as f64);
+        let mut improved = true;
+        while improved {
+            improved = false;
+            for i in 0..c.len() {
+                for delta in [1i32, -1, 2, -2, 4, -4, 8, -8, 16, -16] {
+                    let mut trial = c.clone();
+                    trial[i] = f32::from_bits((trial[i].to_bits() as i32 + delta) as u32);
+                    let s = joint_score(&trial);
+                    if s < best {
+                        best = s;
+                        c = trial;
+                        improved = true;
+                    }
+                }
+            }
+        }
+        println!(
+            "acos8_asin_joint: tuned max {} avg {:.5}  coeffs: {:?}",
             best.0,
             best.1 as f64 / grid.len() as f64,
             c.iter().map(|v| format!("{v:e}")).collect::<Vec<_>>()
