@@ -2632,9 +2632,23 @@ saves an op and/or a rounding:
   exponent-construction strategy as the only difference keeps future
   coefficient refits from having to be applied twice (they've already
   drifted once: same constants, duplicated source).
-- **expm1/erf/erfc/atan compute both select arms always (correct for
-  vectorization) — but check the arms share subexpressions**: erf's Padé
-  arm computes x² and the tail arm computes x.abs() then squares inside
-  erf_poly's Horner — x² is computable once and passed to both. Minor,
-  but these double-arm functions pay 2× and deserve a shared-subexpression
-  pass each.
+- **erf's shared x² — done, tested, kept (2026-07-07).** Checked the
+  specific claim: erf's Padé arm computed `x2 = x*x` (unclamped) at the
+  top, while the tail arm's `erf_poly` separately computed its own
+  `x2 = x*x` internally from `xa_bounded` (`|x|` clamped to 10). These
+  looked like two independent squarings of *related* but not obviously
+  *equal* values -- turned out to be safely shareable: they only differ
+  once `|x| > 10`, but the Padé arm's result is only ever *selected*
+  in the final `if xa < 0.28 {a} else {b}` when `xa < 0.28`, always
+  comfortably inside the clamp, so whatever the *unselected* Padé
+  computation does for `|x| > 10` is unobservable. Refactored `erf_poly`
+  to take `x2` as a parameter instead of computing it internally, and
+  `erf` now computes one `x2` (from the already-clamped `xa_bounded`) and
+  passes it to both the Padé numer/denom and `erf_poly` -- one fewer
+  multiply per call, zero behavior change (confirmed exhaustively: avg/
+  max ulp exactly unchanged at 0.3194/5, bit-for-bit). mca: **both** axes
+  improved together (91.74->85.97 cyc latency, -6.3%; 2.871->2.788
+  cyc/elem throughput, -2.9%) -- a clean win, not a tradeoff. `expm1`/
+  `atan`'s own double-arm shared-subexpression potential not checked yet
+  (erfc doesn't call `erf_poly`, has its own separate n/d rational, no
+  shared-x2 opportunity there).

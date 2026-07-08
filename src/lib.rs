@@ -1463,7 +1463,7 @@ pub fn tan(x: f32) -> f32 {
 // 3.163->2.871 cyc/elem throughput (-9.2%) -- both axes improved
 // together here, unlike acos_poly's case (small throughput cost there).
 #[inline(always)]
-fn erf_poly(x: f32) -> f32 {
+fn erf_poly(x: f32, x2: f32) -> f32 {
     let a6 = 3.118769e-4f32;
     let a5 = -4.67225e-3f32;
     let a4 = 3.3162573e-2f32;
@@ -1471,7 +1471,6 @@ fn erf_poly(x: f32) -> f32 {
     let a2 = -9.1684705e-1f32;
     let a1 = -1.6282598f32;
     let a0 = 3.1332566e-5f32;
-    let x2 = x * x;
     let x4 = x2 * x2;
     let b0 = fma(a1, x, a0);
     let b1 = fma(a3, x, a2);
@@ -1503,13 +1502,21 @@ fn erf_poly(x: f32) -> f32 {
 /// bounded, matching erfc's fix.
 #[inline(always)]
 pub fn erf(x: f32) -> f32 {
-    let x2 = x * x;
+    let xa = x.abs();
+    let xa_bounded = if xa > 10.0 { 10.0 } else { xa };
+    // Shared between both branches: the Pade arm's own x2 (x*x, unclamped)
+    // and erf_poly's internal x2 (xa_bounded*xa_bounded) only differ once
+    // |x| > 10, but the Pade arm's result (`a`) is only ever *selected*
+    // when `xa < 0.28`, comfortably inside the clamp -- so reusing the
+    // already-clamped x2 here changes nothing observable, just removes a
+    // redundant multiply (and bounds the discarded arm's x2 to <= 100
+    // instead of letting it run up toward overflow for huge |x|, a minor
+    // side benefit, not the point of the change).
+    let x2 = xa_bounded * xa_bounded;
     let numer = x * fma(f32::from_bits(0x3f174f6e), x2, f32::from_bits(0x3f906ebb));
     let denom = fma(fma(f32::from_bits(0x3e3e2be3), x2, f32::from_bits(0x3f5b6db7)), x2, 1.0);
     let a = numer / denom;
-    let xa = x.abs();
-    let xa_bounded = if xa > 10.0 { 10.0 } else { xa };
-    let b = mulsign(1.0 - exp2_checked(erf_poly(xa_bounded)), x);
+    let b = mulsign(1.0 - exp2_checked(erf_poly(xa_bounded, x2)), x);
     if xa < 0.28 { a } else { b }
 }
 
