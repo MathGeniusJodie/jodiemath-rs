@@ -989,7 +989,7 @@ pub fn ln_normal(x: f32, koff: f32) -> f32 {
     let r2 = fma(l4, s4, r1);
     let p = fma(r2, s4, r0);
     let k_hi = k * LN2_HI; // exact, see LN2_HI's comment
-    fma(p, s, k_hi) + k * LN2_LO
+    fma(k, LN2_LO, fma(p, s, k_hi))
 }
 
 /// log10(x), same Cody-Waite-combine approach as ln (see ln's own doc
@@ -1043,7 +1043,7 @@ pub fn log10_normal(x: f32, koff: f32) -> f32 {
     let r2 = fma(l4, s4, r1);
     let p = fma(r2, s4, r0);
     let k_hi = k * LOG10_2_HI; // exact, see LN2_HI's comment (same trick)
-    fma(p, s, k_hi) + k * LOG10_2_LO
+    fma(k, LOG10_2_LO, fma(p, s, k_hi))
 }
 
 /// ln(1+x), accurate for small |x| (unlike the naive `ln(1.0 + x)`, which

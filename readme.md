@@ -29,8 +29,8 @@ All functions auto-vectorize, it's a hard requirement
 ```
                         | jodie avg  | jodie max | std avg | std max
 ------------------------|------------|-----------|---------|--------
-                     ln |    0.126   |     3     |  0.000  |    1
-                  log10 |    0.286   |     4     |  0.000  |    0
+                     ln |    0.117   |     3     |  0.000  |    1
+                  log10 |    0.127   |     3     |  0.000  |    0
                   log1p |    0.106   |     4     |  0.000  |    0
         exp (in-domain) |    0.091   |     4     |  0.000  |    1
       expm1 (in-domain) |    0.138   |     6     |  0.000  |    0

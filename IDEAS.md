@@ -550,6 +550,21 @@ brainstorm backlog lives at the bottom of this file.
   2.713 cyc/elem throughput (cheaper than tanh's 94.91/2.567, as expected
   for one exp + one division vs. a rational approx).
 
+- **ln/log10: fuse the final `+ k*LN2_LO`/`+ k*LOG10_2_LO` into an fma
+  (2026-07-08)**: `fma(p, s, k_hi) + k*LN2_LO` → `fma(k, LN2_LO, fma(p, s,
+  k_hi))`, same in log10_normal. A genuine accuracy win, essentially free:
+  exhaustive sweep gives ln avg 0.126→0.1168 (max unchanged, 3), log10 avg
+  0.286→0.1270 *and* max ulp 4→3. mca showed no measurable latency/
+  throughput change either way (ln 55.86/1.714→56.86/1.709, log10
+  55.86/1.714→56.86/1.714 — within this file's usual mca run-to-run noise
+  band), and a paired quickbench stash/pop comparison confirmed the same
+  (wash on both latency and throughput, no regression). Adopted under the
+  loop's "improves accuracy without a perf penalty" bar. Note: the
+  backlog's premise that "asinh/acosh/atanh/log1p/powf all route through
+  these" doesn't hold — grepping confirms only `ln`/`log10` themselves
+  call `ln_normal`/`log10_normal`, so this fix is local to the two public
+  functions, not felt downstream.
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
@@ -805,16 +820,6 @@ legitimate direction here, unlike on most targets.
   quickbench loops validates either. Methodology, but it de-risks every
   other entry here.
 
-### log family
-
-- **Fuse ln/log10's final add into an fma**: `fma(p, s, k_hi) + k*LN2_LO`
-  is a mul + add that won't contract on its own — `fma(k, LN2_LO,
-  fma(p, s, k_hi))` is one op shorter and strictly one fewer rounding.
-  Same in log10_normal. Small, likely-free, possibly measurable on
-  everything downstream (asinh/acosh/atanh/log1p/powf all route through
-  these).
-
-
 ### exp family
 
 - **Select-tree "LUT" for exp2**: split f = f_hi + f_lo where f_hi takes 4
@@ -899,15 +904,6 @@ legitimate direction here, unlike on most targets.
   threshold) applies automatically after the round-1 degree-7 idea or any
   refit. Bookkeeping entry so the follow-through isn't forgotten.
 
-### erf / erfc
-
-- **erfc: exact exponent via two_prod**: `-(xa*xa)*LOG2_E` rounds twice
-  before exp2_checked even starts, and each ulp of exponent error is
-  ~0.69 ulp of result error — likely a real chunk of the 109. Compute
-  x² and its fma residual (two_prod), fold `residual·LOG2_E` into
-  exp2_checked's poly argument (or the round-1 log-space form's R(x)).
-  Bounded cost: one fma + one add.
-
 ### hypot / atan2 / new surface
 
 - **hypot_checked with branchless exponent rescale**: extract
@@ -917,9 +913,4 @@ legitimate direction here, unlike on most targets.
   + selects, fully vectorizable, kills the documented overflow/underflow
   tradeoff for callers who need std-grade hypot without std-grade scalar
   code.
-
-
-- **exp10**: exp2(x·LOG2_10) has the same argument-rounding flaw exp2(x·
-  LOG2_E) had before exp's Cody-Waite fix; do it properly from day one
-  with a LOG10_2_HI/LO-style split (constants already exist for log10).
 
