@@ -290,6 +290,25 @@ IDEAS.md for the before/after measurements):
   found once this session). mca cost is negligible: atan2 unchanged
   (57.17/1.467), hypot +0.5%/+0.4% (21.00->21.11 cyc, 0.763->0.766
   cyc/elem), remainder unchanged (33.02/0.647).
+- **improved**: `asin`'s worst-case accuracy, in two rounds. First, the
+  small/mid Taylor threshold widened `0.1 -> 0.3` after re-checking (and
+  disproving) a prior doc comment's own untested claim that the residual
+  "can't be shrunk by moving thresholds" -- max ulp 84 -> 41, zero perf
+  cost. Then, investigating *why* the acos-derived `near1` branch stayed
+  accurate well below its `a > 0.9` cutoff led to removing the `mid`
+  branch (a whole separate rational-correction formula) entirely: it
+  turns out `acos_poly` is `acos`'s own full-`[0,1]`-domain poly, not
+  something limited to "near 1" -- the name was just where it happened to
+  get reused first. A 2-branch `asin_small`/`acos_poly` structure beats
+  the old 3-branch one everywhere past x~0.25: max ulp 41 -> 11, avg ulp
+  0.105 -> 0.033. mca is a genuine mixed result: throughput improved a
+  lot (2.899 -> 0.968 cyc/elem, -67%, less total vectorized work) but
+  latency got *worse* (43.24 -> 59.03 cyc, +37%) -- removing the `mid`
+  branch also removed independent work the scalar chain could previously
+  use to fill cycles otherwise spent waiting on the sqrt. Kept: both
+  accuracy and throughput (this crate's prioritized metric) improved by a
+  wide margin, only the secondary latency number regressed -- see asin's
+  own doc comment (fixes 5-6) for the full investigation.
 
 **sinh_throughput/cosh_throughput** are a second tier for sinh/cosh, added
 after finding that computing `exp(-x)` as `1.0 / exp(x)` (instead of a
@@ -375,7 +394,7 @@ comment); their rows are exhaustive (all 2^32 f32 bit patterns), not fuzz.
                   asinh |    0.173   |     4     | (std also imperfect at extreme |x|)
                   acosh |    0.063   |     4     |  0.000  |    1
                   atanh |    0.032   |     3     |  0.037  | 363409
-                   asin |    0.105   |    41     |  0.000  |    0
+                   asin |    0.033   |    11     |  0.000  |    0
                    acos |    0.496   |     4     |  0.000  |    0
                    atan |    0.186   |    18     |  0.000  |    0
        tan (in-domain)  |    0.331   |  2967     |  0.000  |    0
@@ -649,7 +668,7 @@ tanh                |          87.64 |             1.793
 asinh               |         120.99 |             7.716
 acosh               |         127.75 |             6.588
 atanh               |          79.99 |             4.331
-asin                |          43.24 |             2.899
+asin                |          59.03 |             0.968
 acos                |          37.11 |             0.820
 atan                |          57.09 |             1.410
 atan2               |          57.17 |             1.467
@@ -787,11 +806,15 @@ time in the surprising direction (a small-looking change, a large real win).
 # todo:
 - do principled and thourough analysis of dependency chains and rounding errors to find optimizations
 - perfectly rounded versions
-- asin's max-ulp residual (41, now at the small/mid branch boundary
-  x ~ 0.3 -- widening the Taylor branch's domain from x<0.1 to x<0.3
-  already cut this from 84, see asin's doc comment fix 5; closing it the
-  rest of the way needs a genuinely different correction shape for the
-  mid branch itself, not just a threshold or coefficients)
+- asin's max-ulp residual (11, down from 84 via two rounds of fixes --
+  widening the small-branch threshold, then removing the `mid` branch
+  entirely in favor of reusing acos's own full-domain poly, see asin's
+  doc comment fixes 5-6; closing the rest of the way needs a genuinely
+  different correction shape, not just a threshold)
+- asin's latency regressed 43.24->59.03 cyc as a side effect of fix 6
+  above (throughput improved a lot, 2.899->0.968 cyc/elem, and accuracy
+  improved a lot too; only latency got worse) -- worth a closer look if
+  serial-latency-bound callers turn out to care, see the mca notes above
 - fix (or at least give a "_checked" full-range companion to) the remaining
   inherited accuracy defects in the newly-ported functions: remainder's
   tie-breaking cliff, and the exp-family's (exp/expm1/sinh/cosh/tanh/powf)

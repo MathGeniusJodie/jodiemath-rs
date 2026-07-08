@@ -431,9 +431,49 @@ branches, no scalar-only intrinsics unless the vector form exists).
   direction, this is the first one this session caught in the opposite
   direction (a *rejection* that turned out to be wrong, leaving a real,
   free win on the table until re-checked).
-- **acos/asin shared kernel**: both reduce to sqrt(1−a)·poly; a shared
-  computation with different post-transforms would halve the code and enable a
-  combined refit at f32-quantized precision.
+- **asin's `mid` branch (a separate rational-correction formula) removed
+  entirely, replaced by reusing `acos_poly` down to a < 0.25 — done,
+  tested, kept (2026-07-07, immediate follow-up to the threshold entry
+  above).** Investigating *why* `near1` (the `pi/2 - acos_poly(a)`
+  branch, previously only used for `a > 0.9`) stayed accurate well below
+  its own cutoff raised the obvious question the original 3-branch design
+  never asked: `acos_poly` is `acos`'s *own* poly, fit and used across
+  `acos`'s entire `[0,1]` domain in `pub fn acos` itself, not something
+  tuned specifically "for near 1" — the name was just an accident of
+  where it was first reused. Measured `near1_branch` in isolation across
+  the full domain: garbage near x=0 (the identical `pi/2 - poly(0)`
+  cancellation the `small`/`mid` split exists to avoid), but from x~0.25
+  onward it's *already better than `mid` ever was anywhere in `mid`'s own
+  former `[0.1, 0.9)` domain* — `mid` wasn't covering a gap `near1`
+  couldn't, it was simply never tried there. Coordinate-searched a direct
+  2-branch (`asin_small`/`near1`) crossover instead of guessing: flat
+  minimum around `a < 0.25`. Exhaustive sweep: max ulp 41 -> 11, avg ulp
+  0.105 -> 0.033 (both improved again, third accuracy win in a row on
+  this function today). mca is a genuine mixed result — throughput
+  improved a lot (2.899 -> 0.968 cyc/elem, -67%, `mid`'s whole 3-fma +
+  2-division + sqrt chain removed from every vectorized call) but latency
+  got *worse* (43.24 -> 59.03 cyc, +37%): the same non-monotonic-
+  scheduling surprise logged elsewhere in this file (asinh's own fix
+  showed the identical shape) — with 3 branches computed unconditionally,
+  the scalar latency chain had independent work to fill cycles otherwise
+  spent waiting on the sqrt; with only 2, less slack exists. Kept anyway:
+  accuracy and throughput (the metric this crate's vectorization-first
+  design prioritizes) both improved by a wide margin, only the secondary
+  diagnostic latency number regressed, the same shape of tradeoff already
+  accepted for asinh/acosh's log1p-fix side effect earlier this session.
+  This also mostly fulfills the "acos/asin shared kernel" idea below —
+  asin now directly reuses acos's own poly for its whole non-small
+  domain, not a separate fit.
+- **acos/asin shared kernel — mostly done as a side effect of the `mid`
+  removal above.** Originally: both reduce to sqrt(1−a)·poly; a shared
+  computation with different post-transforms would halve the code and
+  enable a combined refit at f32-quantized precision. `asin` now calls
+  `acos_poly` directly (`pi/2 - sqrt(1-a)*acos_poly(a)`, sign-restored),
+  the exact shared-kernel shape described here — what's left unclaimed is
+  a literal combined refit of `acos_poly` scored jointly against both
+  `acos` and `asin`'s error simultaneously (currently `acos_poly` is only
+  ever fit/tuned from `acos`'s own perspective); likely small further
+  upside, not attempted this round.
 - **atan poly refit — done, tested, kept (2026-07-07)**, same recipe as
   the asin mid-branch refit just above, extending `examples/tune.rs` with
   `atan_poly_c`. Turned out atan was already close to a strong local

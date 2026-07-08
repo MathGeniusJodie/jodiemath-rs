@@ -1017,10 +1017,11 @@ pub fn acos(x: f32) -> f32 {
 // asin(x) = x + x^3/6 + 3x^5/40 + 15x^7/336 + O(x^9), the odd Taylor series
 // (exact rational coefficients). Unlike sinh's Taylor series, this one
 // converges slowly as |x| approaches 1 (asin has a sqrt singularity
-// there), so it's only used below |x| < 0.1 (see asin below), where 4
+// there), so it's only used below |x| < 0.25 (see asin below), where 4
 // terms already leave truncation error orders of magnitude under budget:
-// the next (dropped) term, 105x^9/3456, is ~2.7e-11 at x=0.1 relative to
-// asin(0.1) ~ 0.1, i.e. ~2.7e-10 relative, far under f32 eps.
+// the next (dropped) term, 105x^9/3456, is ~1.2e-7 at x=0.25 relative to
+// asin(0.25) ~ 0.2527, i.e. ~4.6e-7 relative -- a few ulp, comparable to
+// (not swamped by) the other branch's own residual there, see fix 6.
 #[inline(always)]
 fn asin_small(x: f32) -> f32 {
     let x2 = x * x;
@@ -1032,11 +1033,13 @@ fn asin_small(x: f32) -> f32 {
     x * p
 }
 
-/// A rational correction folded into the acos-style sqrt identity, plus a
-/// small-x Taylor branch. Two separate accuracy problems in the
-/// straight-ported form, found and fixed one at a time as each fix's own
+/// A small-x Taylor branch plus the acos-style sqrt identity (`asin(x) =
+/// pi/2 - acos(x)`, reusing acos's own poly). The straight-ported form
+/// used a different, rational-correction formula instead of the acos
+/// identity for everything above the small-x cutoff -- multiple accuracy
+/// problems in that form, found and fixed one at a time as each fix's own
 /// exhaustive re-sweep exposed the next (same pattern as acosh/asinh
-/// above):
+/// above), until fix 6 replaced it outright:
 /// 1. The final step, `sqrt(1-a) - 1`, has the same near-zero cancellation
 ///    as asinh/acosh's `sqrt(1+t) - 1` (loses precision as `a -> 0`, i.e.
 ///    as `x -> 0`, exactly where asin needs to be most accurate). Fixed
@@ -1110,20 +1113,47 @@ fn asin_small(x: f32) -> f32 {
 ///    separately measuring where `asin_small` itself stopped being
 ///    trustworthy -- the two curves were never actually compared until
 ///    now.
+/// 6. The `mid` branch (the rational correction from fixes 1-2) removed
+///    entirely (2026-07-07, later still). Once fix 5's investigation
+///    showed `acos_poly`'s `sqrt(1-a)*acos_poly(a)` formula (the `near1`
+///    branch) staying accurate from x~0.25 onward, it raised an obvious
+///    question fix 3 never actually asked: `acos_poly` is `acos`'s *own*
+///    poly, fit and used across `acos`'s *entire* `[0,1]` domain, not
+///    something specifically tuned "for near 1" -- the `near1` name was
+///    just a historical accident of where it was *first* reused here (a
+///    > 0.9), not a real limitation. Measured how far it holds up in
+///    isolation: garbage near x=0 (catastrophic cancellation in
+///    `pi/2 - acos_poly(0)`, the same mechanism the `mid`/`small` split
+///    exists to avoid), but from x >= 0.25 it's already better than `mid`
+///    ever was anywhere in `mid`'s own former domain -- so `mid` wasn't
+///    filling a gap `near1` couldn't cover, it was just never tried
+///    there. A direct 2-branch (`asin_small` / `near1` only) coordinate
+///    search over the crossover point found a flat minimum around
+///    `a < 0.25`. Collapsing to 2 branches removes `mid`'s entire
+///    computation (3 fma's, 2 divisions, a sqrt) from every call, not
+///    just changes a threshold. Exhaustive sweep: max ulp 41 -> 11, avg
+///    ulp 0.105 -> 0.033 (both improved again). mca is a genuine mixed
+///    result, not the "faster on both axes" outcome the op-count cut
+///    suggested before actually measuring: throughput improved a lot
+///    (2.899 -> 0.968 cyc/elem, -67%, fewer total ops in the vectorized
+///    loop), but latency got *worse* (43.24 -> 59.03 cyc, +37%) -- the
+///    same non-monotonic-scheduling surprise logged elsewhere in this
+///    file (asinh's own fix showed the identical shape): with 3 branches
+///    computed unconditionally, the scalar chain had independent work to
+///    fill cycles that would otherwise sit idle waiting on the sqrt;
+///    with only 2, less of that slack exists. Kept anyway -- accuracy
+///    improved substantially and throughput (the metric this crate's
+///    vectorization-first design actually prioritizes, per the readme)
+///    improved even more, both by a wide margin; only the secondary,
+///    diagnostic latency number regressed, the same shape of tradeoff
+///    already accepted for asinh/acosh's log1p-fix side effect earlier
+///    this session.
 #[inline(always)]
 pub fn asin(x: f32) -> f32 {
     let a = x.abs();
-    let d = fma(-0.03926096, a, 0.17931573);
-    let d = fma(-a, d, 1.7587008);
-    let d = fma(-a, d, -3.6605723);
-    let a2 = (a * a - a) / d + a;
-    let sq = (1.0 - a2).sqrt();
-    let sm1 = -a2 / (sq + 1.0);
-    let mid = mulsign(sm1, x) * (-FRAC_PI_2);
     let small = asin_small(x);
-    let near1 = mulsign(FRAC_PI_2 - (1.0 - a).sqrt() * acos_poly(a), x);
-    let r = if a < 0.9 { mid } else { near1 };
-    if a < 0.3 { small } else { r }
+    let big = mulsign(FRAC_PI_2 - (1.0 - a).sqrt() * acos_poly(a), x);
+    if a < 0.25 { small } else { big }
 }
 
 // Pade-style rational approximation of atan on [0,1]. Ported from
