@@ -293,6 +293,31 @@ fn cbrt_normal_c(x: f32, c: &[f32]) -> f32 {
     fma(sr, p, ss)
 }
 
+// cbrt_normal_c with the seed offset (shipped: 0x2a509a07) as a 5th
+// tunable parameter (c[0], its bits used directly as the offset added to
+// ax/3) instead of a fixed literal -- IDEAS.md's "joint seed-constant +
+// degree-3 coefficient search" idea. The previously-rejected joint search
+// only tried this against a *degree-2* correction (3 coeffs, hopeless
+// regardless of seed); this keeps the full shipped degree-3.
+#[inline(always)]
+fn cbrt_normal_joint_c(x: f32, c: &[f32]) -> f32 {
+    const SIGN_MASK: u32 = 0x8000_0000;
+    let ax = x.to_bits() & !SIGN_MASK;
+    let a = f32::from_bits(ax);
+    let rcp = 1.0 / a;
+    let s = f32::from_bits(ax / 3 + c[0].to_bits());
+    let s2 = s * s;
+    let d = fma(s2, s, -a);
+    let r = d * rcp;
+    let r2 = r * r;
+    let a1 = fma(c[2], r, c[1]);
+    let b1 = fma(c[4], r, c[3]);
+    let p = fma(b1, r2, a1);
+    let ss = f32::from_bits(s.to_bits() | (x.to_bits() & SIGN_MASK));
+    let sr = ss * r;
+    fma(sr, p, ss)
+}
+
 // cbrt_normal_c, but with cbrt_fast's shift-multiply seed
 // ((ax>>16)*0x5556 + 0x2a4ddef1, cbrt_fast's own constants, reused as-is)
 // instead of the division-based ax/3 + 0x2a509a07 -- checking whether the
@@ -875,6 +900,25 @@ fn main() {
         }
         let init = [-0.33333147, 0.22220612, -0.17394388, 0.14823665];
         tune("cbrt_normal", &cbrt_normal_c, &|x| x.cbrt(), &grid, &init);
+
+        // seed offset (c[0], bits used directly) jointly with the same
+        // degree-3 poly, seeded from the shipped values (not zero -- see
+        // this file's own zero-seed-trap lesson).
+        let mut grid2 = vec![];
+        let mut b = 1.0f32.to_bits();
+        while b < 2.0f32.to_bits() {
+            grid2.push(f32::from_bits(b));
+            grid2.push(-f32::from_bits(b));
+            b += 5;
+        }
+        let init_joint = [
+            f32::from_bits(0x2a509a07),
+            -0.33333147,
+            0.22220612,
+            -0.17394388,
+            0.14823665,
+        ];
+        tune("cbrt_normal_joint", &cbrt_normal_joint_c, &|x| x.cbrt(), &grid2, &init_joint);
     }
     if which.contains("cbrtshift") {
         // coarser grid for a fast first-pass screen of the shift-multiply

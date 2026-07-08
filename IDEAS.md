@@ -792,6 +792,29 @@ brainstorm backlog lives at the bottom of this file.
   of an irrational constant from a huge value to get a tiny, sign-
   sensitive residual), that headroom runs out far sooner than expected.**
 
+- **cbrt: joint seed-constant + degree-3 coefficient search (2026-07-08),
+  double-checked via two independent methods, no headroom found.** The
+  previously-rejected joint search only tried a *degree-2* correction
+  (hopeless regardless of seed); this one keeps the shipped degree-3 (4
+  coefficients) and adds the seed offset as a 5th free parameter. Added
+  `cbrt_normal_joint_c` to `tune.rs` (seeded from the shipped values, not
+  zero) and ran the existing coordinate descent on the same grid
+  `cbrt_normal` already uses: essentially no movement (avg 0.33871→0.33856,
+  ~0.04% relative, max ulp unchanged at 2). Since coordinate descent alone
+  can miss a genuinely different basin the backlog's "basin-hopping"
+  framing was reaching for, double-checked independently with a
+  from-scratch Python sweep of the underlying continuous math (not
+  tune.rs) across a wide range of seed offsets (±2000, well beyond
+  coordinate descent's ±16-per-step reach) with a fresh least-squares
+  refit of the poly at each: best found was 1.407e-7 max relative error
+  vs. the shipped combination's own refit at 1.411e-7 — also ~0.3%,
+  negligible, and only in the underlying math (before any f32-rounding
+  effects that would likely wash out even that). Two independent methods
+  now agree the shipped seed+poly combination is already essentially
+  optimal for this architecture; not adopted. Not implemented in
+  `src/lib.rs`; kept `cbrt_normal_joint_c` in `tune.rs` as reference infra
+  (same precedent as `cbrt_shiftmul_c`/`cbrt_throughput_c`).
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
@@ -1066,15 +1089,6 @@ legitimate direction here, unlike on most targets.
   gather. Would make a `sin_exact` with no accuracy cliff anywhere in
   f32. Big job, listed for completeness (the "graceful degradation"
   contract makes it optional, not required).
-
-### cbrt
-
-- **Joint seed-constant + degree-3 coefficient search**: the rejected
-  joint search was seed × *degree-2* (3 coeffs, hopeless). Seed × the
-  shipped degree-3 was never searched — the seed constant currently in
-  use was inherited, then the poly tuned around it. A basin-hopping pass
-  over (seed offset, c1..c4) jointly targets avg 0.31 → lower at zero
-  runtime cost.
 
 ### atan / asin / acos
 
