@@ -1464,6 +1464,53 @@ brainstorm backlog lives at the bottom of this file.
   `cbrt_accurate`/`cbrt_accurate_normal` are structurally the same
   pattern, and both paid off equally well. Commit `c80e1fa`.
 
+- **powf_checked_unchecked, implemented (2026-07-08), the third tier
+  found by the same "check the whole family, not just the one function
+  that first flagged it" instinct — this time closing out `powf`'s own
+  remaining tier.** `powf_checked` (the high-precision double-float
+  variant, not a domain-safety tier despite the name — same role
+  `cbrt_accurate` plays for `cbrt`) pays its own `is_safe`/`edge_mag`
+  fallback selects *and* the same negative-base/`y==0` chain `powf`
+  itself has, on top of `exp2_checked_df(log2_df(ax) * y)`.
+  `powf_checked_unchecked(x, y) = exp2_checked_df(log2_df(x) * y)`,
+  domain "x positive/normal/finite, y != 0.0" (same as `powf_unchecked`).
+  **Naming note**: called it `powf_checked_unchecked` for strict
+  consistency with the `cbrt_accurate` → `cbrt_accurate_unchecked`
+  precedent (append `_unchecked` to the exact existing name), even though
+  it reads awkwardly — `powf_checked`'s "checked" doesn't mean "domain-
+  safety-checked" the way `log_2`/`atan2`/`hypot`'s does, it means
+  "higher-precision," so "checked_unchecked" isn't self-contradictory
+  once you know that, just unfortunate naming inherited from an earlier
+  session's inconsistent use of "_checked" across this crate (domain-
+  safety in most places, precision-tier in this one) — not fixed here,
+  out of scope for this pass. Bit-identical to `powf_checked` over 50M
+  in-domain fuzz samples. mca: latency 106.31→105.58 cyc (-0.7%,
+  essentially flat), throughput 7.359→5.851 cyc/elem (**-20.5%**).
+  quickbench across 5 repeated runs told an honest, slightly messier
+  story than the previous two entries: throughput improved consistently
+  every single time (-13.5% to -30.4%, averaging ~-21%, matching mca's
+  prediction closely), but latency was genuinely noise-dominated — 3 of
+  5 runs showed a modest improvement (-5% to -7%), 2 of 5 showed a
+  modest *regression* (+5% to +8%) — consistent with mca's own
+  near-zero prediction, not a real directional effect either way. Kept
+  the honest picture in this entry rather than cherry-picking a
+  favorable run; adopted on throughput alone, matching this crate's
+  established priority (vectorization-first design, throughput is the
+  metric that matters — same standing justification used for several
+  earlier latency-flat-or-worse/throughput-better adoptions, e.g. asin's
+  2-branch collapse, `exp_pos_neg`'s shared reduction). Full harness
+  treatment: codegen_check clean, 3 new edgecheck.rs bit-exact-vs-
+  `powf_checked` regression-guard entries, accuracy.rs domain-restricted
+  sweep (0.047/141 avg/max ulp, `powf_checked`'s own domain-restricted
+  reading is 0.0234/137 — differs only from sampling a narrower x>0-only
+  subset, same non-issue as every other `_unchecked` sibling this
+  session), readme tables updated (skipped the precision table, matching
+  this session's own precedent of not adding a row for a parent function
+  — `powf_checked`/`remainder` — that was never listed there to begin
+  with). With this, `powf` now has all three tiers (`powf_unchecked`,
+  `powf`, `powf_checked_unchecked`, `powf_checked`) any `cbrt`-shaped
+  function in this crate could have. Commit `<pending>`.
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED

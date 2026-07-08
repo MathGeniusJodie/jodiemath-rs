@@ -2417,6 +2417,21 @@ pub fn powf_checked(x: f32, y: f32) -> f32 {
     if y == 0.0 { 1.0 } else { r }
 }
 
+/// `powf_checked` without domain/sign checks: valid for `x` positive,
+/// normal, and finite (the same domain [`log_2_unchecked`]/
+/// [`powf_unchecked`] require) and `y != 0.0`. No `is_safe`/`edge_mag`
+/// fallback (that machinery exists purely to cover `x`'s zero/inf/nan
+/// cases, all excluded by this domain), no `y == 0.0` special case, no
+/// negative-base parity handling -- same relationship to `powf_checked`
+/// that `powf_unchecked` has to `powf`, just applied to the high-
+/// precision double-float tier instead of the plain one (same shape as
+/// `cbrt_accurate_unchecked`'s relationship to `cbrt_accurate`). See
+/// [`powf_checked`] for the full-domain-safe version.
+#[inline(always)]
+pub fn powf_checked_unchecked(x: f32, y: f32) -> f32 {
+    exp2_checked_df(log2_df(x) * y)
+}
+
 /// Straight port of jodiemath's remainderf: x - round(x/y)*y (ties away from
 /// zero, via f32::round -- not IEEE 754 remainder's ties-to-even).
 /// round(x/y)*y's absolute error scales with ulp(x), which swamps the true

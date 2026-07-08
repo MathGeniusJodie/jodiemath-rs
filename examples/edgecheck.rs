@@ -497,6 +497,17 @@ fn main() {
         powf_checked(0.86967933, 576.48004),
         1.1009411e-35,
     );
+    // powf_checked_unchecked: contract is x positive/normal/finite, y !=
+    // 0.0 -- must match powf_checked inside that domain (verified more
+    // thoroughly via a 50M-sample fuzz, not preserved in-repo; permanent
+    // regression guard).
+    check("powf_checked_unchecked(2,3)", powf_checked_unchecked(2.0, 3.0), powf_checked(2.0, 3.0));
+    check("powf_checked_unchecked(2,1000)", powf_checked_unchecked(2.0, 1000.0), powf_checked(2.0, 1000.0));
+    check(
+        "powf_checked_unchecked(0.86967933,576.48004)",
+        powf_checked_unchecked(0.86967933, 576.48004),
+        powf_checked(0.86967933, 576.48004),
+    );
     check("remainder(5,3)", remainder(5.0, 3.0), -1.0);
     check("remainder(4,2)", remainder(4.0, 2.0), 0.0);
     // remainder_unchecked: contract is x != 0.0, y finite -- must match

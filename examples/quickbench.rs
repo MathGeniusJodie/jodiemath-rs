@@ -157,6 +157,7 @@ fn main() {
     bench!("std powf", move |x: f32| x.powf(powf_y));
     bench!("powf_unchecked", move |x: f32| powf_unchecked(x, powf_y));
     bench!("powf_checked", move |x: f32| powf_checked(x, powf_y));
+    bench!("powf_checked_unchecked", move |x: f32| powf_checked_unchecked(x, powf_y));
     {
         // black_box'd once, not per-call -- see pown's own mca_target.rs
         // comment for why that placement matters.
