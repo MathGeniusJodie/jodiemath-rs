@@ -1546,9 +1546,27 @@ legitimate direction here, unlike on most targets.
 
 ### atan / asin / acos
 
-- **Retune asin's 0.25 crossover after any acos_poly change**: fix 5's
-  lesson (measure both branches' actual curves, don't trust the inherited
-  threshold) applies automatically after the round-1 degree-7 idea or any
-  refit. Bookkeeping entry so the follow-through isn't forgotten.
+- **Retune asin's 0.25 crossover after any acos_poly change (2026-07-08),
+  checked and confirmed already near-optimal, no change**: the joint
+  acos+asin refit (fix 7 in asin's own doc comment, commit `b9f9b5d`)
+  changed `acos_poly`'s coefficients *after* fix 6 had picked the 0.25
+  threshold against the *old* coefficients -- exactly the situation this
+  bookkeeping entry existed to catch. Probed both branches' real error
+  curves (bucketed max/avg ulp vs f64::asin ground truth, same methodology
+  as fix 5) across a in [0, 0.5] using the *current* (post-refit)
+  `acos_poly`. Found the true max-ulp crossover sits around a~0.26, not
+  0.25 -- but the exhaustive accuracy.rs sweep's own reported worst case
+  (max ulp 9 at x=0.24595731) sits *inside* `asin_small`'s own domain,
+  a local peak in the Taylor branch's own truncation error right before
+  the 0.25 edge, not a boundary-placement artifact: `big`'s error in that
+  exact neighborhood (a in [0.245, 0.25)) is *worse* (~15-16 ulp per the
+  probe), so no threshold placement in this region rescues that specific
+  point -- moving the boundary earlier trades into `big`'s even-worse
+  region there, moving it later just lets `asin_small`'s own peak keep
+  climbing. 0.25 is already close enough to the true crossover (~0.26)
+  that the difference is noise-level and doesn't touch the function's
+  actual max-ulp bottleneck either way. No change made; this closes out
+  the bookkeeping entry with a definitive negative answer rather than
+  leaving it open.
 
 
