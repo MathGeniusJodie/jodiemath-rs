@@ -88,11 +88,36 @@ branches, no scalar-only intrinsics unless the vector form exists).
   from a table (plus log2(m_i) table folded into k's fma). Range shrinks
   ~8–16×, poly drops to degree 3–4. Vectorization: `vpermps` (see cross-cutting
   caveat).
-- **ln/log10: fold the rescale into the poly**: `log_2(x) * LN_2` adds a full
-  extra rounding on top of log_2's error (~doubles avg ulp). Instead refit the
-  poly with coefficients pre-multiplied by ln2 (i.e. fit s·P(s) → ln directly)
-  and handle k·ln2 as Cody–Waite: `fma(k, LN2_HI, poly_ln) + k*LN2_LO` — two
-  extra fmas, roughly halves ln's error. Same for log10.
+- **ln/log10: fold the rescale into the poly — done, tested, kept
+  (2026-07-07).** Implemented exactly as specified: `ln_normal`/
+  `log10_normal` reuse `log_2_normal`'s decomposition (`s = m - 1`) but
+  with coefficients pre-scaled (`log_2`'s own `c[i] * LN_2`/`* LOG10_2`,
+  each individually rounded to f32 -- a "quantized" scale, not a fresh
+  minimax refit, and evidently good enough: `c_ln[0]` came out bit-exact
+  `1.0` and the rest visibly converge toward the classic `ln(1+s)` Taylor
+  coefficients `-1/2, 1/3, -1/4, ...`, a good sanity check that the scaled
+  poly is well-conditioned). `k·ln2` is Cody-Waite split: `LN2_HI` has its
+  low 9 mantissa bits zeroed so `k*LN2_HI` is *exact* for every `k` this
+  crate's decomposition can produce (brute-force confirmed for k in
+  [-300,300], the domain covers roughly [-150,127] including the
+  denormal `koff` prescale) -- `fma(poly, s, k*LN2_HI) + k*LN2_LO` then
+  costs only one *small* correction-term rounding instead of the naive
+  `log_2(x) * LN_2`'s one *whole-result* rounding (which scales the
+  k-dominated bulk of the value, not just the tiny poly correction).
+  Measured, not just reasoned about: exhaustive (2^32) sweep, `ln` avg
+  ulp 0.1259→0.1168 (max ulp unchanged at 3), `log10` avg ulp
+  0.2856→0.1270 (max ulp 4→3) -- log10 saw roughly double ln's gain,
+  consistent with LOG10_2 being a "worse" (less power-of-two-friendly)
+  rescale constant than LN_2 to begin with. mca: latency *improved*
+  slightly for both (56.91→55.86 cyc, -1.8%), throughput cost tiny
+  (1.689→1.714 cyc/elem, +1.5%) -- a near-wash, not a real tradeoff either
+  way, so this is close to a clean win rather than an accuracy-for-speed
+  trade. Both functions were already over the file's own stated ≤2-max-ulp
+  budget before this change (3 and 4 respectively) -- a pre-existing,
+  unrelated situation this change improves but doesn't fully close (ln
+  stays at 3, log10 drops to 3); not chased further here since it wasn't
+  this idea's claim to fix. codegen_check and the full edgecheck/test
+  suite stayed clean throughout.
 - **log_2 degree-8 probe** with quantized refit (see cross-cutting).
 - **log1p, real fix (branchless) — done, tested, kept (2026-07-07).** u = 1
   + x; c = x − (u − 1) (exact by Sterbenz for the interesting range);

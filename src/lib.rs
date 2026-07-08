@@ -715,22 +715,140 @@ fn mulsign(x: f32, y: f32) -> f32 {
 }
 
 const LN_2: f32 = std::f32::consts::LN_2;
-const LOG10_2: f32 = std::f32::consts::LOG10_2;
 const LOG2_E: f32 = std::f32::consts::LOG2_E;
 const FRAC_PI_2: f32 = std::f32::consts::FRAC_PI_2;
 const FRAC_PI_4: f32 = std::f32::consts::FRAC_PI_4;
 
-/// Straight port of jodiemath's logf: log2(x) rescaled by ln(2). Same domain
-/// behavior as log_2 (its edge handling covers zero/negative/denormal/inf/nan).
+// Cody-Waite split of ln(2): LN2_HI keeps its low 9 mantissa bits zeroed, so
+// k*LN2_HI (k an exact small integer, this crate's log_2_normal decomposition
+// never produces |k| past a couple hundred) is *exact* -- no rounding at all,
+// confirmed by brute force for k in [-300, 300]. LN2_LO is the f32-rounded
+// residual (LN2 - LN2_HI as f64, then rounded). This is the same trick
+// reduce_pi already uses for pi/2's own hi/lo split.
+const LN2_HI: f32 = 0.693145751953125;
+const LN2_LO: f32 = 1.428606765330187e-6;
+const LOG10_2_HI: f32 = 0.301025390625;
+const LOG10_2_LO: f32 = 4.605039066518657e-6;
+
+/// ln(x) via a poly fitted directly for ln, not log_2's poly rescaled after
+/// the fact. `log_2(x) * LN_2` (the naive approach, and jodiemath's own
+/// original formula) rounds *twice*: once inside log_2 to produce its own
+/// f32 result, then again multiplying that already-rounded value by LN_2 --
+/// and that second rounding applies to the *whole* result (dominated by the
+/// integer exponent term k, not the small poly correction), so it costs
+/// nearly a full ulp of avoidable error. Same domain behavior as log_2 (its
+/// edge handling covers zero/negative/denormal/inf/nan).
 #[inline(always)]
 pub fn ln(x: f32) -> f32 {
-    log_2(x) * LN_2
+    let tiny = x < f32::MIN_POSITIVE;
+    let xs = if tiny { x * 16777216.0 } else { x };
+    let koff = if tiny { -24.0 } else { 0.0 };
+    let r = ln_normal(xs, koff);
+    let spec = if x == 0.0 { f32::NEG_INFINITY } else { f32::NAN };
+    let r = if x <= 0.0 { spec } else { r };
+    if !(x < f32::INFINITY) {
+        x * x
+    } else {
+        r
+    }
 }
 
-/// Straight port of jodiemath's log10f: log2(x) rescaled by log10(2).
+/// Core of ln for positive normal finite x only -- see log_2_normal, same
+/// contract. Reuses log_2_normal's exact decomposition (s = m - 1) and
+/// poly *shape*, but with coefficients fitted for ln directly (log_2's own
+/// c[i] * LN_2, each individually rounded to f32) and a Cody-Waite combine
+/// with k instead of a single fma: `k*LN2_HI` is exact (see LN2_HI's own
+/// comment), so `fma(poly, s, k*LN2_HI)` folds the poly correction in with
+/// only one rounding, then `+ k*LN2_LO` adds back the tiny residual LN2_HI
+/// dropped -- that final add's own rounding now only affects a small
+/// correction term instead of the whole (k-dominated) result, unlike the
+/// naive `log_2(x) * LN_2` where the second rounding scales everything.
+#[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
+#[inline(always)]
+pub fn ln_normal(x: f32, koff: f32) -> f32 {
+    let e = (x.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23;
+    let m = f32::from_bits((x.to_bits() as i32).wrapping_sub(e << 23) as u32);
+    let k = e as f32 + koff;
+    let s = m - 1.0;
+    let c: [f32; 10] = [
+        1.0,
+        -0.49999988,
+        0.33333343,
+        -0.25001621,
+        0.20002009,
+        -0.16609012,
+        0.14181833,
+        -0.13243459,
+        0.12904665,
+        -0.07621122,
+    ];
+    let s2 = s * s;
+    let s4 = s2 * s2;
+    let l0 = fma(c[1], s, c[0]);
+    let l1 = fma(c[3], s, c[2]);
+    let l2 = fma(c[5], s, c[4]);
+    let l3 = fma(c[7], s, c[6]);
+    let l4 = fma(c[9], s, c[8]);
+    let r0 = fma(l1, s2, l0);
+    let r1 = fma(l3, s2, l2);
+    let r2 = fma(l4, s4, r1);
+    let p = fma(r2, s4, r0);
+    let k_hi = k * LN2_HI; // exact, see LN2_HI's comment
+    fma(p, s, k_hi) + k * LN2_LO
+}
+
+/// log10(x), same Cody-Waite-combine approach as ln (see ln's own doc
+/// comment for why this avoids the naive `log_2(x) * LOG10_2`'s double
+/// rounding).
 #[inline(always)]
 pub fn log10(x: f32) -> f32 {
-    log_2(x) * LOG10_2
+    let tiny = x < f32::MIN_POSITIVE;
+    let xs = if tiny { x * 16777216.0 } else { x };
+    let koff = if tiny { -24.0 } else { 0.0 };
+    let r = log10_normal(xs, koff);
+    let spec = if x == 0.0 { f32::NEG_INFINITY } else { f32::NAN };
+    let r = if x <= 0.0 { spec } else { r };
+    if !(x < f32::INFINITY) {
+        x * x
+    } else {
+        r
+    }
+}
+
+/// Core of log10 for positive normal finite x only -- see ln_normal, same
+/// approach with coefficients fitted for log10 (log_2's c[i] * LOG10_2).
+#[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
+#[inline(always)]
+pub fn log10_normal(x: f32, koff: f32) -> f32 {
+    let e = (x.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23;
+    let m = f32::from_bits((x.to_bits() as i32).wrapping_sub(e << 23) as u32);
+    let k = e as f32 + koff;
+    let s = m - 1.0;
+    let c: [f32; 10] = [
+        0.4342945,
+        -0.2171472,
+        0.14476489,
+        -0.10858066,
+        0.08686763,
+        -0.07213202,
+        0.06159092,
+        -0.05751561,
+        0.05604425,
+        -0.03309811,
+    ];
+    let s2 = s * s;
+    let s4 = s2 * s2;
+    let l0 = fma(c[1], s, c[0]);
+    let l1 = fma(c[3], s, c[2]);
+    let l2 = fma(c[5], s, c[4]);
+    let l3 = fma(c[7], s, c[6]);
+    let l4 = fma(c[9], s, c[8]);
+    let r0 = fma(l1, s2, l0);
+    let r1 = fma(l3, s2, l2);
+    let r2 = fma(l4, s4, r1);
+    let p = fma(r2, s4, r0);
+    let k_hi = k * LOG10_2_HI; // exact, see LN2_HI's comment (same trick)
+    fma(p, s, k_hi) + k * LOG10_2_LO
 }
 
 /// ln(1+x), accurate for small |x| (unlike the naive `ln(1.0 + x)`, which
