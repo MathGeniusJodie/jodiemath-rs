@@ -1361,17 +1361,47 @@ legitimate direction here, unlike on most targets.
 
 ## sin / cos / tan
 
-- **`sincos` / `sincos_checked` returning both values from one
-  reduction**: the rejected fused-tan attempts above failed on *poly*
-  grounds (pole cancellation in the division); a plain sincos that runs
-  the existing reduction once and sinf_poly twice (r and its ±pi/2
-  counterpart... no — r with sin parity, and separately the cos offset
-  needs its own q) — the cheap version shares only x/pi; the checked
-  version shares the expensive two_prod machinery with two different
-  pre_offsets, where round_x_over_pi's dominant two_prod(x, RPI_HI) and
-  reduce_pi's qh-side products genuinely coincide when qh matches.
-  Needs design work, but callers wanting both currently pay 2x the most
-  expensive reduction in the crate.
+- **`sincos_checked` returning both values from one reduction (2026-07-08),
+  implemented and measured — bit-exact but no real speedup, reverted**:
+  confirmed the entry's own premise exactly: `round_x_over_pi`'s `qh =
+  p0.round()` and `reduce_pi`'s qh-only half (`p1/p2` two_prods and
+  everything folded from them) are provably identical between sin's
+  pre_offset=0 and cos's pre_offset=-0.5 (only `ql` differs) — factored
+  `round_x_over_pi`/`reduce_pi` into a shared qh-part + a per-branch
+  ql-tail (bit-exact refactor, verified against the unfused functions with
+  zero behavior change), then built `sincos_checked` computing the shared
+  part once and only the two ql-tails + two poly evals twice. Verified
+  bit-exact against calling `sin_checked`+`cos_checked` separately across
+  50M fuzz samples *and* all 2^32 f32 bit patterns exhaustively (caught and
+  fixed one real bug along the way: the fused cos branch's parity flip
+  needs the raw pre-+0.5 `kl`, not `kl+0.5` — cos_checked's own `pl =
+  parity(kl)` uses a different variable than the `kl + 0.5` passed to
+  `reduce_pi`, an easy detail to lose when refactoring). llvm-mca predicted
+  a real win (latency unchanged 123.58 cyc — LLVM's own CSE already merges
+  the shared computation when both `#[inline(always)]` calls are adjacent
+  in the *scalar* chain — but throughput 8.466→6.852 cyc/elem, ~19%
+  better, since the vectorized loop apparently doesn't get the same CSE for
+  free). Real wall-clock quickbench flatly disagreed: a naive `s+c`-combine
+  bench first showed the *opposite* direction (fused ~7% worse), which
+  turned out to be a bench-shape artifact; switching to a
+  two-separate-output-array bench (matching how a real caller and mca's
+  own methodology would use it) narrowed it to a wash within thermal
+  noise, and a final noise-resistant interleaved measurement (10 rounds
+  alternating separate/fused, 4096-pass min-of-many each) settled it: fused
+  ~1.4% *slower*, not faster. Not adopted; all reverted (src/lib.rs,
+  mca.rs, mca_target.rs, quickbench.rs). **General lesson: this is the
+  first time in this whole session that llvm-mca's theoretical prediction
+  and real wall-clock measurement flatly *disagreed in direction* (not just
+  magnitude) on a change with a clean, verified mathematical justification
+  — a reminder that mca models an idealized scheduler, not the real
+  vectorizer's actual decisions once closures/tuples/CSE-across-inlined-
+  calls are in play, and that discrepancy itself only showed up because
+  this session's own "verify before trusting one tool" discipline caught
+  it. When mca and quickbench disagree, trust quickbench (real hardware),
+  but don't stop at the first quickbench number either if the bench shape
+  itself is suspect (the s+c-combine variant's answer flipped again once
+  the bench was changed to match realistic usage) — triangulate with a
+  third, noise-controlled measurement before deciding.**
 
 - **tan via mod-pi/2 reduction + dedicated tan poly with reciprocal branch
   (2026-07-08), implemented and measured — premise was wrong, real
