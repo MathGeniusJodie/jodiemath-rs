@@ -127,6 +127,7 @@ fn main() {
         "sinh_throughput_fn",
         "cosh_throughput_fn",
         "tanh",
+        "sigmoid",
         "asinh",
         "acosh",
         "atanh",

@@ -648,6 +648,26 @@ fn main() {
         let s = measure!(tanh_domain, |x: f32| x.tanh(), tanh_u35);
         report("std tanh", &s, t0);
     }
+    if run("sigmoid") {
+        // Domain matches sigmoid's own exp(-x) clamp (see its doc
+        // comment): accurate while -x stays in exp's own good range.
+        let sigmoid_domain = |x: f32| {
+            let e = x * std::f32::consts::LOG2_E;
+            e > -126.0 && e < 126.0
+        };
+        // Direct 1/(1+exp(-x)) in f64, *not* the 0.5+0.5*tanh(x/2)
+        // identity -- that identity has exactly the cancellation bug
+        // sigmoid's own doc comment describes, just pushed out to a
+        // larger |x| in f64 (tanh saturates to exactly -1.0 once
+        // |x/2| exceeds ~18.7 in f64, well inside this domain), so it
+        // would silently give a *wrong* reference for part of the swept
+        // range instead of a merely imprecise one.
+        let sigmoid_ref = |v: F64xN| {
+            F64xN::splat(1.0) / (F64xN::splat(1.0) + exp_u10(-v))
+        };
+        let s = measure!(sigmoid_domain, sigmoid, sigmoid_ref);
+        report("sigmoid", &s, t0);
+    }
     if run("asinh") {
         let s = measure!(everywhere, asinh, asinh_u10);
         report("asinh", &s, t0);

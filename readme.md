@@ -39,6 +39,7 @@ All functions auto-vectorize, it's a hard requirement
 sinh_throughput (in-domain)| 0.084   |     7     |  0.000  |    1
 cosh_throughput (in-domain)| 0.061   |     4     |  0.000  |    0
        tanh (in-domain) |    0.148   |     9     |  0.000  |    0
+                sigmoid |    0.100   |     5     | (no std sigmoid)
                   asinh |    0.173   |     4     | 
                   acosh |    0.063   |     4     |  0.000  |    1
                   atanh |    0.032   |     3     | 
@@ -81,6 +82,7 @@ exp10_checked | 17.5 ns |     -   |  -
          sinh | 14.0 ns | 14.0 ns | 1.0x
          cosh | 13.8 ns | 14.0 ns | 1.0x
          tanh | 17.7 ns | 16.5 ns | 0.9x
+      sigmoid | 15.4 ns |     -   |  -
         asinh | 43.7 ns | 86.3 ns | 2.0x
         acosh | 35.1 ns | 27.0 ns | 0.8x
         atanh | 23.2 ns |  4.2 ns | 0.2x
@@ -125,6 +127,7 @@ exp10_checked | 0.57 ns  |     -   |  -
          sinh | 0.58 ns  | 5.62 ns | 9.7x
          cosh | 0.50 ns  | 5.55 ns | 11.2x
          tanh | 0.64 ns  | 5.23 ns | 8.2x
+      sigmoid | 0.43 ns  |     -    |  -
         asinh | 2.19 ns  | 41.42 ns | 18.9x
         acosh | 1.32 ns  |  6.17 ns | 4.7x
         atanh | 0.79 ns  |  4.54 ns | 5.7x
@@ -175,6 +178,7 @@ cosh                |          57.00 |             2.074
 sinh_throughput     |          62.00 |             1.943
 cosh_throughput     |          61.00 |             1.616
 tanh                |          94.91 |             2.567
+sigmoid             |          65.09 |             2.713
 asinh               |         120.99 |             7.716
 acosh               |         127.75 |             6.588
 atanh               |          79.99 |             4.331

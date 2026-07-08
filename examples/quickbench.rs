@@ -108,6 +108,7 @@ fn main() {
     bench!("cosh_throughput", cosh_throughput);
     bench!("tanh", tanh);
     bench!("std tanh", |x: f32| x.tanh());
+    bench!("sigmoid", sigmoid);
     bench!("asinh", asinh);
     bench!("std asinh", |x: f32| x.asinh());
     bench!("acosh", acosh);

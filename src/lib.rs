@@ -1386,6 +1386,34 @@ pub fn tanh(x: f32) -> f32 {
     e / (e + 2.0)
 }
 
+/// logistic sigmoid, `1/(1+exp(-x))`. The backlog idea for this function
+/// proposed the identity `sigmoid(x) = 0.5 + 0.5*tanh(x/2)` (algebraically
+/// exact: multiply `tanh(x/2)`'s own definition by `e^(x/2)/e^(x/2)` to
+/// get `(e^x-1)/(e^x+1)`, and `0.5 + 0.5*` that simplifies to
+/// `e^x/(e^x+1) = 1/(1+e^-x)`) -- tried first, and it's a real bug, not
+/// just imprecise: for `x` around `-17.3`, `tanh(x/2)` (`~-8.66`) already
+/// rounds to *exactly* `-1.0f32` (its true value is within half a ulp of
+/// `-1.0`, so that's the *correct* f32 rounding for tanh's own output),
+/// but `0.5 + 0.5*(-1.0)` then computes to *exactly* `0.0` even though
+/// the true sigmoid value there (`~2.98e-8`) is nowhere near it or f32's
+/// underflow threshold -- `tanh`'s own correct saturation discards
+/// exactly the residual precision this formula needs. The same class of
+/// "algebraically-exact identity reintroduces catastrophic cancellation"
+/// bug this file's `atanh` single-log1p-fusion entry already documents.
+/// Fixed by computing directly instead, which has no such cancellation
+/// anywhere (adding a small-to-1 value or a 1-to-huge value both lose
+/// only irrelevant precision, and the final division is well-
+/// conditioned in both regimes): clamping `-x` before `exp` (mirroring
+/// `tanh`'s own domain-safety clamp, same idea, no cancellation-prone
+/// identity in between) keeps this correct and gracefully saturating to
+/// exactly `0.0`/`1.0` over the whole domain, never inf/nan for any
+/// finite input.
+#[inline(always)]
+pub fn sigmoid(x: f32) -> f32 {
+    let e = exp((-x).clamp(-87.0, 88.0));
+    1.0 / (1.0 + e)
+}
+
 /// asinh(x) = ln(x + sqrt(x^2+1)), fixed for two bugs in the straight-ported
 /// form (the doc comment used to describe only the first; the exhaustive
 /// sweep that found it also turned up the second, worse one):

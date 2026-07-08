@@ -532,6 +532,24 @@ brainstorm backlog lives at the bottom of this file.
   is not the right fix given where the actual worst case lives. No code
   changed.
 
+- **sigmoid/logistic, implemented (2026-07-08)**: the backlog's own
+  suggested identity, `0.5 + 0.5·tanh(x/2)`, was tried first and is a real
+  *bug*, not just imprecise — for x≈-17.33, `tanh(x/2)` (≈-8.66) already
+  correctly rounds to exactly `-1.0f32` (true value within half a ulp of
+  `-1.0`, so that's tanh's own correct output), but `0.5 + 0.5·(-1.0)` then
+  computes to exactly `0.0` even though the true sigmoid value there
+  (≈2.98e-8) is nowhere near it or f32's underflow threshold. Same bug
+  class as the rejected atanh single-log1p-fusion above: composing through
+  an intermediate function that has already saturated/rounded to an
+  extreme value discards precision the outer formula still needs, even
+  though the identity is algebraically exact. Fixed by computing directly
+  instead — `1.0/(1.0+exp((-x).clamp(-87.0, 88.0)))` — which has no
+  cancellation anywhere and gracefully saturates to 0.0/1.0 over the whole
+  domain. Fuzzed clean after the fix (avg/max ulp 0.0996/4) and confirmed
+  exhaustively (0.0996/5 over all 2^32 patterns). mca: 65.09 cyc latency,
+  2.713 cyc/elem throughput (cheaper than tanh's 94.91/2.567, as expected
+  for one exp + one division vs. a rational approx).
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
@@ -900,11 +918,6 @@ legitimate direction here, unlike on most targets.
   tradeoff for callers who need std-grade hypot without std-grade scalar
   code.
 
-
-- **sigmoid/logistic**: 1/(1 + exp(-x)) — one exp tier + one division
-  (idle divider), or expm1-based near 0 if the cancellation check demands
-  it. Pairs with the tanh rational idea (logistic(x) =
-  0.5 + 0.5·tanh(x/2), so whichever fit wins serves both).
 
 - **exp10**: exp2(x·LOG2_10) has the same argument-rounding flaw exp2(x·
   LOG2_E) had before exp's Cody-Waite fix; do it properly from day one

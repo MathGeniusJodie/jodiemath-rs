@@ -212,6 +212,23 @@ fn main() {
     check("tanh(-inf)", tanh(f32::NEG_INFINITY), -1.0);
     check("tanh(nan)", tanh(f32::NAN), f32::NAN);
 
+    check("sigmoid(0)", sigmoid(0.0), 0.5);
+    check("sigmoid(-0)", sigmoid(-0.0), 0.5);
+    // Regression pin for the cancellation bug found while implementing this
+    // function (see its doc comment): a first version computed
+    // 0.5+0.5*tanh(x/2), which returned exactly 0.0 here because tanh(x/2)
+    // had already correctly saturated to exactly -1.0f32 -- discarding the
+    // true, nowhere-near-zero result. Direct 1/(1+exp(-x)) has no such
+    // cancellation.
+    check("sigmoid(-17.32869)", sigmoid(-17.32869), 2.9802024e-8);
+    check("sigmoid(1000)", sigmoid(1000.0), 1.0);
+    check("sigmoid(f32::MAX)", sigmoid(f32::MAX), 1.0);
+    check("sigmoid(inf)", sigmoid(f32::INFINITY), 1.0);
+    check("sigmoid(-inf)", sigmoid(f32::NEG_INFINITY), 6.054601e-39);
+    check_finite("sigmoid(-1000)", sigmoid(-1000.0));
+    check_finite("sigmoid(-f32::MAX)", sigmoid(-f32::MAX));
+    check("sigmoid(nan)", sigmoid(f32::NAN), f32::NAN);
+
     check("asinh(0)", asinh(0.0), 0.0);
     // small-x cancellation (see asinh's doc comment) is fixed: asinh(x) ~ x
     // for tiny x, no longer collapses to exactly 0.
