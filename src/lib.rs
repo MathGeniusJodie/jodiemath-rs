@@ -861,6 +861,18 @@ pub fn cbrt_accurate(x: f32) -> f32 {
     if ax == 0 || ax >= EXPONENT_MASK { x + x } else { r }
 }
 
+/// cbrt_accurate without the small/big-domain rescale selects or the
+/// final zero/inf/nan-propagation select: valid for `x` already inside
+/// cbrt_accurate's own safe range (roughly `2^-56` to `2^127`, see its
+/// doc comment for why the rescale exists at all -- outside that range
+/// `scale=1.0` is no longer correct and the double-float residual
+/// misrounds or the Newton step's cube can overflow). Mirrors `cbrt`/
+/// `cbrt_unchecked`'s own split, applied one tier up.
+#[inline(always)]
+pub fn cbrt_accurate_unchecked(x: f32) -> f32 {
+    cbrt_accurate_normal(x, 1.0)
+}
+
 // higher throughput cbrt experiment, 5.5 ulp average error
 pub fn cbrt_throughput(x: f32) -> f32 {
     //let r = f32::from_bits(0xd461ff81u32.wrapping_sub((x.to_bits()>>16)*0x5556u32));

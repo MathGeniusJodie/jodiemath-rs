@@ -99,6 +99,12 @@ throughput_fn!(thr_cbrt_unchecked, "cbrt_unchecked_throughput", cbrt_unchecked);
 latency_fn!(lat_cbrt_accurate, "cbrt_accurate_latency", |x: f32| cbrt_accurate_normal(x, 1.0));
 throughput_fn!(thr_cbrt_accurate, "cbrt_accurate_throughput", cbrt_accurate);
 
+// cbrt_accurate_unchecked == cbrt_accurate_normal(x, 1.0), so latency here
+// is expected to match lat_cbrt_accurate above exactly (same reasoning as
+// cbrt_unchecked) -- measured explicitly anyway for a complete row.
+latency_fn!(lat_cbrt_accurate_unchecked, "cbrt_accurate_unchecked_latency", cbrt_accurate_unchecked);
+throughput_fn!(thr_cbrt_accurate_unchecked, "cbrt_accurate_unchecked_throughput", cbrt_accurate_unchecked);
+
 latency_fn!(lat_cbrt_throughput_fn, "cbrt_throughput_fn_latency", cbrt_throughput);
 throughput_fn!(thr_cbrt_throughput_fn, "cbrt_throughput_fn_throughput", cbrt_throughput);
 
@@ -326,6 +332,7 @@ fn main() {
         lat_cbrt, thr_cbrt;
         lat_cbrt_unchecked, thr_cbrt_unchecked;
         lat_cbrt_accurate, thr_cbrt_accurate;
+        lat_cbrt_accurate_unchecked, thr_cbrt_accurate_unchecked;
         lat_cbrt_throughput_fn, thr_cbrt_throughput_fn;
         lat_cbrt_fast, thr_cbrt_fast;
         lat_exp2, thr_exp2;

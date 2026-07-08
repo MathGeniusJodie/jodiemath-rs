@@ -1430,6 +1430,40 @@ brainstorm backlog lives at the bottom of this file.
   literal-folding issue at all; this idea came from auditing the crate's
   own internal-core inventory instead.** Commit `3647c77`.
 
+- **cbrt_accurate_unchecked, implemented (2026-07-08), one tier up from
+  `cbrt_unchecked` — applying the exact same idea to `cbrt_accurate`'s own
+  `*_normal` core.** `cbrt_accurate` pays a *three*-way rescale select
+  (`small`/`big`/neither, vs. `cbrt`'s single `tiny` check) plus the same
+  final zero/inf/nan select, on top of `cbrt_accurate_normal(x, scale)`.
+  `mca_target.rs`'s own `lat_cbrt_accurate` marker was already calling
+  `cbrt_accurate_normal(x, 1.0)` directly (this crate's latency-measures-
+  the-core convention), which is *exactly* what an unchecked wrapper
+  would be — just never exposed as a real public function. Added
+  `cbrt_accurate_unchecked(x) = cbrt_accurate_normal(x, 1.0)`, domain "x
+  already inside cbrt_accurate's own safe rescale range" (roughly `2^-56`
+  to `2^127`, i.e. its `!small && !big` condition exactly). Bit-identical
+  to `cbrt_accurate` over ~143M in-domain fuzz samples. Latency
+  structurally identical to `cbrt_accurate`'s own row by construction
+  (both 59.06 cyc, confirmed, same non-news as `cbrt_unchecked`'s own
+  latency row). Throughput: mca 3.129→2.067 cyc/elem (**-34.0%**),
+  confirmed via quickbench (3 runs, consistent direction/magnitude each
+  time): latency ~20.4→18.5 ns (-9.4%), throughput ~0.83→0.55 ns
+  (-33.7%) — both axes improve, matching `cbrt_unchecked`'s own shape
+  almost exactly (unsurprising, same select-stripping mechanism one
+  layer up). Full harness treatment: codegen_check clean, 4 new
+  edgecheck.rs bit-exact-vs-`cbrt_accurate` regression-guard entries
+  (placed outside the shared `cbrt`/`cbrt_accurate` denormal-focused
+  loop, same reasoning as `cbrt_unchecked`'s own entries), accuracy.rs
+  domain-restricted sweep (0.0000/1 avg/max ulp, identical to
+  `cbrt_accurate`'s own reading since it's bit-identical code — this
+  domain includes the crate's known, accepted `cbrt_accurate` 1-ulp
+  mantissa-`0x353b5` won't-fix, not a new issue), readme tables updated.
+  Confirms the general lesson from `cbrt_unchecked`'s own entry: once one
+  `_normal`/`_checked`-adjacent pair in a family gets this treatment,
+  check its siblings in the same family too — `cbrt`/`cbrt_normal` and
+  `cbrt_accurate`/`cbrt_accurate_normal` are structurally the same
+  pattern, and both paid off equally well. Commit `<pending>`.
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED

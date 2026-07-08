@@ -111,6 +111,7 @@ fn main() {
         "cbrt_unchecked",
         "cbrt_wrapped",
         "cbrt_accurate",
+        "cbrt_accurate_unchecked",
         "cbrt_throughput_fn",
         "cbrt_fast",
         "exp2",

@@ -443,6 +443,15 @@ fn main() {
         let normal_finite = |x: f32| x.abs() >= f32::MIN_POSITIVE && x.is_finite();
         let s = measure!(normal_finite, cbrt_unchecked, cbrt_u35);
         report("cbrt_unchecked (+)", &s, t0);
+        // cbrt_accurate_unchecked's own contract: x already inside
+        // cbrt_accurate's own safe rescale range (matches its `!small &&
+        // !big` domain exactly, see cbrt_accurate's own doc comment).
+        let accurate_safe_range = |x: f32| {
+            let ax = x.to_bits() & 0x7fff_ffff;
+            ax >= 0x2380_0000 && ax < 0x7f00_0000
+        };
+        let s = measure!(accurate_safe_range, cbrt_accurate_unchecked, cbrt_u35);
+        report("cbrt_accurate_unchecked (+)", &s, t0);
     }
     if run("log") {
         let s = measure!(everywhere, log_2, log2_u35);

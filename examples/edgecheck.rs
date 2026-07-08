@@ -79,6 +79,14 @@ fn main() {
     check("cbrt_unchecked(-8)", cbrt_unchecked(-8.0), cbrt(-8.0));
     check("cbrt_unchecked(max)", cbrt_unchecked(f32::MAX), cbrt(f32::MAX));
     check("cbrt_unchecked(min_normal)", cbrt_unchecked(f32::MIN_POSITIVE), cbrt(f32::MIN_POSITIVE));
+    // cbrt_accurate_unchecked: contract is x already inside cbrt_accurate's
+    // own safe rescale range (roughly 2^-56 to 2^127) -- must match
+    // cbrt_accurate inside that domain (verified more thoroughly via a
+    // ~143M-sample fuzz, not preserved in-repo; permanent regression guard).
+    check("cbrt_accurate_unchecked(8)", cbrt_accurate_unchecked(8.0), cbrt_accurate(8.0));
+    check("cbrt_accurate_unchecked(-8)", cbrt_accurate_unchecked(-8.0), cbrt_accurate(-8.0));
+    check("cbrt_accurate_unchecked(1e30)", cbrt_accurate_unchecked(1e30), cbrt_accurate(1e30));
+    check("cbrt_accurate_unchecked(1e-16)", cbrt_accurate_unchecked(1e-16), cbrt_accurate(1e-16));
     // sin/cos (unchecked): only accurate while q = round(x/pi) is an exact
     // f32 integer, i.e. |x| < 2^22 * pi (~1.3e7) -- see sin's doc comment.
     check("sin(0)", sin(0.0), 0.0);
