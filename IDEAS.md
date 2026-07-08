@@ -629,7 +629,33 @@ branches, no scalar-only intrinsics unless the vector form exists).
   for latency. `erfc` (same accuracy.rs filter substring, doesn't even
   use `erf_poly`) confirmed unaffected as a sanity check: 0.311/109,
   bit-for-bit matching its own pre-change baseline. Kept.
-- **atan poly refit — done, tested, kept (2026-07-07)**, same recipe as
+- **erfc's n/d rational chains: Horner -> Estrin — tried, marginal/mixed,
+  not adopted (2026-07-07), immediate third attempt at the same
+  restructuring, this time on the two smaller degree-4 (5-coefficient)
+  Horner chains inside `erfc`'s Padé-style tail.** Estrin for 5
+  coefficients only saves 1 depth level (`ceil(log2(5))=3` vs Horner's
+  4), a smaller theoretical win than acos_poly/erf_poly's 6-deep-to-3
+  halving, and `n`/`d` were already independent (computable in parallel)
+  even in Horner form, so there was less obvious slack to reclaim.
+  Regrouped both (sharing `xa²`/`xa⁴` between them, 2 extra multiplies
+  total for both chains combined, not 4). mca confirmed the small-win
+  prediction: latency 78.09->77.09 cyc (-1.3%), but throughput got
+  *worse* (2.599->2.634 cyc/elem, +1.3%) -- a wash, not a clean win
+  either way. Exhaustive sweep also showed a small real accuracy cost
+  this time, unlike erf_poly's exact match: avg ulp 0.3106->0.3189 (a
+  ~2.7% relative increase, max ulp unchanged at 109, still comfortably
+  in budget either way). Reverted: with latency and throughput roughly
+  canceling out and accuracy moving the wrong way, this doesn't clear
+  the "speeds up without an accuracy penalty" or "improves accuracy
+  without a perf penalty" bar either one — it's genuinely a third
+  outcome, not a scaled-down version of erf_poly's clean win or
+  acos_poly's clear loss. Together, these three same-restructuring
+  attempts in one session (acos_poly: real speedup, real accuracy loss,
+  rejected; erf_poly: real speedup, no accuracy cost, adopted; erfc's
+  n/d: negligible speedup, small accuracy cost, rejected) confirm the
+  crate's recurring lesson applies here too — a technique that works
+  cleanly on one poly doesn't transfer automatically to a
+  similar-looking one; each needs its own measurement.
   the asin mid-branch refit just above, extending `examples/tune.rs` with
   `atan_poly_c`. Turned out atan was already close to a strong local
   optimum for this coordinate-descent scheme (unlike asin's mid branch,
