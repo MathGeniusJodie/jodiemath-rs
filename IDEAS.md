@@ -977,6 +977,45 @@ brainstorm backlog lives at the bottom of this file.
   rounding in the pipeline dominates) has no reason to behave
   differently for a structurally similar poly.
 
+- **Dedicated sinh/cosh kernels via cosh_k/sinh_k reassociation
+  (2026-07-08), tested and rejected — a real, measured mixed result on
+  both axes, not a clean win either way.** `exp_pos_neg`'s existing e/o
+  split already computes `cosh(r)` (=`e`) and `sinh(r)` (=`r*o`)
+  internally; this idea reassociates the *combine* step around
+  `cosh_k`/`sinh_k` = `(2^k ± 2^-k)/2` instead of forming `exp(x)`/
+  `exp(-x)` separately and subtracting/adding once at the end. A hand
+  derivation beforehand suggested this was roughly op-count-neutral (a
+  wash) — wrong, matching this file's standing lesson to measure rather
+  than trust hand-counted op estimates: `sinh_kernel_test`/
+  `cosh_kernel_test` mca showed a real, consistent latency win for both
+  (58.00→51.00 cyc, cosh 57.00→51.00 cyc, ~11-12%), but throughput split
+  in different directions — `sinh` improved (2.523→2.214, ~12% better)
+  while `cosh` got *worse* (2.074→2.214, ~7% worse). Accuracy split
+  the other way: `cosh_kernel_test` matched shipped `cosh` almost
+  exactly (avg 0.0710 vs 0.0713, max 5 both), but `sinh_kernel_test`
+  showed a real ~12x average-ulp regression (0.0806→0.9557, max ulp
+  unchanged at 5 — spread across many samples gaining 1-2 ulp each,
+  not one catastrophic outlier, confirmed by direct spot-checks showing
+  no individual wildly-wrong value). Root cause not fully chased down,
+  but plausibly more total roundings in the reassociated form (forming
+  `cosh_k`/`sinh_k` as their own intermediate values, each independently
+  rounded, before the final combine) vs. the current form's fewer,
+  later-arriving roundings. Net: `sinh` gets a real speed win at a real
+  accuracy cost; `cosh` keeps its accuracy but only wins on one of two
+  speed axes — neither clears this loop's "speeds up without an
+  accuracy penalty" bar on its own. Not adopted for either function; all
+  scratch reverted (`src/lib.rs`/`mca_target.rs`/`mca.rs`/`accuracy.rs`),
+  nothing kept as reference infra this time (the mca_target.rs test
+  functions were simple enough to reproduce cheaply if revisited).
+  **General lesson: this file has repeatedly found fma-reassociation
+  changes can move latency and throughput in opposite directions (see
+  the sinh/cosh even/odd-split entry itself, and several others) — this
+  is the first case where it *also* split accuracy asymmetrically
+  between two functions sharing the exact same reassociated intermediate
+  values, so "check both mca axes" isn't enough on its own; when two
+  sibling functions share a reassociation, check accuracy for *both*
+  separately, don't assume symmetry.**
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
@@ -1198,16 +1237,6 @@ legitimate direction here, unlike on most targets.
   uiCA is measurably more accurate for Tiger Lake, and `perf stat` on the
   quickbench loops validates either. Methodology, but it de-risks every
   other entry here.
-
-### exp family
-
-- **Dedicated sinh/cosh kernels on the reduced argument**: instead of
-  composing exp twice (or the round-1 even/odd trick), do the reduction
-  once (k, r) and fit sinh(r)/cosh(r) minimax polys directly on
-  [-ln2/2, ln2/2]: sinh(x) = sinh(r)·cosh_k + cosh(r)·sinh_k where
-  cosh_k/sinh_k = (2^k ± 2^-k)/2 come from two exponent bit-tricks. The
-  polys are even/odd so they share r² powers. Compare against round 1's
-  shared-exp idea; one of the two should win.
 
 ### sin / cos
 
