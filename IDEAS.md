@@ -24,10 +24,34 @@ branches, no scalar-only intrinsics unless the vector form exists).
 - **Weighted refits**: minimax over the *actual* distribution of reduced
   arguments (including the reduction's own error) instead of the ideal
   interval; the avg-ulp metric rewards this even when max ulp doesn't move.
-- **Degree-reduction probes**: with the 0.5-avg/2-max budget, retry dropping
-  one coefficient from each poly (log_2 deg-9→8, exp2 Q deg-5→4, sinf_poly
-  deg-9→7) with a tuned refit; earlier attempts predate the budget being
-  stated this loosely. Each dropped term is one fma of depth and/or width.
+- **Degree-reduction probes — re-checked via lolremez screening, all three
+  still fail by a wide margin, not adopted (2026-07-07).** The stated
+  premise (re-litigate under a "looser" 0.5-avg/2-max budget) didn't
+  actually change anything: `log_2` deg-9→8 was already conclusively
+  tested and rejected earlier (max ulp 3-5 vs. a 2 cap, even after
+  tuning — see the "Degree-reduction search" results elsewhere in this
+  file, unaffected by a looser *average* budget since the failure is a
+  *max* violation). The other two, screened fresh with lolremez (the
+  crate's own established pre-check methodology — fit the reduced degree,
+  compare estimated max relative error against the current degree's
+  fitted error, only bother with a full coordinate-descent+Rust
+  implementation if the gap looks borderline): `exp2`'s Q poly, degree
+  5→4, `(2^x-1)/x` on `[0,1]` — estimated max relative error 1.01e-8
+  (degree 5, matches the ~1e-8 already shipped) → 4.07e-7 (degree 4), a
+  **40x** degradation, several ulp worth of poly-introduced error alone
+  against exp2's current max-ulp-1 accuracy. `sinf_poly`, degree 9→7,
+  `(sin(sqrt(y))-sqrt(y))/y^1.5` on `[0, (pi/2)^2]` — 6.97e-9 (degree 3
+  in y, i.e. degree 9 overall, matches sinf_poly's own doc comment's
+  ~6.1e-9) → 1.24e-6 (degree 2 in y, degree 7 overall), a **178x**
+  degradation — consistent with (probably the same underlying fact as)
+  this file's own already-recorded "sin/cos: degree-2 correction poly
+  fails hard (82 ulp)" finding from the "Degree-reduction search"
+  results. Neither gap is remotely borderline, so neither was carried
+  through to a full Rust+coordinate-descent verification — the lolremez
+  signal alone is decisive here, and building out a doomed candidate
+  just to watch it fail the real sweep would be busywork, not rigor.
+  Each dropped term would have been one fma of depth-or-width, but with
+  no accuracy budget left to spend it on.
 - **Small LUTs via in-register permute**: a 8/16-entry table indexed by top
   mantissa bits autovectorizes as `vpermps` (AVX2) / `vpermi2ps` (AVX-512) if
   written as a const array indexed by `usize` — LLVM does turn small
