@@ -54,6 +54,36 @@ brainstorm backlog lives at the bottom of this file.
   adopted; would need the seed's own magic constants jointly re-derived to
   go further.
 
+## log_2 / ln / log10
+
+- **Direct minimax refits for ln/log10, tuned against their own objective
+  instead of log_2's rescaled coefficients (2026-07-08)**: coordinate-
+  descended `ln_poly_c`/`log10_poly_c` (new permanent `tune.rs`
+  infrastructure, `"lnlog10"` arg) against `ln`/`log10` directly, matching
+  the shipped Estrin structure and Cody-Waite k-combine exactly, c[0]
+  fixed at its mathematically-required exact value (same as `log_2`'s own
+  tuning). Same outcome as the erf near-zero/tail refits above: essentially
+  a zero-move local optimum (ln avg ulp 0.2344→0.2341, log10
+  0.2551→0.2539, both max ulp unchanged) — individually rounding log_2's
+  own coefficients by a fixed constant was already close enough to a
+  direct fit that there's no meaningful headroom left. Not adopted.
+
+## hypot / misc
+
+- **Compensated hypot, `e = fma(r, -r, s); r + e/(2r)` (2026-07-08)**:
+  implemented exactly as scoped (guarded at `r == 0` for the `x==y==0`
+  case). Fuzz accuracy (paired via `git stash`, 10M samples both sides)
+  showed **no measurable improvement at all** — 0.0337→0.0338 avg ulp,
+  max ulp 1 unchanged both before and after, i.e. within pure sampling
+  noise. `hypot`'s existing single-fma-then-sqrt was already close enough
+  to correctly rounded (sqrt is itself correctly rounded relative to the
+  once-rounded `s`, and that one rounding rarely flips the sqrt's own
+  rounding direction) that there was no real residual left to recover.
+  Real, large cost for zero benefit: mca latency 21.11→44.05 cyc (+109%),
+  throughput 0.766→1.436 cyc/elem (+87%) — the extra fma/division/select
+  chain roughly doubled hypot's cost on both axes. Reverted before even
+  checking edgecheck.rs.
+
 ## asin / acos / atan / atan2
 
 - **acos_poly Horner→Estrin restructuring (2026-07-07)**: regrouped 6-deep
@@ -286,13 +316,6 @@ legitimate direction here, unlike on most targets.
   Division-on-critical-path caveat as above; the classic tradeoff every
   libm makes the other way, but this CPU's idle divider may flip it.
 
-- **Direct minimax refits for ln/log10**: their coefficients are log_2's
-  scaled by LN_2/LOG10_2 and *individually rounded* — never actually
-  refit against ln/log10 as their own objective. A direct lolremez +
-  tune pass has more freedom (the per-coefficient rounding errors can
-  partially cancel instead of accumulating). Zero perf cost, pure
-  accuracy probe, same recipe as the erf/expm1 refits above.
-
 - **log1p small-|x| dedicated poly branch**: log1p currently always pays a
   full ln poly + division; a Taylor/minimax branch for |x| < 0.25 (like
   asin_small) selected against the existing path could beat it on accuracy
@@ -407,12 +430,6 @@ legitimate direction here, unlike on most targets.
   actually degrades, don't trust the inherited threshold) was never done.
 
 ## hypot / misc
-
-- **Compensated hypot**: s = fma(x,x,y·y), r = s.sqrt(), then one
-  correction: e = fma(r, -r, s) (exact residual), r += e/(2r) — one fma +
-  one division (idle divider) + one add for a likely ~2x max-ulp cut.
-  The sqrt itself is correctly rounded; the error is all in s's single
-  rounding, which the residual step recovers. Overflow tradeoff unchanged.
 
 - **atanh via single log1p**: atanh(x) = 0.5·log1p(2x/(1−x)) on |x| with
   mulsign, replacing *two* full log1p/ln evaluations with one plus a

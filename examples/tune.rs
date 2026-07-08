@@ -35,6 +35,61 @@ fn exp2_c(x: f32, c: &[f32]) -> f32 {
     )
 }
 
+// Same Cody-Waite splits as src/lib.rs's private LN2_HI/LN2_LO and
+// LOG10_2_HI/LOG10_2_LO (not pub, so redefined here verbatim).
+const LN2_HI: f32 = 0.693145751953125;
+const LN2_LO: f32 = 1.428606765330187e-6;
+const LOG10_2_HI: f32 = 0.301025390625;
+const LOG10_2_LO: f32 = 4.605039066518657e-6;
+
+// ln_normal/log10_normal's exact shape (see src/lib.rs), refitting the
+// poly directly against ln/log10 instead of log_2's own coefficients
+// individually rescaled by LN_2/LOG10_2. c[0] is each function's
+// mathematically-required exact leading term (1.0 for ln, LOG10_2 for
+// log10 -- log10(1+s)'s derivative at s=0), so both are tuned with
+// tune_fixed0.
+#[inline(always)]
+fn ln_poly_c(x: f32, c: &[f32]) -> f32 {
+    let e = (x.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23;
+    let m = f32::from_bits((x.to_bits() as i32).wrapping_sub(e << 23) as u32);
+    let k = e as f32;
+    let s = m - 1.0;
+    let s2 = s * s;
+    let s4 = s2 * s2;
+    let l0 = fma(c[1], s, c[0]);
+    let l1 = fma(c[3], s, c[2]);
+    let l2 = fma(c[5], s, c[4]);
+    let l3 = fma(c[7], s, c[6]);
+    let l4 = fma(c[9], s, c[8]);
+    let r0 = fma(l1, s2, l0);
+    let r1 = fma(l3, s2, l2);
+    let r2 = fma(l4, s4, r1);
+    let p = fma(r2, s4, r0);
+    let k_hi = k * LN2_HI;
+    fma(p, s, k_hi) + k * LN2_LO
+}
+
+#[inline(always)]
+fn log10_poly_c(x: f32, c: &[f32]) -> f32 {
+    let e = (x.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23;
+    let m = f32::from_bits((x.to_bits() as i32).wrapping_sub(e << 23) as u32);
+    let k = e as f32;
+    let s = m - 1.0;
+    let s2 = s * s;
+    let s4 = s2 * s2;
+    let l0 = fma(c[1], s, c[0]);
+    let l1 = fma(c[3], s, c[2]);
+    let l2 = fma(c[5], s, c[4]);
+    let l3 = fma(c[7], s, c[6]);
+    let l4 = fma(c[9], s, c[8]);
+    let r0 = fma(l1, s2, l0);
+    let r1 = fma(l3, s2, l2);
+    let r2 = fma(l4, s4, r1);
+    let p = fma(r2, s4, r0);
+    let k_hi = k * LOG10_2_HI;
+    fma(p, s, k_hi) + k * LOG10_2_LO
+}
+
 #[inline(always)]
 fn log2_c(x: f32, c: &[f32]) -> f32 {
     let e = (x.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23;
@@ -374,6 +429,28 @@ fn main() {
             -0.23961738, 0.20460059, -0.19106273, 0.18617496, -0.10994955,
         ];
         tune_fixed0("log2", &log2_c, &|x| x.log2(), &grid, &init);
+    }
+    if which.contains("lnlog10") {
+        let mut grid = vec![];
+        let mut b = 0x0080_0000u32;
+        while b < 0x7f80_0000 {
+            grid.push(f32::from_bits(b));
+            b += 1499;
+        }
+        // current shipped coefficients (src/lib.rs's ln_normal/
+        // log10_normal): log_2's own c[i] * LN_2/LOG10_2, individually
+        // rounded to f32 -- never refit directly against ln/log10 as
+        // their own objective until now.
+        let init = [
+            1.0, -0.49999988, 0.33333343, -0.25001621, 0.20002009, -0.16609012, 0.14181833,
+            -0.13243459, 0.12904665, -0.07621122,
+        ];
+        tune_fixed0("ln", &ln_poly_c, &|x| x.ln(), &grid, &init);
+        let init = [
+            0.4342945, -0.2171472, 0.14476489, -0.10858066, 0.08686763, -0.07213202, 0.06159092,
+            -0.05751561, 0.05604425, -0.03309811,
+        ];
+        tune_fixed0("log10", &log10_poly_c, &|x| x.log10(), &grid, &init);
     }
     if which.contains("asin") {
         // asin's mid branch is only ever evaluated for a = |x| in
