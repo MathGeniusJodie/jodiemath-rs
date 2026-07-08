@@ -1424,6 +1424,63 @@ branches, no scalar-only intrinsics unless the vector form exists).
   rather than starting from zero, and should budget real time for the
   Rust/SIMD port itself, which is a separate, larger effort from what
   was done here.
+- **Payne-Hanek Rust port attempt (2026-07-07, continued from above):
+  fixed-width lookup table generated, a `u128`-accumulator capacity
+  ceiling found and precisely bounded.** Took the validated windowing
+  scheme and generated a real 128-entry Rust table (`PH_TABLE: [[u32;
+  4]; 128]`, indexed by `e = exponent_field - 127`), reusing the exact
+  window-selection formula already proven exhaustively above. Found two
+  further bugs, both in the *productionization* step (fixed-width table
+  generation + scalar arithmetic), not in the core algorithm already
+  validated:
+  1. Table generation pads short windows (needed near `e=0`, where the
+     raw window formula would reach past the precomputed 2000-bit
+     constant's own precision) up to a fixed 128-bit width via a
+     left-shift -- but the shift changes the meaning of every downstream
+     bit position, and the first draft didn't adjust `bot_lsb_index` to
+     compensate. This silently broke the "denom_shift is a constant 96"
+     pattern that had only ever been *observed*, never proven, in the
+     unpadded middle of the table -- the true denom_shift ranges from 96
+     to 151 depending on `e`. Caught by an independent `f64::sin()`
+     cross-check (shares no code with the Payne-Hanek math), which is
+     the right kind of check for exactly this failure mode: the Python
+     spot-check generator and the Rust port shared the same wrong
+     assumption, so they silently agreed with each other (a false 30/30
+     pass) while both being wrong relative to the true reduction. Fixed
+     by threading a per-entry `PH_DENOM_SHIFT: [u32; 128]` array through
+     instead of assuming a constant.
+  2. Fixing (1) exposed a second, more fundamental issue: a `u128`
+     accumulator physically cannot hold `denom_shift` values above ~126
+     -- not just because `1u128 << shift` panics/wraps for `shift >=
+     128`, but because getting `q mod 4` right needs *two* full bits of
+     headroom above the fraction point, and `total: u128` only has bit
+     positions 0..127 to work with. At `denom_shift = 127` (`e = 24`),
+     only 1 bit of headroom exists, so the top bit of the octant is
+     silently always 0 -- `q4` comes out wrong by exactly 2 (confirmed
+     by hand: `e=24` gives `q4=1` where the true answer is `q4=3`, with
+     `r` itself still correct to the ulp) while every `e >= 25`
+     (`denom_shift <= 126`) matches a direct f64 reference exactly (0
+     mismatches / 120,000 checked) and the independent `sin()`
+     cross-check drops from ~2.0 (worst possible, for a [-1,1] range) to
+     ~2.6e-8 (f32 rounding noise).
+  **Conclusion, and why this doesn't actually block anything**: a plain
+  `u128` schoolbook accumulator is only valid for `e >= 25`, i.e. `|x|
+  >= 2^25 ~ 3.35e7` -- almost exactly the "Hybrid tiering" idea's own
+  proposed boundary (`2^22*pi ~ 1.3e7`) a few bullets below, arrived at
+  completely independently. Below that threshold, `reduce_pi`'s existing
+  double-float Cody-Waite reduction is already accurate and fast, so PH
+  was never going to replace it there anyway -- the accumulator's
+  ceiling lines up almost exactly with the range where PH would actually
+  be *used* in a hybrid design, not a gap that needs closing. A
+  full-range (`e=0..127`) implementation is still possible if ever
+  needed (wider accumulator, e.g. two u128s, or a narrower/smarter table
+  window specifically near low `e`), but isn't required for the design
+  this crate would actually ship.
+  Still not done, and still the actual point of the idea: the mca +
+  exhaustive-sweep head-to-head against `reduce_pi`'s current cost, and
+  the SIMD/vectorized port -- both remain future work, now with a
+  correctness-validated scalar reference to port from. Prototype code
+  again intentionally not committed (same convention as above).
 - **Hybrid tiering**: fast single-word reduction for |x| < 2^22·π, PH only
   beyond — but branchless means computing both and blending, so this only
   pays if PH is expensive. If exact PH lands near reduce_pi's cost, drop the
