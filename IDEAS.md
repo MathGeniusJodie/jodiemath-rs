@@ -1335,17 +1335,95 @@ branches, no scalar-only intrinsics unless the vector form exists).
 
 ## Range reduction, the deep end (sin/cos/tan)
 
-- **Exact vectorizable Payne–Hanek for f32**: f32 only has ~256 exponents, so
-  full PH is *small* here. Treat x as (mantissa u32) × 2^e, multiply the
-  24-bit mantissa by 3 pre-selected 32-bit windows of 2/π (window index =
-  e >> 5-ish, from a 256-entry table) using widening 32×32→64 multiplies
-  (`vpmuludq` — fully vectorizable). ~12–18 integer ops, gives the *exactly*
-  reduced argument for every finite f32, no cliff, no gradual degradation,
-  no double-float chain. Table access is a gather (vpgatherdd) or, since
-  consecutive lanes usually share exponents, sometimes a broadcast. This
-  could plausibly beat sin_checked's current double-float reduction on
-  *both* speed and accuracy — the single most interesting experiment in
-  this file. Compare against reduce_pi via mca + exhaustive sweep.
+- **Exact vectorizable Payne–Hanek for f32 — core math validated in a
+  Python prototype (2026-07-07), Rust/SIMD port not yet attempted.**
+  Before writing any Rust, built an exact-arithmetic reference (Python
+  `Decimal`, 2000-bit precomputed `2/pi` via a from-scratch Chudnovsky-
+  series pi computation, cross-checked against the known leading digits
+  of `2/pi`) that computes `q = round(x/(pi/2))` and the true residual
+  `r = x - q*(pi/2)` for any f32 `x` using exact integer arithmetic --
+  no float rounding anywhere except the final display conversion. This
+  is the same "verify against exact rational arithmetic first" method
+  this crate already used for the original sin/cos double-float work
+  (see jodiemath-workflow memory) applied to a new technique. Confirmed
+  the exact reference itself is correct: the `|r| <= pi/4` invariant
+  holds for a battery including deliberately adversarial x values placed
+  right at odd multiples of `pi/4` (the hardest rounding-tie cases),
+  worst-case ratio exactly `1.0` (the expected boundary, not a
+  violation).
+  Then tested the idea's specific windowing claim -- that only a small,
+  *fixed-size* window of `2/pi`'s bits (selected by `x`'s exponent, not
+  the full precomputed constant) is actually needed, which is the
+  precondition for a practical, small lookup table. This needed two real
+  bugs shaken out of the *test harness itself* before it gave a
+  trustworthy answer, worth recording since both are exactly the kind of
+  mistake a rushed version of this experiment would ship silently:
+  1. First comparison checked the windowed computation's `q` against the
+     full computation's `q` for *exact numeric equality* -- and failed
+     badly for large `x` (magnitude-only mismatches, e.g. `q_full` vs.
+     `q_window` differing by 4-5x). Root cause: for large `x`, `q` itself
+     is an astronomically large integer (tens of bits), but *only `q mod
+     4` (the octant) and `r` actually matter* for a sin/cos reduction --
+     comparing raw `q` was testing an irrelevant invariant. Fixed by
+     comparing `q mod 4` and `r` instead.
+  2. With that fixed, `r` still came out wildly wrong for large `x`
+     (values differing by 16 orders of magnitude, not a rounding
+     difference) -- because the residual was computed as `x - q*(pi/2)`
+     using the *windowed* (magnitude-truncated) `q`, silently
+     reintroducing the exact catastrophic-cancellation problem Payne-
+     Hanek exists to avoid once `q` needs more bits than the window
+     captures. Fixed by deriving `r` *directly* from the fractional part
+     of the windowed computation (never reconstructing `q`'s absolute
+     value at all) -- the textbook-correct way this algorithm is
+     supposed to work, which the first draft had quietly skipped.
+  3. A third, smaller bug (`f32_decompose(abs(x))` discards the true
+     sign before extracting it, always yielding `sign=0`) was masked in
+     the first test battery because that battery's own x-generation
+     accidentally cleared the sign bit too (`bits &= 0x7FFFFFFF`) -- two
+     independent bugs canceling out is exactly the kind of false
+     confidence a single positive-only smoke test can produce. Caught
+     once a second, denser test battery deliberately included negative
+     `x`. Fixed by extracting sign from `x` directly, not from `abs(x)`.
+  After all three fixes, a dense battery (34,578 values: every
+  boundary mantissa at every exponent from `e=0` to `127` i.e. `|x|`
+  from ~1 to `f32::MAX`, ~200 random mantissas per exponent, both signs,
+  200 deliberately adversarial values placed at odd multiples of
+  `pi/4` and their immediate f32 neighbors) passed with **zero**
+  mismatches (checked to full f32 precision, not just displayed digits)
+  using a window of **4 consecutive 32-bit words (128 bits)** of `2/pi`,
+  selected by `x`'s exponent. A 3-word (96-bit) window, the idea's own
+  original guess, got 34,574/34,578 right (99.99%) with 4 remaining
+  misses clustered at genuine last-bit rounding-boundary cases (`x` an
+  extremely close near-multiple of `pi/2`) -- confirmed these 4 specific
+  cases pass cleanly with the 4-word window, not a deeper structural
+  gap.
+  **What this validates**: the core numerical claim is real and
+  measured, not speculative -- exact f32 reduction mod `pi/2` genuinely
+  only needs 128 bits of `2/pi`, selected by exponent, with no gradual
+  degradation or cliff at any magnitude, confirmed against 34k+
+  adversarially-chosen exact-arithmetic test cases. **What's still
+  unvalidated**: everything about turning this into a real, vectorized
+  Rust implementation -- the exact table layout (which exponent ranges
+  share a window vs. need their own entry; a 256-entry table indexed
+  directly by the 8-bit exponent field is the simplest correct
+  approach, though adjacent exponents' windows likely overlap enough
+  that a smaller table with a shift-based lookup could work), the
+  widening-multiply codegen (`vpmuludq` on 24-bit mantissas against
+  128-bit windows, correctly vectorized across lanes with potentially
+  different exponents), the gather-vs-broadcast table access question,
+  and above all a head-to-head mca + exhaustive-sweep comparison against
+  `reduce_pi`'s current cost (109/113 cyc latency for sin_checked/
+  cos_checked) -- this prototype only proves the reduction is
+  *mathematically* sound and boundedly-tabled, not that it's *faster*.
+  That comparison is the actual point of the idea and hasn't been made
+  yet. Prototype code intentionally not committed to the repo (matches
+  this crate's established practice for scratch verification scripts,
+  e.g. the original sin/cos double-float exploration) -- this writeup
+  is the persistent record of what was learned; a future attempt can
+  rebuild the Python reference from this description in under an hour
+  rather than starting from zero, and should budget real time for the
+  Rust/SIMD port itself, which is a separate, larger effort from what
+  was done here.
 - **Hybrid tiering**: fast single-word reduction for |x| < 2^22·π, PH only
   beyond — but branchless means computing both and blending, so this only
   pays if PH is expensive. If exact PH lands near reduce_pi's cost, drop the
