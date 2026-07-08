@@ -565,6 +565,50 @@ branches, no scalar-only intrinsics unless the vector form exists).
   (constrain or report per-function breakdowns) whenever a poly serves
   more than one caller with differently-shaped error sensitivity, rather
   than trusting a single combined metric to mean "both improved."
+- **acos_poly: Horner -> Estrin restructuring — tried, measured, real
+  latency win, rejected anyway for costing protected accuracy
+  (2026-07-07), immediately after the joint refit above.** `acos_poly`
+  is a plain 6-deep sequential Horner chain (7 coefficients, no
+  regrouping) — the odd one out in this crate, which elsewhere
+  consistently uses Estrin for exactly this kind of poly (e.g. `log_2`'s
+  own 10-coefficient poly, `ceil(log2(N))`-deep instead of `N-1`-deep).
+  Regrouped into the standard Estrin split (3 pairs at depth 1, combined
+  via `x²`/`x⁴` at depths 2-3 — 3 fma's deep instead of 6, same 6 fma
+  total plus 2 extra plain multiplies for `x²`/`x⁴`), keeping the *exact
+  same* coefficients (a pure regrouping, the same trick that was free for
+  `exp2`'s Q poly and `log_2` itself). mca: a genuine, substantial
+  latency win on both callers — `asin` 59.03→49.97 cyc (-15.4%,
+  recovering over half of fix 6's earlier latency regression), `acos`
+  37.11→29.11 cyc (-21.6%, an unrelated bonus, since acos_poly is also
+  `acos`'s own core computation) — at a small throughput cost (`asin`
+  +5.5%, `acos` +1.7%, the 2 extra multiplies). But unlike `exp2`/`log_2`'s
+  own successful regroupings, this one is *not* accuracy-neutral: `fma`
+  reassociation changes which intermediate values get rounded when, and
+  the shipped coefficients were coordinate-descended specifically against
+  the Horner evaluation order. Exhaustive sweep with unchanged
+  coefficients: asin max ulp 9→12, acos max ulp 4→5 — both regressed.
+  Tried recovering it by re-tuning the coefficients for the *Estrin* form
+  specifically (reusing the constrained joint acos/asin search from the
+  refit above) — made it *worse*, not better: asin max ulp 9→11 (closer,
+  still regressed), but acos max ulp 9→**6** (worse than the unretuned
+  Estrin's 5). Root cause of the retune failing to help: the constrained
+  search's "acos must not regress" check only runs against the tuning
+  grid (~12,900 points), not the full 2^32 exhaustive sweep — the earlier
+  Horner-form joint refit's grid-level guarantee happened to hold
+  exhaustively too, but this Estrin-form attempt's didn't, exposing that
+  the earlier "genuinely untouched, not just close" claim was only ever a
+  grid-level guarantee, not a proven exhaustive one. Reverted both
+  `src/lib.rs`'s `acos_poly` and `examples/tune.rs`'s `acos_poly_c` back
+  to Horner with the pre-Estrin coefficients (confirmed via mca: numbers
+  back to bit-for-bit the same as before this attempt). Not adopted:
+  `acos`'s exact accuracy was specifically protected by name in the
+  immediately-preceding commit (a constrained search built *for the
+  purpose* of guaranteeing it wouldn't regress), and this would undo that
+  guarantee for a latency-only win on a metric this crate's own readme
+  treats as secondary to throughput. A future attempt would need either a
+  denser tuning grid (closer to exhaustive) or accepting the Horner
+  form's accuracy as a hard constraint while searching for a different
+  Estrin-compatible coefficient set — not attempted further this round.
 - **atan poly refit — done, tested, kept (2026-07-07)**, same recipe as
   the asin mid-branch refit just above, extending `examples/tune.rs` with
   `atan_poly_c`. Turned out atan was already close to a strong local
