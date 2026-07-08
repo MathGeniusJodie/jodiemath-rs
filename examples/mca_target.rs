@@ -223,8 +223,18 @@ throughput_fn!(thr_hypot_checked, "hypot_checked_throughput", |x: f32| hypot_che
 latency_fn!(lat_rsqrt, "rsqrt_latency", rsqrt);
 throughput_fn!(thr_rsqrt, "rsqrt_throughput", rsqrt);
 
-latency_fn!(lat_powf, "powf_latency", |x: f32| powf(x, 2.0));
-throughput_fn!(thr_powf, "powf_throughput", |x: f32| powf(x, 2.0));
+// black_box'd 2nd arg, same reasoning as pown's `n` below and atan2/hypot
+// above: a literal `2.0` exponent is a compile-time-known even integer,
+// letting LLVM fold away powf's y==0.0/y_int/y_odd branches entirely and
+// understating its real branchy cost.
+latency_fn!(lat_powf, "powf_latency", {
+    let y = black_box(2.0);
+    move |x: f32| powf(x, y)
+});
+throughput_fn!(thr_powf, "powf_throughput", {
+    let y = black_box(2.0);
+    move |x: f32| powf(x, y)
+});
 
 // black_box'd n, computed *once* before the loop/chain (not per-call
 // inside the closure -- that placement let LLVM see through it and
@@ -240,19 +250,32 @@ throughput_fn!(thr_pown, "pown_throughput", {
     move |x: f32| pown(x, n)
 });
 
-latency_fn!(lat_powf_checked, "powf_checked_latency", |x: f32| powf_checked(x, 2.0));
-throughput_fn!(thr_powf_checked, "powf_checked_throughput", |x: f32| powf_checked(
-    x, 2.0
-));
+latency_fn!(lat_powf_checked, "powf_checked_latency", {
+    let y = black_box(2.0);
+    move |x: f32| powf_checked(x, y)
+});
+throughput_fn!(thr_powf_checked, "powf_checked_throughput", {
+    let y = black_box(2.0);
+    move |x: f32| powf_checked(x, y)
+});
 
-latency_fn!(lat_remainder, "remainder_latency", |x: f32| remainder(x, 3.0));
-throughput_fn!(thr_remainder, "remainder_throughput", |x: f32| remainder(x, 3.0));
+// black_box'd 2nd arg, same reasoning as powf above.
+latency_fn!(lat_remainder, "remainder_latency", {
+    let y = black_box(3.0);
+    move |x: f32| remainder(x, y)
+});
+throughput_fn!(thr_remainder, "remainder_throughput", {
+    let y = black_box(3.0);
+    move |x: f32| remainder(x, y)
+});
 
-latency_fn!(lat_remainder_checked, "remainder_checked_latency", |x: f32| remainder_checked(
-    x, 3.0
-));
-throughput_fn!(thr_remainder_checked, "remainder_checked_throughput", |x: f32| {
-    remainder_checked(x, 3.0)
+latency_fn!(lat_remainder_checked, "remainder_checked_latency", {
+    let y = black_box(3.0);
+    move |x: f32| remainder_checked(x, y)
+});
+throughput_fn!(thr_remainder_checked, "remainder_checked_throughput", {
+    let y = black_box(3.0);
+    move |x: f32| remainder_checked(x, y)
 });
 
 fn main() {

@@ -114,14 +114,22 @@ hypot_unchecked |  5.0 ns |     -   |  -
   hypot_checked | 19.9 ns | 11.9 ns | 0.6x
         rsqrt |  6.7 ns |     -   |  -
          pown | 50.3 ns |     -   |  -
-         powf | 24.2 ns |  3.2 ns | 0.1x
-    remainder | 12.7 ns |     -   |  -
+      powf (*)| 20.7 ns | 17.5 ns | 0.8x
+ powf_checked | 27.4 ns | 17.5 ns | 0.6x
+ remainder (*)|  9.3 ns |     -   |  -
+remainder_checked| 12.7 ns |     -   |  -
 ```
-(*) atan2/hypot's jodie numbers jumped here vs, older recordings of this
-table -- not a regression, a benchmark fix: a literal `1.0` 2nd argument
-let LLVM fold away their own special-case branches at compile time,
-silently hiding the real cost (see readme's own former todo note on this).
-Both now use a `black_box`'d 2nd argument for an honest number.
+(*) atan2/hypot/powf/remainder's jodie numbers jumped here vs. older
+recordings of this table -- not a regression, a benchmark fix: a literal
+`1.0`/`2.0`/`3.0` 2nd argument let LLVM fold away their own special-case
+branches at compile time, silently hiding the real cost (see readme's own
+former todo note on this). `std powf`'s number changed even more
+dramatically for a related but distinct reason, confirmed via
+`--emit=asm`: `x.powf(2.0)` with a literal exponent isn't even a real
+`powf` call -- LLVM recognizes the constant integer exponent and replaces
+the whole thing with a single `x*x` multiply, so the old "3.2 ns" was
+never measuring std's actual powf cost at all. All four functions (plus
+`std powf`) now use a `black_box`'d 2nd argument for an honest number.
 
 ```
 Throughput (independent array evals over [f32; 4096], examples/quickbench.rs; lower is better)
@@ -171,11 +179,15 @@ hypot_unchecked | 0.17 ns  |     -    |  -
   hypot_checked | 0.40 ns  |  2.72 ns | 6.8x
         rsqrt | 0.31 ns  |     -    |  -
          pown | 1.24 ns  |     -    |  -
-         powf | 0.95 ns  |  0.07 ns | 0.07x
-    remainder | 0.22 ns  |     -    |  -
+      powf (*)| 1.05 ns  |  6.03 ns | 5.7x
+ powf_checked | 1.53 ns  |  6.03 ns | 4.0x
+ remainder (*)| 0.16 ns  |     -    |  -
+remainder_checked| 0.29 ns  |     -    |  -
 ```
 (*) see the latency table's own footnote above -- same benchmark fix,
-not a regression.
+not a regression. `powf`'s throughput ratio flips especially hard here
+(was "0.07x", now "5.7x") since the old std comparison point was a bare
+`x*x` multiply, not real `powf`.
 
 ```
 theoretical cost from llvm-mca (-mcpu=native, 100 iterations)
@@ -225,8 +237,10 @@ hypot               |          21.11 |             0.766
 hypot_checked       |          57.19 |             1.178
 rsqrt               |          28.00 |             1.381
 pown                |         176.00 |             3.805
-powf                |          98.03 |             3.898
-remainder           |          33.02 |             0.647
+powf                |         105.03 |             4.662
+powf_checked        |         106.31 |             7.359
+remainder           |          34.03 |             0.729
+remainder_checked   |          50.03 |             1.424
 ```
 
 # tools
@@ -251,8 +265,3 @@ remainder           |          33.02 |             0.647
 # todo:
 - do principled and thourough analysis of dependency chains and rounding errors to find optimizations
 - perfectly rounded versions
-- vary both arguments in quickbench's two-argument benchmarks (powf,
-  remainder currently fix one argument, which may be letting LLVM
-  constant-fold std's side of a couple of comparisons -- see the benchmark
-  notes above; atan2/hypot fixed already, their 2nd argument is now
-  black_box'd instead of a literal)

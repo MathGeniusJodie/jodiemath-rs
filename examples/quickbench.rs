@@ -146,13 +146,22 @@ fn main() {
     bench!("hypot_unchecked", move |x: f32| hypot_unchecked(x, hypot_y));
     bench!("hypot_checked", move |x: f32| hypot_checked(x, hypot_y));
     bench!("rsqrt", rsqrt);
-    bench!("powf", |x: f32| powf(x, 2.0));
-    bench!("std powf", |x: f32| x.powf(2.0));
+    // black_box'd 2nd arg, same reasoning as atan2/hypot above -- a literal
+    // exponent lets LLVM constant-fold powf's y==0.0/y_int/y_odd branches
+    // away entirely (2.0 is a compile-time-known even integer), understating
+    // the real branchy cost. See readme.md's own todo note on this.
+    let powf_y = std::hint::black_box(2.0);
+    bench!("powf", move |x: f32| powf(x, powf_y));
+    bench!("std powf", move |x: f32| x.powf(powf_y));
+    bench!("powf_checked", move |x: f32| powf_checked(x, powf_y));
     {
         // black_box'd once, not per-call -- see pown's own mca_target.rs
         // comment for why that placement matters.
         let n = black_box(5);
         bench!("pown", |x: f32| pown(x, n));
     }
-    bench!("remainder", |x: f32| remainder(x, 3.0));
+    // black_box'd 2nd arg, same reasoning as powf just above.
+    let remainder_y = std::hint::black_box(3.0);
+    bench!("remainder", move |x: f32| remainder(x, remainder_y));
+    bench!("remainder_checked", move |x: f32| remainder_checked(x, remainder_y));
 }

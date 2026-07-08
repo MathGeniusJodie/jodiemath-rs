@@ -1282,6 +1282,51 @@ brainstorm backlog lives at the bottom of this file.
   needs the same "verify against real fuzz, don't trust the tool's own
   report" discipline from day one, not just the original `tune()`.**
 
+- **powf/remainder quickbench/mca literal-2nd-argument fix (2026-07-08),
+  readme's own long-standing todo item — real, and worse than the
+  atan2/hypot precedent that inspired checking it.** `quickbench.rs`'s
+  `powf`/`remainder` benches and `mca_target.rs`'s matching marker
+  functions all used a literal 2nd argument (`2.0`/`3.0`), same class of
+  bug already fixed for `atan2`/`hypot` (see that entry above). Fixed by
+  `black_box`-ing the 2nd argument in both harnesses, same idiom as
+  `atan2`/`hypot`/`pown`. Unlike `atan2`/`hypot`, mca handled the
+  black-boxed version cleanly (no region-marker corruption), so both
+  tools gave a clean before/after: `powf` mca latency/throughput
+  98.03/3.898 → 105.03/4.662, `powf_checked` 105.48/6.285 → 106.31/7.359,
+  `remainder` 33.02/0.647 → 34.03/0.729, `remainder_checked` 47.02/1.034
+  → 50.03/1.424 — all four genuinely more expensive once the
+  y==0.0/y_int/y_odd (powf) and y==0.0/y.is_infinite() (remainder)
+  branches can't be constant-folded away, confirming jodie's own
+  functions were being undermeasured, not just std's. The `std powf`
+  side was **far more dramatic** and a distinct bug: quickbench showed
+  `std powf` latency 3.4ns→17.5ns and throughput 0.07ns→6.0ns (both
+  ~5-135x) — confirmed via a standalone `--emit=asm` check
+  (`x.powf(2.0)` vs `x.powf(black_box(2.0))`) that a literal integer
+  exponent doesn't just fold a branch, it makes LLVM recognize
+  `powf(x,2.0)` isn't a real libm call at all and replace the whole
+  thing with a single `vmulss` (`x*x`) — so the readme's old "powf | 24.2
+  ns | 3.2 ns | 0.1x" comparison was never measuring real `powf` on
+  either side, and the "jodie is 10-14x slower than std" conclusion it
+  implied was backwards: with an honest black-boxed exponent, jodie's
+  `powf` throughput (1.05 ns) is actually ~5.7x *faster* than std's real
+  cost (6.03 ns), and latency is roughly on par (0.8x) rather than 0.1x.
+  Also added missing `powf_checked`/`remainder_checked` rows to
+  quickbench.rs and the readme's mca table (they already existed in
+  `mca_target.rs`/`mca.rs` but were never wired into quickbench or
+  written into the readme). readme.md's latency/throughput/mca tables
+  and its own todo note updated to match; the todo item removed since
+  it's now done. **General lesson, sharper than the atan2/hypot version
+  of this same finding: a literal argument to a two-argument function
+  isn't just a branch-folding risk for the *checked-vs-unchecked*
+  comparison (the risk this file already knew about) — for a function
+  name libm/LLVM specifically recognizes and special-cases at a fixed
+  integer exponent (`pow(x, 2)`, `pow(x, 3)`, etc.), it can silently
+  replace the *reference* implementation with a trivial intrinsic,
+  making the "improvement" ratio in a comparison table not just
+  imprecise but actively backwards. Any future two-argument benchmark
+  entry in this crate should default to `black_box`-ing both arguments
+  from the start, not just the one whose own branches are in question.**
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
