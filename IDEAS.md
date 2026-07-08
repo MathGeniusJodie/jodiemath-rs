@@ -914,6 +914,43 @@ brainstorm backlog lives at the bottom of this file.
   guarantee, though slower on latency (19.94ns vs 11.87ns) — a real,
   known tradeoff, not hidden.
 
+- **erfc domain split, [0,2]/[2,10] (2026-07-08), tested and rejected —
+  the underlying math was dramatically tighter but the crate's real
+  max-ulp bottleneck lives somewhere else entirely.** Checked with scipy
+  first: fitting the same degree-4/4 rational shape separately per domain
+  half (against `erfc(xa)*exp(xa²)`, the actual quantity the rational
+  approximates) gave max relative error 9.8e-10 ([0,2]) and 3.25e-9
+  ([2,10]) vs. the shipped single-domain fit's 3.73e-7 — 100-380x
+  tighter. Added `erfc_lo_c`/`erfc_hi_c` to `tune.rs` (seeded from the
+  scipy fits, not zero) and coordinate-descended each against the real
+  ulp objective: `erfc_lo` converged essentially where it started (max
+  6→5), but `erfc_hi` — covering the exact region the crate's own max-ulp
+  109 comes from — only moved from max 110→94, nowhere near the
+  backlog's own stated bar ("only worth it if 109 → single digits").
+  Implemented the split for real (a `xa<2.0` branchless select between
+  the two rationals) and confirmed via the actual accuracy.rs fuzz
+  harness, not just tune.rs's grid: avg ulp genuinely improved a lot
+  (0.3105→0.1889, ~39%) but max ulp barely moved (106→105), and the
+  worst-case `x` stayed in the same narrow neighborhood both before and
+  after (8.77 vs 8.70) — strong evidence the worst case isn't limited by
+  the rational's fit quality at all, matching the original log-space
+  entry's own caution ("check whether the 109 is actually...noise before
+  crediting any fix"). Whatever caps it (most likely accumulated rounding
+  through `exp2_checked`/`xa*xa`/the final multiply, not investigated
+  further this pass) sits downstream of the correction term entirely, so
+  no refit of *that* piece — however precise — can fix it. Not adopted
+  (real avg win, but the specific bar this idea was proposed against
+  wasn't met, and shipping ~2x the rational cost for an avg-only
+  improvement wasn't judged worth it given how far short of "single
+  digits" the max ulp still is); `src/lib.rs`/`accuracy.rs` scratch
+  reverted, `erfc_lo_c`/`erfc_hi_c` kept in `tune.rs` as reference infra.
+  **General lesson, sharpening this file's now-repeated finding: a
+  dramatically tighter mathematical fit for one *piece* of a pipeline
+  doesn't help if the real bottleneck is a *different* piece — before
+  crediting any refit, check where the worst case actually sits (same
+  `x`, same order of magnitude, before and after) to see whether the fix
+  even touched the right part of the computation.**
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
@@ -1067,14 +1104,6 @@ legitimate direction here, unlike on most targets.
   sits *after* the seed/r computation on the critical path, with nothing
   to hide behind. Not adopted; reverted.
 
-
-## erf / erfc
-
-- **erfc domain split**: if log-space fails, two rationals ([0,2] /
-  [2,10]) with one select — both arms computed branchlessly, so ~2x the
-  poly cost; only worth it if 109 → single digits (the log-space attempt
-  above already found the single-poly approach doesn't converge at a
-  practical degree, so this fallback is the natural next thing to try).
 
 ## hypot / misc
 

@@ -437,6 +437,45 @@ fn erfc_c(x: f32, c: &[f32]) -> f32 {
     fma(y, z, w)
 }
 
+// erfc_c's exact shape, but only ever evaluated/tuned for xa in [0,2] --
+// IDEAS.md's "erfc domain split" idea: a separate, domain-specific
+// rational per half should each need much less dynamic range to cover
+// than the single [0,10] fit.
+#[inline(always)]
+fn erfc_lo_c(x: f32, c: &[f32]) -> f32 {
+    let z = if x < 0.0 { -1.0 } else { 1.0 };
+    let w = if x < 0.0 { 2.0 } else { 0.0 };
+    let xa = x.abs().min(10.0);
+    let n = fma(c[0], xa, c[1]);
+    let n = fma(n, xa, c[2]);
+    let n = fma(n, xa, c[3]);
+    let n = fma(n, xa, 1.0);
+    let d = fma(c[4], xa, c[5]);
+    let d = fma(d, xa, c[6]);
+    let d = fma(d, xa, c[7]);
+    let d = fma(d, xa, 1.0);
+    let y = (-(xa * xa) * std::f32::consts::LOG2_E).exp2() * n / d;
+    fma(y, z, w)
+}
+
+// erfc_c's exact shape, tuned for xa in [2,10] instead.
+#[inline(always)]
+fn erfc_hi_c(x: f32, c: &[f32]) -> f32 {
+    let z = if x < 0.0 { -1.0 } else { 1.0 };
+    let w = if x < 0.0 { 2.0 } else { 0.0 };
+    let xa = x.abs().min(10.0);
+    let n = fma(c[0], xa, c[1]);
+    let n = fma(n, xa, c[2]);
+    let n = fma(n, xa, c[3]);
+    let n = fma(n, xa, 1.0);
+    let d = fma(c[4], xa, c[5]);
+    let d = fma(d, xa, c[6]);
+    let d = fma(d, xa, c[7]);
+    let d = fma(d, xa, 1.0);
+    let y = (-(xa * xa) * std::f32::consts::LOG2_E).exp2() * n / d;
+    fma(y, z, w)
+}
+
 // exp's e^r poly (see src/lib.rs's exp) with c0 AND c1 both forced to
 // exactly 1.0 (hardcoded, not tuned) instead of just c0 -- only c2..c5 (4
 // values, named c[0..4] here) are free. Matches the shipped Estrin
@@ -885,6 +924,48 @@ fn main() {
             0.15177123248577118, 0.7851238250732422, 1.8210692405700684, 2.1067135334014893,
         ];
         tune("erfc", &erfc_c, &erfc_ref, &grid, &init);
+    }
+    if which == "erfcsplit" {
+        // scipy-derived seeds (least_squares fit of erfc(xa)*exp(xa^2)
+        // against the same degree-4/4 rational shape, per domain half --
+        // not zero-seeded, see this file's own zero-seed-trap lesson).
+        let mut grid_lo = vec![];
+        let mut b = 0.0f32.to_bits();
+        while b < 2.0f32.to_bits() {
+            grid_lo.push(f32::from_bits(b));
+            grid_lo.push(-f32::from_bits(b));
+            b += 600;
+        }
+        let init_lo = [
+            3.98038805e-5,
+            4.78439720e-2,
+            3.14573495e-1,
+            7.84393590e-1,
+            8.58997187e-2,
+            5.49311743e-1,
+            1.47290761e0,
+            1.91277270e0,
+        ];
+        tune("erfc_lo", &erfc_lo_c, &erfc_ref, &grid_lo, &init_lo);
+
+        let mut grid_hi = vec![];
+        let mut b = 2.0f32.to_bits();
+        while b < 10.0f32.to_bits() {
+            grid_hi.push(f32::from_bits(b));
+            grid_hi.push(-f32::from_bits(b));
+            b += 2400;
+        }
+        let init_hi = [
+            1.79230307e-7,
+            1.47984655e-1,
+            5.92738296e-1,
+            1.14808010e0,
+            2.62310450e-1,
+            1.05031439e0,
+            2.16933286e0,
+            2.27410184e0,
+        ];
+        tune("erfc_hi", &erfc_hi_c, &erfc_ref, &grid_hi, &init_hi);
     }
     if which.contains("cbrt") {
         // one octave [1,2) is representative: the bit-trick seed's
