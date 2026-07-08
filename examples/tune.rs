@@ -353,6 +353,19 @@ fn exp_r_c(r: f32, c: &[f32]) -> f32 {
     fma(l2, r4, r0)
 }
 
+// Scratch: sinh/cosh's shared exp(r)/exp(-r) even/odd split (see
+// src/lib.rs's exp_pos_neg). e(u)=1+c0*u+c2*u^2, o(u)=1+c1*u+c3*u^2,
+// p(r)=e+r*o. Same grid as exp_r (symmetric in r), so tuning this one
+// function against exp(r) over +-r already covers both e+r*o and e-r*o.
+#[inline(always)]
+fn exp_r_pair_c(r: f32, c: &[f32]) -> f32 {
+    let r2 = r * r;
+    let r4 = r2 * r2;
+    let e = fma(c[2], r4, fma(c[0], r2, 1.0));
+    let o = fma(c[3], r4, fma(c[1], r2, 1.0));
+    fma(r, o, e)
+}
+
 fn tune(
     name: &str,
     f: &dyn Fn(f32, &[f32]) -> f32,
@@ -811,5 +824,6 @@ fn main() {
         let init =
             [0.49998869147306002, 0.1666632564456679, 0.041917526482916918, 0.0083811120373467017];
         tune("exp_r (c0=c1=1 forced)", &exp_r_c, &|x| x.exp(), &grid, &init);
+        tune("exp_r_pair (even/odd split)", &exp_r_pair_c, &|x| x.exp(), &grid, &init);
     }
 }

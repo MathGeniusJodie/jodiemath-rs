@@ -28,8 +28,8 @@ All functions auto-vectorize, it's a hard requirement
                   log1p |    0.106   |     4     |  0.000  |    0
         exp (in-domain) |    0.091   |     4     |  0.000  |    1
       expm1 (in-domain) |    0.138   |     6     |  0.000  |    0
-       sinh (in-domain) |    0.080   |     5     |  0.000  |    1
-       cosh (in-domain) |    0.076   |     4     |  0.000  |    0
+       sinh (in-domain) |    0.081   |     5     |  0.000  |    1
+       cosh (in-domain) |    0.071   |     5     |  0.000  |    0
 sinh_throughput (in-domain)| 0.084   |     7     |  0.000  |    1
 cosh_throughput (in-domain)| 0.061   |     4     |  0.000  |    0
        tanh (in-domain) |    0.148   |     9     |  0.000  |    0
@@ -67,8 +67,8 @@ cbrt_accurate | 17.0 ns | 22.0 ns | 1.3x
         log1p | 16.5 ns | 21.1 ns | 1.3x
           exp |  9.9 ns |  9.5 ns | 1.0x
         expm1 | 11.3 ns | 13.7 ns | 1.2x
-         sinh | 13.1 ns | 14.3 ns | 1.1x
-         cosh | 12.9 ns | 14.4 ns | 1.1x
+         sinh | 14.0 ns | 14.0 ns | 1.0x
+         cosh | 13.8 ns | 14.0 ns | 1.0x
          tanh | 15.5 ns | 15.6 ns | 1.0x
         asinh | 43.7 ns | 86.3 ns | 2.0x
         acosh | 35.1 ns | 27.0 ns | 0.8x
@@ -103,8 +103,8 @@ cbrt_accurate | 0.67 ns  | 3.93 ns | 5.9x
         log1p | 0.60 ns  | 6.28 ns | 10.4x
           exp | 0.31 ns  | 2.47 ns | 8.0x
         expm1 | 0.46 ns  | 5.56 ns | 12.1x
-         sinh | 0.73 ns  | 6.31 ns | 8.7x
-         cosh | 0.63 ns  | 6.43 ns | 10.2x
+         sinh | 0.58 ns  | 5.62 ns | 9.7x
+         cosh | 0.50 ns  | 5.55 ns | 11.2x
          tanh | 0.56 ns  | 5.17 ns | 9.3x
         asinh | 2.19 ns  | 41.42 ns | 18.9x
         acosh | 1.32 ns  |  6.17 ns | 4.7x
@@ -139,8 +139,8 @@ log10               |          56.91 |             1.626
 log1p               |          61.16 |             2.276
 exp                 |          42.00 |             1.327
 expm1               |          74.00 |             1.779
-sinh                |          54.00 |             3.057
-cosh                |          53.00 |             2.743
+sinh                |          58.00 |             2.523
+cosh                |          57.00 |             2.074
 sinh_throughput     |          62.00 |             1.943
 cosh_throughput     |          61.00 |             1.616
 tanh                |          90.78 |             2.163

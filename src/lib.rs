@@ -1001,6 +1001,72 @@ pub fn expm1(x: f32) -> f32 {
     if x.abs() < 0.5 { a } else { b }
 }
 
+// Shared exp(x)/exp(-x) for sinh/cosh (2026-07-08): the Cody-Waite
+// reduction only needs to happen once, since -x's reduction is exactly
+// (-k, -r) -- immediate from x = k*ln2 + r (exact by construction), no
+// independent rounding of -x*log2e needed or even relevant. exp's own e^r
+// poly splits into an even/odd part in r^2 (e(u) = 1 + c[0]*u + c[2]*u^2,
+// o(u) = 1 + c[1]*u + c[3]*u^2, so p(r) = e + r*o matches exp's p exactly
+// -- verified by expanding both forms), so p(-r) = e - r*o reuses e/o at
+// the cost of one more fma instead of a whole second poly. Only the final
+// exponent-field scaling (2^k vs 2^-k) is genuinely duplicated -- cheap
+// integer/bit-trick work, not fma-port pressure. See exp's own doc
+// comment for shared domain/rounding notes; same unchecked-exp2 domain
+// limit applies to both outputs here.
+//
+// This was IDEAS.md's "biggest single-function win candidate" backlog
+// entry, and it delivered a real but three-way mixed result, all
+// re-measured after the coefficient retune below (see exp_pos_neg):
+// mca throughput sinh 3.057->2.523 cyc/elem (-17.5%), cosh 2.743->2.074
+// (-24.4%) -- the predicted win, since the fma-port-heavy reduction+poly
+// now runs once instead of twice. But mca latency got *worse*, sinh
+// 54.00->58.00 cyc (+7.4%), cosh 53.00->57.00 (+7.5%): the old code's two
+// independent exp(x)/exp(-x) calls could run concurrently on this
+// out-of-order CPU (no data dependency between them), hiding one behind
+// the other; funneling both through one shared serial prefix removes
+// that overlap. Same shape as asin's 2-branch collapse (see its own doc
+// comment, fix 6) and several other entries in this file -- throughput
+// is the metric this crate's vectorization-first design prioritizes, so
+// kept despite the latency regression. Accuracy (exhaustive sweep):
+// after retuning, sinh's max ulp is unchanged (5->5, avg ulp 0.0797->
+// 0.0806, noise-level); cosh's max ulp moved 4->5 (avg actually improved,
+// 0.0760->0.0714) -- a small real regression, but landing at exactly the
+// max-ulp level sinh (its own sibling function) already carries, not some
+// new outlier. Adopted on that basis: a substantial, clearly-prioritized
+// throughput win against a latency cost and a one-ulp max-ulp move that
+// lands within this composite function family's own existing spread.
+#[inline(always)]
+fn exp2_field_split(k: f32) -> (f32, f32) {
+    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+    let k1b = fma(k, 0.5, ROUND_MAGIC) - (ROUND_MAGIC - 383.0);
+    let k2b = (k + 766.0) - k1b;
+    let t1 = f32::from_bits((k1b.to_bits() << 8) & EXPONENT_MASK);
+    let t2 = f32::from_bits((k2b.to_bits() << 8) & EXPONENT_MASK);
+    (t1, t2)
+}
+
+#[inline(always)]
+fn exp_pos_neg(x: f32) -> (f32, f32) {
+    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+    let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
+    let r = fma(-k, LN2_HI, x);
+    let r = fma(-k, LN2_LO, r);
+    // Retuned for this even/odd split specifically (examples/tune.rs's
+    // exp_r_pair_c/"exp_r_pair") -- the plain-Horner exp() coefficients
+    // copied verbatim here left max ulp 4 on the tuning grid, retuning
+    // c0/c1 recovered max ulp 3 (c2/c3 didn't move).
+    let c: [f32; 4] = [4.999897e-1, 1.6666329e-1, 4.1917525e-2, 8.3811125e-3];
+    let r2 = r * r;
+    let r4 = r2 * r2;
+    let e = fma(c[2], r4, fma(c[0], r2, 1.0));
+    let o = fma(c[3], r4, fma(c[1], r2, 1.0));
+    let p_pos = fma(r, o, e);
+    let p_neg = fma(-r, o, e);
+    let (t1, t2) = exp2_field_split(k);
+    let (t1n, t2n) = exp2_field_split(-k);
+    (p_pos * t1 * t2, p_neg * t1n * t2n)
+}
+
 // sinh(x) = x + x^3/6 + x^5/120 + x^7/5040 + O(x^9), the odd Taylor series
 // (exact rational coefficients, not a numerical fit -- sinh is entire, so
 // this converges everywhere, and truncation error at the |x|<0.5 select
@@ -1019,8 +1085,9 @@ fn sinh_small(x: f32) -> f32 {
     x * p
 }
 
-/// sinh(x) = 0.5*(exp(x) - exp(-x)) directly, except for |x| < 0.5 where
-/// exp(x) and exp(-x) are both ~1 and the subtraction cancels almost all
+/// sinh(x) = 0.5*(exp(x) - exp(-x)) directly (via `exp_pos_neg`'s shared
+/// reduction, see its own doc comment), except for |x| < 0.5 where exp(x)
+/// and exp(-x) are both ~1 and the subtraction cancels almost all
 /// precision (the same class of bug log1p/tanh had, see IDEAS.md) --
 /// there, use the Taylor form above instead, same branchless-select
 /// pattern as expm1's Pade/exp split. See exp's doc comment for the
@@ -1030,15 +1097,19 @@ fn sinh_small(x: f32) -> f32 {
 #[inline(always)]
 pub fn sinh(x: f32) -> f32 {
     let a = sinh_small(x);
-    let b = 0.5 * (exp(x) - exp(-x));
+    let (ep, en) = exp_pos_neg(x);
+    let b = 0.5 * (ep - en);
     if x.abs() < 0.5 { a } else { b }
 }
 
-/// Straight port of jodiemath's coshf. See exp's doc comment for the
-/// inherited unchecked-exp2 domain limit.
+/// cosh(x) = 0.5*(exp(x) + exp(-x)) via `exp_pos_neg`'s shared reduction
+/// (see its own doc comment) -- never cancels (adds instead of
+/// subtracts), so unlike sinh needs no small-x branch. See exp's doc
+/// comment for the inherited unchecked-exp2 domain limit.
 #[inline(always)]
 pub fn cosh(x: f32) -> f32 {
-    0.5 * (exp(x) + exp(-x))
+    let (ep, en) = exp_pos_neg(x);
+    0.5 * (ep + en)
 }
 
 /// Throughput-tier sinh: computes `exp(-x)` as `1.0 / exp(x)` instead of a

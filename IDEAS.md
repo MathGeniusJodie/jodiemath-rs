@@ -372,14 +372,6 @@ legitimate direction here, unlike on most targets.
   Realistic for sinf_poly (4 coeffs), cbrt's correction (4), expm1's Pade
   (5), atan_poly (4).
 
-- **Even/odd poly sharing for ±r pairs**: `exp(x)` and `exp(-x)` share
-  their reduction exactly (round is odd, so k(-x) = -k, r(-x) = -r), and a
-  poly evaluated at both ±r splits into E(r²) ± r·O(r²) — one poly's worth
-  of fmas produces both values. sinh/cosh/tanh currently pay for two full
-  `exp` evaluations (or one exp + one division); this gets the second
-  exponential for ~2 fmas + one exponent-field negation (2^-k is a bit
-  trick). Biggest single-function win candidate in the file.
-
 - **Rational (P/Q) refits of pure polys to exploit the idle divider**: a
   degree-(m/n) rational typically matches a degree-(m+n) poly's accuracy,
   so e.g. sinf_poly's 4 coeffs → 2/2 rational could cut fma count and
@@ -430,13 +422,11 @@ legitimate direction here, unlike on most targets.
   odd symmetry via mulsign. Likely both faster *and* more accurate than
   the current route; the standard ML-workload tanh shape.
 
-- **sinh/cosh via the shared-reduction even/odd trick** (see cross-cutting
-  entry): sinh(x) = (2^k·(E+rO) − 2^-k·(E−rO))/2 needs care when the two
-  scales differ hugely (for |x| > ~9 one side vanishes — which is also
-  when cancellation is impossible, so it's benign), but eliminates an
-  entire exp evaluation from sinh/cosh and both from tanh-via-expm1 if
-  kept. sinh_throughput/cosh_throughput's 1/e division route becomes
-  obsolete if this works.
+- **tanh via the shared-reduction even/odd trick**: tanh currently reuses
+  `expm1(2x)` (already a single exp evaluation, not two), so the sinh/cosh
+  version of this idea (now adopted, see git history/src/lib.rs's
+  `exp_pos_neg`) doesn't directly apply here — this is really the
+  separate "tanh: direct rational" idea below, not a variant of this one.
 
 ## sin / cos / tan
 
