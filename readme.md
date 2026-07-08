@@ -65,11 +65,11 @@ cbrt_accurate | 17.0 ns | 22.0 ns | 1.3x
            ln | 15.3 ns | 14.5 ns | 0.9x
         log10 | 14.3 ns | 16.6 ns | 1.2x
         log1p | 16.5 ns | 21.1 ns | 1.3x
-          exp | 13.1 ns | 13.6 ns | 1.0x
-        expm1 | 14.6 ns | 19.1 ns | 1.3x
-         sinh | 16.9 ns | 20.1 ns | 1.2x
-         cosh | 27.7 ns | 37.5 ns | 1.4x
-         tanh | 35.9 ns | 33.8 ns | 0.9x
+          exp |  9.9 ns |  9.5 ns | 1.0x
+        expm1 | 11.3 ns | 13.7 ns | 1.2x
+         sinh | 13.1 ns | 14.3 ns | 1.1x
+         cosh | 12.9 ns | 14.4 ns | 1.1x
+         tanh | 15.5 ns | 15.6 ns | 1.0x
         asinh | 43.7 ns | 86.3 ns | 2.0x
         acosh | 35.1 ns | 27.0 ns | 0.8x
         atanh | 23.2 ns |  4.2 ns | 0.2x
@@ -101,11 +101,11 @@ cbrt_accurate | 0.67 ns  | 3.93 ns | 5.9x
            ln | 0.55 ns  | 3.82 ns | 7.0x
         log10 | 0.53 ns  | 5.30 ns | 10.1x
         log1p | 0.60 ns  | 6.28 ns | 10.4x
-          exp | 0.32 ns  | 3.09 ns | 9.7x
-        expm1 | 0.49 ns  | 6.46 ns | 13.2x
-         sinh | 0.69 ns  | 14.84 ns | 21.5x
-         cosh | 1.69 ns  | 22.54 ns | 13.3x
-         tanh | 1.04 ns  | 18.06 ns | 17.3x
+          exp | 0.31 ns  | 2.47 ns | 8.0x
+        expm1 | 0.46 ns  | 5.56 ns | 12.1x
+         sinh | 0.73 ns  | 6.31 ns | 8.7x
+         cosh | 0.63 ns  | 6.43 ns | 10.2x
+         tanh | 0.56 ns  | 5.17 ns | 9.3x
         asinh | 2.19 ns  | 41.42 ns | 18.9x
         acosh | 1.32 ns  |  6.17 ns | 4.7x
         atanh | 0.79 ns  |  4.54 ns | 5.7x
@@ -137,13 +137,13 @@ cos_checked         |         113.00 |             4.537
 ln                  |          56.91 |             1.626
 log10               |          56.91 |             1.626
 log1p               |          61.16 |             2.276
-exp                 |          51.00 |             1.648
-expm1               |          82.09 |             2.158
-sinh                |          63.00 |             3.839
-cosh                |          62.00 |             3.357
-sinh_throughput     |          71.00 |             2.326
-cosh_throughput     |          70.00 |             1.913
-tanh                |          98.74 |             2.522
+exp                 |          42.00 |             1.327
+expm1               |          74.00 |             1.779
+sinh                |          54.00 |             3.057
+cosh                |          53.00 |             2.743
+sinh_throughput     |          62.00 |             1.943
+cosh_throughput     |          61.00 |             1.616
+tanh                |          90.78 |             2.163
 asinh               |         120.99 |             7.716
 acosh               |         127.75 |             6.588
 atanh               |          79.99 |             4.331

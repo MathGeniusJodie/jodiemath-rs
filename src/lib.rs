@@ -929,9 +929,34 @@ pub fn log1p(x: f32) -> f32 {
 /// advance) -- splitting into two representable halves sidesteps this by
 /// construction, the same way exp2_checked already does for its own,
 /// wider checked range.
+///
+/// `k`'s rounding (2026-07-08) uses the sin/cos-style magic-constant add
+/// (`fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC`) instead of a plain
+/// `.round()` call -- IDEAS.md's backlog only speculated this would save
+/// one op on `k1b`'s own already-existing magic-round (unclear payoff,
+/// "worth one mca look"), but the real win was bigger and came from
+/// somewhere else: native `.round()` (vroundps) is apparently just a
+/// slower instruction on this CPU than the fma+subtract pair the magic
+/// trick uses, independent of anything downstream. Measured (mca):
+/// latency 51.00->42.00 cyc (-17.6%), throughput 1.648->1.327 cyc/elem
+/// (-19.5%), cascading to every caller (expm1 -9.9%/-17.6%, sinh
+/// -14.3%/-20.4%, cosh -14.5%/-18.3%, tanh -8.1%/-14.2% lat/throughput;
+/// `powf`/`erf`/`erfc`/`asinh`/`acosh`/`atanh` don't call this function,
+/// unaffected). This swaps round-half-away-from-zero (`.round()`'s
+/// documented behavior) for the hardware's round-half-to-even (what the
+/// add-then-subtract trick actually performs) -- differs only at exact
+/// half-integer ties of `x*log2(e)`, and both the 100M-sample fuzz *and*
+/// the exhaustive all-2^32-pattern sweep found zero measurable accuracy
+/// difference (exp/expm1/sinh/cosh avg+max ulp bit-identical; tanh's
+/// looked like max 8->9 under fuzz alone until the exhaustive sweep
+/// showed *both* versions hit max 9 at the same worst x -- fuzz just
+/// hadn't sampled that point before, not a regression). `exp(88.37628)`
+/// (the k=128 edgecheck above) independently re-verified bit-exact
+/// against a true f64 reference.
 #[inline(always)]
 pub fn exp(x: f32) -> f32 {
-    let k = fma(x, LOG2_E, 0.0).round();
+    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+    let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
     let r = fma(-k, LN2_HI, x);
     let r = fma(-k, LN2_LO, r);
     // c0 and c1 both forced exactly 1.0 (were 1.0 and 1.0000000647031426):
@@ -948,7 +973,6 @@ pub fn exp(x: f32) -> f32 {
     let l2 = fma(c[3], r, c[2]);
     let r0 = fma(l1, r2, l0);
     let p = fma(l2, r4, r0);
-    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
     let k1b = fma(k, 0.5, ROUND_MAGIC) - (ROUND_MAGIC - 383.0);
     let k2b = (k + 766.0) - k1b;
     let t1 = f32::from_bits((k1b.to_bits() << 8) & EXPONENT_MASK);

@@ -647,13 +647,6 @@ legitimate direction here, unlike on most targets.
   polys are even/odd so they share r² powers. Compare against round 1's
   shared-exp idea; one of the two should win.
 
-- **exp's magic-constant round**: exp uses `.round()` (vroundps) while
-  sin gets its round *and* its parity from one ROUND_MAGIC add. exp needs
-  no parity, so vroundps is probably already optimal — but the magic-add
-  version makes k1b available one op earlier (it *is* k+383 pre-shifted).
-  Worth one mca look since exp is the hottest composite dependency
-  (sinh/cosh/tanh/expm1 all inherit).
-
 ### sin / cos
 
 - **mod-pi/2 reduction with paired even/odd polys**: reduce with
