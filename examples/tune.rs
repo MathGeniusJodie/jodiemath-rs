@@ -35,6 +35,59 @@ fn exp2_c(x: f32, c: &[f32]) -> f32 {
     )
 }
 
+// IDEAS.md's "Select-tree LUT for exp2" idea, tried and rejected
+// (2026-07-08): f=x-floor(x) in [0,1) split into an 8-way quantized
+// f_hi (a 3-level blend over 2^(i/8), i=0..7, exact f32 constants) plus
+// a residual f_lo in [0,1/8) fit directly (not the (2^f-1)/f trick,
+// since f_hi already carries the "-1" baseline). c[0] is fixed at 1.0
+// (2^0 at f_lo=0), tuned with tune_fixed0. A scipy feasibility check
+// found k=4 (the backlog's own framing) needs degree 3 to only reach
+// 2.94e-7 max relerr, ~24x worse than the shipped degree-5 form's
+// 1.22e-8 -- not competitive; k=8 (one more blend level than "2-level
+// vblendvps" suggested) with degree 3 reaches 1.84e-8, close. But real
+// tuning against the actual ulp objective (coordinate descent, seeded
+// from the scipy fit, not zero) landed at max ulp 3 / avg 0.43 on this
+// file's own exp2 grid, vs. the shipped form's max 2 / avg 0.20 on the
+// identical grid -- a real, measured regression even at k=8, despite
+// the scipy math suggesting near-parity. Not chased further (no
+// implementation bug found in a quick review of the blend-tree/f_lo
+// boundary consistency); disqualified on accuracy alone before even
+// checking mca for the hoped-for latency win. Not implemented in
+// src/lib.rs; kept as reference infra.
+const EXP2_LUT8: [f32; 8] = [
+    1.0, 1.0905077, 1.1892071, 1.2968396, 1.4142135, 1.5422108, 1.6817929, 1.8340081,
+];
+#[inline(always)]
+fn exp2_lut8_c(x: f32, c: &[f32]) -> f32 {
+    let k = x.floor();
+    let f = x - k;
+    let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
+    // 3-level blend tree selecting among the 8 precomputed 2^(i/8)
+    // constants by comparing f against 1/8-spaced thresholds -- mirrors
+    // this crate's established "compute both arms unconditionally, then
+    // select" branchless idiom, just nested three deep instead of one.
+    let b0 = if f < 4.0 / 8.0 {
+        if f < 2.0 / 8.0 {
+            if f < 1.0 / 8.0 { EXP2_LUT8[0] } else { EXP2_LUT8[1] }
+        } else if f < 3.0 / 8.0 {
+            EXP2_LUT8[2]
+        } else {
+            EXP2_LUT8[3]
+        }
+    } else if f < 6.0 / 8.0 {
+        if f < 5.0 / 8.0 { EXP2_LUT8[4] } else { EXP2_LUT8[5] }
+    } else if f < 7.0 / 8.0 {
+        EXP2_LUT8[6]
+    } else {
+        EXP2_LUT8[7]
+    };
+    let idx = (f * 8.0).floor();
+    let f_lo = f - idx * (1.0 / 8.0);
+    let f_lo2 = f_lo * f_lo;
+    let poly = fma(fma(c[3], f_lo, c[2]), f_lo2, fma(c[1], f_lo, c[0]));
+    exp2int * b0 * poly
+}
+
 // Same Cody-Waite splits as src/lib.rs's private LN2_HI/LN2_LO and
 // LOG10_2_HI/LOG10_2_LO (not pub, so redefined here verbatim).
 const LN2_HI: f32 = 0.693145751953125;
@@ -592,6 +645,19 @@ fn main() {
         // for headroom from where the crate actually is now.
         let init = [2.1702237e-4, 1.2439679e-3, 9.678826e-3, 5.548333e-2, 2.4022985e-1, 6.93147e-1];
         tune("exp2", &exp2_c, &|x| x.exp2(), &grid, &init);
+    }
+    if which.contains("exp2lut") {
+        let mut grid = vec![];
+        let mut b = 1e-6f32.to_bits();
+        while b <= 126.0f32.to_bits() {
+            grid.push(f32::from_bits(b));
+            grid.push(-f32::from_bits(b));
+            b += 997;
+        }
+        // scipy-derived seed (least_squares fit of 2^f_lo directly over
+        // f_lo in [0,1/8), not zero-seeded).
+        let init = [1.0, 0.69315195, 0.2400347, 0.05795604];
+        tune_fixed0("exp2_lut8", &exp2_lut8_c, &|x| x.exp2(), &grid, &init);
     }
     if which.contains("log2") || which.is_empty() {
         let mut grid = vec![];

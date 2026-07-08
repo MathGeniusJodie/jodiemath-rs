@@ -951,6 +951,32 @@ brainstorm backlog lives at the bottom of this file.
   `x`, same order of magnitude, before and after) to see whether the fix
   even touched the right part of the computation.**
 
+- **Select-tree "LUT" for exp2 (2026-07-08), tested and rejected — the
+  backlog's own "2-level, degree 2-3" framing didn't survive a scipy
+  check, and even the corrected parameters came up short once tuned
+  against real ulp.** Split `f` into an 8-way quantized `f_hi` (2^(i/8),
+  i=0..7, a 3-level blend tree — one level more than the backlog's
+  "2-level vblendvps" framing, needed because a scipy check found the
+  backlog's own k=4/degree-3 combination only reaches 2.94e-7 max
+  relative error, ~24x worse than the shipped degree-5 form's 1.22e-8)
+  plus a residual `f_lo` fit directly with a degree-3 poly (k=8 gets
+  back to 1.84e-8, close to competitive). Added `exp2_lut8_c` to
+  `tune.rs`, seeded from the scipy fit (not zero), and coordinate-
+  descended against the real `x.exp2()` objective: landed at max ulp 3 /
+  avg 0.43 on this file's own exp2 grid, a real regression from the
+  shipped form's max 2 / avg 0.20 on the identical grid — despite the
+  scipy math suggesting near-parity at k=8. No implementation bug found
+  on a quick review of the blend-tree/`f_lo` boundary consistency (exact
+  power-of-two thresholds, checked by hand at a boundary value). Not
+  chased further, and not even brought to an mca latency check — the
+  accuracy regression alone disqualifies it under this loop's own bar.
+  Not implemented in `src/lib.rs`; kept `exp2_lut8_c` in `tune.rs` as
+  reference infra. Also removed the backlog's "same trick applies to
+  exp's e^r poly" follow-on, since the exact mechanism this rejected
+  (mathematical fit tightness not being the real constraint once other
+  rounding in the pipeline dominates) has no reason to behave
+  differently for a structurally similar poly.
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
@@ -1174,13 +1200,6 @@ legitimate direction here, unlike on most targets.
   other entry here.
 
 ### exp family
-
-- **Select-tree "LUT" for exp2**: split f = f_hi + f_lo where f_hi takes 4
-  (or 8) quantized values; 2^f_hi comes from a 2-level vblendvps tree over
-  4-8 constants (no gather needed), and f_lo's range shrinks 4-8x so the
-  poly drops from degree 5 to 2-3. Trades ~3 fma levels for ~2-3 blends +
-  1 compare chain. Same trick applies to exp's e^r poly. This is the
-  gather-free version of the LUT idea round 1 wrote off.
 
 - **Dedicated sinh/cosh kernels on the reduced argument**: instead of
   composing exp twice (or the round-1 even/odd trick), do the reduction
