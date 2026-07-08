@@ -1428,7 +1428,7 @@ brainstorm backlog lives at the bottom of this file.
   finds candidates regardless of whether their benchmark ever had an
   literal-arg problem to begin with. `cbrt` never had a two-argument
   literal-folding issue at all; this idea came from auditing the crate's
-  own internal-core inventory instead.** Commit `<pending>`.
+  own internal-core inventory instead.** Commit `3647c77`.
 
 ---
 
