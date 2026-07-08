@@ -534,7 +534,7 @@ fn main() {
             grid.push(-f32::from_bits(b));
             b += 5;
         }
-        let init = [-0.33333164, 0.22220786, -0.17394418, 0.1482371];
+        let init = [-0.33333147, 0.22220612, -0.17394388, 0.14823665];
         tune("cbrt_normal", &cbrt_normal_c, &|x| x.cbrt(), &grid, &init);
     }
     if which.contains("sinf") {
@@ -559,7 +559,7 @@ fn main() {
             grid.push(-f32::from_bits(b));
             b += 300;
         }
-        let init = [-2.0, -120.0, -12.0, 60.0, -120.0];
+        let init = [-1.9999927, -120.0, -12.000030, 59.999996, -120.0];
         tune("expm1_near0", &expm1_near0_c, &|x| x.exp_m1(), &grid, &init);
     }
 }
