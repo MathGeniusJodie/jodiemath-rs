@@ -1570,10 +1570,42 @@ branches, no scalar-only intrinsics unless the vector form exists).
   compile target" half of this idea (x86-64-v3 vs whatever) is a
   separate, softer question not addressed here -- this entry only closes
   the "make the invalid state unrepresentable" half.
-- **Register-pressure check at zmm width**: AVX-512 doubles the register
-  file but the 10-constant log poly + reduction constants in a fused loop
-  can still spill at unroll factors LLVM likes; inspect `-C target-cpu`
-  variants' loop bodies, not just the kernel in isolation.
+- **Register-pressure check at zmm width — investigated, likely not
+  worth forcing, reasoning documented rather than fully tested
+  (2026-07-07).** First confirmed the premise: this session's dev
+  machine (i5-1145G7, Tiger Lake) genuinely has full AVX-512 available
+  (`avx512f`/`bw`/`dq`/`vl`/etc. all present under `-C target-cpu=native`
+  in `rustc --print cfg`), yet the crate's actual compiled throughput
+  loops (checked `log2_throughput` directly in `--emit=asm`) use `%ymm`
+  (256-bit AVX2) registers, not `%zmm` (512-bit) -- confirmed via the
+  same evidence this crate's own mca table header already documents
+  ("16-wide (two AVX2 vectors)"). So LLVM, even with AVX-512 fully
+  available, is *choosing* not to use it here. Looked for a way to force
+  the comparison this entry asks for (zmm-width codegen, to check for
+  spills) and found `rustc -C help`/`--print target-features` expose a
+  real `prefer-256-bit` / `prefer-512-bit` LLVM tuning knob -- but
+  couldn't find a clean, direct rustc-level way to flip it independent of
+  `-C target-cpu`'s own built-in tuning table (it's baked into LLVM's
+  per-CPU `X86.td` tuning entries, not exposed as a standalone
+  `target-feature=` string the way ISA features like `+fma` are).
+  Didn't force it via a deeper LLVM-internals route: Tiger Lake (and
+  client Intel parts generally) are widely documented to suffer real
+  frequency downclocking under sustained AVX-512-width execution, and
+  LLVM's own per-CPU tuning tables are specifically written to account
+  for exactly this -- the ymm choice here is very likely LLVM's own
+  informed judgment for *this* CPU, not an oversight or missing feature,
+  and overriding it against that judgment would plausibly trade "more
+  work per instruction" for "lower sustained clock," a net loss on this
+  particular part even before considering the register-pressure/spill
+  question this entry actually asked about. Given that prior, the
+  register-pressure check itself was never run (there was nothing to
+  check without first getting real zmm-width codegen to inspect) --
+  this entry is closed with documented reasoning rather than empirical
+  measurement, unlike this session's other closed entries. Re-open if
+  `-C target-cpu` is ever changed to a part where AVX-512 tuning
+  genuinely favors zmm width (server Ice Lake/Sapphire Rapids-class
+  parts are less downclock-sensitive than client Tiger Lake), or if a
+  more direct way to override the tuning table is found.
 - **`clamp` codegen — verified, confirmed correct, no change needed
   (2026-07-07).** Checked `sin_checked`'s `.clamp(-POLY_SAFE_BOUND,
   POLY_SAFE_BOUND)` directly in `--emit=asm` output (fresh, not from
