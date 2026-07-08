@@ -714,6 +714,8 @@ fn main() {
         report("atan", &s, t0);
         let s = measure!(everywhere, |x: f32| x.atan(), atan_u35);
         report("std atan", &s, t0);
+        let s = measure!(everywhere, atan_latency, atan_u35);
+        report("atan_latency", &s, t0);
     }
     if run("tan") {
         let tan_domain = |x: f32| x.abs() < (1u32 << 22) as f32 * std::f32::consts::PI;

@@ -1825,6 +1825,41 @@ pub fn atan(x: f32) -> f32 {
     mulsign(y, x)
 }
 
+/// Latency-tier atan: a division-free odd degree-17 poly (fit directly
+/// against atan(r) over r in [0,1], not derived from atan_poly's own
+/// rational) instead of atan_poly's 3/3 Pade form. Removes the division
+/// atan_poly's own critical path pays (a division can't start until its
+/// numerator/denominator resolve, unlike cbrt's early-starting `rcp`),
+/// trading it for more fma depth -- opposite tradeoff to nearly every
+/// other function in this crate, so a separate opt-in tier rather than a
+/// replacement (same shape as `sinh_throughput`/`cosh_throughput`, just
+/// favoring the other axis): mca latency 61.09→59.09 cyc (-3.3%),
+/// throughput 1.491→1.611 cyc/elem (+8.1% worse). Accuracy is not a
+/// tradeoff here (fuzz: avg/max ulp 0.052/3 vs atan's own 0.068/3, a
+/// slight improvement, not a cost) -- use this over `atan` only for a
+/// value on its own or a serial dependency chain where per-call latency
+/// matters more than array-loop throughput.
+#[inline(always)]
+pub fn atan_latency(x: f32) -> f32 {
+    let a = x.abs();
+    let r = a.min(1.0 / a);
+    let r2 = r * r;
+    let r4 = r2 * r2;
+    let c0 = -0.33333167;
+    let c1 = 0.19994265;
+    let c2 = -0.14216055;
+    let c3 = 0.10689225;
+    let c4 = -0.07608681;
+    let c5 = 0.04395558;
+    let c6 = -0.01687014;
+    let c7 = 0.0030569038;
+    let lo = fma(fma(fma(c2, r2, c1), r2, c0), r2, 1.0);
+    let hi = fma(fma(fma(fma(c7, r2, c6), r2, c5), r2, c4), r2, c3);
+    let p = fma(hi, r4 * r4, lo) * r;
+    let y = if a < 1.0 { p } else { FRAC_PI_2 - p };
+    mulsign(y, x)
+}
+
 /// atan2(y, x). `atan2(-0.0, +0.0)` used to come out `+0.0` instead of
 /// IEEE754/C99's defined `-0.0`: when `x` is exactly `+0.0`, `base`
 /// degenerates to exactly `+0.0`, and the final `base + mulsign(...)`

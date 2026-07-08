@@ -124,6 +124,7 @@ fn main() {
     bench!("std acos", |x: f32| x.acos());
     bench!("atan", atan);
     bench!("std atan", |x: f32| x.atan());
+    bench!("atan_latency", atan_latency);
     // black_box'd 2nd arg (not a literal 1.0): a compile-time-constant 2nd
     // arg lets LLVM fold away atan2's own special-case branches entirely,
     // silently hiding their real cost -- this matters here specifically

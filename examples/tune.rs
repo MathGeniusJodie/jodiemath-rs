@@ -294,6 +294,24 @@ fn atan_poly7_c(x: f32, c: &[f32]) -> f32 {
     numer / denom
 }
 
+// IDEAS.md's "Pure-poly atan latency tier" idea: a division-free odd
+// degree-17 poly (c[0..8), d0=1.0 fixed, tuned with tune_fixed0 via a
+// leading dummy 1.0 slot... actually c has no d0 slot, tune_fixed0
+// isn't used here, c[0..8) map directly to d1..d8) instead of
+// atan_poly's 3/3 rational -- removes the division atan_poly's own
+// critical path pays, trading it for more fma depth. Split into a
+// low half (d0..d3) and high half (d4..d8) so both halves' Horner
+// chains can evaluate in parallel before one final combine, instead of
+// one long degree-8 Horner chain.
+#[inline(always)]
+fn atan_pure_poly_c(x: f32, c: &[f32]) -> f32 {
+    let x2 = x * x;
+    let x4 = x2 * x2;
+    let lo = fma(fma(fma(c[2], x2, c[1]), x2, c[0]), x2, 1.0);
+    let hi = fma(fma(fma(fma(c[7], x2, c[6]), x2, c[5]), x2, c[4]), x2, c[3]);
+    fma(hi, x4 * x4, lo) * x
+}
+
 // acos_poly (see src/lib.rs), scored as the *whole* acos(x) formula for
 // x >= 0 (sqrt(1-x)*acos_poly(x)) rather than the bare poly value -- the
 // sqrt factor's own rounding interacts with the poly, so tuning the poly
@@ -794,6 +812,20 @@ fn main() {
         // zero-seeded).
         let init3 = [0.0616303, 0.75416583, 0.22413336, 1.08749911];
         tune("atan_three", &atan_three_c, &|x| x.atan(), &grid, &init3);
+
+        // Pure-poly latency tier: scipy-derived degree-17 seed (least_squares
+        // odd-poly fit against atan(x) directly over [0,1], not zero-seeded).
+        let init_pure = [
+            -0.33333168,
+            0.19994266,
+            -0.14216056,
+            0.10689226,
+            -0.07608681,
+            0.04395558,
+            -0.01687014,
+            0.0030569030,
+        ];
+        tune("atan_pure_poly", &atan_pure_poly_c, &|x| x.atan(), &grid, &init_pure);
     }
     if which.contains("acos") {
         // acos/asin's near-1 branch both evaluate this for x = |input| in

@@ -137,6 +137,7 @@ fn main() {
         "asin",
         "acos",
         "atan",
+        "atan_latency",
         "atan2",
         "tan",
         "erf",

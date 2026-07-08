@@ -292,6 +292,12 @@ fn main() {
     check("atan(0)", atan(0.0), 0.0);
     check("atan(inf)", atan(f32::INFINITY), std::f32::consts::FRAC_PI_2);
     check("atan(-inf)", atan(f32::NEG_INFINITY), -std::f32::consts::FRAC_PI_2);
+    check("atan_latency(0)", atan_latency(0.0), 0.0);
+    check("atan_latency(-0)", atan_latency(-0.0), -0.0);
+    check("atan_latency(inf)", atan_latency(f32::INFINITY), std::f32::consts::FRAC_PI_2);
+    check("atan_latency(-inf)", atan_latency(f32::NEG_INFINITY), -std::f32::consts::FRAC_PI_2);
+    check("atan_latency(nan)", atan_latency(f32::NAN), f32::NAN);
+    check("atan_latency(1)", atan_latency(1.0), atan(1.0));
     check("atan2(1,0)", atan2(1.0, 0.0), std::f32::consts::FRAC_PI_2);
     check("atan2(-1,0)", atan2(-1.0, 0.0), -std::f32::consts::FRAC_PI_2);
     // atan2(-0.0, +0.0) used to lose its sign (IEEE754's "+0 + -0 = +0"

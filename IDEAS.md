@@ -1051,6 +1051,28 @@ brainstorm backlog lives at the bottom of this file.
   idea, not just after, once enough instances of it have piled up in
   this file.**
 
+- **Pure-poly atan latency tier, implemented as `atan_latency`
+  (2026-07-08)**: `atan_poly`'s 3/3 rational puts a division on the
+  critical path (can't start until the numerator/denominator resolve);
+  a division-free odd degree-17 poly (fit directly against atan(r) over
+  r in [0,1], scipy-seeded, split into two 4-deep-Horner halves combined
+  with one final fma so both halves evaluate in parallel) trades that
+  division for more fma depth instead. Confirmed the exact "opposite
+  tradeoff" shape the backlog predicted: mca latency 61.09→59.09 cyc
+  (-3.3%), throughput 1.491→1.611 cyc/elem (+8.1% worse). Accuracy is
+  not a tradeoff here — fuzz confirms avg/max ulp 0.052/3 vs `atan`'s own
+  0.068/3, a slight improvement, not a cost. Wall-clock quickbench
+  latency was noisier than mca across repeated runs (sometimes better,
+  sometimes worse, within this machine's usual thermal noise), but
+  throughput consistently measured worse across every run, matching
+  mca's prediction. Shipped as an explicit opt-in tier rather than a
+  replacement — same shape as `sinh_throughput`/`cosh_throughput`
+  (same accuracy, different latency/throughput profile, pick based on
+  calling context) — for a single serial-chain call where per-call
+  latency matters more than array-loop throughput. Full harness
+  integration (edgecheck bit-exact on all special values, codegen_check
+  clean, quickbench, mca, readme) done; commit follows.
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
@@ -1296,14 +1318,6 @@ legitimate direction here, unlike on most targets.
   contract makes it optional, not required).
 
 ### atan / asin / acos
-
-- **Pure-poly atan latency tier**: atan_poly's division sits on the
-  critical path (unlike cbrt's early rcp, it can't start until the poly
-  numerator resolves... actually until x2 does). An odd degree-13..17
-  polynomial needs no division: worse throughput (more fmas on saturated
-  ports), likely better latency (divider's ~11 cyc + dependency removed).
-  Opposite tradeoff to everything else here, so it's a per-caller tier
-  question, not a replacement.
 
 - **Retune asin's 0.25 crossover after any acos_poly change**: fix 5's
   lesson (measure both branches' actual curves, don't trust the inherited

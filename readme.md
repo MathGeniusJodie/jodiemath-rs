@@ -49,6 +49,7 @@ cosh_throughput (in-domain)| 0.061   |     4     |  0.000  |    0
                    asin |    0.030   |     9     |  0.000  |    0
                    acos |    0.496   |     4     |  0.000  |    0
                    atan |    0.068   |     4     |  0.000  |    0
+           atan_latency |    0.052   |     3     |  0.000  |    0
         tan (in-domain) |    0.331   |  2967     |  0.000  |    0
                    erf  |    0.319   |     5     | (no std erf)
          erfc (|x|<=10) |    0.311   |   109     | (no std erfc)
@@ -98,6 +99,7 @@ log10_unchecked|  8.8 ns |     -   |  -
          asin | 19.4 ns |  4.1 ns | 0.2x
          acos | 13.0 ns |  4.0 ns | 0.3x
          atan | 14.0 ns | 19.3 ns | 1.4x
+ atan_latency | 16.9 ns |     -   |  -
       atan2 (*) | 18.2 ns | 23.7 ns | 1.3x
 atan2_unchecked | 18.1 ns |     -   |  -
           tan | 23.5 ns | 27.3 ns | 1.2x
@@ -154,6 +156,7 @@ log10_unchecked| 0.26 ns  |     -    |  -
          asin | 0.46 ns  |  4.01 ns | 8.7x
          acos | 0.26 ns  |  4.01 ns | 15.6x
          atan | 0.33 ns  |  6.32 ns | 19.2x
+ atan_latency | 0.43 ns  |     -    |  -
   atan2 (*) | 0.48 ns  | 10.33 ns | 21.5x
 atan2_unchecked | 0.48 ns  |     -    |  -
           tan | 0.76 ns  |  9.07 ns | 11.9x
@@ -213,6 +216,7 @@ atanh               |          79.99 |             4.331
 asin                |          59.03 |             0.968
 acos                |          37.11 |             0.820
 atan                |          61.09 |             1.491
+atan_latency        |          59.09 |             1.611
 atan2               |          61.17 |             1.532
 tan                 |          71.02 |             2.532
 erf                 |          91.74 |             2.871
