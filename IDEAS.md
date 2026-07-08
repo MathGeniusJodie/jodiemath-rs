@@ -1359,11 +1359,12 @@ brainstorm backlog lives at the bottom of this file.
   region-name-to-table-row mapping is a hardcoded `order` array, not
   derived from the compiled regions automatically — a new marker
   function's rows silently don't print (no error, just missing from the
-  table) until its name is added there too; (2) `mca.rs` doesn't actually
-  take a filter argument at all despite looking like it might (`./mca
-  powf` prints the *entire* table, the argument is silently ignored) —
-  don't rely on that argument to narrow output, pipe through `grep`
-  instead. Commit `<pending>`.
+  table) until its name is added there too; (2) `mca.rs` never actually
+  called `std::env::args()` at all despite looking like it might filter
+  (`./mca powf` printed the *entire* table, silently) — fixed with real
+  filter support (same substring-match idiom as `quickbench.rs`'s own
+  `run()` closure) in the same commit, so this is no longer a trap for
+  the next session. Commit `ecc8df8`.
 
 ---
 

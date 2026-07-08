@@ -18,6 +18,14 @@ include!("support/mca_common.rs");
 const MCA_ITERATIONS: u32 = 100;
 
 fn main() {
+    // Unlike quickbench, this used to silently ignore any argument (no
+    // env::args() call at all) -- `./mca powf` looked like it filtered but
+    // actually always printed the full ~52-row table. Real filter support:
+    // still recompiles/reruns llvm-mca over everything (region names aren't
+    // known until the asm exists), just narrows the printed rows.
+    let args: Vec<String> = std::env::args().collect();
+    let filter = args.get(1).map(|s| s.as_str()).unwrap_or("");
+
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
 
     // Cargo's fingerprint cache doesn't account for the `--emit=asm` passed
@@ -161,6 +169,9 @@ fn main() {
     println!("{:19} | latency (cyc) | throughput (cyc)", "");
     println!("{:-<19}-|-{:->14}-|-{:->17}", "", "", "");
     for key in order {
+        if !filter.is_empty() && !key.contains(filter) {
+            continue;
+        }
         println!(
             "{:19} | {:>14} | {:>17}",
             key,
