@@ -61,17 +61,27 @@ brainstorm backlog lives at the bottom of this file.
   poly's domain. Max ulp unchanged (2→2), avg ulp barely moved
   (0.00248→0.00244) — already near f32's precision floor. Not applied.
 
-- **expm1 Pade degree bump, numerator degree 3 → 5 (2026-07-08)**: added a
-  new odd term (new `expm1_near0_deg5_c` in `tune.rs`, `"expm1_near0"`
-  arg), seeded at 0.0 so it starts bit-identical to the shipped 5-
-  coefficient form. Coordinate descent left the new coefficient at exactly
-  0.0 and every other coefficient unmoved — a zero-move local optimum,
-  same signature as the `exp2`/`log_2` coefficient-refit entry above and
-  this session's `acos_poly8`/ln/log10 refits. No headroom found on
-  `tune.rs`'s own grid (known to be coarser than `accuracy.rs`'s exhaustive
-  sweep, but a *zero*-move result doesn't need the denser sweep to trust —
-  there's nothing for it to reveal). Not adopted; `src/lib.rs` never
-  touched.
+- **expm1 Pade degree bump, numerator degree 3 → 5 (2026-07-08, later
+  re-checked with a proper scipy seed instead of 0.0, still not
+  adopted)**: originally added a new odd term (`expm1_near0_deg5_c` in
+  `tune.rs`, `"expm1_near0"` arg), seeded at 0.0 — a zero-move local
+  optimum, later understood (see this file's Cross-cutting tuner-
+  methodology finding) to likely be the zero-seed trap rather than a
+  genuine floor. Re-tested with a real
+  scipy `least_squares` fit as the seed (found max abs error 3.4e-9 vs
+  the shipped form's 5.3e-8, ~15x better in isolation) — this time real
+  headroom *did* show up in avg ulp (fuzz + exhaustive: 0.1382→0.1345)
+  but **not in max ulp** (exhaustive: 6→6 unchanged, worst case at
+  x≈1.09, which is in `expm1`'s *other* branch — plain `exp(x)-1`
+  for `|x|≥0.5` — entirely untouched by this change). So unlike `atan`'s
+  degree bump, the extra numerator degree here improves the branch it
+  targets but doesn't move the function's actual worst case at all, and
+  it cost real throughput (mca 1.779→1.905 cyc/elem, +7.1% worse,
+  cascading to `tanh` since it calls `expm1` internally). Reverted;
+  `src/lib.rs` and `tune.rs` restored. If `expm1`'s max ulp 6 is ever
+  worth chasing, the `b = exp(x)-1` branch (or `exp`'s own accuracy near
+  x≈1) is where the actual headroom would need to come from, not this
+  branch.
 
 ## cbrt family
 
