@@ -1488,7 +1488,20 @@ legitimate direction here, unlike on most targets.
   bad bit patterns (1-2 vcmpps+blend if the misses share a mantissa or
   cluster). Fragile (any refit invalidates the list) and only sane where
   the count is tiny and stable; record which functions actually have
-  concentrated misses first.
+  concentrated misses first. Checked erfc (2026-07-08), the obvious
+  candidate given three separate refit attempts all converged on the same
+  reported "worst x ~8.6-9.0" -- scanned x in [0,15] and found ~4900 points
+  with ulp>=90, spread *continuously* across x in [8.00, 9.17], not a
+  concentrated handful. Makes sense in hindsight: the root cause (already
+  diagnosed, see erfc compensated-Horner's entry) is a continuous precision
+  loss in the upstream exponent computation across a whole magnitude band,
+  not a few isolated rounding-boundary coin-flips -- exactly the "systematic
+  vs. rare-tie-break" distinction that determines whether this idea even
+  applies. Not viable for erfc. cbrt_accurate's own single recurring bad
+  mantissa (0x353b5) would fit the "tiny and stable" bar but is an
+  already-decided won't-fix, not something to patch. No other function in
+  this crate is known to have a concentrated-miss profile; this idea stays
+  parked until one shows up.
 
 - **FTZ/DAZ feature flag**: under a cargo feature declaring "caller runs
   with FTZ+DAZ on" (the common game/audio configuration), every denormal
