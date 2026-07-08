@@ -580,15 +580,34 @@ legitimate direction here, unlike on most targets.
   Needs design work, but callers wanting both currently pay 2x the most
   expensive reduction in the crate.
 
-- **tan via mod-pi/2 reduction + dedicated tan rational with reciprocal
-  branch (sleef-style)**: reduce r to [-pi/4, pi/4] with q = round(x·2/pi),
-  then tan(x) = tan(r) or -1/tan(r) by q's parity. This dodges the exact
-  failure mode of both rejected fused-tan attempts (they evaluated near
-  the pole; here the pole becomes a well-conditioned reciprocal of a
-  near-zero-argument value). Costs: a new reduction constant set (pi/2
-  split), a rational poly, one division, one select. Current tan max ulp
-  is ~3000 near poles — this is the only idea on the list that could fix
-  that.
+- **tan via mod-pi/2 reduction + dedicated tan poly with reciprocal branch
+  (2026-07-08), implemented and measured — premise was wrong, real
+  regression on every axis, reverted**: the backlog framed this as fixing
+  "max ulp ~3000 near poles" via `sin(x)/cos(x)` allegedly amplifying
+  error when dividing by a near-zero `cos(x)`. Implemented in full (new
+  `PI_HALF_A..D` Cody-Waite split, `q=round(x*2/pi)`, `r` in `[-pi/4,
+  pi/4]`, a dedicated degree-6 `tanf_poly(r)` fitted with scipy, `-1/t`
+  reciprocal branch by q's parity) — and direct spot-checks at exact odd
+  multiples of pi/2 (`k*pi/2` for `k` up to 1001) showed the *old*
+  `sin(x)/cos(x)` form was already 0-1 ulp exactly at the actual poles.
+  The premise doesn't hold for this crate: `sin`/`cos` preserve *relative*
+  precision even as their value shrinks toward zero (their own reduction
+  + poly don't suffer cancellation), so dividing two independently-
+  accurate values doesn't catastrophically amplify error the way the
+  backlog assumed — the real ~3000 max ulp turned out to come entirely
+  from `sin`/`cos`'s own well-known large-`|x|` degradation near their
+  *domain* cliff (~1.3e7), inherited by any tan built on top, not from
+  evaluating near a pole at moderate `x` at all. Measured comparison
+  (exhaustive-adjacent fuzz, bucketed by `|x|`): the new reduction is
+  *worse* in every practical bucket (`|x|<10`: max ulp 4→5; `|x|<1000`:
+  4→5; `|x|<1e6`: 9→17; `|x|<2^22*pi/2≈6.6e6`: 136→9656) and additionally
+  has a *narrower* safe domain than the old form (its own cliff sits at
+  `2^22*(pi/2)≈6.6e6`, half of `sin`/`cos`'s `2^22*pi≈1.3e7`, since `q`'s
+  magnitude scales with `2/pi` instead of `1/pi`). Reverted; `src/lib.rs`
+  untouched. **General lesson: before implementing a fix framed around
+  "operation X amplifies error near Y," check the actual current
+  behavior at Y directly (a handful of spot-check values) — here it took
+  under a minute and would have saved the whole implementation effort.**
 
 - **cos (fast tier): dedicated even poly in r²**: q = round(x/pi) same as
   sin, cos(x) = ±cos(r) with cos poly = even, killing the -0.5/+0.5
