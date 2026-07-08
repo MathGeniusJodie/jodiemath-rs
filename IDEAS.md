@@ -1246,6 +1246,42 @@ brainstorm backlog lives at the bottom of this file.
   to pursue this, and the quick check confirms rather than refutes it,
   so there's nothing more to gain from a full implementation.
 
+- **Simulated annealing / basin-hopping over coefficient space
+  (2026-07-08), implemented and tested on acos_poly — rejected, and it
+  walked straight into the exact known trap this file already documented
+  for cbrt_throughput's tuning.** Added `tune_basin_hop` to `tune.rs`:
+  runs the usual single-axis coordinate descent to a local optimum,
+  then repeatedly perturbs 2-3 random coefficients simultaneously (a
+  wider jump than the descent's own ±16-per-step reach, meant to cross
+  "diagonal valleys" a single-axis search can't) and re-descends,
+  keeping the result only if it improves. First attempt used the full
+  10000-step grid `acos_poly`'s own tuning already uses and 100-2000
+  restarts — far too slow to be practical (each restart re-runs a full
+  descent; killed after several minutes with no result). Switched to a
+  100x coarser grid (1M-step) for speed, 50 restarts: found a candidate
+  reporting max ulp 2 vs. the single-axis descent's max 3 *on that same
+  coarse grid*. Implemented it for real and checked against the actual
+  accuracy.rs fuzz (100M samples) before trusting it, given this file's
+  own established discipline: the candidate measured max ulp 4 (no
+  better than shipped) and avg ulp 0.9611 vs. shipped's 0.4961 — nearly
+  *double*, a real regression, not the improvement the coarse grid
+  promised. Root cause is the same `score()`-returns-`(max,sum)`-compared-
+  by-Rust's-default-tuple-ordering issue already documented for
+  cbrt_throughput: `descend()` (the basin-hop's own inner loop) inherits
+  this exact max-first bias, so it can find a coefficient set that
+  shaves the *coarse grid's* worst case while quietly wrecking the
+  average on the *real* domain the coarse grid doesn't fully represent.
+  Not adopted; `src/lib.rs`/`accuracy.rs` scratch reverted, kept
+  `tune_basin_hop` in `tune.rs` as reference infra (its own doc comment
+  now documents this exact failure prominently, so a future user doesn't
+  have to rediscover it). **General lesson: a *new* search technique
+  built on top of `tune()`'s existing `score()`/comparison machinery
+  inherits that machinery's known flaws automatically — extending the
+  tuner doesn't launder away the max-first-bias caveat already on record
+  for the base coordinate descent, and any new tuning tool built this way
+  needs the same "verify against real fuzz, don't trust the tool's own
+  report" discipline from day one, not just the original `tune()`.**
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
@@ -1275,11 +1311,6 @@ legitimate direction here, unlike on most targets.
   this session, no longer an open residual.) `sollya` is not installed on
   this machine (`which sollya` finds nothing) -- would need it added
   first, a bigger step than this loop should take unilaterally.
-
-- **Simulated annealing / basin-hopping over coefficient space**: same
-  motivation as above but no new tooling — perturb 2-3 coefficients at
-  once (the coordinate-descent tuner only moves one axis at a time, so it
-  can't cross diagonal valleys). Cheap to bolt onto tune.rs.
 
 - **Exhaustive/rlibm-style correctly-rounded coefficient search for the
   smallest polys**: for a 4-coefficient poly over a bounded f32 domain, the

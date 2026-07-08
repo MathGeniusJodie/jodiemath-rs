@@ -643,6 +643,95 @@ fn tune(
     );
 }
 
+// IDEAS.md's "Simulated annealing / basin-hopping over coefficient
+// space" idea, tried on acos_poly and rejected (2026-07-08): tune()'s
+// coordinate descent only moves one axis at a time, so it can't cross a
+// "diagonal valley" (a direction where improvement requires two or more
+// coefficients to move together, each individually making the score
+// worse). Runs the usual single-axis descent to a local optimum first,
+// then repeatedly perturbs 2-3 random coefficients simultaneously (a
+// wider jump than descent's own +-16 step) and re-descends from there,
+// keeping the result only if it beats the current best.
+//
+// Inherits the exact same max-first-tuple-comparison trap already found
+// for cbrt_throughput's own tuning (`score()` returns `(max, sum)`,
+// compared via Rust's default tuple ordering, max first): confirmed
+// bitten by it directly -- on acos_poly with a coarse 1M-step grid (for
+// speed; the full 10000-step grid makes even 50 restarts too slow to be
+// practical, each restart re-running a full descent), 50 restarts found
+// a candidate reporting max 2 vs. the single-axis descent's max 3 on
+// that same coarse grid -- but on the *real* accuracy.rs fuzz (100M
+// samples, the actual measure that matters), that candidate came out at
+// max ulp 4 (same as shipped, not an improvement) and avg ulp 0.9611 vs.
+// shipped's 0.4961 -- avg nearly *doubled*. Any result from this
+// function needs the same real-fuzz verification `tune()`'s own results
+// do; don't trust the coarse-grid "improvement" number by itself.
+fn tune_basin_hop(
+    name: &str,
+    f: &dyn Fn(f32, &[f32]) -> f32,
+    reference: &dyn Fn(f64) -> f64,
+    grid: &[f32],
+    init: &[f32],
+    restarts: usize,
+) {
+    fn descend(
+        f: &dyn Fn(f32, &[f32]) -> f32,
+        reference: &dyn Fn(f64) -> f64,
+        grid: &[f32],
+        start: &[f32],
+    ) -> (Vec<f32>, (u64, u64)) {
+        let mut c = start.to_vec();
+        let mut best = score(f, reference, grid, &c);
+        let mut improved = true;
+        while improved {
+            improved = false;
+            for i in 0..c.len() {
+                for delta in [1i32, -1, 2, -2, 4, -4, 8, -8, 16, -16] {
+                    let mut trial = c.clone();
+                    trial[i] = f32::from_bits((trial[i].to_bits() as i32 + delta) as u32);
+                    let s = score(f, reference, grid, &trial);
+                    if s < best {
+                        best = s;
+                        c = trial;
+                        improved = true;
+                    }
+                }
+            }
+        }
+        (c, best)
+    }
+
+    let (mut c, mut best) = descend(f, reference, grid, init);
+    println!(
+        "{name}: single-axis descent max {} avg {:.5}",
+        best.0,
+        best.1 as f64 / grid.len() as f64
+    );
+
+    use rand::RngExt;
+    let mut rng = rand::rng();
+    for _ in 0..restarts {
+        let mut trial_start = c.clone();
+        let n_perturb = 2 + (rng.random::<u8>() % 2) as usize; // 2 or 3
+        for _ in 0..n_perturb {
+            let idx = (rng.random::<u32>() as usize) % trial_start.len();
+            let delta = (rng.random::<i32>() % 64) - 32; // wider than descend's own +-16
+            trial_start[idx] = f32::from_bits((trial_start[idx].to_bits() as i32 + delta) as u32);
+        }
+        let (c_trial, s_trial) = descend(f, reference, grid, &trial_start);
+        if s_trial < best {
+            best = s_trial;
+            c = c_trial;
+        }
+    }
+    println!(
+        "{name}: basin-hopped ({restarts} restarts) max {} avg {:.5}  coeffs: {:?}",
+        best.0,
+        best.1 as f64 / grid.len() as f64,
+        c.iter().map(|v| format!("{v:e}")).collect::<Vec<_>>()
+    );
+}
+
 // Like tune(), but never perturbs coefficient index 0 -- for cases where
 // that coefficient is a mathematically-required exact value (e.g.
 // log_2's leading term, exactly log2(e)), not a free empirical parameter.
@@ -839,6 +928,18 @@ fn main() {
         }
         let init = [2.2960256e-3, -1.1146317e-2, 2.6900213e-2, -4.8802543e-2, 8.8755615e-2, -2.1458544e-1, 1.5707963];
         tune("acos_poly", &acos_poly_c, &|x| x.acos(), &grid, &init);
+        // Coarser grid (100x fewer points) specifically for the basin-hop
+        // phase, so each of many restarts' full re-descent stays fast --
+        // the single-axis result above already confirms the full grid's
+        // own local optimum, this just needs a representative proxy to
+        // screen many candidate basins quickly.
+        let mut coarse_grid = vec![];
+        let mut b = 0.0f32.to_bits();
+        while b < 1.0f32.to_bits() {
+            coarse_grid.push(f32::from_bits(b));
+            b += 1_000_000;
+        }
+        tune_basin_hop("acos_poly_bh", &acos_poly_c, &|x| x.acos(), &coarse_grid, &init, 50);
     }
     if which.contains("asinacos") {
         // asin now calls acos_poly_c directly for a >= 0.25 (pi/2 -
