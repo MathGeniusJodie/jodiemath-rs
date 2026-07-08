@@ -416,6 +416,36 @@ brainstorm backlog lives at the bottom of this file.
   already ~1 there), so it was never actually accurate as a direct erfc
   approximation, just close enough in erf's shadow. Not adopted.
 
+- **powf_checked's ~150 max ulp investigated (2026-07-08): the backlog's
+  diagnosis ("exp2_checked's double-rounding into denormals") doesn't
+  survive direct measurement — the real residual lives somewhere in the
+  `log2_df`/`exp2_checked_df` double-float argument chain, not in
+  `exp2_checked`'s own rounding, and isn't a simple fix.** First checked
+  the stated premise directly: a domain-restricted sweep of
+  `exp2_checked` alone, restricted to `x` in `[-151,-120]` (its actual
+  denormal-output zone), still measured max ulp **1** — i.e.
+  `exp2_checked` itself is *not* measurably broken near the denormal
+  boundary, contradicting the "double-rounding into denormals" theory at
+  face value. Next, found `powf_checked`'s actual worst case via a
+  targeted 20M-sample search (correcting a reference-computation bug
+  along the way — `x.abs().powf(y)` alone doesn't reproduce the correct
+  NaN for negative-base/non-integer-exponent, needed an explicit
+  integer/parity check matching the crate's own convention): the worst
+  case found was `x≈0.895`, `y≈-789.4`, landing near the exponent range's
+  *upper* boundary (~125.7, close to `exp2_checked`'s +128 ceiling), not
+  the lower/denormal one at all. Checked `exp2_checked` directly at that
+  exact bit-pattern argument (not a re-derived f64 approximation, which
+  gave a misleadingly different value the first time) — it was
+  bit-exact. So the ~150 max ulp residual isn't `exp2_checked`
+  mis-rounding its argument; it's more likely a precision limit in how
+  `log2_df(ax) * y` (the `Df32` multiply) or `exp2_checked_df`'s own
+  reconstruction handles this specific regime. Not root-caused further
+  this session (would need tracing through the `Df32` arithmetic
+  step-by-step at this exact input, a bigger investigation than fits
+  here) — the backlog's "one extra multiply, only when denormal" framing
+  is not the right fix given where the actual worst case lives. No code
+  changed.
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
@@ -581,11 +611,6 @@ legitimate direction here, unlike on most targets.
   sin_checked's reduction, with two correction candidates instead of one.
   Heavy; only worth it if a real use case needs |x/y| > 2^24.
 
-- **powf_checked denormal-boundary fixup**: the remaining ~150 max ulp is
-  exp2_checked's double-rounding into denormals; computing 2^(k+64)·p and
-  multiplying by 2^-64 at the end (one extra multiply, only when the
-  result is denormal-range) would make the final rounding single. Also
-  fixes the same characteristic in exp2_checked itself if done there.
 
 - **Small-poly Estrin audit (asin_small, sinh_small)**: both are 3-deep
   Horner in x²; Estrin gets them to 2-deep + one extra multiply. Latency-
