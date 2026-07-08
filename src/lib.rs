@@ -1143,17 +1143,51 @@ pub fn cosh_throughput(x: f32) -> f32 {
     0.5 * (e + 1.0 / e)
 }
 
-/// tanh(x) = (e^2x - 1) / (e^2x + 1) = expm1(2x) / (expm1(2x) + 2), reusing
-/// expm1's already-correct small-x handling (its own Pade branch below
-/// |x|<0.5) instead of computing exp2(2x) and cancelling `1.0 - (~1.0)`
-/// directly, which lost essentially all precision for small x (a fuzz
-/// sweep found this the same 300-million-ulp-average class of bug as
-/// log1p's, before that fix -- see IDEAS.md). Still inherits exp's
-/// unchecked-domain limit via expm1 (halved range, same as before: expm1
-/// sees 2x).
+/// tanh(x) = (e^2x - 1) / (e^2x + 1) = expm1(2x) / (expm1(2x) + 2), same
+/// formula as before, reusing expm1's already-correct small-x handling
+/// (its own Pade branch below |x|<0.5) instead of computing exp2(2x) and
+/// cancelling `1.0 - (~1.0)` directly, which lost essentially all
+/// precision for small x (a fuzz sweep found this the same
+/// 300-million-ulp-average class of bug as log1p's, before that fix --
+/// see IDEAS.md).
+///
+/// `2*x` is now clamped to `[-87.0, 88.0]` before reaching `expm1`
+/// (2026-07-08). Previously the raw `2*x` inherited exp's unchecked-
+/// domain garbage for |x| > ~44 (2x past ~88.7) -- verified as a real
+/// bug, not just theoretical: `tanh(50)`/`tanh(1000)`/`tanh(f32::MAX)`
+/// all returned NaN where std correctly saturates to 1. IDEAS.md's
+/// backlog proposed fixing this via `tanh(x) = -expm1(-2|x|)/
+/// (expm1(-2|x|)+2)` (always-nonpositive argument, "never overflows"),
+/// reasoning that expm1's negative side only ever saturates gracefully
+/// -- turned out to need verification, not just trust: `exp()` itself is
+/// *not* gracefully monotonic outside its documented ~[-87.3, 88.7)
+/// domain, it's genuine garbage in both directions (spot checks found
+/// `exp(-150)=0` correctly but `exp(-200)=inf`, wrong, and worse beyond
+/// that), so the abs-based form still needed a clamp to be safe, at
+/// which point the abs/mulsign restructuring was doing no work the
+/// clamp alone doesn't already do. Measured both (mca): the abs+mulsign
+/// form cost 98.86/2.541 cyc lat/throughput vs. this plain-clamp form's
+/// 94.91/2.567 -- the simpler form has better latency and matches
+/// baseline in-domain accuracy exactly (avg/max ulp 0.1482/8, bit-
+/// identical to the unclamped original, since real inputs never reach
+/// the clamp boundary), where the abs+mulsign form measured very
+/// slightly worse (avg ulp 0.1488) from its extra rounding steps. Kept
+/// the plain clamp. `f32::clamp` returns NaN unchanged if the input is
+/// NaN (unlike `.max`/`.min`), so NaN propagation isn't broken, and the
+/// clamp is lossless even for in-range-but-large x: any x past the
+/// clamp boundary already has a true tanh value of exactly 1.0f32 (or
+/// -1.0f32) many orders of magnitude before reaching it (e^-2*8.3 is
+/// already below ulp(1.0)/2), so clamping produces the bit-identical
+/// correctly-rounded answer, not an approximation. Real remaining cost:
+/// mca latency +4.5% (90.78->94.91 cyc), throughput +18.7% worse
+/// (2.163->2.567 cyc/elem) versus the unclamped original -- accepted per
+/// this crate's own established precedent of paying a real perf cost to
+/// fix a "wrong/NaN for legitimate finite input" domain hole (see sin/
+/// cos's own inf-for-large-x fix), which is a more serious defect class
+/// than an in-domain ulp regression.
 #[inline(always)]
 pub fn tanh(x: f32) -> f32 {
-    let e = expm1(2.0 * x);
+    let e = expm1((2.0 * x).clamp(-87.0, 88.0));
     e / (e + 2.0)
 }
 

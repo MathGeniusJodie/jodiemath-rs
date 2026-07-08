@@ -622,13 +622,6 @@ legitimate direction here, unlike on most targets.
   1 compare chain. Same trick applies to exp's e^r poly. This is the
   gather-free version of the LUT idea round 1 wrote off.
 
-- **tanh via negative-argument expm1**: `tanh(x) = -expm1(-2|x|) /
-  (expm1(-2|x|) + 2)` with mulsign. The argument is always ≤ 0, so expm1
-  stays in [-1, 0] and *never overflows* — the current form inherits exp's
-  unchecked-domain garbage for |x| > ~44, this one saturates to ±1
-  naturally over the whole f32 range. Fixes a real (documented) domain
-  hole at zero-ish cost (abs + mulsign vs. nothing).
-
 - **Dedicated sinh/cosh kernels on the reduced argument**: instead of
   composing exp twice (or the round-1 even/odd trick), do the reduction
   once (k, r) and fit sinh(r)/cosh(r) minimax polys directly on

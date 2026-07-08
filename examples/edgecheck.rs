@@ -142,6 +142,20 @@ fn main() {
     check("sinh(0)", sinh(0.0), 0.0);
     check("cosh(0)", cosh(0.0), 1.0);
     check("tanh(0)", tanh(0.0), 0.0);
+    // Domain hole fixed 2026-07-08: 2*x used to be passed to expm1
+    // unclamped, inheriting exp's unchecked-domain garbage for |x| > ~44
+    // (2x past ~88.7) -- tanh(50)/(1000)/(f32::MAX) all used to return
+    // NaN instead of correctly saturating. Pinned here so it can't
+    // silently come back.
+    check("tanh(50)", tanh(50.0), 1.0);
+    check("tanh(1000)", tanh(1000.0), 1.0);
+    check("tanh(f32::MAX)", tanh(f32::MAX), 1.0);
+    check("tanh(-50)", tanh(-50.0), -1.0);
+    check("tanh(-1000)", tanh(-1000.0), -1.0);
+    check("tanh(-f32::MAX)", tanh(-f32::MAX), -1.0);
+    check("tanh(inf)", tanh(f32::INFINITY), 1.0);
+    check("tanh(-inf)", tanh(f32::NEG_INFINITY), -1.0);
+    check("tanh(nan)", tanh(f32::NAN), f32::NAN);
 
     check("asinh(0)", asinh(0.0), 0.0);
     // small-x cancellation (see asinh's doc comment) is fixed: asinh(x) ~ x

@@ -69,7 +69,7 @@ cbrt_accurate | 17.0 ns | 22.0 ns | 1.3x
         expm1 | 11.3 ns | 13.7 ns | 1.2x
          sinh | 14.0 ns | 14.0 ns | 1.0x
          cosh | 13.8 ns | 14.0 ns | 1.0x
-         tanh | 15.5 ns | 15.6 ns | 1.0x
+         tanh | 17.7 ns | 16.5 ns | 0.9x
         asinh | 43.7 ns | 86.3 ns | 2.0x
         acosh | 35.1 ns | 27.0 ns | 0.8x
         atanh | 23.2 ns |  4.2 ns | 0.2x
@@ -105,7 +105,7 @@ cbrt_accurate | 0.67 ns  | 3.93 ns | 5.9x
         expm1 | 0.46 ns  | 5.56 ns | 12.1x
          sinh | 0.58 ns  | 5.62 ns | 9.7x
          cosh | 0.50 ns  | 5.55 ns | 11.2x
-         tanh | 0.56 ns  | 5.17 ns | 9.3x
+         tanh | 0.64 ns  | 5.23 ns | 8.2x
         asinh | 2.19 ns  | 41.42 ns | 18.9x
         acosh | 1.32 ns  |  6.17 ns | 4.7x
         atanh | 0.79 ns  |  4.54 ns | 5.7x
@@ -143,7 +143,7 @@ sinh                |          58.00 |             2.523
 cosh                |          57.00 |             2.074
 sinh_throughput     |          62.00 |             1.943
 cosh_throughput     |          61.00 |             1.616
-tanh                |          90.78 |             2.163
+tanh                |          94.91 |             2.567
 asinh               |         120.99 |             7.716
 acosh               |         127.75 |             6.588
 atanh               |          79.99 |             4.331
