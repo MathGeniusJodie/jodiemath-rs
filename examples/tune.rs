@@ -159,6 +159,17 @@ fn atan_poly_c(x: f32, c: &[f32]) -> f32 {
     (fma(fma(c[0], x2, c[1]), x2, 1.0) * x) / fma(fma(x2, c[2], c[3]), x2, 1.0)
 }
 
+// Degree bump on atan_poly: 3/3 instead of 2/2 (one more term each in
+// numer/denom). c = [a2, a1, a0, b2, b1, b0]; a2/b2 start at 0.0 so this
+// starts bit-identical to the shipped 2/2 form.
+#[inline(always)]
+fn atan_poly7_c(x: f32, c: &[f32]) -> f32 {
+    let x2 = x * x;
+    let numer = fma(fma(fma(c[0], x2, c[1]), x2, c[2]), x2, 1.0) * x;
+    let denom = fma(fma(fma(c[3], x2, c[4]), x2, c[5]), x2, 1.0);
+    numer / denom
+}
+
 // acos_poly (see src/lib.rs), scored as the *whole* acos(x) formula for
 // x >= 0 (sqrt(1-x)*acos_poly(x)) rather than the bare poly value -- the
 // sqrt factor's own rounding interacts with the poly, so tuning the poly
@@ -518,6 +529,24 @@ fn main() {
         }
         let init = [0.040634338, 0.65748954, 0.17133473, 0.9907859];
         tune("atan_poly", &atan_poly_c, &|x| x.atan(), &grid, &init);
+        // Zero-seeded: gets trapped exactly at the 2/2 form's own optimum.
+        // 0.0's bit pattern is 0x0, so the tuner's integer-bit-step search
+        // (deltas of 1..16 ulp) only reaches denormal-scale values from
+        // there, which have ~zero effect on the polynomial and never score
+        // better -- a "zero-move local optimum" that's really just the
+        // search being unable to leave 0, not evidence of no headroom (an
+        // arbitrary nonzero seed like 1e-3, tried and discarded, did
+        // worse still: it starts from a point worse than the 2/2 form and
+        // the greedy per-coordinate search never recovered, converging to
+        // max ulp 565).
+        let init7 = [0.0, 0.040634338, 0.65748954, 0.0, 0.17133473, 0.9907859];
+        tune("atan_poly7 (3/3)", &atan_poly7_c, &|x| x.atan(), &grid, &init7);
+        // What actually works: a real least-squares Pade fit (scipy, not
+        // a guess) of the 3/3 shape against atan(x) directly over [0,1] --
+        // found max abs error 1.3e-9 vs the 2/2 form's 7.8e-7 (~600x).
+        // Fed as the coordinate-descent starting point instead of 0.0.
+        let init7d = [0.00883003, 0.28497791, 1.12717105, 0.05016619, 0.57181574, 1.46050425];
+        tune("atan_poly7 (3/3, scipy seed)", &atan_poly7_c, &|x| x.atan(), &grid, &init7d);
     }
     if which.contains("acos") {
         // acos/asin's near-1 branch both evaluate this for x = |input| in

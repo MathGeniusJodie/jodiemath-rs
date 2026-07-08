@@ -38,11 +38,11 @@ cosh_throughput (in-domain)| 0.061   |     4     |  0.000  |    0
                   atanh |    0.032   |     3     | 
                    asin |    0.030   |     9     |  0.000  |    0
                    acos |    0.496   |     4     |  0.000  |    0
-                   atan |    0.186   |    18     |  0.000  |    0
+                   atan |    0.068   |     4     |  0.000  |    0
         tan (in-domain) |    0.331   |  2967     |  0.000  |    0
                    erf  |    0.319   |     5     | (no std erf)
          erfc (|x|<=10) |    0.311   |   109     | (no std erfc)
-                  atan2 |    0.136   |    18     |  0.000  |    0
+                  atan2 |    0.069   |     3     |  0.000  |    0
         hypot (bounded) |    0.034   |     1     |  0.000  |    0
         powf (in-domain)|    0.181   |   127     |  0.000  |    1
 ```
@@ -75,8 +75,8 @@ cbrt_accurate | 17.0 ns | 22.0 ns | 1.3x
         atanh | 23.2 ns |  4.2 ns | 0.2x
          asin | 19.4 ns |  4.1 ns | 0.2x
          acos | 13.0 ns |  4.0 ns | 0.3x
-         atan | 16.5 ns | 27.4 ns | 1.7x
-        atan2 | 16.6 ns | 33.8 ns | 2.0x
+         atan | 14.0 ns | 19.3 ns | 1.4x
+        atan2 | 14.1 ns | 23.7 ns | 1.7x
           tan | 23.5 ns | 27.3 ns | 1.2x
           erf | 21.0 ns |     -   |  -
          erfc | 22.9 ns |     -   |  -
@@ -111,8 +111,8 @@ cbrt_accurate | 0.67 ns  | 3.93 ns | 5.9x
         atanh | 0.79 ns  |  4.54 ns | 5.7x
          asin | 0.46 ns  |  4.01 ns | 8.7x
          acos | 0.26 ns  |  4.01 ns | 15.6x
-         atan | 0.62 ns  |  8.28 ns | 13.3x
-        atan2 | 0.62 ns  | 13.30 ns | 21.4x
+         atan | 0.33 ns  |  6.32 ns | 19.2x
+        atan2 | 0.35 ns  |  9.97 ns | 28.2x
           tan | 0.76 ns  |  9.07 ns | 11.9x
           erf | 0.70 ns  |     -    |  -
          erfc | 0.68 ns  |     -    |  -
@@ -149,8 +149,8 @@ acosh               |         127.75 |             6.588
 atanh               |          79.99 |             4.331
 asin                |          59.03 |             0.968
 acos                |          37.11 |             0.820
-atan                |          57.09 |             1.410
-atan2               |          57.17 |             1.467
+atan                |          61.09 |             1.491
+atan2               |          61.17 |             1.532
 tan                 |          71.02 |             2.532
 erf                 |          91.74 |             2.871
 erfc                |          78.09 |             2.599

@@ -19,6 +19,30 @@ brainstorm backlog lives at the bottom of this file.
   shipped coefficients — a literal zero-move local optimum. Both had already
   been tuned in an earlier session; no headroom left.
 
+- **Coordinate-descent tuner methodology finding, "zero-move" isn't always
+  "no headroom" (2026-07-08)**: `tune.rs`'s tuner moves each coefficient by
+  integer *bit-pattern* steps (deltas of ±1..16 ulp). For a brand-new
+  coefficient seeded at exactly `0.0` (bit pattern `0x0`), those steps only
+  reach denormal-scale values, which have ~zero effect on the polynomial
+  and essentially never score better — the search is *structurally unable*
+  to leave 0, not evidence the extra degree of freedom is useless. Confirmed
+  by direct comparison on `atan_poly`'s degree bump (see git history): a
+  zero-seeded 3/3 rational reported "tuned max 18" (identical to the 2/2
+  form, a textbook zero-move result) while a *real* least-squares Pade fit
+  (scipy) of the exact same shape found max ulp 3 on the same grid — a
+  genuine, large local optimum the zero-seed could never reach. An
+  arbitrary nonzero seed (e.g. `1e-3`) isn't a fix either: it can start
+  from a *worse* point than the existing form and the greedy per-
+  coordinate search may never recover (measured: converged to max ulp 565,
+  far worse than not bumping the degree at all). **When a "zero-move"
+  result is reported for a genuinely new coefficient (not a re-tune of an
+  existing one), don't trust it as "no headroom" without first trying a
+  properly-computed nonzero starting point (scipy least_squares / a real
+  Pade or minimax fit) as the tuner's seed.** This may retroactively call
+  into question other zero-move entries in this file that used a bare
+  `0.0` seed for a new coefficient (e.g. `acos_poly8`, `expm1_near0_deg5`)
+  — not re-litigated here, but worth remembering if revisiting them.
+
 ## exp2 / exp / sin / cos / tan
 
 - **Fused sincos / direct tan via shared reduction (2026-07-07), two
@@ -334,6 +358,38 @@ brainstorm backlog lives at the bottom of this file.
   work. Reverted immediately (before mca — the accuracy regression alone
   disqualifies it).
 
+- **erfc: exact exponent via two_prod (2026-07-08)**: computed `xa*xa`'s
+  exact rounding residual (`e = fma(xa,xa,-p)`) and folded `e*LOG2_E` into
+  the exponent (`fma(-e, LOG2_E, -p*LOG2_E)`) instead of dropping it, as
+  the backlog proposed. Real, exhaustively-confirmed accuracy win (avg/max
+  ulp 0.3106/109 → 0.3055/93), but a real mca cost too (latency
+  78.09→82.14 cyc, +5.2%; throughput 2.599→2.788 cyc/elem, +7.3% worse) —
+  unlike `tanh`'s domain-hole fix (a genuine NaN-for-legitimate-input bug),
+  this is just trimming an already-accepted, already-far-over-any-nominal-
+  budget max ulp a bit further (109→93 is still nowhere near the top-of-
+  file "≤2 max" budget this function was never going to hit anyway), so
+  the cost isn't clearly justified by the gain. Not adopted; reverted.
+
+- **erfc in log space, single polynomial over the full [0,10] clamped
+  domain (2026-07-08)**: fit `R(x) = log2(erfc(x)) + x²·log2(e)` via
+  lolremez to replace the n/d rational + division entirely (`erfc(x) =
+  exp2_checked(-x²·log2(e) + R(x))`, same shape `erf`'s own tail branch
+  already uses for `erf`, though `erf_poly` itself turned out unusable
+  here directly — see below). Convergence was poor: degree 10 only
+  reached estimated max error 6.5e-6 (need roughly 1e-7 for a few-ulp
+  result), degree 15 (16 coefficients — far more than any poly in this
+  crate) got to 3.75e-7, still short, and degrees beyond that took over
+  2 minutes without converging. The backlog's own fallback ("erfc domain
+  split... two rationals") is likely necessary for this shape to work at
+  a practical degree; not attempted (bigger scope than fits one pass).
+  Separately confirmed `erf_poly` (already log2(erfc)-shaped internally
+  for `erf`'s own tail branch) can't just be reused for `erfc` directly:
+  swapping it in gave catastrophic error (avg ulp ~297000, max ~3.6e8) —
+  `erf_poly` was fit against *erf's* accuracy objective, where erfc's
+  absolute tininess for large x barely moves erf's own ulp count (erf is
+  already ~1 there), so it was never actually accurate as a direct erfc
+  approximation, just close enough in erf's shadow. Not adopted.
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
@@ -471,16 +527,6 @@ legitimate direction here, unlike on most targets.
   degree-3-poly accuracy at 1 less fma depth, or beat its max ulp 2 at
   equal cost.
 
-## asin / acos / atan
-
-- **atan_poly degree bump (2/2 → 3/3 rational, or higher)**: max ulp 18 is
-  the crate's worst in-budget-relevant offender after erfc; the 2026-07-07
-  refit confirmed the *current form* is at its floor, so more degrees of
-  freedom is the only way down. Each degree adds one fma per chain (numer
-  and denom evaluate in parallel, so latency impact is one fma level per
-  +1 degree on both). atan2 inherits any gain directly — and if atan gets
-  good enough, the previously-useless division-residual correction
-  (rejected above, atan error dominated) becomes worth re-testing.
 
 ## erf / erfc
 
@@ -735,7 +781,7 @@ legitimate direction here, unlike on most targets.
   LOG2_E) had before exp's Cody-Waite fix; do it properly from day one
   with a LOG10_2_HI/LO-style split (constants already exist for log10).
 
-- **atan2_checked**: revisit the rejected division-residual correction
-  *after* any atan_poly accuracy bump — the rejection reason was "atan's
-  own error dominates", which stops being true if atan drops to ~2 ulp.
-  Recorded dependency, not an independent idea.
+- **atan2_checked**: revisit the rejected division-residual correction now
+  that atan_poly is a 3/3 rational (2026-07-08, max ulp 18 -> 4) instead
+  of 2/2 — the rejection reason was "atan's own error dominates," which
+  no longer clearly holds at this much lower error level.

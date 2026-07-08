@@ -1515,24 +1515,45 @@ pub fn asin(x: f32) -> f32 {
 }
 
 // Pade-style rational approximation of atan on [0,1]. Ported from
-// jodiemath's atanf_poly; coefficients refit (2026-07-07) with
-// examples/tune.rs's coordinate-descent tuner against f64::atan over
-// [0,1] (exactly atan's own domain for this poly, via a.min(1/a)). Zero
-// perf cost (same instructions, only the 4 literal constants changed):
-// max ulp 19 -> 18 and avg ulp improved too for both atan and atan2
-// (which calls atan directly) -- unlike asin's mid-branch refit, this one
-// didn't trade one metric for the other, both moved the same direction.
-// A denser tuning grid (39M points vs. this file's 25k) converged to the
-// same coefficients, suggesting this is a genuine local optimum for this
-// coordinate-descent scheme, not an artifact of grid resolution.
+// jodiemath's atanf_poly; degree bumped 2/2 -> 3/3 (2026-07-08, one more
+// term each in numerator/denominator). The naive way to search for this
+// -- coordinate-descend a new 6th coefficient starting from 0.0 -- get
+// trapped: 0.0's bit pattern is 0x0, so the tuner's integer-bit-step
+// search (deltas of 1..16 ulp) only reaches denormal-scale values from
+// there, which have ~zero effect on the polynomial and never score
+// better, so it never moves (a "zero-move local optimum" that's really
+// just the search being unable to leave 0, not evidence of no headroom).
+// An arbitrary small nonzero seed (1e-3) did worse still: it starts from
+// a *worse* point than the shipped 2/2 form and the greedy per-coordinate
+// search never recovered (converged to max ulp 565, far worse than the
+// 2/2 form's 18). What worked: an actual least-squares Pade fit (scipy,
+// not a guess) of the 3/3 shape against atan(x) directly over [0,1] --
+// found max abs error 1.3e-9 vs the 2/2 form's 7.8e-7 (~600x), real
+// headroom neither naive tuner seed could reach. Fed as the coordinate-
+// descent starting point (examples/tune.rs's atan_poly7_c/"atan"):
+// dropped straight to max ulp 3 / avg 0.286 on the tuning grid (from the
+// 2/2 form's 18/1.36) before the descent even needed to move much.
+// Verified against the real crate (not just the tuning grid), exhaustive
+// all-2^32-bit-pattern sweep: atan avg/max ulp 0.186/18 -> 0.068/4;
+// atan2 (which calls this directly, sampled since it takes two f32 args)
+// 0.136/18 -> 0.069/3. mca: one more fma-depth level in both numerator
+// and denominator (evaluated in parallel, so latency cost is one fma,
+// not two) -- real but modest per-call cost (atan 57.09/1.410 ->
+// 61.09/1.491 cyc lat/throughput, atan2 57.17/1.467 -> 61.17/1.532),
+// easily justified by a >4x max-ulp cut on the crate's second-worst
+// accuracy offender.
 #[inline(always)]
 fn atan_poly(x: f32) -> f32 {
-    let a = f32::from_bits(0x3d26709d);
-    let b = f32::from_bits(0x3f285132);
-    let c = f32::from_bits(0x3e2f7213);
-    let d = f32::from_bits(0x3f7da42d);
+    let a2 = 8.830049e-3;
+    let a1 = 2.8497794e-1;
+    let a0 = 1.127171e0;
+    let b2 = 5.0166193e-2;
+    let b1 = 5.718157e-1;
+    let b0 = 1.4605043e0;
     let x2 = x * x;
-    (fma(fma(a, x2, b), x2, 1.0) * x) / fma(fma(x2, c, d), x2, 1.0)
+    let numer = fma(fma(fma(a2, x2, a1), x2, a0), x2, 1.0) * x;
+    let denom = fma(fma(fma(b2, x2, b1), x2, b0), x2, 1.0);
+    numer / denom
 }
 
 /// Straight port of jodiemath's atanf: reciprocates |x| > 1 into range
