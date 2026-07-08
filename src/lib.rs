@@ -892,17 +892,69 @@ pub fn log1p(x: f32) -> f32 {
     if x == 0.0 { x } else { normal }
 }
 
-/// Straight port of jodiemath's expf: exp2(x * log2(e)). Inherits exp2's
-/// unchecked domain (see exp2's doc comment): only accurate while
-/// x*log2(e) stays in [-126, 128), i.e. roughly x in [-87.3, 88.7) --
-/// outside that, exp2's bit-trick construction produces garbage rather
-/// than a clamped/overflowed value. Every other function below that's
-/// built on exp (expm1, sinh, cosh, tanh, powf, erf, erfc) inherits the
-/// same limit; this is a straight port of the C original, which has the
-/// identical gap (its own expf also calls the unchecked exp2f).
+/// exp(x) via a proper Cody-Waite reduction instead of `exp2(x * LOG2_E)`.
+/// The naive form rounds `x * LOG2_E` *once* before ever calling exp2 --
+/// that rounding lands on the *argument*, and since exp2's derivative
+/// scales with exp2 itself, a relative error `delta` in the argument
+/// becomes roughly `delta * ln2` of *relative* error in the result,
+/// growing with `|x|` (worst near exp's own domain ceiling, ~88.7) --
+/// dozens of ulp, confirmed the dominant error source for exp and
+/// everything built on it. Fixed the standard way: `k = round(x*log2e)`,
+/// `r = x - k*ln2` done as an exact Cody-Waite reduction (`LN2_HI`/`LN2_LO`,
+/// the same split `ln`/`log10` already use -- `k*LN2_HI` is exact for this
+/// domain's k, and `x - k*LN2_HI` is exact by Sterbenz since `k*ln2` tracks
+/// `x` closely), then a dedicated degree-5 minimax poly for `e^r` directly
+/// on `[-ln2/2, ln2/2]` (lolremez estimated max error 7.6e-8, ~1.3 ulp),
+/// scaled by `2^k`. Inherits exp2's unchecked domain (see exp2's doc
+/// comment): only accurate while `x*log2(e)` stays in `[-126, 128)`, i.e.
+/// roughly `x` in `[-87.3, 88.7)` -- outside that, the exponent
+/// construction produces garbage rather than a clamped/overflowed value,
+/// same as before. `expm1`, `sinh`, `cosh`, `sinh_throughput`, and
+/// `cosh_throughput` call this directly and inherit both this fix and
+/// that same domain limit (measured: max ulp 63->4 / 64->8, avg ulp
+/// roughly halved, across all of them). `tanh` (via `expm1`) is only
+/// indirectly affected; `powf`/`erf`/`erfc` route through `exp2_checked`
+/// directly and don't call this function at all, so are unaffected
+/// either way.
+///
+/// Scaling by `2^k` needs exp2_checked's own k1/k2 split (not exp2's
+/// simpler single-multiply trick), even though this function is otherwise
+/// unchecked: `round` (unlike `floor`) can push `k` one integer past
+/// where a *single* exponent-field construction stays valid -- e.g.
+/// `x=88.37628` gives `x*log2e=127.50002`, which floor (what exp2 itself
+/// uses) keeps at `k=127` (safely representable) but round pushes to
+/// `k=128`, an exponent field value reserved for inf/NaN that a single
+/// bit-trick multiply can't represent at all (found via a real
+/// `exp(88.37628)=inf` edgecheck-style failure, not reasoned about in
+/// advance) -- splitting into two representable halves sidesteps this by
+/// construction, the same way exp2_checked already does for its own,
+/// wider checked range.
 #[inline(always)]
 pub fn exp(x: f32) -> f32 {
-    exp2(x * LOG2_E)
+    let k = fma(x, LOG2_E, 0.0).round();
+    let r = fma(-k, LN2_HI, x);
+    let r = fma(-k, LN2_LO, r);
+    let c: [f32; 6] = [
+        1.0, // forced exact (was 1.0000000754895702) so exp(0) == 1.0 exactly
+        1.0000000647031426,
+        0.49998869147306002,
+        0.1666632564456679,
+        0.041917526482916918,
+        0.0083811120373467017,
+    ];
+    let r2 = r * r;
+    let r4 = r2 * r2;
+    let l0 = fma(c[1], r, c[0]);
+    let l1 = fma(c[3], r, c[2]);
+    let l2 = fma(c[5], r, c[4]);
+    let r0 = fma(l1, r2, l0);
+    let p = fma(l2, r4, r0);
+    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+    let k1b = fma(k, 0.5, ROUND_MAGIC) - (ROUND_MAGIC - 383.0);
+    let k2b = (k + 766.0) - k1b;
+    let t1 = f32::from_bits((k1b.to_bits() << 8) & EXPONENT_MASK);
+    let t2 = f32::from_bits((k2b.to_bits() << 8) & EXPONENT_MASK);
+    p * t1 * t2
 }
 
 /// A Pade approximant near 0 (where exp(x)-1 loses precision to

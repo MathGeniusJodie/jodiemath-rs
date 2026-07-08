@@ -129,6 +129,15 @@ fn main() {
     check("log1p(-0)", log1p(-0.0), -0.0);
 
     check("exp(0)", exp(0.0), 1.0);
+    // exp's Cody-Waite reduction uses round (not exp2's own floor), which
+    // can push k one integer higher than floor would right at the domain
+    // ceiling -- e.g. x=88.37628 gives x*log2e=127.50002, floor keeps
+    // k=127 (representable by a single exponent-field construction) but
+    // round pushes k=128 (exponent field 255, reserved for inf/NaN, not
+    // representable by a single multiply at all). A real regression this
+    // fix introduced and then fixed with exp2_checked's own k1/k2 split;
+    // pinned here so it can't silently come back.
+    check_finite("exp(88.37628)", exp(88.37628));
     check("expm1(0)", expm1(0.0), 0.0);
     check("sinh(0)", sinh(0.0), 0.0);
     check("cosh(0)", cosh(0.0), 1.0);

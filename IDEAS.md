@@ -153,12 +153,65 @@ branches, no scalar-only intrinsics unless the vector form exists).
 
 ## exp2 / exp2_checked / exp / expm1
 
-- **exp: skip the log2e pre-multiply's rounding**. `exp2(x * LOG2_E)` puts a
-  rounding error on the *argument*, amplified by the derivative — the dominant
-  error for |x| ≳ 1. Standard fix: k = round(x·log2e), r = x − k·LN2_HI −
-  k·LN2_LO (Cody–Waite, exact), poly for e^r on [−ln2/2, ln2/2], scale by 2^k
-  with the existing bit trick. ~2 extra fmas, big avg-ulp win for exp and
-  everything built on it (sinh/cosh/tanh/erf/erfc/powf).
+- **exp: skip the log2e pre-multiply's rounding — done, tested, kept
+  (2026-07-07).** Implemented as specified: `k = round(x*log2e)`,
+  `r = x - k*LN2_HI - k*LN2_LO` (Cody-Waite, reusing the exact same
+  `LN2_HI`/`LN2_LO` split `ln`/`log10` already established), a dedicated
+  degree-5 minimax poly for `e^r` directly on `[-ln2/2, ln2/2]` (lolremez,
+  estimated max error 7.6e-8), scaled by `2^k`.
+  Two real bugs found while implementing, neither anticipated by the
+  idea's own framing:
+  1. A raw lolremez fit doesn't force `p(0) = 1` exactly, so `exp(0)` came
+     out `1.0000001` (1 ulp off) -- caught immediately by edgecheck.
+     Fixed the pragmatic way (not a full re-fit of a `(e^r-1)/r` form,
+     which hung indefinitely in lolremez itself, seemingly on the r=0
+     singularity -- tried, gave up after it stalled on iteration 0 for
+     20+ seconds): forced the fit's constant coefficient to exactly `1.0`
+     directly, a ~7.5e-8 nudge far smaller than the poly's own ~7.6e-8
+     error budget, verified not to matter empirically (numbers below).
+  2. "Scale by 2^k with the existing bit trick" (the idea's own words,
+     meaning exp2's simple single-multiply construction) breaks at the
+     domain ceiling: `round` (unlike `floor`, which exp2 itself uses) can
+     push `k` one integer higher right at the boundary -- `x=88.37628`
+     gives `x*log2e=127.50002`, `floor` keeps `k=127` (representable) but
+     `round` gives `k=128`, an exponent field value reserved for inf/NaN
+     that no single bit-trick multiply can represent at all. Found via a
+     real `exp(88.37628) == inf` failure (should be `2.4e38`), not
+     reasoned about in advance -- a genuine regression this fix itself
+     introduced relative to the old formula's safe range, not a
+     pre-existing gap. Fixed by reusing exp2_checked's own `k1`/`k2` split
+     (two representable halves) instead of the single-multiply trick;
+     pinned in edgecheck so it can't silently regress again.
+  Measured (exhaustive, 2^32 patterns): `exp` avg ulp 0.2878->0.1049
+  (-63%), max ulp 63->4 (-94%); `expm1` avg ulp 0.2394->0.1432 (-40%),
+  max ulp 64->8 (-87%) -- both massive wins, `exp`'s worst case moving
+  from the domain ceiling (~88.7, exactly where the amplified-rounding
+  mechanism predicts) to a small, unremarkable `x`. `sinh`/`cosh`/
+  `sinh_throughput`/`cosh_throughput` (all call `exp` directly) improved
+  similarly (max ulp 63/63/63/64 -> 5/5/7/5). `tanh` (via `expm1`) saw a
+  small *regression* instead (max ulp 5->8, avg roughly unchanged) --
+  matches this section's own standing note below ("re-run their refits
+  afterwards, their current coefficients partially compensate upstream
+  error and will be mis-tuned once exp improves"): tanh's own
+  cancellation-fix coefficients were apparently tuned against exp's old
+  error pattern specifically. Not chased further here (still small, and
+  a separate refit task); `powf`/`erf`/`erfc` don't call this `exp`
+  function at all (they route through `exp2_checked` directly), so are
+  completely unaffected either way -- correcting an assumption in the
+  idea's own original wording, which listed them as inheriting the fix.
+  mca cost is real (the extra Cody-Waite reduction + k1/k2 split aren't
+  free): `exp` 39.00->51.00 cyc latency (+30.8%), 0.974->1.648 cyc/elem
+  throughput (+69.2%); `expm1` +17.0%/+49.8%; `sinh`/`cosh`/
+  `sinh_throughput`/`cosh_throughput` all show a similar +40-70%
+  throughput cost (two of the four latency numbers actually *improved*).
+  Kept as the new default (not tiered as `_checked`) despite the real
+  cost -- unlike remainder_checked/powf_checked's fixes (rare, extreme-
+  input tail cases with no effect on typical use), this idea's own
+  framing calls it "the dominant error for |x| >= 1", meaning it affects
+  *ordinary*, everyday inputs broadly, not a long tail -- the same
+  "closer to a correctness fix than a speed trade" reasoning already
+  used for log1p/erf/erfc's over-budget-but-pervasive bugs earlier this
+  session, not the "offer both" tiering used for rare-tail issues.
 - **Table+poly**: f = j/16 + f', 2^(j/16) from a 16-entry `vpermps` table,
   poly degree drops from 5 to ~2–3. Cuts both latency and width.
 - **Q(f) degree-4 probe** with quantized refit against the ≤0.5-avg budget.
