@@ -1091,11 +1091,16 @@ pub fn tanh(x: f32) -> f32 {
 pub fn asinh(x: f32) -> f32 {
     let ax = x.abs();
     let small = ax < 2048.0;
-    let direct_sq = fma(ax, ax, 1.0).sqrt();
-    let inv_ax2 = 1.0 / (ax * ax);
+    // ax*ax used to be computed 3 times independently (once fused inside
+    // direct_sq's fma, once for inv_ax2, once again for sm1's small-branch
+    // numerator) -- shared here, same "both branches always computed
+    // unconditionally, so shareable" reasoning as erf's own x2 fix.
+    let ax2 = ax * ax;
+    let direct_sq = (ax2 + 1.0).sqrt();
+    let inv_ax2 = 1.0 / ax2;
     let rescaled_sq = ax * (1.0 + inv_ax2).sqrt();
     let sq = if small { direct_sq } else { rescaled_sq };
-    let sm1 = if small { (ax * ax) / (sq + 1.0) } else { sq - 1.0 };
+    let sm1 = if small { ax2 / (sq + 1.0) } else { sq - 1.0 };
     let d = ax + sm1;
     let r = if d.is_finite() { log1p(d) } else { ln(ax) + LN_2 };
     mulsign(r, x)
@@ -1150,6 +1155,14 @@ pub fn asinh(x: f32) -> f32 {
 ///    own fixes elsewhere in this file leave behind.
 #[inline(always)]
 pub fn acosh(x: f32) -> f32 {
+    // NOT the same "shared x2" opportunity asinh's own fix below found:
+    // `direct` needs x*x - 1.0 computed as a *single* rounding (the fma)
+    // specifically because x is near 1 at acosh's own domain boundary,
+    // where x*x - 1.0 is a catastrophic-cancellation subtraction -- a
+    // rounded-then-reused x2 loses exactly the precision that cancellation
+    // needs (tried, measured: max ulp 3 -> 700). `direct` and `inv_x2`
+    // each need their own x*x in a different rounding context, so there's
+    // no real redundant computation to remove here after all.
     let direct = fma(x, x, -1.0).sqrt();
     let inv_x2 = 1.0 / (x * x);
     let rescaled = x * fma(-inv_x2, 1.0, 1.0).sqrt();
