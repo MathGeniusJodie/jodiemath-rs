@@ -1198,6 +1198,35 @@ brainstorm backlog lives at the bottom of this file.
   much"), worth recognizing quickly (a short timeout) rather than
   letting an optimizer grind indefinitely.**
 
+- **Rational (P/Q) refits for sinf_poly and erf_poly (2026-07-08) —
+  closes out the "Rational (P/Q) refits of pure polys" backlog entry
+  entirely: 4 for 4 rejected, no candidate left untested.** Following
+  directly on the log_2/acos_poly rejections above, checked the
+  remaining two named candidates with a short-timeout scipy screen
+  each. `sinf_poly`: fit `(sin(x)-x)/x³` (the shipped poly's actual
+  target, computed via its own convergent Taylor series to sidestep a
+  catastrophic-cancellation bug the first attempt at this script hit
+  computing `sin(x)-x` directly in float64 for small x) as degree-1/1
+  and degree-2/2 rationals, seeded from the shipped poly's own
+  coefficients — both converged (no timeout this time) but landed at
+  max relative error ~8.4e-2, five orders of magnitude *worse* than the
+  shipped 4-coefficient poly's own 1.1e-7. `erf_poly`: fit `log2(erfc(xa))`
+  (erf's tail branch's actual target) as degree-2/2 and degree-3/3
+  rationals, same seeding approach — timed out at 30s for both, the
+  same non-convergence failure mode as `acos_poly`. Not chased further
+  for either. **General lesson: this backlog entry's own framing ("a
+  degree-(m/n) rational typically matches a degree-(m+n) poly's
+  accuracy") turned out not to hold for a single one of its four named
+  candidates in this crate — every candidate either failed to fit at
+  all (`acos_poly`, `erf_poly`) or fit far worse than the incumbent poly
+  (`sinf_poly`), or was ruled out on structural grounds before fitting
+  even mattered (`log_2`). A plausible-sounding general claim about
+  rational vs. polynomial approximation theory doesn't automatically
+  transfer to a *specific* already-well-fit target function — worth
+  remembering before assuming a "rational should beat a poly of similar
+  total degree" framing applies to any particular case without
+  checking.**
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
@@ -1235,14 +1264,6 @@ legitimate direction here, unlike on most targets.
   interval search can find the *global* optimum rather than a local one.
   Realistic for sinf_poly (4 coeffs), cbrt's correction (4), expm1's Pade
   (5), atan_poly (4).
-
-- **Rational (P/Q) refits of pure polys to exploit the idle divider**: a
-  degree-(m/n) rational typically matches a degree-(m+n) poly's accuracy,
-  so e.g. sinf_poly's 4 coeffs → 2/2 rational could cut fma count and
-  Estrin depth at the cost of one division. Latency risk (division sits on
-  the critical path, and unlike cbrt's rcp it can't start early), so this
-  is a throughput idea, not a latency one. Candidates: sinf_poly, erf_poly
-  (log_2 and acos_poly checked and ruled out, see tried-and-rejected log).
 
 - **Batch/slice API tier (`exp2_slice(&[f32], &mut [f32])` etc.)**: the
   crate's whole perf story assumes the *caller's* loop auto-vectorizes;
