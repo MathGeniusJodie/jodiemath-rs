@@ -746,6 +746,52 @@ brainstorm backlog lives at the bottom of this file.
   settled centered-refit and rational-form questions before any Rust
   was written.**
 
+- **"Resurrect the f64-reduction sin/cos as a middle tier" (2026-07-08):
+  the premise didn't survive contact with either git history or a real
+  implementation — rejected on two independent grounds.** First: the
+  backlog's own claim ("the abandoned f64 version... the code already
+  exists and was verified; it's a revert-and-rename") doesn't hold up —
+  a full search of `git log --all` and the reflog found no commit, stash,
+  or working-tree file anywhere containing a genuine hardware-`f64`-based
+  sin/cos reduction; the only "double" reduction in this repo's history
+  is `sin_checked`'s own Df32 (emulated double-float, already shipped),
+  which the backlog itself distinguishes from what it's proposing. There
+  was nothing to revert. Implemented one from scratch anyway to check the
+  underlying idea on its own merits (`sin_mid`/`cos_mid`: cast to `f64`,
+  `q = round(x*FRAC_1_PI)`, `r = (x - q*PI) as f32`, reusing `sinf_poly`
+  directly) — and it fails on accuracy by a wide margin, the second,
+  independent rejection: even in the smallest bucket tested (`|x|<1e6`)
+  max ulp was 637 (avg a reasonable-looking 0.0356, but that average
+  hides the outliers near sin's own zeros, where a tiny absolute
+  reduction error becomes a huge *relative*/ulp error), degrading to
+  millions of ulp by `1e10` and low billions by `1e11`-`1e12` — nowhere
+  close to the claimed "~1e9". Added an f64 two-product compensation for
+  `q*PI`'s own rounding (`e = q.mul_add(PI, -q*PI)`, correcting the
+  *multiplication's* rounding error) before giving up: this helped (max
+  ulp 637→70 in the smallest bucket) but didn't come close to closing the
+  gap, because the dominant remaining error isn't from the multiply's
+  rounding at all — it's that `f64`'s `PI` constant itself is only one
+  ~52-bit word, off from true π by its own fixed ~2^-53 relative error,
+  which no amount of *compensating the arithmetic around it* can correct.
+  Reaching real accuracy would need a genuine hi+lo (Cody-Waite-style)
+  split of π across *two* f64 words — at which point the design is no
+  longer a simple, cheap single-f64 reduction, and starts converging on
+  something not obviously cheaper than `sin_checked`'s existing Df32
+  approach (which already does exactly this kind of split, just in
+  native f32 arithmetic instead). Not implemented; `src/lib.rs`/
+  `accuracy.rs` scratch additions reverted, nothing shipped. **General
+  lesson: "the code already exists, it's a revert" is itself a claim
+  worth checking (`git log --all`/reflog/stash) before assuming the
+  implementation work is already done — here it wasn't, and a from-
+  scratch build was the only way to find out the accuracy claim was also
+  wrong. Separately: a single hardware `f64` word is not a free
+  drop-in replacement for a proper double-double reduction — it has
+  exactly one rounding's worth of headroom over `f32` (roughly 2^-52 vs
+  2^-24, not the "infinite precision" intuition might suggest), and for
+  an argument-reduction problem specifically (subtracting a huge multiple
+  of an irrational constant from a huge value to get a tiny, sign-
+  sensitive residual), that headroom runs out far sooner than expected.**
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
@@ -1012,14 +1058,6 @@ legitimate direction here, unlike on most targets.
   contract before adopting). Applies to fast *and* checked tiers, and
   makes the round-1 sincos idea nearly free (both polys already
   evaluated).
-
-- **Resurrect the f64-reduction sin/cos as a middle tier**: the abandoned
-  f64 version (git history, ~2026-07-06) measured ~1.9/2.3 cyc/elem —
-  roughly 3x faster than today's checked tier — while staying accurate to
-  ~1e9 (vs. the fast tier's 1.3e7 cliff and checked's 1e13). Three-tier
-  fast/medium/checked would cover the "audio/DSP phase accumulator"
-  middle ground the current pair brackets awkwardly. The code already
-  exists and was verified; it's a revert-and-rename.
 
 - **Vectorized Payne-Hanek "exact" tier**: full-range correct reduction
   needs the 2/pi product against x's mantissa with the window selected by
