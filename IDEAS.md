@@ -598,16 +598,28 @@ legitimate direction here, unlike on most targets.
   failure the shifted-sin form avoids. Probably dies for that reason;
   listed so the reasoning is recorded rather than re-derived.
 
-## cbrt
-
-- **Rational correction, (1+r)^(-1/3) ≈ P(r)/Q(r) degree 1/1 or 2/1**: the
-  degree-2 poly cut failed (see above) because 3 poly coefficients can't
-  bend enough; a rational with 4 coefficients has a different (usually
-  better) approximation class for algebraic functions like this one, and
-  cbrt already spends one division (rcp) — mca showed 2 divisions/element
-  still leaves the divider ~idle (cbrt_accurate measurement). Could reach
-  degree-3-poly accuracy at 1 less fma depth, or beat its max ulp 2 at
-  equal cost.
+- **cbrt: rational correction, (1+r)^(-1/3) ≈ P(r)/Q(r), 2/2 with the same
+  4 coefficients as the shipped degree-3 poly (2026-07-08)**: scipy
+  `least_squares` found a 2/2 rational fitting the underlying math
+  ~100x tighter than the shipped poly (max abs error 1.9e-9 vs 1.9e-7,
+  same coefficient count) — looked very promising in isolation. Didn't
+  survive contact with the real crate: `tune.rs`'s own coordinate-descent
+  (seeded from the scipy fit, not 0.0) converged to max ulp unchanged (2)
+  with avg *slightly worse* (0.339→0.359) on the tuning grid, and
+  implementing it directly confirmed this on the real exhaustive/fuzz
+  pipeline too (avg ulp 0.3113→0.4675, max unchanged at 3) — the
+  underlying approximation is tighter, but both forms are already deep
+  enough into f32's own rounding-noise floor (a handful of fma/mul/div
+  ops each contributing up to 0.5 ulp) that a 100x-tighter *mathematical*
+  fit doesn't move the *computed* result's ulp count; the rational's
+  extra division adds one more rounding step, roughly a wash on accuracy
+  or slightly worse. Also failed on speed, contrary to the backlog's
+  "divider is idle" framing: mca latency 35.06→45.06 cyc (+28.5%),
+  throughput 1.629→1.657 cyc/elem (+1.7%, also worse) — unlike
+  `cbrt_normal`'s existing `rcp` (started immediately, independent of the
+  seed chain, so its latency hides behind other work), this new division
+  sits *after* the seed/r computation on the critical path, with nothing
+  to hide behind. Not adopted; reverted.
 
 
 ## erf / erfc
