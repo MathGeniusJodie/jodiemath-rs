@@ -140,6 +140,7 @@ fn main() {
         "hypot",
         "rsqrt",
         "powf",
+        "pown",
         "powf_checked",
         "remainder",
         "remainder_checked",

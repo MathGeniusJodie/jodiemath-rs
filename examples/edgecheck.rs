@@ -324,6 +324,30 @@ fn main() {
     check("rsqrt(-inf)", rsqrt(f32::NEG_INFINITY), f32::NAN);
     check("rsqrt(nan)", rsqrt(f32::NAN), f32::NAN);
 
+    check("pown(2,3)", pown(2.0, 3), 8.0);
+    check("pown(2,0)", pown(2.0, 0), 1.0);
+    check("pown(0,0)", pown(0.0, 0), 1.0);
+    check("pown(0,5)", pown(0.0, 5), 0.0);
+    check("pown(0,-3)", pown(0.0, -3), f32::INFINITY);
+    check("pown(-0,3)", pown(-0.0, 3), -0.0);
+    check("pown(-0,-3)", pown(-0.0, -3), f32::NEG_INFINITY);
+    check("pown(-2,3)", pown(-2.0, 3), -8.0);
+    check("pown(-2,4)", pown(-2.0, 4), 16.0);
+    check("pown(2,-1)", pown(2.0, -1), 0.5);
+    check("pown(nan,2)", pown(f32::NAN, 2), f32::NAN);
+    check("pown(inf,2)", pown(f32::INFINITY, 2), f32::INFINITY);
+    check("pown(inf,-2)", pown(f32::INFINITY, -2), 0.0);
+    check("pown(-inf,3)", pown(f32::NEG_INFINITY, 3), f32::NEG_INFINITY);
+    check("pown(-inf,-3)", pown(f32::NEG_INFINITY, -3), -0.0);
+    // i32::MIN's magnitude is 2^31, needing bit index 31 -- an off-by-one
+    // in an earlier 0..31 iteration range gave 1.0 here instead of 0.0.
+    check("pown(2,i32::MIN)", pown(2.0, i32::MIN), 0.0);
+    check("pown(2,i32::MAX)", pown(2.0, i32::MAX), f32::INFINITY);
+    // Found via fuzzing: computing x^|n| then reciprocating at the end
+    // (instead of inverting x first) overflowed here even though the
+    // true small answer doesn't.
+    check("pown(-1.8449108e19,-2)", pown(-1.8449108e19, -2), 2.937983e-39);
+
     check("powf(2,3)", powf(2.0, 3.0), 8.0);
     check("powf(1,5)", powf(1.0, 5.0), 1.0);
     // powf used to return plausible-looking finite garbage instead of

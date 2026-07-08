@@ -131,5 +131,11 @@ fn main() {
     bench!("rsqrt", rsqrt);
     bench!("powf", |x: f32| powf(x, 2.0));
     bench!("std powf", |x: f32| x.powf(2.0));
+    {
+        // black_box'd once, not per-call -- see pown's own mca_target.rs
+        // comment for why that placement matters.
+        let n = black_box(5);
+        bench!("pown", |x: f32| pown(x, n));
+    }
     bench!("remainder", |x: f32| remainder(x, 3.0));
 }

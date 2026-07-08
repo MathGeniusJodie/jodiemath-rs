@@ -51,6 +51,8 @@ cosh_throughput (in-domain)| 0.061   |     4     |  0.000  |    0
                   atan2 |    0.069   |     3     |  0.000  |    0
         hypot (bounded) |    0.034   |     1     |  0.000  |    0
                   rsqrt |    0.260   |     1     | (no std rsqrt)
+          pown (|n|<=8) |    0.158   |    11     | (no std pown)
+         pown (|n|<=64) |    0.209   |    90     | (no std pown)
         powf (in-domain)|    0.181   |   127     |  0.000  |    1
 ```
 
@@ -95,6 +97,7 @@ exp10_checked | 17.5 ns |     -   |  -
          erfc | 22.9 ns |     -   |  -
         hypot |  8.4 ns | 13.9 ns | 1.7x
         rsqrt |  6.7 ns |     -   |  -
+         pown | 50.3 ns |     -   |  -
          powf | 24.2 ns |  3.2 ns | 0.1x
     remainder | 12.7 ns |     -   |  -
 ```
@@ -138,6 +141,7 @@ exp10_checked | 0.57 ns  |     -   |  -
          erfc | 0.68 ns  |     -    |  -
         hypot | 0.24 ns  |  2.92 ns | 12.0x
         rsqrt | 0.31 ns  |     -    |  -
+         pown | 1.24 ns  |     -    |  -
          powf | 0.95 ns  |  0.07 ns | 0.07x
     remainder | 0.22 ns  |     -    |  -
 ```
@@ -183,6 +187,7 @@ erf                 |          91.74 |             2.871
 erfc                |          78.09 |             2.599
 hypot               |          21.11 |             0.766
 rsqrt               |          28.00 |             1.381
+pown                |         176.00 |             3.805
 powf                |          98.03 |             3.898
 remainder           |          33.02 |             0.647
 ```

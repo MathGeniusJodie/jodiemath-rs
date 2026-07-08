@@ -2091,6 +2091,69 @@ pub fn powf(x: f32, y: f32) -> f32 {
     if y == 0.0 { 1.0 } else { r }
 }
 
+/// x^n for integer `n` (`i32`), via exponentiation by squaring. Each
+/// step is a single correctly-rounded f32 multiply -- no poly, no log/
+/// exp composition -- so this sidesteps `powf`'s own "amplifies log_2's
+/// rounding error by y" issue (see its own doc comment) entirely for
+/// integer exponents.
+///
+/// A first version used a data-dependent `while` loop (trip count =
+/// `n`'s bit length), which only auto-vectorized when `n` happened to
+/// be a *compile-time constant* the compiler could unroll -- checked
+/// directly (`--emit=asm`, a black-boxed runtime `n` fed uniformly to
+/// every array element, the realistic "same exponent, varying base"
+/// calling pattern): zero vector instructions, a genuine violation of
+/// this crate's "every public function must auto-vectorize" hard
+/// requirement, not just a missed optimization. Fixed with a fully
+/// unrolled, branchless design instead: always exactly 32 iterations
+/// (an `i32`'s full magnitude range including `i32::MIN`'s `2^31`, which
+/// needs bit index 31 -- an off-by-one caught directly when a `0..31`
+/// version returned `1.0` instead of `0.0` for `pown(2.0, i32::MIN)`),
+/// squaring `base` unconditionally every step and selecting whether to
+/// fold the current power into `result` based on each bit of `n` in
+/// turn -- the operation *sequence* is now fixed regardless of `n`'s
+/// runtime value, so it vectorizes even for a genuinely per-lane-
+/// *varying* `n` (confirmed via the same `--emit=asm` check: real
+/// `vmulps`/`vblendvps` instructions). Real cost: always pays for 32
+/// squarings + selects regardless of how small `n` actually is, where
+/// the old data-dependent loop only paid for `n`'s actual bit length --
+/// a deliberate throughput-for-correctness trade, since a function that
+/// silently fails to vectorize for its most realistic calling pattern
+/// isn't a function this crate can ship.
+///
+/// `n=0` gives `1.0` for any `x` (including `0.0`, matching `powf`'s own
+/// convention) for free: every one of the 31 iterations selects the
+/// "don't multiply" branch, since `n`'s bits are all zero. Negative `x`
+/// needs no special-casing either -- integer powers of a negative base
+/// are always well-defined (unlike `powf`'s general real-exponent
+/// case), so plain repeated multiplication already gets the sign right.
+#[inline(always)]
+pub fn pown(x: f32, n: i32) -> f32 {
+    // Invert x *before* the squaring loop (not the final result after)
+    // when n is negative -- computing x^|n| first and reciprocating at
+    // the end can overflow at an intermediate squaring step even when
+    // the true (small) final answer wouldn't (found empirically: a
+    // 20M-sample fuzz caught pown(1.8e19, -2) returning 0 instead of the
+    // correct ~2.94e-39, because 1.8e19^2 alone overflows f32 even
+    // though its reciprocal doesn't). Squaring the already-small
+    // reciprocal instead avoids that overflow, and this also handles
+    // 0^negative (`1.0/0.0 = inf`, then `inf^n = inf`, correct) and
+    // inf^negative (`1.0/inf = 0`, then `0^n = 0`, correct) for free,
+    // with no separate final-inversion special case needed.
+    let mut base = if n < 0 { 1.0 / x } else { x };
+    let un = n.unsigned_abs();
+    let mut result = 1.0f32;
+    // 32, not 31: i32::MIN's magnitude is exactly 2^31, needing bit
+    // index 31 -- an off-by-one caught directly (pown(2.0, i32::MIN)
+    // returned 1.0 instead of the correct 0.0 with a 0..31 range).
+    for i in 0..32u32 {
+        let bit_set = (un >> i) & 1 == 1;
+        result = if bit_set { result * base } else { result };
+        base *= base;
+    }
+    result
+}
+
 /// Higher-accuracy variant of [`powf`]: `exp2(log_2(x)*y)` amplifies
 /// log_2's own rounding error by `y` -- for `|y|` large that swamps the
 /// result (hundreds of ulp), since `log_2(x)` is collapsed to a single f32

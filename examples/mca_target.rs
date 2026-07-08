@@ -208,6 +208,20 @@ throughput_fn!(thr_rsqrt, "rsqrt_throughput", rsqrt);
 latency_fn!(lat_powf, "powf_latency", |x: f32| powf(x, 2.0));
 throughput_fn!(thr_powf, "powf_throughput", |x: f32| powf(x, 2.0));
 
+// black_box'd n, computed *once* before the loop/chain (not per-call
+// inside the closure -- that placement let LLVM see through it and
+// simplify pown's fixed 32-iteration loop away, undercounting the
+// realistic "runtime exponent, unknown at compile time" cost this
+// function is actually built for, see its own doc comment).
+latency_fn!(lat_pown, "pown_latency", {
+    let n = black_box(5);
+    move |x: f32| pown(x, n)
+});
+throughput_fn!(thr_pown, "pown_throughput", {
+    let n = black_box(5);
+    move |x: f32| pown(x, n)
+});
+
 latency_fn!(lat_powf_checked, "powf_checked_latency", |x: f32| powf_checked(x, 2.0));
 throughput_fn!(thr_powf_checked, "powf_checked_throughput", |x: f32| powf_checked(
     x, 2.0
@@ -283,6 +297,7 @@ fn main() {
         lat_hypot, thr_hypot;
         lat_rsqrt, thr_rsqrt;
         lat_powf, thr_powf;
+        lat_pown, thr_pown;
         lat_powf_checked, thr_powf_checked;
         lat_remainder, thr_remainder;
         lat_remainder_checked, thr_remainder_checked;
