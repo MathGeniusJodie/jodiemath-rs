@@ -420,6 +420,15 @@ fn main() {
 
     check("powf(2,3)", powf(2.0, 3.0), 8.0);
     check("powf(1,5)", powf(1.0, 5.0), 1.0);
+    // powf_unchecked: contract is x positive/normal/finite, y != 0.0 --
+    // must match powf inside that domain (verified more thoroughly via a
+    // 50M-sample fuzz, not preserved in-repo; these are a permanent
+    // regression guard).
+    check("powf_unchecked(2,3)", powf_unchecked(2.0, 3.0), powf(2.0, 3.0));
+    check("powf_unchecked(1,5)", powf_unchecked(1.0, 5.0), powf(1.0, 5.0));
+    check("powf_unchecked(2,1000)", powf_unchecked(2.0, 1000.0), powf(2.0, 1000.0));
+    check("powf_unchecked(2,-1000)", powf_unchecked(2.0, -1000.0), powf(2.0, -1000.0));
+    check("powf_unchecked(0.86967933,576.48004)", powf_unchecked(0.86967933, 576.48004), powf(0.86967933, 576.48004));
     // powf used to return plausible-looking finite garbage instead of
     // inf/0 once log2(x)*y left the unchecked exp2's domain (see doc
     // comment) -- now correctly saturates.

@@ -2265,6 +2265,22 @@ pub fn powf(x: f32, y: f32) -> f32 {
     if y == 0.0 { 1.0 } else { r }
 }
 
+/// powf without domain/sign checks: valid for `x` positive, normal, and
+/// finite (the same domain [`log_2_unchecked`] requires) and `y != 0.0`.
+/// No handling for negative/zero/denormal/inf/nan `x`, no `y == 0.0`
+/// special case, no negative-base parity handling -- those are exactly
+/// the branches [`powf`]'s own doc comment describes paying on every
+/// call regardless of whether they're ever hit. Mirrors `log_2`/
+/// `log_2_unchecked` and `atan2`/`atan2_unchecked`'s own fast/full-safety
+/// split; `exp2_checked` (not the even-faster `exp2`) is kept since powf's
+/// own doc comment already documents why bare `exp2` silently wraps
+/// around into plausible-looking garbage instead of overflowing --
+/// nothing about this narrower domain contract changes that risk.
+#[inline(always)]
+pub fn powf_unchecked(x: f32, y: f32) -> f32 {
+    exp2_checked(log_2_unchecked(x) * y)
+}
+
 /// x^n for integer `n` (`i32`), via exponentiation by squaring. Each
 /// step is a single correctly-rounded f32 multiply -- no poly, no log/
 /// exp composition -- so this sidesteps `powf`'s own "amplifies log_2's

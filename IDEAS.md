@@ -1327,6 +1327,44 @@ brainstorm backlog lives at the bottom of this file.
   entry in this crate should default to `black_box`-ing both arguments
   from the start, not just the one whose own branches are in question.**
 
+- **powf_unchecked, implemented (2026-07-08), immediate follow-up to the
+  benchmark fix above.** Once the literal-arg fix confirmed `powf`'s own
+  branches (y==0.0 special case, negative-base handling: `x.is_sign_negative()`,
+  `y == y.trunc()`, `parity(y)`, two selects) have real, previously-hidden
+  cost, the natural next step (same shape as `log_2_unchecked`/
+  `atan2_unchecked`/`hypot_unchecked`) was exposing a narrower-contract
+  core that skips them: `powf_unchecked(x, y) = exp2_checked(log_2_unchecked(x) * y)`,
+  domain "x positive/normal/finite (log_2_unchecked's own contract), y !=
+  0.0". Kept `exp2_checked` rather than dropping to the even-faster
+  `exp2`, since `powf`'s own doc comment already documents why bare
+  `exp2` silently wraps into plausible-looking garbage outside its
+  range — nothing about this narrower contract removes that risk.
+  Verified bit-identical to `powf` over 50M in-domain fuzz samples
+  (scratch check, not preserved in-repo) before measuring speed, same
+  discipline as every other `_unchecked` tier. mca: latency 105.03→79.05
+  cyc (-24.7%), throughput 4.662→3.095 cyc/elem (-33.6%). Confirmed on
+  real hardware via quickbench (3 repeated runs, all agreeing in
+  direction and magnitude): latency ~20.7→18.7 ns (-9.7%), throughput
+  ~1.03→0.70 ns (-31.7%) — both axes improve, matching this crate's
+  established `_unchecked` pattern exactly. `codegen_check` confirms
+  clean vectorization (no `call`/saturating-cast in the new throughput
+  region), `edgecheck.rs` got 5 new bit-exact-vs-`powf` regression-guard
+  entries, `accuracy.rs` got a domain-restricted sweep entry (avg/max
+  ulp 0.363/135, expected to differ numerically from `powf`'s own
+  broader-domain 0.181/127 reading purely from sampling a narrower x>0
+  subset — not a real accuracy difference, same non-issue already
+  documented for `log_2_unchecked`). readme's precision/latency/
+  throughput/mca tables updated. Two harness bugs fixed along the way,
+  worth remembering for the next `_unchecked` addition: (1) `mca.rs`'s
+  region-name-to-table-row mapping is a hardcoded `order` array, not
+  derived from the compiled regions automatically — a new marker
+  function's rows silently don't print (no error, just missing from the
+  table) until its name is added there too; (2) `mca.rs` doesn't actually
+  take a filter argument at all despite looking like it might (`./mca
+  powf` prints the *entire* table, the argument is silently ignored) —
+  don't rely on that argument to narrow output, pipe through `grep`
+  instead. Commit `<pending>`.
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED

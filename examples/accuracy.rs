@@ -853,6 +853,16 @@ fn main() {
         let s = fuzz2(TWOARG_SAMPLES, pow_domain, |x: f32, y: f32| x.powf(y), pow_u10);
         report("std powf", &s, t0);
     }
+    if run("powf_unchecked") {
+        // powf_unchecked's own contract: x positive/normal/finite (same as
+        // log_2_unchecked), y != 0.0. Narrower than powf's own domain above
+        // (no negative x), same exponent-range restriction.
+        let pow_domain = |x: f32, y: f32| {
+            x >= f32::MIN_POSITIVE && x.is_finite() && y != 0.0 && (-126.0..128.0).contains(&(x.log2() * y))
+        };
+        let s = fuzz2(TWOARG_SAMPLES, pow_domain, powf_unchecked, pow_u10);
+        report("powf_unchecked (+)", &s, t0);
+    }
     if run("powf_checked") {
         // Same domain as powf's own sweep -- see powf_checked's doc
         // comment for why this variant is substantially more accurate

@@ -62,6 +62,7 @@ hypot_unchecked (bounded, +) | 0.034 |     1     | (bit-identical to hypot on it
           pown (|n|<=8) |    0.158   |    11     | (no std pown)
          pown (|n|<=64) |    0.209   |    90     | (no std pown)
         powf (in-domain)|    0.181   |   127     |  0.000  |    1
+    powf_unchecked (+)  |    0.363   |   135     | (bit-identical to powf on its domain)
 ```
 
 # benchmarks
@@ -114,8 +115,9 @@ hypot_unchecked |  5.0 ns |     -   |  -
   hypot_checked | 19.9 ns | 11.9 ns | 0.6x
         rsqrt |  6.7 ns |     -   |  -
          pown | 50.3 ns |     -   |  -
-      powf (*)| 20.7 ns | 17.5 ns | 0.8x
- powf_checked | 27.4 ns | 17.5 ns | 0.6x
+      powf (*)| 20.7 ns | 16.8 ns | 0.8x
+powf_unchecked | 18.7 ns | 16.8 ns | 0.9x
+ powf_checked | 26.9 ns | 16.8 ns | 0.6x
  remainder (*)|  9.3 ns |     -   |  -
 remainder_checked| 12.7 ns |     -   |  -
 ```
@@ -179,8 +181,9 @@ hypot_unchecked | 0.17 ns  |     -    |  -
   hypot_checked | 0.40 ns  |  2.72 ns | 6.8x
         rsqrt | 0.31 ns  |     -    |  -
          pown | 1.24 ns  |     -    |  -
-      powf (*)| 1.05 ns  |  6.03 ns | 5.7x
- powf_checked | 1.53 ns  |  6.03 ns | 4.0x
+      powf (*)| 1.03 ns  |  5.86 ns | 5.7x
+powf_unchecked | 0.70 ns  |  5.86 ns | 8.3x
+ powf_checked | 1.46 ns  |  5.86 ns | 4.0x
  remainder (*)| 0.16 ns  |     -    |  -
 remainder_checked| 0.29 ns  |     -    |  -
 ```
@@ -238,6 +241,7 @@ hypot_checked       |          57.19 |             1.178
 rsqrt               |          28.00 |             1.381
 pown                |         176.00 |             3.805
 powf                |         105.03 |             4.662
+powf_unchecked      |          79.05 |             3.095
 powf_checked        |         106.31 |             7.359
 remainder           |          34.03 |             0.729
 remainder_checked   |          50.03 |             1.424
