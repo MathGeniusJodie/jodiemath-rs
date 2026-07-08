@@ -187,6 +187,11 @@ throughput_fn!(thr_hypot, "hypot_throughput", |x: f32| hypot(x, 1.0));
 latency_fn!(lat_powf, "powf_latency", |x: f32| powf(x, 2.0));
 throughput_fn!(thr_powf, "powf_throughput", |x: f32| powf(x, 2.0));
 
+latency_fn!(lat_powf_checked, "powf_checked_latency", |x: f32| powf_checked(x, 2.0));
+throughput_fn!(thr_powf_checked, "powf_checked_throughput", |x: f32| powf_checked(
+    x, 2.0
+));
+
 latency_fn!(lat_remainder, "remainder_latency", |x: f32| remainder(x, 3.0));
 throughput_fn!(thr_remainder, "remainder_throughput", |x: f32| remainder(x, 3.0));
 
@@ -250,6 +255,7 @@ fn main() {
         lat_erfc, thr_erfc;
         lat_hypot, thr_hypot;
         lat_powf, thr_powf;
+        lat_powf_checked, thr_powf_checked;
         lat_remainder, thr_remainder;
         lat_remainder_checked, thr_remainder_checked;
     );

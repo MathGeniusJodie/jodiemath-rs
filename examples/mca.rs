@@ -133,6 +133,7 @@ fn main() {
         "erfc",
         "hypot",
         "powf",
+        "powf_checked",
         "remainder",
         "remainder_checked",
     ];

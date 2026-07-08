@@ -1235,13 +1235,65 @@ branches, no scalar-only intrinsics unless the vector form exists).
 
 ## erf / erfc / powf / hypot / remainder / log1p-dependents
 
-- **powf, double-float log**: exp2(log_2(x)·y) amplifies log_2's error by
-  y·2^… — the dominant powf error. Compute log2(x) as df (hi, lo) — log_2
-  already has the pieces pre-collapse — multiply by y in df (two_prod + fma),
-  split into int + frac, feed exp2's poly with the lo word folded in as
-  `result·(1 + lo·ln2)` ≈ `fma(result, lo*LN2, result)`. This is the standard
-  <1-ulp powf shape; maybe +6–8 fmas, transforms powf from ~hundreds of ulp
-  (for large y) to budget-compliant.
+- **powf, double-float log — done, tested, adopted as an opt-in tier
+  `powf_checked` (2026-07-07).** Implemented exactly as specified, using
+  the crate's existing `Df32` double-float type (already had `Mul<f32>`
+  with the right two-prod-style combine built in — no new machinery
+  needed). `log2_df(x)` reuses `log_2_normal`'s decomposition but keeps
+  `k` and `s*P(s)` apart via `Df32::from_add` (a real two-sum, not a naive
+  pair — needed since `|k|` isn't always `>= |s*P(s)|`, e.g. near `x=1`
+  where `k=0`). `exp2_checked_df` reuses `exp2_checked`'s clamp/k1-k2-split/
+  poly machinery on the hi component, folding the lo component in as
+  `fma(result, lo*LN2, result)`.
+  Two real bugs found while wiring this up, both in the *edge-case*
+  handling, not the core math:
+  1. `exp2_checked_df` initially clamped `k` *after* flooring `v.0` but
+     computed `f` from the *unclamped* `v.0 - floor(v.0)` -- for `y` large
+     enough that `y*log2(x)` overflows to `+-inf` inside the `Df32`
+     multiply, this computed `inf - inf = NaN`. Fixed by clamping `v.0`
+     itself *before* flooring/subtracting, exactly matching
+     `exp2_checked`'s own order of operations (caught by a direct edgecheck
+     failure: `powf_checked(2, 1000)` gave `NaN` instead of `inf`).
+  2. Even after (1), the same case still gave `NaN`: the final
+     `fma(result, v.1*LN2, result)` hits an `inf*0.0` indeterminate form
+     whenever `result` itself has already saturated to `+-inf` (with
+     `v.1` legitimately `0.0`) -- `inf*0.0` is `NaN` by itself regardless
+     of fusion, contaminating an otherwise-correct saturated result. Same
+     "correction term goes non-finite" class of bug as log1p/atanh/acosh/
+     atan2's own `corr.is_finite()` guards elsewhere in this file -- fixed
+     the same way (fall back to the unfolded `result` when the
+     correction isn't finite; the correction is meaningless in the
+     already-saturated regime anyway).
+  First measurement (computing the naive fallback unconditionally
+  alongside the precise path, for ax==0/inf/nan) roughly *doubled*
+  throughput (3.898->7.782 cyc/elem) -- replaced the naive-formula
+  fallback with cheap direct selects for the only 3 possible edge
+  magnitudes (`ax==0`/`ax==+inf`/`ax==NaN`, each just a compare+select,
+  no log2/exp2 call at all), which recovered most of that
+  (7.782->6.285), though a real cost remains (below).
+  Verified via a controlled 25M-sample fuzz sweep (apples-to-apples,
+  comparing both formulas against the same f64 reference on the same
+  inputs, not two separate smaller runs that can differ by sampling
+  noise): avg ulp 0.36->0.05 (-87%), max ulp 170->154 -- **both** improve,
+  contradicting an earlier smaller (5M-sample) accuracy.rs comparison
+  that looked like max ulp got slightly *worse* (143->151); traced that
+  discrepancy to sampling noise, not a real regression. The remaining
+  ~150 max ulp is a separate, pre-existing `exp2_checked` characteristic
+  near the denormal/underflow boundary (confirmed present, and about
+  equally large, in *both* the plain and precise formula at the same
+  input) -- not something this fix introduces or was ever meant to close.
+  mca: latency 98.03->105.48 cyc (+7.6%), throughput 3.898->6.285 cyc/elem
+  (+61.2%) -- a real, substantial cost (the double-float bookkeeping
+  itself isn't free, not just the edge-case fallback), so kept as an
+  opt-in `powf_checked` tier rather than replacing `powf` outright,
+  matching sin/sin_checked and exp2/exp2_checked.
+  **Separately found, not fixed (out of scope for this change)**: three
+  pre-existing IEEE754 special-case gaps in `powf` (present before this
+  change too, unaffected by it either way) -- `powf(1.0, y)` should be
+  `1.0` for *any* `y` including NaN/inf, and `powf(-1.0, inf)` should be
+  `1.0`, but all three currently give `NaN` (the `exp2_checked(log2(x)*y)`
+  formula can't derive these without a dedicated override, the same way
+  `pow(x, 0) = 1` already needed one). Worth a follow-up idea of its own.
 - **powf integer-y fast path is NOT vectorizable as a branch** — skip; but the
   df version above covers those cases accurately anyway.
 - **erfc tail — done, tested, kept (2026-07-07).** Swapped the interior

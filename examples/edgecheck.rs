@@ -266,6 +266,31 @@ fn main() {
     check("powf(-0,3)", powf(-0.0, 3.0), -0.0);
     check("powf(-0,2)", powf(-0.0, 2.0), 0.0);
     check("powf(-0,-1)", powf(-0.0, -1.0), f32::NEG_INFINITY);
+    // powf_checked shares powf's special-case handling on top of its
+    // double-float-precision magnitude for large |y| -- same edge cases
+    // should hold identically, plus a couple more that exercise the
+    // is_safe/edge_mag fallback split (ax == 0/+inf/NaN) specifically.
+    check("powf_checked(2,3)", powf_checked(2.0, 3.0), 8.0);
+    check("powf_checked(2,1000)", powf_checked(2.0, 1000.0), f32::INFINITY);
+    check("powf_checked(2,-1000)", powf_checked(2.0, -1000.0), 0.0);
+    check("powf_checked(-2,3)", powf_checked(-2.0, 3.0), -8.0);
+    check("powf_checked(-2,3.5)", powf_checked(-2.0, 3.5), f32::NAN);
+    check("powf_checked(0,0)", powf_checked(0.0, 0.0), 1.0);
+    check("powf_checked(0,5)", powf_checked(0.0, 5.0), 0.0);
+    check("powf_checked(0,-5)", powf_checked(0.0, -5.0), f32::INFINITY);
+    check("powf_checked(inf,5)", powf_checked(f32::INFINITY, 5.0), f32::INFINITY);
+    check("powf_checked(inf,-5)", powf_checked(f32::INFINITY, -5.0), 0.0);
+    check("powf_checked(nan,5)", powf_checked(f32::NAN, 5.0), f32::NAN);
+    check("powf_checked(2,nan)", powf_checked(2.0, f32::NAN), f32::NAN);
+    check("powf_checked(-0,3)", powf_checked(-0.0, 3.0), -0.0);
+    check("powf_checked(-0,-1)", powf_checked(-0.0, -1.0), f32::NEG_INFINITY);
+    // the actual point of powf_checked: a large-|y| case where the plain
+    // formula's error is large (see powf_checked's own doc comment).
+    check(
+        "powf_checked(0.86967933,576.48004)",
+        powf_checked(0.86967933, 576.48004),
+        1.1009411e-35,
+    );
     check("remainder(5,3)", remainder(5.0, 3.0), -1.0);
     check("remainder(4,2)", remainder(4.0, 2.0), 0.0);
     // remainder(-0.0, y) used to lose its sign: q is +-0.0 matching x/y's

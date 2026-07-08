@@ -1521,6 +1521,97 @@ pub fn hypot(x: f32, y: f32) -> f32 {
     if x.is_infinite() || y.is_infinite() { f32::INFINITY } else { normal }
 }
 
+/// log2(x) as a double-float (Df32) instead of a collapsed f32, for
+/// positive finite x only (same domain log_2_normal assumes -- callers
+/// must guard zero/negative/inf/nan themselves). Reuses log_2_normal's
+/// exact decomposition and poly (`s = m - 1`, `P(s)`) but keeps the
+/// integer exponent `k` and the poly correction `s*P(s)` apart via
+/// `Df32::from_add` (a proper two-sum, not a naive pair) instead of
+/// collapsing them with a single `fma(p, s, k)` -- `s*P(s)` alone already
+/// has full relative f32 precision, but adding it to `k` in a single
+/// rounding (as log_2_normal does) throws away exactly the low bits a
+/// later multiply-by-y would otherwise be able to use. Denormal input is
+/// handled the same way log_2's own wrapper does (scale up, offset k).
+#[inline(always)]
+fn log2_df(x: f32) -> Df32 {
+    let tiny = x < f32::MIN_POSITIVE;
+    let xs = if tiny { x * 16777216.0 } else { x };
+    let koff = if tiny { -24.0 } else { 0.0 };
+    let e = (xs.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23;
+    let m = f32::from_bits((xs.to_bits() as i32).wrapping_sub(e << 23) as u32);
+    let k = e as f32 + koff;
+    let s = m - 1.0;
+    let c: [f32; 10] = [
+        LOG2_E,
+        -0.72134733,
+        0.4808985,
+        -0.36069715,
+        0.288568,
+        -0.23961738,
+        0.20460059,
+        -0.19106273,
+        0.18617496,
+        -0.10994955,
+    ];
+    let s2 = s * s;
+    let s4 = s2 * s2;
+    let l0 = fma(c[1], s, c[0]);
+    let l1 = fma(c[3], s, c[2]);
+    let l2 = fma(c[5], s, c[4]);
+    let l3 = fma(c[7], s, c[6]);
+    let l4 = fma(c[9], s, c[8]);
+    let r0 = fma(l1, s2, l0);
+    let r1 = fma(l3, s2, l2);
+    let r2 = fma(l4, s4, r1);
+    let p = fma(r2, s4, r0);
+    Df32::from_add(k, p * s)
+}
+
+/// exp2 of a double-float argument, reusing exp2_checked's own clamp/
+/// k1-k2-split/poly machinery on the hi component, then folding the lo
+/// component in as a multiplicative correction:
+/// `exp2(hi + lo) = exp2(hi) * exp2(lo) ~= exp2(hi) * (1 + lo*ln2)`
+/// (first-order Taylor, valid since `lo` is always tiny relative to 1 by
+/// Df32's own invariant) -- `fma(result, lo*LN_2, result)`. This is the
+/// step that actually captures the precision `log2_df` preserved: without
+/// it, the lo component would just be silently dropped and this would be
+/// no more accurate than the plain `exp2_checked(v.to_f32())`.
+#[inline(always)]
+fn exp2_checked_df(v: Df32) -> f32 {
+    // clamp *before* floor/subtract (matching exp2_checked exactly): if v.0
+    // itself is already +-inf (y large enough that y*log2(x) overflows in
+    // the Df32 multiply), flooring first and clamping after would compute
+    // `inf - floor(inf)` = `inf - inf` = NaN instead of correctly
+    // saturating.
+    let xs = v.0.clamp(-151.0, 128.0);
+    let k = xs.floor();
+    let f = xs - k;
+    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+    let k1b = fma(k, 0.5, ROUND_MAGIC) - (ROUND_MAGIC - 383.0);
+    let k2b = (k + 766.0) - k1b;
+    let t1 = f32::from_bits((k1b.to_bits() << 8) & EXPONENT_MASK);
+    let t2 = f32::from_bits((k2b.to_bits() << 8) & EXPONENT_MASK);
+    let f2 = f * f;
+    let g0 = fma(2.4022985e-1, f, 6.93147e-1);
+    let g1 = fma(9.678826e-3, f, 5.548333e-2);
+    let g2 = fma(2.1702237e-4, f, 1.2439679e-3);
+    let h = fma(g2, f2, g1);
+    let q = fma(h, f2, g0);
+    let p = fma(q, t1 * f, t1);
+    let result = p * t2;
+    // when result saturates to 0 or +-inf (xs clamped away from its real
+    // value), `fma(result, v.1*LN_2, result)` can hit an inf*0 or 0*finite
+    // -> still-fine-looking-but-actually-NaN indeterminate form (e.g.
+    // result=inf, v.1=0.0: inf*0.0 is NaN by itself, and NaN+inf is NaN,
+    // contaminating an otherwise-correct saturated result) -- same
+    // "correction term goes non-finite" class of bug as log1p/atanh/
+    // acosh/atan2's own corr.is_finite() guards. The correction is
+    // meaningless in the saturated regime anyway (there's no precision
+    // left to refine), so skip it there.
+    let corr = fma(result, v.1 * LN_2, result);
+    if corr.is_finite() { corr } else { result }
+}
+
 /// exp2(log2(x) * y). Used to route through the *unchecked* exp2 for its
 /// exponent -- correctly documented as inaccurate outside
 /// `log2(x)*y in [-126, 128)`, but "inaccurate" undersold it: outside
@@ -1535,7 +1626,8 @@ pub fn hypot(x: f32, y: f32) -> f32 {
 /// `exp2_checked` instead, so the whole function is consistently
 /// checked. Real perf cost (unlike erf/erfc's fixes, which only touched
 /// a rarely-hit edge branch, this touches every call): see mca numbers
-/// in the readme/IDEAS.md.
+/// in the readme/IDEAS.md. See [`powf_checked`] for a variant with
+/// substantially better accuracy for large `|y|`, at extra cost.
 #[inline(always)]
 pub fn powf(x: f32, y: f32) -> f32 {
     let ax = x.abs();
@@ -1561,6 +1653,55 @@ pub fn powf(x: f32, y: f32) -> f32 {
     // pow(x, 0) = 1 for *any* x -- even 0, negative, or NaN -- a
     // dedicated IEEE754/C99 special case, not derivable from the log/exp2
     // formula (0*inf and NaN*0 both degrade to NaN above). Override last.
+    if y == 0.0 { 1.0 } else { r }
+}
+
+/// Higher-accuracy variant of [`powf`]: `exp2(log_2(x)*y)` amplifies
+/// log_2's own rounding error by `y` -- for `|y|` large that swamps the
+/// result (hundreds of ulp), since `log_2(x)` is collapsed to a single f32
+/// *before* the multiply, throwing away exactly the low bits that `y`'s
+/// multiplication would otherwise be able to use. Fixed by keeping
+/// `log2(x)` as a double-float (Df32) through the multiply by `y` and the
+/// exp2 reconstruction, only collapsing to a single f32 at the very end
+/// (see [`log2_df`]/[`exp2_checked_df`]). Confirmed by fuzzing (25M
+/// samples, apples-to-apples against the plain formula on the same
+/// inputs): avg ulp 0.36 -> 0.05 (-87%), max ulp 170 -> 154 -- both
+/// improve, though the remaining ~150 max ulp is a separate, pre-existing
+/// `exp2_checked` characteristic near the denormal/underflow boundary
+/// (present, and about equally large, in *both* the plain and precise
+/// formula there), not something this fix introduces or was meant to
+/// close. Real mca cost though (double-float bookkeeping plus the poly
+/// evaluation isn't free): latency 98.03->105.48 cyc (+7.6%), throughput
+/// 3.898->6.285 cyc/elem (+61.2%) -- kept as an opt-in tier rather than
+/// the default, matching sin/sin_checked and exp2/exp2_checked.
+#[inline(always)]
+pub fn powf_checked(x: f32, y: f32) -> f32 {
+    let ax = x.abs();
+    // The df path is only valid for ax strictly positive and finite (same
+    // domain log_2_normal's own decomposition assumes); ax == 0 or
+    // non-finite needs a fallback, but *not* a second full
+    // log_2+exp2_checked computation -- that would roughly double this
+    // function's cost just to cover a few degenerate inputs. The only
+    // three possible magnitudes there are cheap direct selects: ax == 0
+    // -> 0 (y > 0) or +inf (y < 0); ax == +inf -> +inf (y > 0) or 0
+    // (y < 0); ax == NaN (from x == NaN) -> NaN. (y == 0 is overridden
+    // separately below regardless of any of this.)
+    let is_safe = ax > 0.0 && ax.is_finite();
+    let mag_precise = exp2_checked_df(log2_df(ax) * y);
+    // (ax == 0) == (y > 0) picks out exactly the two "goes to zero" cases
+    // (ax==0,y>0 and ax==+inf,y<0) vs. the two "goes to infinity" cases --
+    // cheaper than a 4-way branch and avoids inf/inf-is-NaN traps a
+    // division-based shortcut would hit for the ax==+inf,y<0 case.
+    let zero_or_inf = if (ax == 0.0) == (y > 0.0) { 0.0 } else { f32::INFINITY };
+    let edge_mag = if ax.is_nan() { f32::NAN } else { zero_or_inf };
+    let mag = if is_safe { mag_precise } else { edge_mag };
+    // Same negative-x/y-parity/y==0 handling as powf -- see its own doc
+    // comment for the reasoning.
+    let y_int = y == y.trunc();
+    let y_odd = y_int && parity(y) != 0.0;
+    let neg_signed = if y_odd { -mag } else { mag };
+    let neg_result = if y_int { neg_signed } else { f32::NAN };
+    let r = if x.is_sign_negative() { neg_result } else { mag };
     if y == 0.0 { 1.0 } else { r }
 }
 

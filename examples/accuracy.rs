@@ -654,6 +654,15 @@ fn main() {
         let s = fuzz2(TWOARG_SAMPLES, pow_domain, |x: f32, y: f32| x.powf(y), pow_u10);
         report("std powf", &s, t0);
     }
+    if run("powf_checked") {
+        // Same domain as powf's own sweep -- see powf_checked's doc
+        // comment for why this variant is substantially more accurate
+        // for large |y| (avg ulp -87% in a controlled comparison).
+        let pow_domain =
+            |x: f32, y: f32| x != 0.0 && (-126.0..128.0).contains(&(x.abs().log2() * y));
+        let s = fuzz2(TWOARG_SAMPLES, pow_domain, powf_checked, pow_u10);
+        report("powf_checked", &s, t0);
+    }
     // Both remainder variants use *ties-away-from-zero* rounding for q (see
     // remainder's own doc comment) but sleef's `remainder_ref` implements
     // true IEEE754 remainder, which is ties-to-*even* -- a different, also
