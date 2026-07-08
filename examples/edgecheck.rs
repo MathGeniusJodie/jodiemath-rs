@@ -72,6 +72,13 @@ fn main() {
         check_min_max(&format!("{n}(max)"), f(f32::MAX), ((f32::MAX as f64).cbrt()) as f32);
         check(&format!("{n}(2^-57)"), f(f32::from_bits(0x2300_0000)), ((f32::from_bits(0x2300_0000) as f64).cbrt()) as f32);
     }
+    // cbrt_unchecked: contract is x normal/finite (no denormal/zero/inf/nan)
+    // -- must match cbrt inside that domain (verified more thoroughly via a
+    // ~200M-sample fuzz, not preserved in-repo; permanent regression guard).
+    check("cbrt_unchecked(8)", cbrt_unchecked(8.0), cbrt(8.0));
+    check("cbrt_unchecked(-8)", cbrt_unchecked(-8.0), cbrt(-8.0));
+    check("cbrt_unchecked(max)", cbrt_unchecked(f32::MAX), cbrt(f32::MAX));
+    check("cbrt_unchecked(min_normal)", cbrt_unchecked(f32::MIN_POSITIVE), cbrt(f32::MIN_POSITIVE));
     // sin/cos (unchecked): only accurate while q = round(x/pi) is an exact
     // f32 integer, i.e. |x| < 2^22 * pi (~1.3e7) -- see sin's doc comment.
     check("sin(0)", sin(0.0), 0.0);

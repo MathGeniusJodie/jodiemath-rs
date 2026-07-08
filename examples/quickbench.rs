@@ -69,6 +69,7 @@ fn main() {
     bench!("nop", |x: f32| x);
     bench!("cbrt", cbrt);
     bench!("std cbrt", |x: f32| x.cbrt());
+    bench!("cbrt_unchecked", cbrt_unchecked);
     bench!("cbrt_accurate", cbrt_accurate);
     bench!("cbrt_throughput", cbrt_throughput);
     bench!("cbrt_fast", cbrt_fast);

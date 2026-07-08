@@ -10,6 +10,7 @@ All functions auto-vectorize, it's a hard requirement
                         | jodie avg  | jodie max | std avg | std max
 ------------------------|------------|-----------|---------|--------
                    cbrt |    0.326   |     3     |    0    |    0
+     cbrt_unchecked (+) |    0.312   |     3     | (bit-identical to cbrt on its domain)
           cbrt_accurate |    0.000   |     1     |    0    |    0
                    exp2 |    0.030   |     1     |  0.000  |    1
            exp2_checked |    0.016   |     1     |  0.000  |    1
@@ -72,6 +73,7 @@ Serial latency (dependency chain, examples/quickbench.rs; lower is better)
               | jodie   | std     | improvement
 --------------|---------|---------|------------
          cbrt | 12.9 ns | 22.0 ns | 1.7x
+cbrt_unchecked| 10.1 ns | 21.2 ns | 2.1x
 cbrt_accurate | 17.0 ns | 22.0 ns | 1.3x
           cos | 12.7 ns | 12.8 ns | 1.0x
   cos_checked | 30.3 ns | 12.8 ns | 0.4x
@@ -139,6 +141,7 @@ Throughput (independent array evals over [f32; 4096], examples/quickbench.rs; lo
               | jodie    | std     | improvement
 --------------|----------|---------|------------
          cbrt | 0.37 ns  | 3.93 ns | 10.6x
+cbrt_unchecked| 0.25 ns  | 4.04 ns | 16.2x
 cbrt_accurate | 0.67 ns  | 3.93 ns | 5.9x
           cos | 0.27 ns  | 3.41 ns | 12.6x
   cos_checked | 1.61 ns  | 3.41 ns | 2.1x
@@ -199,6 +202,7 @@ theoretical cost from llvm-mca (-mcpu=native, 100 iterations)
                     | latency (cyc)  | throughput (cyc)
 --------------------|----------------|------------------
 cbrt                |          35.06 |             1.629
+cbrt_unchecked      |          35.06 |             0.906
 cbrt_accurate       |          59.06 |             3.129
 exp2                |          35.00 |             0.841
 exp2_checked        |          43.06 |             1.399

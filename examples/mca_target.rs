@@ -89,6 +89,13 @@ throughput_fn!(thr_cbrt, "cbrt_throughput", cbrt);
 // number, since lat_cbrt above intentionally skips the rare-input branch.
 latency_fn!(lat_cbrt_wrapped, "cbrt_wrapped_latency", cbrt);
 
+// cbrt_unchecked == cbrt_normal, so latency here is expected to match
+// lat_cbrt above exactly (this crate's own convention: latency calls the
+// branchless *_normal core directly already) -- measured explicitly
+// anyway for a complete row, same as log2_unchecked's own pair below.
+latency_fn!(lat_cbrt_unchecked, "cbrt_unchecked_latency", cbrt_unchecked);
+throughput_fn!(thr_cbrt_unchecked, "cbrt_unchecked_throughput", cbrt_unchecked);
+
 latency_fn!(lat_cbrt_accurate, "cbrt_accurate_latency", |x: f32| cbrt_accurate_normal(x, 1.0));
 throughput_fn!(thr_cbrt_accurate, "cbrt_accurate_throughput", cbrt_accurate);
 
@@ -317,6 +324,7 @@ fn main() {
     run_all!(
         lat_nop, thr_nop;
         lat_cbrt, thr_cbrt;
+        lat_cbrt_unchecked, thr_cbrt_unchecked;
         lat_cbrt_accurate, thr_cbrt_accurate;
         lat_cbrt_throughput_fn, thr_cbrt_throughput_fn;
         lat_cbrt_fast, thr_cbrt_fast;

@@ -437,6 +437,12 @@ fn main() {
         report("cbrt_fast (+)", &s, t0);
         let s = measure!(everywhere, |x: f32| x.cbrt(), cbrt_u35);
         report("std cbrt", &s, t0);
+        // cbrt_unchecked's own contract: x normal/finite, either sign
+        // (unlike log_2_unchecked's positive-only domain -- cbrt_normal
+        // already reapplies x's own sign bit internally).
+        let normal_finite = |x: f32| x.abs() >= f32::MIN_POSITIVE && x.is_finite();
+        let s = measure!(normal_finite, cbrt_unchecked, cbrt_u35);
+        report("cbrt_unchecked (+)", &s, t0);
     }
     if run("log") {
         let s = measure!(everywhere, log_2, log2_u35);

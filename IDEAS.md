@@ -1388,6 +1388,48 @@ brainstorm backlog lives at the bottom of this file.
   unconditional edge-case selects the next time this backlog runs dry.
   Commit `f623569`.
 
+- **cbrt_unchecked, implemented (2026-07-08), same unchecked-tier idea
+  found by auditing this crate's own `#[doc(hidden)]` `*_normal` cores
+  for ones without a matching public `_unchecked` wrapper yet
+  (`cbrt_normal` was the one remaining candidate — `ln_normal`/
+  `log10_normal` already have `ln_unchecked`/`log10_unchecked`).** `cbrt`
+  pays a denormal-rescale select pair (`tiny` check, `xs`/`scale` selects)
+  plus a final zero/inf/nan-propagation select on every call, on top of
+  `cbrt_normal`'s branchless core; `cbrt_unchecked(x) = cbrt_normal(x)`,
+  domain "x normal (not denormal/zero), finite (not inf/nan)", drops all
+  of it — no koff-style trick needed since `cbrt_normal` already
+  reapplies `x`'s own sign bit internally, so unlike `log_2_unchecked`
+  this domain covers *both* signs, not positive-only. Bit-identical to
+  `cbrt` over ~200M in-domain fuzz samples (scratch check, not preserved
+  in-repo). This crate's own mca_target.rs convention (latency calls
+  `*_normal` directly already, see its own top comment) meant
+  `cbrt_unchecked`'s *latency* number was structurally guaranteed to
+  match `cbrt`'s own `lat_cbrt` row exactly (confirmed: both 35.06 cyc)
+  — no new information there, matching the same thing already noted for
+  `log_2_unchecked`'s latency row. Throughput was the real test and
+  delivered a bigger win than any `_unchecked` tier so far this session:
+  mca 1.629→0.906 cyc/elem (**-44.4%**). Confirmed on real hardware via
+  quickbench (3 reproducible runs): latency 12.75→10.08 ns (-20.9%, a
+  real win quickbench *can* see that mca's own convention structurally
+  couldn't), throughput 0.37→0.24 ns (-35.1%, matching mca's direction
+  and magnitude closely). Full harness treatment: codegen_check clean,
+  4 new edgecheck.rs bit-exact-vs-`cbrt` regression-guard entries (placed
+  outside the existing `cbrt`/`cbrt_accurate` denormal-focused loop,
+  since `cbrt_unchecked`'s contract explicitly excludes denormals),
+  accuracy.rs domain-restricted sweep (0.312/3 avg/max ulp, matching
+  `cbrt`'s own 0.326/3 within expected sampling noise, same non-issue
+  already documented for every other `_unchecked` sibling), readme
+  tables updated. **General lesson: after several rounds of "the
+  benchmark fix revealed real branch cost, so expose an unchecked tier"
+  wins on functions that already had an obvious two-argument-benchmark
+  trigger (`powf`, `remainder`), the next place to look isn't only
+  "which function's benchmark looks suspicious" — grepping for
+  `#[doc(hidden)]` `pub fn *_normal`/`*_checked`-adjacent cores directly
+  finds candidates regardless of whether their benchmark ever had an
+  literal-arg problem to begin with. `cbrt` never had a two-argument
+  literal-folding issue at all; this idea came from auditing the crate's
+  own internal-core inventory instead.** Commit `<pending>`.
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED

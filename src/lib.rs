@@ -792,6 +792,18 @@ pub fn cbrt(x: f32) -> f32 {
     if ax == 0 || ax >= EXPONENT_MASK { x + x } else { r }
 }
 
+/// cbrt without domain checks: valid for `x` normal (not denormal or
+/// zero) and finite (not inf/nan) -- both signs are fine, `cbrt_normal`
+/// already reapplies `x`'s own sign bit internally. Skips the denormal-
+/// rescale select pair and the final zero/inf/nan propagation select
+/// `cbrt`'s own doc comment describes paying on every call. Mirrors this
+/// crate's other `_unchecked` cores (`log_2_unchecked`, etc.); see
+/// [`cbrt`] for the full-domain-safe version.
+#[inline(always)]
+pub fn cbrt_unchecked(x: f32) -> f32 {
+    cbrt_normal(x)
+}
+
 /// cbrt to within ~0.5 ulp: cbrt_normal (<= 1 ulp), then one Newton step
 /// carried out in double-f32 arithmetic. Only valid for x already rescaled
 /// into cbrt_accurate's safe range (roughly 2^-56 to 2^127): outside it the
