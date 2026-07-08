@@ -1524,17 +1524,68 @@ legitimate direction here, unlike on most targets.
 
 ### sin / cos
 
-- **mod-pi/2 reduction with paired even/odd polys**: reduce with
-  q = round(x·2/pi) so |r| ≤ pi/4, then select sin(r)/cos(r) by quadrant.
-  The poly degree drops hard on the halved range (deg-7 failed on
-  ±pi/2 but has huge margin on ±pi/4; cos's even poly similar), and the
-  two polys share r²/r⁴ powers, so "evaluate both + blend" costs much
-  less than 2x. Costs: q's parity becomes 2 bits (two selects), and the
-  reduction constants change (pi/2 splits, q twice as large so the
-  fast tier's cliff moves down 2x — check that against the |x| ≤ 1e6
-  contract before adopting). Applies to fast *and* checked tiers, and
-  makes the round-1 sincos idea nearly free (both polys already
-  evaluated).
+- **mod-pi/2 reduction with paired even/odd polys (2026-07-08), screened
+  with scipy + a rounding-faithful f32 simulation before touching Rust —
+  the domain-halving accuracy win is real but too small, and the "evaluate
+  both + blend" framing undercounts the real op cost; not implemented.**
+  Original idea: reduce with q = round(x·2/pi) so |r| ≤ pi/4, then select
+  sin(r)/cos(r) by quadrant, speculating the poly degree "drops hard" on
+  the halved range and that sharing r²/r⁴ makes evaluating both polys cost
+  much less than 2x. Checked both claims before writing any Rust:
+  1. **Degree only drops by one coefficient, not dramatically.** Fit the
+     same odd/even reduced forms this crate already uses (`sinf_poly`'s
+     `r+r³·P(r²)`, cos's `1-r²/2+r⁴·Q(r²)`) via least-squares at both
+     domain half-widths: at pi/2, 4 correction coefficients are needed to
+     reach ~6.9e-8 max relative error (this fit reproduced the shipped
+     `sinf_poly` coefficients almost exactly — a good sanity check on the
+     method); at pi/4, 2 coefficients only reaches ~1.2e-5 (confirmed too
+     loose below), 3 reaches ~3e-8 (sin) / ~2.4e-9 (cos). Halving the
+     domain buys exactly one fewer coefficient per poly, not the "drops
+     hard" the entry hoped for.
+  2. **"Costs much less than 2x" doesn't survive a real op count.** This
+     crate's existing `sin`/`cos` already share a *single* poly
+     (`sinf_poly`, 4 coefficients) via the phase-shift trick, with 1-bit
+     parity — so the real comparison is 1 poly/4 coeffs/1-bit-select vs. 2
+     polys/3+3 coeffs (both `sin(r)` and `cos(r)` must be evaluated
+     unconditionally per this crate's branchless-select convention, since
+     the quadrant is a runtime value) plus a 2-bit quadrant blend. Hand-
+     counting fma/mul ops for a standalone `sin(x)` call: current ≈16 (6
+     reduction + 3 mul + 4 fma poly + copysign + 1-bit xor); mod-pi/2 ≈20
+     (6 reduction + 2 shared mul + 4 fma sin_r + 4 fma cos_r + ~4 for the
+     2-bit select/sign) — ~25% *more* hot-loop arithmetic, not less.
+  Confirmed accuracy separately with a rounding-faithful f32 numpy
+  simulation (round every op to f32, this crate's own established
+  pre-Rust screening idiom) using the crate's real PI_A..D split halved
+  exactly (`PI2_A = PI_A/2` etc., bit-exact since these constants already
+  carry trailing mantissa zero bits): the 3-coefficient version gives
+  avg/max ulp 0.136/2 (sin) and 0.147/14 (cos) over a log-uniform
+  |x|≤1e6 sweep — about as tight as the real shipped numbers (re-measured
+  fresh via `accuracy.rs`: sin |x|≤1e6 avg/max 0.0409/3, cos 0.0830/3),
+  so accuracy was never the blocker. The aggressive 2-coefficient version
+  (the one that would actually cut total ops below the current 16) blows
+  up badly instead (avg ulp ~6.3/5.9, both catastrophically over the
+  sub-ulp-average bar) — the "drops hard" framing fails at the aggressive
+  end too. Given the op-count math already predicts a real throughput
+  regression (more fma/mul port pressure, this crate's own repeatedly-
+  measured hot-loop bottleneck) for zero accuracy benefit (current `sin`/
+  `cos` are already ~10-100x tighter than the sub-ulp-average bar), a full
+  implementation (new pi/2 constants, quadrant-select logic, re-verifying
+  the domain cliff at its 2x-tighter bound, full accuracy.rs/edgecheck/mca
+  cycle) isn't justified by the likely outcome. Not implemented — killed
+  by reasoning from real op counts one step earlier than usual (before
+  even a hand-written Rust prototype, let alone mca), same discipline as
+  the `exp` k1/k2-clamp entry's fast falsification. One narrower case
+  would likely still come out ahead: a hypothetical combined
+  `sincos(x) -> (f32,f32)` amortizes the second poly across both outputs
+  (~24 ops for both together vs. ~32 for two separate current-style
+  calls) — but this crate has no fast-tier combined sincos today, and the
+  *checked*-tier version of exactly that sharing idea (`sincos_checked`,
+  sharing only the reduction, not the poly) already measured no real
+  wall-clock win despite a clean bit-exact/mca-predicted-win setup (see
+  that entry above) — discouraging enough to not build a new API just to
+  pair with this. Left open only for that narrower, not-yet-existing
+  case; the entry as originally scoped (speed up the existing standalone
+  `sin`/`cos`) is closed.
 
 - **Vectorized Payne-Hanek "exact" tier**: full-range correct reduction
   needs the 2/pi product against x's mantissa with the window selected by
