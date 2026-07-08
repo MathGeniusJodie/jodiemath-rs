@@ -1003,7 +1003,7 @@ pub fn ln_normal(x: f32, koff: f32) -> f32 {
     let r2 = fma(l4, s4, r1);
     let p = fma(r2, s4, r0);
     let k_hi = k * LN2_HI; // exact, see LN2_HI's comment
-    fma(k, LN2_LO, fma(p, s, k_hi))
+    fma(p, s, k_hi) + k * LN2_LO
 }
 
 /// ln without domain checks: valid for positive normal finite x only, see
@@ -1065,7 +1065,7 @@ pub fn log10_normal(x: f32, koff: f32) -> f32 {
     let r2 = fma(l4, s4, r1);
     let p = fma(r2, s4, r0);
     let k_hi = k * LOG10_2_HI; // exact, see LN2_HI's comment (same trick)
-    fma(k, LOG10_2_LO, fma(p, s, k_hi))
+    fma(p, s, k_hi) + k * LOG10_2_LO
 }
 
 /// log10 without domain checks: valid for positive normal finite x only,

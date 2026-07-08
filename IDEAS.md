@@ -550,20 +550,37 @@ brainstorm backlog lives at the bottom of this file.
   2.713 cyc/elem throughput (cheaper than tanh's 94.91/2.567, as expected
   for one exp + one division vs. a rational approx).
 
-- **ln/log10: fuse the final `+ k*LN2_LO`/`+ k*LOG10_2_LO` into an fma
-  (2026-07-08)**: `fma(p, s, k_hi) + k*LN2_LO` → `fma(k, LN2_LO, fma(p, s,
-  k_hi))`, same in log10_normal. A genuine accuracy win, essentially free:
-  exhaustive sweep gives ln avg 0.126→0.1168 (max unchanged, 3), log10 avg
-  0.286→0.1270 *and* max ulp 4→3. mca showed no measurable latency/
-  throughput change either way (ln 55.86/1.714→56.86/1.709, log10
-  55.86/1.714→56.86/1.714 — within this file's usual mca run-to-run noise
-  band), and a paired quickbench stash/pop comparison confirmed the same
-  (wash on both latency and throughput, no regression). Adopted under the
-  loop's "improves accuracy without a perf penalty" bar. Note: the
-  backlog's premise that "asinh/acosh/atanh/log1p/powf all route through
-  these" doesn't hold — grepping confirms only `ln`/`log10` themselves
-  call `ln_normal`/`log10_normal`, so this fix is local to the two public
-  functions, not felt downstream.
+- **ln/log10: fuse the final `+ k*LN2_LO`/`+ k*LOG10_2_LO` into an fma —
+  re-tested 2026-07-08, mistakenly adopted, then corrected back to
+  rejected the same day.** This is the exact same idea the entry just
+  above (commit-dated earlier the same day) already tested and rejected —
+  picked again later in the session without cross-referencing the
+  existing entry, and this time mis-measured as a win. Two errors, both
+  now corrected: (1) the "before" accuracy baseline was taken from
+  `readme.md`'s numbers (ln avg 0.126, log10 avg 0.286) instead of
+  re-measuring the actual current unfused code directly — a fresh
+  exhaustive sweep of the genuinely-unfused code gives ln avg 0.1168/max 3
+  and log10 avg 0.1270/max 3, **identical to the fused code's own
+  numbers** (`readme.md`'s log10 figure had simply gone stale at some
+  earlier point, unrelated to this change — there is no accuracy
+  difference between the two forms at all). (2) mca's ln/log10 latency
+  going from 55.86→56.86 cyc was dismissed as "run-to-run noise" without
+  checking reproducibility; re-run 3x on each form just now, it's
+  perfectly deterministic both ways (unfused always 55.86, fused always
+  56.86) — a real, reproducible +1-cycle regression, exactly matching
+  what the entry above already found. Reverted for real this time;
+  `src/lib.rs` restored to `fma(p, s, k_hi) + k * LN2_LO`. **General
+  lesson, two of them: (a) before re-testing an idea, grep this file for
+  whether it's already been tried — a duplicate test is wasted effort at
+  best and, as happened here, a chance to overwrite a correct prior
+  finding with a wrong one; (b) "before" measurements must come from
+  re-running the current code, never from a written number (a readme
+  table, a prior IDEAS.md entry, this file's own history) — those can go
+  stale, and trusting one instead of re-measuring is exactly how this
+  mistake happened. Also: any mca difference, however small, needs a
+  repeat-and-confirm before being called "noise" — this file has now
+  logged the opposite mistake too (calling a real effect noise) alongside
+  its many entries logging noise mistaken for a real effect.**
 
 - **log_2_unchecked/ln_unchecked/log10_unchecked, implemented (2026-07-08)**:
   the log family's "checked" public functions (`log_2`, `ln`, `log10`) pay
@@ -587,13 +604,16 @@ brainstorm backlog lives at the bottom of this file.
   domain-restricted unchecked sweep doesn't get to include — not a real
   accuracy difference, confirmed by the direct bit-for-bit check). Real,
   substantial speed win: mca throughput log2 1.556→0.958 cyc/elem (-38%),
-  ln/log10 1.626→1.084 (-33%); ln/log10 latency 56.91→38.22 cyc (-33%,
+  ln/log10 1.714→1.145 (-33%); ln/log10 latency 55.86→38.39 cyc (-31%,
   log2's own latency number was already measuring the unchecked core per
   this file's own mca_target.rs convention, so no further latency win
   there specifically). Confirmed on real wall-clock too via quickbench
-  (e.g. log10 throughput 0.422→0.261 ns, latency 10.08→8.83 ns). Backlog
+  (e.g. log10 throughput 0.383→0.269 ns, latency 10.13→8.87 ns). Backlog
   entry for the remaining half of this idea (hypot/atan2 unchecked tiers)
-  left open above.
+  left open above. (Numbers corrected 2026-07-08, same day: originally
+  quoted against the ln/log10-fma-fusion entry's numbers, since that
+  change was active when this one was first measured — since reverted as
+  a mistaken adoption, see that entry's own correction above.)
 
 - **Centered-variable refit for exp2's f (2026-07-08), checked via a
   10-line scipy script before writing any Rust — premise refuted before
