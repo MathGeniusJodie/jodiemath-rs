@@ -595,6 +595,33 @@ brainstorm backlog lives at the bottom of this file.
   entry for the remaining half of this idea (hypot/atan2 unchecked tiers)
   left open above.
 
+- **Centered-variable refit for exp2's f (2026-07-08), checked via a
+  10-line scipy script before writing any Rust — premise refuted before
+  implementation, nothing to revert.** The backlog's claim was "refit in
+  g = f − 0.5 so coefficients shrink" (coefficient rounding error scales
+  with coefficient magnitude, an established lesson elsewhere in this
+  file). Fit both forms with scipy `lstsq` (uncentered `R(f) = (2^f-1)/f`
+  over f ∈ [0,1) vs. centered `R(g) = (2^(g+0.5)-1)/(g+0.5)` over
+  g ∈ [-0.5,0.5)) and compared every coefficient directly: the centered
+  fit's coefficients are *larger* across the board (leading term
+  0.693→0.828, and every other coefficient likewise bigger), the opposite
+  of the claimed effect. Root cause: `R(f)` is strictly monotonically
+  increasing over the whole domain (checked explicitly, 0.693 at f=0 up
+  to 1.0 at f=1) with no interior minimum — its smallest magnitude
+  already sits exactly at the domain's own edge (f=0), which the
+  *current, uncentered* fit already exploits directly (c0 = R(0) = ln2).
+  "Centering" necessarily moves the evaluation point away from that edge
+  minimum toward the domain's middle, which is *higher*, not lower, for a
+  monotonic function. The general principle (centering shrinks
+  coefficients) only holds when the function has a genuine interior
+  minimum/root to center on — `log_2`'s own `s = m-1` decomposition works
+  for exactly this reason (`log2(1) = 0` is a real root at the center),
+  but `exp2`'s `R(f)` has no analogous root anywhere in its domain. Not
+  implemented; no code changed. The erfc half of this same backlog entry
+  is a different function shape (P/Q rational, not a monomial poly) and
+  is **not** ruled out by this finding — left open below, split out from
+  the exp2 case.
+
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
@@ -804,12 +831,14 @@ legitimate direction here, unlike on most targets.
   max-ulp outliers.
 
 
-- **Centered-variable refits**: exp2's f lives in [0,1) — refit in
-  g = f − 0.5 so coefficients shrink and their individual f32 roundings
-  matter less (coefficient rounding error scales with coefficient
-  magnitude). Same idea for erfc's xa ∈ [0,10] (hugely off-center today).
-  Free at runtime (the shift folds into existing adds) but changes every
-  coefficient, so it's a refit-and-sweep job.
+- **Centered-variable refit for erfc's xa ∈ [0,10] (hugely off-center
+  today)**: the same idea tried for exp2 (above, rejected) — untested here.
+  erfc's correction is a P/Q rational, not a plain monomial poly, and its
+  target decays across many orders of magnitude over the domain, a very
+  different shape from exp2's monotonic-but-bounded R(f) — the exp2
+  rejection's reasoning (no interior point beats the domain's own edge
+  minimum) doesn't obviously transfer, so this is still worth checking
+  independently rather than assuming it fails the same way.
 
 - **Compensated-Horner accuracy tier**: run the poly with error-free
   transformations (two_prod/two_sum per step, like reduce_pi does for the
