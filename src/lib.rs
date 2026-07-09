@@ -1376,7 +1376,18 @@ fn exp_pos_neg(x: f32) -> (f32, f32) {
     let p_pos = fma(r, o, e);
     let p_neg = fma(-r, o, e);
     let (t1, t2) = exp2_field_split(k);
-    let (t1n, t2n) = exp2_field_split(-k);
+    // t1n = 1/t1, t2n = 1/t2 (both exact power-of-two fields, so 1/t1 is
+    // itself an exact power of two): for an exact power-of-two float with
+    // bit pattern b = (127+e)<<23, its reciprocal 2^-e has bit pattern
+    // (127-e)<<23 = 0x7F000000 - b (since (127+e)+(127-e) = 254 = 0xFE,
+    // and 0xFE<<23 == 0x7F000000). This is exactly the split
+    // exp2_field_split(-k) would have produced (round-half-to-even is
+    // antisymmetric under negation, so k1n=-k1/k2n=-k2), but built with
+    // two integer subtracts instead of a whole second magic-round
+    // fma/sub/sub chain -- deletes exp2_field_split(-k)'s independent
+    // dependency on k entirely.
+    let t1n = f32::from_bits(0x7F00_0000u32.wrapping_sub(t1.to_bits()));
+    let t2n = f32::from_bits(0x7F00_0000u32.wrapping_sub(t2.to_bits()));
     (p_pos * t1 * t2, p_neg * t1n * t2n)
 }
 
