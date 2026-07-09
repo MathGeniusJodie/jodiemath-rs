@@ -225,6 +225,18 @@ fn main() {
     // zero case).
     check("log1p(-0)", log1p(-0.0), -0.0);
 
+    // log2p1(x) = log2(1+x), log1p's own zero/negative/inf edges (same
+    // u/corr/trailing-zero-select structure, see its doc comment) plus a
+    // couple of exact powers of two to pin the LOG2_E conversion.
+    check("log2p1(0)", log2p1(0.0), 0.0);
+    check("log2p1(-0)", log2p1(-0.0), -0.0);
+    check("log2p1(-1)", log2p1(-1.0), f32::NEG_INFINITY);
+    check("log2p1(-2)", log2p1(-2.0), f32::NAN);
+    check("log2p1(1)", log2p1(1.0), 1.0);
+    check("log2p1(3)", log2p1(3.0), 2.0);
+    check("log2p1(inf)", log2p1(f32::INFINITY), f32::INFINITY);
+    check("log2p1(nan)", log2p1(f32::NAN), f32::NAN);
+
     check("exp(0)", exp(0.0), 1.0);
     // exp's Cody-Waite reduction uses round (not exp2's own floor), which
     // can push k one integer higher than floor would right at the domain
@@ -248,6 +260,20 @@ fn main() {
     check("exp10_checked(-45)", exp10_checked(-45.0), 1e-45);
 
     check("expm1(0)", expm1(0.0), 0.0);
+
+    // exp2m1(x) = 2^x - 1. Total (inherits exp2_checked's own full
+    // [-151,128) clamp, see exp2m1's doc comment) so -inf/inf both give an
+    // exact finite/saturated answer rather than NaN, unlike expm1's own
+    // unchecked-exp2 domain limit above.
+    check("exp2m1(0)", exp2m1(0.0), 0.0);
+    check("exp2m1(-0)", exp2m1(-0.0), -0.0);
+    check("exp2m1(1)", exp2m1(1.0), 1.0);
+    check("exp2m1(-1)", exp2m1(-1.0), -0.5);
+    check("exp2m1(inf)", exp2m1(f32::INFINITY), f32::INFINITY);
+    check("exp2m1(-inf)", exp2m1(f32::NEG_INFINITY), -1.0);
+    check("exp2m1(-151)", exp2m1(-151.0), -1.0);
+    check("exp2m1(nan)", exp2m1(f32::NAN), f32::NAN);
+
     check("sinh(0)", sinh(0.0), 0.0);
     check("cosh(0)", cosh(0.0), 1.0);
     check("tanh(0)", tanh(0.0), 0.0);

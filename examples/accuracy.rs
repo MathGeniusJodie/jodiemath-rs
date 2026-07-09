@@ -668,6 +668,21 @@ fn main() {
         let s = measure!(everywhere, |x: f32| x.ln_1p(), log1p_u10);
         report("std log1p", &s, t0);
     }
+    if run("log2p1") {
+        // log2(1+x) via log1p_u10(x)/ln(2), not the naive log2_u35(1.0+v):
+        // forming 1.0+x directly in f64 hits the same cancellation trap
+        // (for the many f32 x with |x| below f64's own ~2.22e-16 relative
+        // precision near 1.0) that log1p's own real-function design exists
+        // to avoid, just at a different, still-real-for-small-f32-x
+        // threshold -- reusing sleef's own cancellation-safe log1p_u10
+        // keeps the reference honest instead of reintroducing that bug on
+        // the test side (the third time this session a naive f64
+        // reference has needed the same fix, see sinc_ref/sind's own gap
+        // check).
+        let log2p1_ref = |v: F64xN| log1p_u10(v) / F64xN::splat(std::f64::consts::LN_2);
+        let s = measure!(everywhere, log2p1, log2p1_ref);
+        report("log2p1", &s, t0);
+    }
     if run("expm1") {
         // expm1's large-|x| branch (and exp itself) calls exp2, only
         // accurate while x*log2(e) stays inside exp2's unchecked domain
@@ -681,6 +696,19 @@ fn main() {
         report("expm1", &s, t0);
         let s = measure!(exp_domain, |x: f32| x.exp_m1(), expm1_u10);
         report("std expm1", &s, t0);
+    }
+    if run("exp2m1") {
+        // 2^x - 1 via expm1_u10(x*ln2), not naive exp2_u35(v)-1.0: same
+        // cancellation-trap reasoning as log2p1_ref just above, mirrored
+        // (exp2_u35(v) rounds to exactly 1.0 in f64 for any |x| below
+        // ~3.2e-16, which many f32 denormals/small-normals are, silently
+        // erasing the true small-but-f32-representable result).
+        // exp2m1 itself is total (inherits exp2_checked's own full clamp,
+        // see its doc comment), so no domain restriction needed here,
+        // unlike expm1 above.
+        let exp2m1_ref = |v: F64xN| expm1_u10(v * F64xN::splat(std::f64::consts::LN_2));
+        let s = measure!(everywhere, exp2m1, exp2m1_ref);
+        report("exp2m1", &s, t0);
     }
     if run("sinh") {
         // sinh/cosh use both exp(x) and exp(-x): restrict to where both

@@ -102,10 +102,12 @@ fn main() {
     bench!("std log10", |x: f32| x.log10());
     bench!("log1p", log1p);
     bench!("std log1p", |x: f32| x.ln_1p());
+    bench!("log2p1", log2p1);
     bench!("exp", exp);
     bench!("std exp", |x: f32| x.exp());
     bench!("expm1", expm1);
     bench!("std expm1", |x: f32| x.exp_m1());
+    bench!("exp2m1", exp2m1);
     bench!("sinh", sinh);
     bench!("std sinh", |x: f32| x.sinh());
     bench!("cosh", cosh);
