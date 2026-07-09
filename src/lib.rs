@@ -1511,7 +1511,32 @@ pub fn cosh_throughput(x: f32) -> f32 {
 /// than an in-domain ulp regression.
 #[inline(always)]
 pub fn tanh(x: f32) -> f32 {
-    let e = expm1((2.0 * x).clamp(-87.0, 88.0));
+    // Standalone copy of expm1 (not a call through the public `expm1` fn,
+    // same "avoid a shared-helper scheduling risk" reasoning as expm1's
+    // own doc comment above) but with a single exponent-field construction
+    // in the exp(x)-1 branch instead of exp's k1/k2 split: the
+    // `.clamp(-87.0, 88.0)` bound already guarantees `k = round(y*log2e)`
+    // stays in [-126, 127] (same domain sigmoid's own single-field fix
+    // relies on), comfortably short of the k=128 edge case the split
+    // exists for. Also carries the same fma(p, exp2int, -1.0) tail fusion
+    // as expm1's own fix.
+    let y = (2.0 * x).clamp(-87.0, 88.0);
+    let a = y * fma(-1.9999927, y * y, -120.0) / fma(y, fma(y, y - 12.000030, 59.999996), -120.0);
+    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+    let k = fma(y, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
+    let r = fma(-k, LN2_HI, y);
+    let r = fma(-k, LN2_LO, r);
+    let c: [f32; 4] = [4.9999300e-1, 1.6667245e-1, 4.1883811e-2, 8.3009899e-3];
+    let r2 = r * r;
+    let r4 = r2 * r2;
+    let l0 = r + 1.0;
+    let l1 = fma(c[1], r, c[0]);
+    let l2 = fma(c[3], r, c[2]);
+    let r0 = fma(l1, r2, l0);
+    let p = fma(l2, r4, r0);
+    let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
+    let b = fma(p, exp2int, -1.0);
+    let e = if y.abs() < 0.5 { a } else { b };
     e / (e + 2.0)
 }
 
