@@ -752,10 +752,34 @@ cousin.
     shared reduction trick pays off identically for both.*
 28. **sind/cosd: same trick for d·DEG_TO_RAD_SMALL** — 2-constant split of
     π/180 (hi with zeroed tail bits so d·HI is exact, lo folded via fma).
-29. **tanpi / tand**: new functions from existing pieces (sinpi/cospi,
-    sind/cosd ratios). tan's period-π means parity cancels in the ratio —
-    check whether the parity xors can be skipped entirely for the pi/deg
-    variants.
+29. **tanpi / tand (implemented 2026-07-09)**: added as plain
+    `sinpi(x)/cospi(x)` and `sind(x)/cosd(x)` ratios -- correct by
+    construction, not an approximation: `tan(pi*x)` has period 1 in
+    half-turns (unlike `sin`/`cos` individually, which flip sign every
+    integer), so whichever integers `sinpi`/`cospi`'s own reductions
+    resolve to, their respective sign corrections cancel exactly in the
+    division. Poles (`cospi(x)==0` at half-integers) are handled for free
+    by IEEE754 division giving the correctly-signed `+-inf`; both inherit
+    their sin/cos siblings' existing `NaN`-at-infinity convention with no
+    new special-casing. Verified: fuzz accuracy clean (`tanpi` avg ulp
+    0.275, `tand` avg ulp 0.177 -- `tanpi`'s max ulp is a huge but
+    harmless near-pole artifact, same class as `cospi`'s own documented
+    near-zero blowup, confirmed by direct inspection: the denominator is
+    a genuinely tiny nonzero value there, not a bug), `codegen_check`
+    clean (70 regions, up from 68), 21 new edgecheck pins, mca (`tanpi`
+    66.97/2.521 cyc lat/throughput, `tand` 70.02/2.533 -- reasonable,
+    expected cost for composing two existing calls plus a division, no
+    surprises). Commits `883104a` (code+harness), `bcf3eee` (readme
+    sync). **Not pursued**: the idea's own secondary suggestion (skip the
+    parity xors entirely, fusing the two reductions into one that never
+    computes an unused sign correction) -- this implementation still
+    pays for `sinpi`'s and `cospi`'s own independent parity computations,
+    which happen to cancel *algebraically* in the ratio but aren't
+    actually eliminated from the generated code. Left open as a real,
+    separate follow-up for whoever wants to chase the extra throughput
+    (would need a shared reduction that produces both sin/cos values
+    from one parity computation, more invasive than this drop-in
+    composition).
 30. **sinpi/cospi/sind/cosd harness coverage (resolved 2026-07-09)**:
     sinpi/cospi were in the sweep, but domain-restricted to |x|<1e6, well
     below 2^22 -- widened to the full f32 range, which is what caught
