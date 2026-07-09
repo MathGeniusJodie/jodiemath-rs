@@ -1569,10 +1569,22 @@ cousin.
     is exact / Sterbenz applies" claims scattered through the comments —
     several past bugs (pre_offset, e3t sign) were exactly wrong claims of
     this kind.
-97. **exp/exp2 denormal-output double-rounding**: the t2 multiply into the
-    denormal range rounds once by design — verify against a
-    correctly-rounded reference specifically on outputs in [2^-149,
-    2^-126) (powf's residual max-ulp neighborhood, per #58).
+97. **exp/exp2 denormal-output double-rounding (resolved 2026-07-09, no
+    bug found)**: swept `x in [-149,-126)` (the exponent range whose
+    output lands in `[2^-149,2^-126)`, i.e. the denormal zone) against a
+    correctly-rounded f64 reference, both a dense linear sweep and a
+    random-bit-pattern sweep -- `exp2_checked` (the relevant full-range
+    variant `powf_checked`'s own residual max-ulp neighborhood per #58
+    actually uses) came back clean: avg ulp 0.0217, max ulp 1, no
+    evidence of a double-rounding defect from the `t2` multiply. Plain
+    `exp2` (unchecked) does produce garbage there (avg ulp in the
+    billions), but that's expected, already-documented pre-existing
+    behavior, not a new bug -- its own doc comment explicitly states
+    "valid for x in [-126,128)... outside that range the exponent
+    construction wraps around and the result is garbage," and denormal
+    outputs fall well outside that stated domain by design (use
+    `exp2_checked` there, which this sweep confirms does the right
+    thing). No code change.
 98. **Karatsuba-style Df32 multiply**: doublefloat.rs's mul does 2-3
     two_prods; for the powf chain, an error-bounded cheaper mul (drop
     lo·lo, keep cross terms in one fma) might cut powf_checked's +61%
