@@ -67,6 +67,7 @@ logaddexp (|a|,|b|<80)|    0.156   |  ~1e4 (real, narrow cancellation -- see its
         tan (in-domain) |    0.331   |  2967     |  0.000  |    0
                    erf  |    0.317   |     5     | (no std erf)
          erfc (|x|<=10) |    0.311   |   109     | (no std erfc)
+        erfcx (|x|<=10) |    0.377   |   125     | (no std erfcx)
                   atan2 |    0.069   |     3     |  0.000  |    0
     atan2_unchecked (+) |    0.069   |     3     | (bit-identical to atan2 on its domain)
         hypot (bounded) |    0.034   |     1     |  0.000  |    0
@@ -137,7 +138,8 @@ atan2_unchecked | 18.1 ns |     -   |  -
          cosd | 12.6 ns |     -   |  -
          tand | 17.3 ns |     -   |  -
           erf | 21.0 ns |     -   |  -
-         erfc | 22.9 ns |     -   |  -
+         erfc | 21.6 ns |     -   |  -
+        erfcx | 13.4 ns |     -   |  -
       hypot (*) |  5.1 ns | 13.9 ns | 2.7x
 hypot_unchecked |  5.0 ns |     -   |  -
   hypot_checked | 19.9 ns | 11.9 ns | 0.6x
@@ -225,7 +227,8 @@ atan2_unchecked | 0.48 ns  |     -    |  -
          cosd | 0.31 ns  |     -    |  -
          tand | 0.58 ns  |     -    |  -
           erf | 0.70 ns  |     -    |  -
-         erfc | 0.68 ns  |     -    |  -
+         erfc | 0.84 ns  |     -    |  -
+        erfcx | 0.78 ns  |     -    |  -
   hypot (*) | 0.17 ns  |  2.42 ns | 14.2x
 hypot_unchecked | 0.17 ns  |     -    |  -
   hypot_checked | 0.40 ns  |  2.72 ns | 6.8x
@@ -308,7 +311,8 @@ atan_latency        |          59.11 |             1.591
 atan2               |          61.28 |             1.662
 tan                 |          71.02 |             2.532
 erf                 |          91.74 |             2.871
-erfc                |          78.09 |             2.599
+erfc                |          64.03 |             2.530
+erfcx               |          39.36 |             2.278
 hypot               |          21.11 |             0.766
 hypot_checked       |          57.19 |             1.178
 rhypot              |          32.02 |             1.389
