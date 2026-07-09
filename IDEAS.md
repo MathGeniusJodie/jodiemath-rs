@@ -1303,8 +1303,20 @@ cousin.
 73. **PGO (+ BOLT) probe on the bench binaries**: mostly affects branchy
     code, which this crate avoids — cheap to try once, likely a null
     result, worth knowing.
-74. **codegen-units=1 + lto sweep for the bench profile**: confirm the
-    harness isn't measuring artifact boundaries.
+74. **codegen-units=1 + lto sweep for the bench profile (resolved
+    2026-07-09, no artifact-boundary issue)**: rebuilt the entire mca
+    suite (~70 functions) with `CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1`
+    and `CARGO_PROFILE_RELEASE_LTO=fat` (env override, no Cargo.toml
+    change) and diffed the full output against a freshly-captured
+    default-profile baseline from the same session -- bit-for-bit
+    identical everywhere except one function off by 0.001 cyc/elem
+    (`powf_checked` 9.105 vs 9.104, plainly floating-point rounding noise
+    in the mca cycle-count arithmetic itself, not a real codegen
+    difference). Confirms the existing default profile (codegen-units=16,
+    no LTO) isn't splitting anything across a compilation-unit boundary
+    in a way that costs real inlining/optimization -- this crate's
+    existing mca numbers are already trustworthy as measured, no LTO
+    needed to get an honest picture. No code/config change.
 75. **Asm-grep CI test**: assert zero scalar fallbacks (no `vsqrtss`/
     `vdivss`/call instructions) in the vectorized loop bodies of every
     public function — turns the "must autovectorize" rule into a test.
