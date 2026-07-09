@@ -163,6 +163,7 @@ fn main() {
         // comment for why that placement matters.
         let n = black_box(5);
         bench!("pown", |x: f32| pown(x, n));
+        bench!("pown_small", |x: f32| pown_small(x, n));
     }
     // black_box'd 2nd arg, same reasoning as powf just above.
     let remainder_y = std::hint::black_box(3.0);

@@ -271,6 +271,20 @@ throughput_fn!(thr_pown, "pown_throughput", {
     let n = black_box(5);
     move |x: f32| pown(x, n)
 });
+// pown_small deliberately NOT wired up here: with only 8 unrolled
+// iterations (vs pown's 32), LLVM's cost model chooses to branch-
+// specialize on the shared black_box'd `n` this harness uses (cheap
+// enough to be worth it at this trip count, unlike pown's 32) instead of
+// emitting the uniform blend/select pown gets -- confirmed correct and
+// still fully vectorized for the harder, realistic per-lane-varying-`n`
+// case (checked directly via a standalone --emit=asm probe: proper
+// AVX-512 masked selects, no scalar fallback), but the branch-specialized
+// shared-n form has multiple return paths, each carrying its own copy of
+// this macro's inline-asm END marker, which corrupts llvm-mca's region
+// parser ("found an invalid region end directive"). A harness limitation
+// specific to this trip count + shared-n combination, not a code
+// correctness issue -- see quickbench.rs for pown_small's real wall-clock
+// numbers instead.
 
 latency_fn!(lat_powf_checked, "powf_checked_latency", {
     let y = black_box(2.0);

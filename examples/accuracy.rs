@@ -820,7 +820,7 @@ fn main() {
         // reciprocals) is near-perfect; large n degrades gracefully,
         // same characteristic any repeated-squaring algorithm has, not a
         // bug to chase further for a utility function like this one.
-        let pown_sweep = |lo: i32, hi: i32, label: &str| {
+        let pown_sweep = |f: &dyn Fn(f32, i32) -> f32, lo: i32, hi: i32, label: &str| {
             let mut sum = 0u64;
             let mut max = 0u64;
             let mut worst = (0.0f32, 0i32);
@@ -831,7 +831,7 @@ fn main() {
                 if !x.is_finite() || x == 0.0 {
                     continue;
                 }
-                let got = pown(x, n);
+                let got = f(x, n);
                 let want = (x as f64).powi(n) as f32;
                 let d = ulp_diff(got, want);
                 sum += d;
@@ -851,8 +851,14 @@ fn main() {
                 t0.elapsed().as_secs_f64(),
             );
         };
-        pown_sweep(-8, 8, "pown (|n|<=8)");
-        pown_sweep(-64, 64, "pown (|n|<=64)");
+        pown_sweep(&pown, -8, 8, "pown (|n|<=8)");
+        pown_sweep(&pown, -64, 64, "pown (|n|<=64)");
+        // pown_small's own contract (|n| <= 255) -- bit-identical to pown
+        // whenever both are in-domain, so this also doubles as a
+        // regression check on the two shared |n|<=8/|n|<=64 buckets.
+        pown_sweep(&pown_small, -8, 8, "pown_small (|n|<=8)");
+        pown_sweep(&pown_small, -64, 64, "pown_small (|n|<=64)");
+        pown_sweep(&pown_small, -255, 255, "pown_small (|n|<=255)");
     }
     if run("powf") {
         // x != 0 (x == 0 is its own exact case, not a fuzz-density target)

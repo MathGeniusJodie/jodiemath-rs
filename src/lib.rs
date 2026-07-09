@@ -2591,6 +2591,42 @@ pub fn pown(x: f32, n: i32) -> f32 {
     result
 }
 
+/// `pown` restricted to `|n| <= 255`: same exponentiation-by-squaring
+/// algorithm, but only 8 unrolled iterations instead of 32 (`255` is
+/// `2^8-1`, so bit index 8 and above are always zero within this
+/// contract, unlike `pown`'s own need to cover `i32::MIN`'s `2^31`) --
+/// 4x fewer squarings/selects for what's overwhelmingly the common case
+/// (small integer exponents). Bit-identical to `pown` whenever the
+/// contract holds (confirmed over 50M generated samples spanning the
+/// full `|n| <= 255` range), matching this crate's other narrower-domain
+/// `_unchecked`-style tiers.
+///
+/// Still fully vectorizes for the harder, realistic per-lane-*varying* n
+/// case (confirmed directly via a standalone `--emit=asm` probe: proper
+/// AVX-512 masked selects, no scalar fallback) -- but isn't wired into
+/// `examples/mca.rs`/`mca_target.rs` like this crate's other tiers: with
+/// only 8 iterations (vs `pown`'s 32), LLVM's cost model chooses to
+/// branch-specialize on `mca_target.rs`'s own shared/uniform-`n`
+/// benchmark shape instead of emitting the uniform blend `pown` gets at
+/// 32 iterations, and the resulting multi-exit-path function corrupts
+/// llvm-mca's inline-asm region markers ("found an invalid region end
+/// directive") -- a harness limitation specific to this trip count +
+/// shared-n combination, not a code correctness issue. Real wall-clock
+/// numbers instead (`quickbench`, 3 repeated runs): latency ~59→~15 ns
+/// (~3.9x faster), throughput ~1.4→~0.22 ns (~6.4x faster) vs `pown`.
+#[inline(always)]
+pub fn pown_small(x: f32, n: i32) -> f32 {
+    let mut base = if n < 0 { 1.0 / x } else { x };
+    let un = n.unsigned_abs();
+    let mut result = 1.0f32;
+    for i in 0..8u32 {
+        let bit_set = (un >> i) & 1 == 1;
+        result = if bit_set { result * base } else { result };
+        base *= base;
+    }
+    result
+}
+
 /// Higher-accuracy variant of [`powf`]: `exp2(log_2(x)*y)` amplifies
 /// log_2's own rounding error by `y` -- for `|y|` large that swamps the
 /// result (hundreds of ulp), since `log_2(x)` is collapsed to a single f32

@@ -433,6 +433,28 @@ fn main() {
     // true small answer doesn't.
     check("pown(-1.8449108e19,-2)", pown(-1.8449108e19, -2), 2.937983e-39);
 
+    // pown_small: same representative cases as pown above, minus the
+    // i32::MIN/i32::MAX ones -- those are outside pown_small's own
+    // |n| <= 255 contract, not something it needs to get right.
+    check("pown_small(2,3)", pown_small(2.0, 3), 8.0);
+    check("pown_small(2,0)", pown_small(2.0, 0), 1.0);
+    check("pown_small(0,0)", pown_small(0.0, 0), 1.0);
+    check("pown_small(0,5)", pown_small(0.0, 5), 0.0);
+    check("pown_small(0,-3)", pown_small(0.0, -3), f32::INFINITY);
+    check("pown_small(-0,3)", pown_small(-0.0, 3), -0.0);
+    check("pown_small(-0,-3)", pown_small(-0.0, -3), f32::NEG_INFINITY);
+    check("pown_small(-2,3)", pown_small(-2.0, 3), -8.0);
+    check("pown_small(-2,4)", pown_small(-2.0, 4), 16.0);
+    check("pown_small(2,-1)", pown_small(2.0, -1), 0.5);
+    check("pown_small(nan,2)", pown_small(f32::NAN, 2), f32::NAN);
+    check("pown_small(inf,2)", pown_small(f32::INFINITY, 2), f32::INFINITY);
+    check("pown_small(inf,-2)", pown_small(f32::INFINITY, -2), 0.0);
+    check("pown_small(-inf,3)", pown_small(f32::NEG_INFINITY, 3), f32::NEG_INFINITY);
+    check("pown_small(-inf,-3)", pown_small(f32::NEG_INFINITY, -3), -0.0);
+    // Boundary of pown_small's own |n| <= 255 contract.
+    check("pown_small(2,255)", pown_small(2.0, 255), pown(2.0, 255));
+    check("pown_small(2,-255)", pown_small(2.0, -255), pown(2.0, -255));
+
     check("powf(2,3)", powf(2.0, 3.0), 8.0);
     check("powf(1,5)", powf(1.0, 5.0), 1.0);
     // powf_unchecked: contract is x positive/normal/finite, y != 0.0 --
