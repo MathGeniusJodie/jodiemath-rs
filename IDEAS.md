@@ -1402,6 +1402,14 @@ cousin.
     a C99-mandated "infinity wins" exemption the way `hypot`/`atan2` have
     -- `logaddexp` isn't a standard function, so there's no external
     convention being violated either way). No code change.
+    Seventh wave (2026-07-09, later still): `asinh`/`acosh`/`atanh`
+    against `x in {0, -0, +-1, +-inf, NaN, +-0.5, +-2}` -- all clean,
+    matching an f64-computed reference exactly except one pair
+    (`asinh(+-0.5)`) off by exactly 1 ulp, comfortably inside `asinh`'s
+    own documented ~0.15-avg/3-max budget, not a bug. Domain-boundary
+    cases all correct: `acosh(x<1)` (including `-1`, `-0`, `0`) is `NaN`,
+    `acosh(1)=0`, `atanh(+-1)=+-inf`, `atanh(|x|>1)=NaN`,
+    `atanh(+-inf)=NaN`. No code change.
 88. **exp10 near the decade boundaries (resolved 2026-07-09, no bug found)**:
     densely fuzzed (12M samples) right around every point where
     kr=round(x·log2_10) crosses an integer (where the floor-adjust select
