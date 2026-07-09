@@ -655,13 +655,38 @@ cousin.
 19. **exp10 third Cody-Waite word**: LOG10_2 reduction is 2-word; a third
     word is one fma off the critical path. Survey exp10's actual max ulp
     first to see if there's anything to collect.
-20. **exp2int construction via pure-integer path**: k is already an exact
-    small integer in f32 form; compare `(k+383).to_bits()<<8` against
-    cvt-to-i32 + shift-23 + add on vector ports (saturating-cast problem
-    doesn't apply — k is bounded). Probably a wash; cheap to check asm.
+20. **exp2int construction via pure-integer path (tried 2026-07-09 via
+    #21, rejected)**: this idea's own "saturating-cast problem doesn't
+    apply -- k is bounded" claim was checked directly and found false --
+    see #21.
 21. **exp2_checked: k1 from bit-twiddled k instead of a second
-    magic-round** — k1b's fma+sub pair might be replaceable with an
-    integer halving of k's already-integer bits. Screen via asm/mca only.
+    magic-round (tried 2026-07-09, rejected)**: implemented `k as i32`
+    + `>>1` integer halving in place of the fma+sub magic-round, exactly
+    as described. Accuracy was (as expected) unaffected -- integer
+    halving of an already-exact integer is trivially exact either way.
+    But `codegen_check` immediately caught a real, serious regression:
+    `k as i32` (Rust's saturating float-to-int cast) does *not* vectorize
+    to a simple packed convert instruction, even though `k` is runtime-
+    bounded by the function's own earlier `.clamp(-151.0,128.0)` -- LLVM
+    can't statically prove that bound from a `.clamp()` call at
+    codegen time, so it still emits the full saturating-cast fallback
+    (`cvttss2si` scalar extract+convert+check), the *exact* known failure
+    class this crate's own `codegen_check` comment already documents.
+    De-vectorized `exp2_checked_throughput` and, via their own calls into
+    `exp2_checked`, `erf_throughput`/`erfc_throughput`/
+    `powf_throughput`/`powf_unchecked_throughput` too -- 5 regions
+    silently broke the crate's own hard "must auto-vectorize" requirement.
+    Reverted immediately, bit-identical to prior HEAD. Also directly
+    refutes idea #20's own premise ("saturating-cast problem doesn't
+    apply — k is bounded") -- it does apply, runtime boundedness isn't
+    visible to the codegen path that decides cast lowering. *A value
+    being runtime-bounded by an earlier `.clamp()` doesn't make an `as`
+    numeric cast free of the saturating-cast vectorization trap -- LLVM's
+    codegen decision for `as i32` doesn't see through arbitrary earlier
+    control flow, only genuinely bounded integer types or explicit
+    unchecked-cast intrinsics would; always run codegen_check immediately
+    after introducing any `as <int>` cast in a public function's hot
+    path, not just when the value's own type looks unbounded.*
 
 ### log family
 
