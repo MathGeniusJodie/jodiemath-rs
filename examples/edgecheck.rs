@@ -455,6 +455,33 @@ fn main() {
     check("pown_small(2,255)", pown_small(2.0, 255), pown(2.0, 255));
     check("pown_small(2,-255)", pown_small(2.0, -255), pown(2.0, -255));
 
+    // pown_const<N>: same representative cases as pown, N as a const
+    // generic instead of a runtime argument -- must match pown exactly
+    // for every N, including the full i32::MIN/i32::MAX extremes (no
+    // narrower contract here, unlike pown_small).
+    check("pown_const::<3>(2)", pown_const::<3>(2.0), 8.0);
+    check("pown_const::<0>(2)", pown_const::<0>(2.0), 1.0);
+    check("pown_const::<0>(0)", pown_const::<0>(0.0), 1.0);
+    check("pown_const::<5>(0)", pown_const::<5>(0.0), 0.0);
+    check("pown_const::<-3>(0)", pown_const::<-3>(0.0), f32::INFINITY);
+    check("pown_const::<3>(-0)", pown_const::<3>(-0.0), -0.0);
+    check("pown_const::<-3>(-0)", pown_const::<-3>(-0.0), f32::NEG_INFINITY);
+    check("pown_const::<3>(-2)", pown_const::<3>(-2.0), -8.0);
+    check("pown_const::<4>(-2)", pown_const::<4>(-2.0), 16.0);
+    check("pown_const::<-1>(2)", pown_const::<-1>(2.0), 0.5);
+    check("pown_const::<2>(nan)", pown_const::<2>(f32::NAN), f32::NAN);
+    check("pown_const::<2>(inf)", pown_const::<2>(f32::INFINITY), f32::INFINITY);
+    check("pown_const::<-2>(inf)", pown_const::<-2>(f32::INFINITY), 0.0);
+    check("pown_const::<3>(-inf)", pown_const::<3>(f32::NEG_INFINITY), f32::NEG_INFINITY);
+    check("pown_const::<-3>(-inf)", pown_const::<-3>(f32::NEG_INFINITY), -0.0);
+    check("pown_const::<i32::MIN>(2)", pown_const::<{ i32::MIN }>(2.0), 0.0);
+    check("pown_const::<i32::MAX>(2)", pown_const::<{ i32::MAX }>(2.0), f32::INFINITY);
+    check(
+        "pown_const::<-2>(-1.8449108e19)",
+        pown_const::<-2>(-1.8449108e19),
+        2.937983e-39,
+    );
+
     check("powf(2,3)", powf(2.0, 3.0), 8.0);
     check("powf(1,5)", powf(1.0, 5.0), 1.0);
     // powf_unchecked: contract is x positive/normal/finite, y != 0.0 --

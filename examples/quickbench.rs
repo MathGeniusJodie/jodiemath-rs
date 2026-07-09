@@ -165,6 +165,9 @@ fn main() {
         bench!("pown", |x: f32| pown(x, n));
         bench!("pown_small", |x: f32| pown_small(x, n));
     }
+    // N baked in at compile time (not black_box'd -- that's the whole
+    // point of pown_const, unlike pown/pown_small above).
+    bench!("pown_const<5>", |x: f32| pown_const::<5>(x));
     // black_box'd 2nd arg, same reasoning as powf just above.
     let remainder_y = std::hint::black_box(3.0);
     bench!("remainder", move |x: f32| remainder(x, remainder_y));

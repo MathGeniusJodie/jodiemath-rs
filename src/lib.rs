@@ -2627,6 +2627,32 @@ pub fn pown_small(x: f32, n: i32) -> f32 {
     result
 }
 
+/// `pown` with a compile-time-known exponent: same algorithm as `pown`,
+/// but with `N` as a const generic instead of a runtime `i32`, so
+/// `N.unsigned_abs()` and `N < 0` are compile-time constants and the
+/// whole 32-iteration bit-testing loop is expected to constant-fold away
+/// entirely, leaving only the exact minimal sequence of multiplies this
+/// specific exponent needs (no runtime branch or select at all) -- the
+/// "same exponent, hard-coded at the call site" pattern (`x*x*x`-style
+/// cubes/squares/reciprocals) that motivated `pown`'s own square-and-
+/// multiply redesign in the first place, taken to its logical conclusion
+/// once the exponent doesn't need to vary per call. Verify with
+/// `--emit=asm` before trusting this folds as described -- monomorphized
+/// generics don't automatically guarantee LLVM finishes the constant
+/// folding, only that it has enough information to.
+#[inline(always)]
+pub fn pown_const<const N: i32>(x: f32) -> f32 {
+    let mut base = if N < 0 { 1.0 / x } else { x };
+    let un = N.unsigned_abs();
+    let mut result = 1.0f32;
+    for i in 0..32u32 {
+        let bit_set = (un >> i) & 1 == 1;
+        result = if bit_set { result * base } else { result };
+        base *= base;
+    }
+    result
+}
+
 /// Higher-accuracy variant of [`powf`]: `exp2(log_2(x)*y)` amplifies
 /// log_2's own rounding error by `y` -- for `|y|` large that swamps the
 /// result (hundreds of ulp), since `log_2(x)` is collapsed to a single f32
