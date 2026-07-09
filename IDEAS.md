@@ -652,9 +652,12 @@ cousin.
     sibling with a differently-derived poly — check whether the "+1" (or
     equivalent identity term) was already free before assuming the weave
     saves anything.*
-19. **exp10 third Cody-Waite word**: LOG10_2 reduction is 2-word; a third
-    word is one fma off the critical path. Survey exp10's actual max ulp
-    first to see if there's anything to collect.
+19. **exp10 third Cody-Waite word (surveyed 2026-07-09, not pursued)**:
+    exhaustive sweep shows exp10/exp10_checked already at avg ulp
+    0.0343/max ulp 2 (2.2B+ samples each) -- already tight (max 2 is
+    close to the practical floor for a non-perfectly-rounded function).
+    Minimal headroom for a third reduction word to collect; not worth the
+    extra fma given how little room there is to improve.
 20. **exp2int construction via pure-integer path (tried 2026-07-09 via
     #21, rejected)**: this idea's own "saturating-cast problem doesn't
     apply -- k is bounded" claim was checked directly and found false --
