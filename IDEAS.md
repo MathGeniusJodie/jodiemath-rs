@@ -2187,6 +2187,54 @@ legitimate direction here, unlike on most targets.
 
 ### atan / asin / acos
 
+- **atan_poly numerator refit via max-capped LP, denominator fixed
+  (2026-07-09), implemented and adopted — small real avg win, exactly
+  the "isolated metric wildly overstates the real effect" pattern this
+  session has now seen four times, but this time landing as a genuine,
+  if modest, win rather than zero or a regression.** `atan_poly` is a
+  3/3 Padé (see its own commit-history comment above for the degree-bump
+  story) — the rational form makes a *joint* max-capped LP harder to set
+  up than this session's earlier pure-poly targets (a coefficient
+  perturbation in the denominator doesn't enter the output linearly, due
+  to the division), so this only touched the numerator, holding the
+  denominator at its shipped values: `numer(x)/denom_fixed(x) ≈ atan(x)`
+  is linear in the numerator's 3 free coefficients once `denom_fixed` is
+  known, exactly the same LP setup as every other target this session,
+  just with `denom_fixed(x)` folded into the per-sample target and
+  weight. Single caller pattern confirmed safe (`atan`/`atan2` both
+  reuse the identical `y=min(a,1/a)` domain, no `sinf_poly`-style
+  region-splitting), and the leading term is safely un-sensitive at
+  `x=0` (multiplied by `x` itself via the constant `1.0` inside the
+  Horner form, same shape as `atan_latency`'s poly). The isolated fit
+  predicted a dramatic win (max weighted error 0.279->0.026, ~11x; avg
+  0.122->0.008, ~15x) — by far the largest isolated-metric prediction
+  this session has produced — but real, exhaustive verification found
+  only a small avg improvement: `atan` avg ulp 0.0681->0.0675 (~0.9%),
+  max ulp *unchanged* at 4, with the *exact same* worst-case `x`
+  (1.0220603) before and after. This confirms the numerator was never
+  the binding constraint for `atan`'s real worst case at all — the
+  true bottleneck lives elsewhere (most likely the denominator, or the
+  division itself), so refitting the numerator alone could only ever
+  move the average, never the max, similar in shape to the `expm1` Padé
+  degree-bump entry's own "fixed the wrong branch" outcome. Adopted
+  anyway since it's a real, `git stash`-paired, exhaustively-confirmed
+  improvement with zero perf cost (mca bit-identical, 61.09/1.491 cyc,
+  pure coefficient swap) and no regression on any axis — `edgecheck.rs`
+  passes, `atan2`/`atan2_unchecked` (which reuse this poly) unaffected
+  beyond noise-level movement on their own non-exhaustive 2-argument
+  sample. `readme.md`'s atan row updated. **General lesson: this is the
+  fourth data point (after `exp`, `erf_poly`, `cbrt`, `atan_latency`) on
+  this session's own "isolated metric predicts direction reliably, not
+  magnitude" finding, and the most extreme case yet (~11-15x predicted,
+  ~0.9% real) — when only refitting *part* of a multi-piece pipeline
+  (here, the numerator of a rational, with the denominator and division
+  untouched), the isolated metric's prediction reflects only that one
+  piece's own theoretical ceiling, which can be wildly larger than what
+  the *whole* pipeline's real bottleneck allows through. Worth checking
+  whether the refit target is a genuine sole contributor or just one
+  piece of several before trusting an unusually large isolated-metric
+  prediction.**
+
 - **Retune asin's 0.25 crossover after any acos_poly change (2026-07-08),
   checked and confirmed already near-optimal, no change**: the joint
   acos+asin refit (fix 7 in asin's own doc comment, commit `b9f9b5d`)

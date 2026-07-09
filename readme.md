@@ -50,7 +50,7 @@ cosh_throughput (in-domain)| 0.051   |     4     |  0.000  |    0
                   atanh |    0.032   |     3     | 
                    asin |    0.030   |     9     |  0.000  |    0
                    acos |    0.496   |     4     |  0.000  |    0
-                   atan |    0.068   |     4     |  0.000  |    0
+                   atan |    0.067   |     4     |  0.000  |    0
            atan_latency |    0.052   |     3     |  0.000  |    0
         tan (in-domain) |    0.331   |  2967     |  0.000  |    0
                    erf  |    0.317   |     5     | (no std erf)

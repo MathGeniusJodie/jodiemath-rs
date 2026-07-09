@@ -1853,11 +1853,28 @@ pub fn asin(x: f32) -> f32 {
 // 61.09/1.491 cyc lat/throughput, atan2 57.17/1.467 -> 61.17/1.532),
 // easily justified by a >4x max-ulp cut on the crate's second-worst
 // accuracy offender.
+//
+// Numerator refit (2026-07-09), denominator held fixed: max-capped
+// ulp-weighted LP (this session's exp/erf_poly/cbrt technique), solving
+// for a0..a2 against `atan(x)*denom(x2)/x` (linear in a0..a2 with the
+// denominator fixed, since numer/denom is linear in the numerator's own
+// coefficients alone). The isolated fit predicted a huge win (~11x
+// tighter max, ~15x tighter avg) but didn't survive contact with the
+// real crate anywhere near that scale (this session's now-repeated
+// finding that the isolated metric doesn't reliably predict real
+// magnitude) -- exhaustive: atan avg ulp 0.0681->0.0675 (a real, small
+// ~0.9% win), max ulp unchanged at 4, same exact worst-case x
+// (1.0220603) before and after, confirming the numerator was never the
+// binding constraint for the true worst case (likely the denominator or
+// the division itself) -- refitting it only touched the average, not
+// the max, similar to the expm1 Pade entry's own "wrong branch" shape.
+// Zero perf cost (same instructions). Adopted for the small, real,
+// no-regression avg win.
 #[inline(always)]
 fn atan_poly(x: f32) -> f32 {
-    let a2 = 8.830049e-3;
-    let a1 = 2.8497794e-1;
-    let a0 = 1.127171e0;
+    let a2 = 0.008830042167832291;
+    let a1 = 0.2849778513254418;
+    let a0 = 1.1271711055988247;
     let b2 = 5.0166193e-2;
     let b1 = 5.718157e-1;
     let b0 = 1.4605043e0;
