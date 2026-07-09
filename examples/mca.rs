@@ -167,6 +167,8 @@ fn main() {
         "remainder_unchecked",
         "remainder_checked",
         "remainder_ieee",
+        "fmod",
+        "fmod_unchecked",
     ];
 
     println!();

@@ -349,6 +349,23 @@ throughput_fn!(thr_remainder_ieee, "remainder_ieee_throughput", {
     move |x: f32| remainder_ieee(x, y)
 });
 
+latency_fn!(lat_fmod, "fmod_latency", {
+    let y = black_box(3.0);
+    move |x: f32| fmod(x, y)
+});
+throughput_fn!(thr_fmod, "fmod_throughput", {
+    let y = black_box(3.0);
+    move |x: f32| fmod(x, y)
+});
+latency_fn!(lat_fmod_unchecked, "fmod_unchecked_latency", {
+    let y = black_box(3.0);
+    move |x: f32| fmod_unchecked(x, y)
+});
+throughput_fn!(thr_fmod_unchecked, "fmod_unchecked_throughput", {
+    let y = black_box(3.0);
+    move |x: f32| fmod_unchecked(x, y)
+});
+
 fn main() {
     // smoke test only: exercises every marked function once so `cargo run
     // --release --example mca_target` succeeds on its own. The interesting
@@ -426,6 +443,8 @@ fn main() {
         lat_powf_checked_unchecked, thr_powf_checked_unchecked;
         lat_remainder, thr_remainder;
         lat_remainder_unchecked, thr_remainder_unchecked;
+        lat_fmod, thr_fmod;
+        lat_fmod_unchecked, thr_fmod_unchecked;
         lat_remainder_checked, thr_remainder_checked;
         lat_remainder_ieee, thr_remainder_ieee;
     );

@@ -1043,6 +1043,27 @@ fn main() {
         let s = fuzz2(TWOARG_SAMPLES, remainder_domain, remainder_ieee, remainder_ref);
         report("remainder_ieee", &s, t0);
     }
+    if run("fmod") {
+        // fmod's own failure mode (see its doc comment) is the
+        // truncation analog of remainder's near_tie exclusion, but at
+        // integer boundaries instead of half-integer ones (`.trunc()`'s
+        // decision changes at integers, not half-integers) -- exclude
+        // the same way, `near_int` instead of `near_tie`.
+        let near_int = |x: f32, y: f32| {
+            let f = (x / y).fract().abs();
+            f < 1e-4 || f > 1.0 - 1e-4
+        };
+        let fmod_domain =
+            |x: f32, y: f32| y != 0.0 && (x / y).abs() < 1000.0 && !near_int(x, y);
+        let fmod_ref = |a: F64xN, b: F64xN| a % b;
+        let s = fuzz2(TWOARG_SAMPLES, fmod_domain, fmod, fmod_ref);
+        report("fmod", &s, t0);
+        let fmod_domain_unchecked = |x: f32, y: f32| {
+            x != 0.0 && y != 0.0 && y.is_finite() && (x / y).abs() < 1000.0 && !near_int(x, y)
+        };
+        let s = fuzz2(TWOARG_SAMPLES, fmod_domain_unchecked, fmod_unchecked, fmod_ref);
+        report("fmod_unchecked (+)", &s, t0);
+    }
 
     println!("total: {:.2}s", t0.elapsed().as_secs_f64());
 }

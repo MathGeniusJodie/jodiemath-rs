@@ -2959,6 +2959,46 @@ pub fn remainder_checked(x: f32, y: f32) -> f32 {
     if y.is_infinite() && x.is_finite() { x } else { r }
 }
 
+/// C's `fmod(x,y)`: truncated (round-toward-zero) division instead of
+/// [`remainder`]'s round-to-nearest, so the result always has the same
+/// sign as `x` (or is a correctly-signed zero) -- a real, defining
+/// difference from `remainder`, not just a different tie-break (C99
+/// `fmod` and IEEE754 `remainder` are two genuinely different
+/// operations, not two conventions for the same one, unlike
+/// `remainder`/`remainder_ieee`'s own ties-away-vs-ties-even split).
+/// Same structure as `remainder` otherwise (same `x==0.0` sign guard,
+/// same finite-x/infinite-y no-reduction special case), just `.trunc()`
+/// instead of `.round()`. Matches Rust's own `%` operator on `f32`
+/// exactly (verified: `%` already implements C `fmod` semantics, not
+/// `remainder`'s) over 50M generated `|x/y|<1000` samples, aside from a
+/// low-probability (~3e-7) real failure mode -- the truncation analog of
+/// `remainder`'s own already-documented one: `x/y`'s single division
+/// rounding can occasionally land the *true* mathematical quotient
+/// within half a division-ulp of an exact *integer* (not a half-integer
+/// tie, since `.trunc()`'s decision boundary is at integers), pushing
+/// the computed `x/y` to the wrong side of it and `q` off by a whole 1,
+/// giving a result off by exactly `y`. Same inherited "naive x-q*y
+/// formula" property `remainder` documents (see its own doc comment,
+/// including its `remainder_checked` fix-at-extra-cost tier) -- not
+/// pursued further here for the same reason, the failure rate is already
+/// this low without any correction.
+#[inline(always)]
+pub fn fmod(x: f32, y: f32) -> f32 {
+    let q = (x / y).trunc();
+    let normal = fma(-q, y, x);
+    let r = if x == 0.0 { x } else { normal };
+    if y.is_infinite() && x.is_finite() { x } else { r }
+}
+
+/// [`fmod`] without domain checks: valid for `x != 0.0` and `y` finite
+/// (not `+-inf`) -- mirrors [`remainder_unchecked`]'s own contract and
+/// reasoning exactly, just for `fmod`'s truncated convention.
+#[inline(always)]
+pub fn fmod_unchecked(x: f32, y: f32) -> f32 {
+    let q = (x / y).trunc();
+    fma(-q, y, x)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

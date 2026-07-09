@@ -670,6 +670,23 @@ fn main() {
     // the higher magnitude 2 for a positive 1.5 (both conventions agree
     // whenever the "away" and "even" neighbors happen to coincide).
     check("remainder_ieee(3,2)", remainder_ieee(3.0, 2.0), -1.0);
+
+    // fmod: C fmod semantics (truncated division, sign always matches x)
+    // -- verified directly against Rust's own `%` operator, which already
+    // implements this convention.
+    check("fmod(5,3)", fmod(5.0, 3.0), 5.0f32 % 3.0);
+    check("fmod(-5,3)", fmod(-5.0, 3.0), -5.0f32 % 3.0);
+    check("fmod(5,-3)", fmod(5.0, -3.0), 5.0f32 % -3.0);
+    check("fmod(-5,-3)", fmod(-5.0, -3.0), -5.0f32 % -3.0);
+    check("fmod(0,3)", fmod(0.0, 3.0), 0.0);
+    check("fmod(-0,3)", fmod(-0.0, 3.0), -0.0);
+    check("fmod(3,inf)", fmod(3.0, f32::INFINITY), 3.0);
+    check("fmod(-3,inf)", fmod(-3.0, f32::INFINITY), -3.0);
+    check("fmod(inf,3)", fmod(f32::INFINITY, 3.0), f32::NAN);
+    check("fmod(3,0)", fmod(3.0, 0.0), f32::NAN);
+    check("fmod(nan,3)", fmod(f32::NAN, 3.0), f32::NAN);
+    check("fmod_unchecked(5,3)", fmod_unchecked(5.0, 3.0), fmod(5.0, 3.0));
+    check("fmod_unchecked(-5,3)", fmod_unchecked(-5.0, 3.0), fmod(-5.0, 3.0));
 }
 
 /// f64-computed exact reference for a single spot-check triple, used only
