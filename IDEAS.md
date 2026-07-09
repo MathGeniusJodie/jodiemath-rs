@@ -25,10 +25,11 @@ brainstorm backlog lives at the bottom of this file.
   session (after sinf_poly's dual-region sharing and acos_poly's direct-
   exposure sharing): the poly was already too close to the best-possible
   floor for the model's own approximation slop to stay safely inside.**
-  Same "zero-move" coordinate-descent finding just above was the exact
-  situation that turned out to have real headroom for `exp`'s own
-  degree-5 poly earlier this session, so this looked like a promising
-  parallel. Confirmed this poly is genuinely single-computation (5
+  Worth trying since a coefficient already confirmed "zero-move" by
+  coordinate descent (see the entry just above) doesn't rule out a
+  properly-seeded LP finding real headroom elsewhere in this file — so
+  this looked like a reasonable parallel to attempt. Confirmed this
+  poly is genuinely single-computation (5
   literal call sites across `exp2`/`exp2_checked`/`exp10`/
   `exp10_checked`/`exp2_checked_df`, but all evaluate the *identical*
   `f` in `[0,1)` the same way — `exp2_checked_df` just takes a `Df32`
@@ -51,30 +52,29 @@ brainstorm backlog lives at the bottom of this file.
   **`exp2_checked`'s max ulp moved 1→2** even on a 100M-sample paired
   fuzz (not a one-off tail hit — reproduced on the full exhaustive
   sweep too, along with `exp2`, `exp10`, and `exp10_checked` *all four*
-  regressing 1→2 simultaneously). Root cause: unlike `exp`'s poly (whose
-  shipped baseline already had real max-ulp slack, 4 ulp, for the LP to
-  work within) or `erf_poly`/`cbrt` (also starting from a multi-ulp
-  baseline), this poly's shipped max ulp was already 1 — as tight as a
-  non-machine-precision poly realistically gets — so the LP's max-cap
-  constraint (built from the *continuous* weighted-error model, not
-  real measured ulp) had essentially no real margin to enforce; the
-  same order of model-vs-reality slop that made `erf_poly`'s predicted
-  ~35% improvement land at ~0.9% in practice was, at this much finer
-  starting scale, enough to tip the *actual* worst case over an integer
-  ulp boundary despite the *model's* own max metric staying flat.
-  Reverted (`git checkout -- src/lib.rs`, confirmed clean via `git
-  diff`/`git status`); no code changed. **General lesson: this makes a
-  third distinct failure mode for the max-capped LP technique, beyond
-  the two already logged (`sinf_poly`'s domain-region sharing,
-  `acos_poly`'s direct multi-caller exposure) — even a genuinely single-
-  caller poly with no sharing risk at all can still regress if it's
-  already close enough to its practical accuracy floor (max ulp already
-  1 here) that the LP's continuous-model max-cap doesn't have enough
-  real slack to reliably hold the *actual* measured max ulp constant.
-  Before trying this technique on any further poly, check the shipped
-  baseline's own max ulp first: a poly already at or near max ulp 1 is
-  a much riskier target than one with real headroom (4+ ulp, like
-  `exp`'s own case) for the max-cap to protect.**
+  regressing 1→2 simultaneously). Root cause: this poly's shipped max
+  ulp was already 1 — as tight as a non-machine-precision poly
+  realistically gets — so the LP's max-cap constraint (built from the
+  *continuous* weighted-error model, not real measured ulp) had
+  essentially no real margin to enforce; even a small amount of
+  model-vs-reality slop (this file's testing has repeatedly found the
+  isolated model's predicted improvement can be an order of magnitude
+  or more off from the real result) is enough, at this fine a starting
+  scale, to tip the *actual* worst case over an integer ulp boundary
+  despite the *model's* own max metric staying flat. Reverted (`git
+  checkout -- src/lib.rs`, confirmed clean via `git diff`/`git
+  status`); no code changed. **General lesson: this makes a third
+  distinct failure mode for the max-capped LP technique, beyond the two
+  already logged (`sinf_poly`'s domain-region sharing, `acos_poly`'s
+  direct multi-caller exposure) — even a genuinely single-caller poly
+  with no sharing risk at all can still regress if it's already close
+  enough to its practical accuracy floor (max ulp already 1 here) that
+  the LP's continuous-model max-cap doesn't have enough real slack to
+  reliably hold the *actual* measured max ulp constant. Before trying
+  this technique on any further poly, check the shipped baseline's own
+  max ulp first: a poly already at or near max ulp 1 is a much riskier
+  target than one with real headroom (4+ ulp) for the max-cap to
+  protect.**
 
 - **Coordinate-descent tuner methodology finding, "zero-move" isn't always
   "no headroom" (2026-07-08)**: `tune.rs`'s tuner moves each coefficient by
@@ -122,9 +122,8 @@ brainstorm backlog lives at the bottom of this file.
   tried, both rejected — real regressions in the real crate despite each
   looking like an improvement in the isolated fit, root-caused to `cos`'s
   own reduction landing on the *opposite end* of the poly's domain from
-  `sin`'s.** Same technique that won for `exp`'s degree-5 poly earlier
-  this session (a `scipy.optimize.linprog` Chebyshev fit of the same 4
-  coefficients, weighted by `1/ulp(sin(x))`), tried here per this file's
+  `sin`'s.** A `scipy.optimize.linprog` Chebyshev fit of the poly's 4
+  coefficients, weighted by `1/ulp(sin(x))`, tried here per this file's
   own "still realistic to try on sinf_poly" backlog note. Variant 1
   (plain minimax, minimize `t` s.t. `|error_i| <= t`): found a real ~3.8x
   tighter worst-case bound in the isolated fit (0.364 -> 0.096
@@ -167,10 +166,10 @@ brainstorm backlog lives at the bottom of this file.
   neutral — it implicitly re-weights which caller's accuracy improves,
   and checking one caller's numbers (or the isolated poly-only metric)
   without checking *all* real callers across *all* their actual bucket
-  sizes can hide a real regression. The `exp` refit earlier this session
-  didn't hit this because `exp`'s poly has only the one direct caller
-  pattern (always evaluated near the same relative position in its
-  domain); this is not automatically true for every poly in this crate.**
+  sizes can hide a real regression. A poly with only one direct caller
+  (always evaluated near the same relative position in its domain, e.g.
+  `exp`'s own degree-5 poly) doesn't have this risk; this is not
+  automatically true for every poly in this crate.**
 
 - **expm1 Pade degree bump, numerator degree 3 → 5 (2026-07-08, later
   re-checked with a proper scipy seed instead of 0.0, still not
@@ -212,65 +211,6 @@ brainstorm backlog lives at the bottom of this file.
   itself is much faster after this session's magic-round fix — the
   backlog's assumed win doesn't obviously hold once `exp`'s own cost
   dropped. Not implemented; no code changed.
-
-- **exp's degree-5 poly (`exp_r`), ulp-weighted Chebyshev LP refit
-  (2026-07-09), implemented and adopted — real, exhaustively-confirmed
-  win on every axis, zero perf cost.** Combined two still-open backlog
-  entries into one test: the cross-cutting sollya/fpminimax entry names
-  `exp`'s degree-5 as one of the few remaining "max ulp is the open
-  residual" candidates (sollya itself isn't installed), and a separate
-  entry proposes ulp-weighted minimax fitting (weighting by 1/ulp(f(x))
-  instead of plain relative error) as a generic technique nobody had
-  applied to a specific function yet. Before writing any Rust: built a
-  rounding-faithful Python simulation of the *entire* `exp()` pipeline
-  (Cody-Waite reduction, the c2..c5 poly, the k1/k2 exponent-split
-  reconstruction — same discipline as this file's other pre-Rust
-  screens), confirmed it reproduces the shipped code's real numbers
-  exactly under bit-pattern-uniform sampling (avg ulp 0.09103 vs
-  readme's documented 0.091) before trusting it for a before/after
-  comparison. Found the current coefficients' worst points all cluster
-  near the domain edge (`|r|~0.3`, not near `r=0`/output=1.0's ulp
-  boundary) — so the *ulp-weighting* half of the idea wasn't actually
-  the operative mechanism here, but it was still worth trying the *LP*
-  half: a `scipy.optimize.linprog` Chebyshev fit (minimize `t` s.t.
-  `|P(r_i)-exp(r_i)| <= t/ulp(exp(r_i))` over a dense grid) against the
-  existing coordinate-descended coefficients as a sanity check found a
-  real ~40% tighter bound in the underlying continuous math (2.245 ->
-  1.350 ulp-weighted units) — evidence the existing coordinate descent
-  (from IDEAS.md's own `exp_r_c`/`"exp_r"` tuner target) had converged
-  to a real but non-global local optimum, not a floor. Quantized the LP
-  solution to f32 and verified in the Python simulation first (30M-point
-  grid and 30M-sample fuzz both agreed: max ulp 4->3, avg 0.912->0.714
-  under uniform-value sampling; bit-pattern-uniform sampling, matching
-  the crate's actual methodology, gave avg 0.09103->0.07444). Implemented
-  in `src/lib.rs` (only the 4 literal constants changed, same Estrin
-  structure) and verified against the real crate, paired via `git stash`,
-  **exhaustively** (all 2^32 bit patterns, not just fuzz) for every
-  caller: `exp` avg/max ulp 0.0911/4 -> 0.0745/3 (both improved);
-  `tanh` 0.1482/9 -> 0.1457/6 (the standout — a 33% max-ulp cut, since
-  tanh's own worst case sat inside this poly's residual); `sinh_
-  throughput` 0.0839/7 -> 0.0723/5 (both improved); `cosh_throughput`
-  0.0606/4 -> 0.0507/4 (avg only); `expm1` 0.1381/6 -> 0.1304/6 (avg
-  only — expm1's own max ulp lives entirely in its other, exp-free Pade
-  branch, per this file's own earlier "expm1 Pade degree bump" entry);
-  `sinh`/`cosh` exactly unchanged (their own worst case doesn't sit in
-  this residual). No regressions found anywhere. `edgecheck.rs` passes
-  unchanged. mca confirmed bit-for-bit identical latency/throughput on
-  `exp`/`sinh`/`tanh` (42.00/1.327, 58.00/2.523, 94.91/2.567) — expected
-  for a pure coefficient swap with no structural change, but confirmed
-  rather than assumed. Adopted; `readme.md`'s precision table updated
-  (exp/expm1/sinh_throughput/cosh_throughput/tanh rows). **General
-  lesson: a function already coordinate-descent-tuned from a good (non-
-  zero) seed can still have real headroom for a proper global solver —
-  unlike the zero-seed trap this file documents elsewhere, this wasn't
-  about escaping a bad starting point, just about coordinate descent's
-  greedy per-coefficient steps not finding as good a joint balance as an
-  LP does directly. Also: the ulp-weighting half of the originating idea
-  turned out not to be the actual mechanism (the worst points weren't
-  near a ulp/exponent boundary at all) — worth remembering that an idea
-  can still pay off for a different reason than the one that motivated
-  trying it, so don't discard a combined idea just because one of its
-  two premises doesn't hold up under inspection.** Commit `997fe7a`.
 
 ## cbrt family
 
@@ -394,36 +334,28 @@ brainstorm backlog lives at the bottom of this file.
 
 - **ln_normal's poly, max-capped ulp-weighted LP (2026-07-09), tested and
   rejected — the isolated fit's most dramatic prediction yet for a "no
-  real headroom" outcome, adding a fifth confirming data point.**
-  Despite the entry above's coordinate-descent "zero-move" verdict,
-  this looked worth trying since that's the exact situation that turned
-  out to have real LP-findable headroom for `exp`'s own poly earlier
-  this session. Confirmed the boundary is safe first (the constant term
-  `c[0]` is multiplied by `s`, so it has zero effect at `s=0` — same
-  un-sensitive pattern as `exp2`'s `g0`, not `acos_poly`'s `u0` trap),
-  and confirmed `ln_normal` isn't shared across differently-stressed
-  sub-regions the way `sinf_poly`/`exp_pos_neg` are (its `_unchecked`
-  twin covers the same domain, just skipping the denormal dance). The
-  isolated fit predicted a huge win (avg weighted error 0.0901→0.0226,
-  ~75%, the LP naturally converging `c[0]` back to within 1e-9 of
-  exactly 1.0 without being forced) — but real `git stash`-paired
+  real headroom" outcome.** Despite the entry above's coordinate-descent
+  "zero-move" verdict, this looked worth trying since a coefficient
+  seeded from a real (non-zero) starting point can still have LP-findable
+  headroom a naive tuner misses (see this file's own tuner-methodology
+  finding, Cross-cutting section). Confirmed the boundary is safe first
+  (the constant term `c[0]` is multiplied by `s`, so it has zero effect
+  at `s=0` — same un-sensitive pattern as `exp2`'s `g0`, not `acos_poly`'s
+  `u0` trap), and confirmed `ln_normal` isn't shared across differently-
+  stressed sub-regions the way `sinf_poly`/`exp_pos_neg` are (its
+  `_unchecked` twin covers the same domain, just skipping the denormal
+  dance). The isolated fit predicted a huge win (avg weighted error
+  0.0901→0.0226, ~75%, the LP naturally converging `c[0]` back to within
+  1e-9 of exactly 1.0 without being forced) — but real `git stash`-paired
   exhaustive verification found essentially nothing: `ln` avg ulp
   0.1168→0.1167 (~0.09%, deep in exhaustive-sweep noise), max ulp
   unchanged at 3. Reverted (`git checkout --`, confirmed clean); no
-  code changed. **General lesson: this is now the fifth data point on
-  this session's "isolated metric doesn't reliably predict magnitude"
-  finding, and unlike `erf_poly`/`atan_poly`'s at-least-small real wins,
-  this one (like `atan_latency`) found *nothing* despite the largest
-  predicted improvement of the whole session (~75%) — reinforcing that
-  the size of the isolated prediction carries close to zero information
-  about whether a real improvement exists at all, only whether it's
-  worth the (cheap) cost of testing. A function already coordinate-
-  descent-confirmed as "zero-move" is not, on its own, a reliable
-  signal that LP will find real headroom either — it worked for `exp`
-  but that may have been the exception, not the rule, among this
-  session's now 6 "already-tuned, tried LP anyway" attempts (`exp` win;
-  `sinf_poly`, `acos_poly`, `exp2`, `atan_latency`, `ln_normal` all
-  no-gain-or-regression).**
+  code changed. **General lesson: the size of an isolated LP prediction
+  carries close to zero information about whether a real improvement
+  exists at all, only whether it's worth the (cheap) cost of testing —
+  a function already coordinate-descent-confirmed as "zero-move" is not,
+  on its own, a reliable signal that a proper LP will find real headroom
+  either.**
 
 ## hypot / misc
 
@@ -465,9 +397,10 @@ brainstorm backlog lives at the bottom of this file.
   (2026-07-09), tested and rejected — a real regression, this session's
   second case (after `sinf_poly`) of the isolated metric getting the
   *direction* wrong, not just the magnitude.** Applied the same
-  numerator-only LP that worked for `atan_poly` (denominator held at
-  its shipped `C`/`D`, target `denom_fixed(x2) = numer(x)/erf(x)*x`
-  linear in the numerator's `A`/`B`). The coefficients barely moved (`A`
+  numerator-only LP approach used elsewhere in this file for rational
+  forms (denominator held at its shipped `C`/`D`, target
+  `denom_fixed(x2) = numer(x)/erf(x)*x` linear in the numerator's
+  `A`/`B`). The coefficients barely moved (`A`
   0.591056→0.591056, `B` 1.128379225731→1.128379164358 — the new `B` is
   actually *closer* to the true `2/sqrt(pi)` than the shipped value,
   which looked like a good sign) and the isolated fit predicted a large
@@ -499,56 +432,11 @@ brainstorm backlog lives at the bottom of this file.
   the tail formula for xa in [0.28,10]. Max ulp unchanged (4→4), avg ulp
   moved <0.3%, stable across a 10x denser grid. Not applied.
 
-- **erf_poly, ulp-weighted Chebyshev LP refit with a max-ulp cap
-  (2026-07-09), implemented and adopted — small but real win, applying
-  this session's two earlier lessons (the `exp` win, and the `sinf_poly`
-  regression) to a new poly.** Same LP technique as both entries above,
-  but with the max-cap fix from the `sinf_poly` postmortem baked in from
-  the start (minimize the weighted-L1/avg-ish objective subject to the
-  max weighted error never exceeding the shipped coefficients' own
-  bound — the `acos_poly` fix-7 pattern) rather than repeating the
-  plain-minimax mistake. Also checked the `sinf_poly` failure mode's
-  premise up front: `erf_poly` has exactly one caller (`erf` itself,
-  always evaluated the same way over its whole `[0.28,10]` clamped
-  domain), not two callers stressing opposite domain regions the way
-  `sin_checked`/`cos_checked` do — so the domain-uniform grid risk that
-  sank `sinf_poly` doesn't apply here. Target: `erf_poly(xa) ≈
-  log2(erfc(xa))` (scipy's float64 `erfc`/`erf`, accurate over this
-  whole range without needing arbitrary precision — `erfc(10)~1.5e-44`
-  is nowhere near f64's own underflow floor), weighted by
-  `erfc(xa)*ln2/ulp(erf(xa))` (the downstream sensitivity of `erf`'s
-  final `1 - exp2_checked(erf_poly(xa))` combine to a poly error).
-  The isolated fit looked like a big win (avg weighted error
-  0.072→0.047, ~35%, max held at parity) — but per this session's other
-  two entries, the isolated metric doesn't reliably predict the real
-  crate's measured ulp change, so it was verified end-to-end anyway
-  before trusting it: implemented in `src/lib.rs`, `git stash`-paired,
-  **exhaustive**: `erf` avg/max ulp 0.3194/5 → 0.3166/5 (avg improved
-  ~0.9%, smaller than the isolated metric suggested but a real,
-  reproducible win, not noise — confirmed exhaustive, not just fuzz);
-  `erfc` (doesn't call this poly) bit-for-bit unchanged, exactly as
-  expected. `edgecheck.rs` passes. mca: `erf` 85.97/2.788 cyc
-  lat/throughput, identical before and after (confirmed by measuring the
-  *current* shipped code directly rather than trusting `readme.md`'s
-  stale 91.74/2.871 row — that number predates some later, unrelated
-  change and was never updated; left as-is here since fixing it isn't
-  this idea's scope). Adopted; `readme.md`'s erf avg-ulp figure updated.
-  **General lesson: the isolated-fit "ulp-weighted error" metric this
-  session's LP script computes is consistently a *directionally* useful
-  signal (every one of the three LP attempts so far correctly predicted
-  whether the real change would be a regression, an improvement, or nil)
-  but not a reliable *magnitude* predictor (exp: predicted ~18%, got
-  ~18%, accurate that time; erf: predicted ~35%, got ~0.9%, off by 30x+)
-  — trust it to decide which candidates are worth building and testing
-  for real, never trust its predicted size as the actual expected
-  result.** Commit `d5bb848`.
-
 - **acos_poly refit against joint acos+asin objective, unconstrained variant
   (2026-07-07)**: an unconstrained joint metric (`max(acos ulp, asin ulp)`)
   improved the joint score but let acos's own exhaustive max ulp regress
-  4→5 — a real cross-function tradeoff. Rejected in favor of a constrained
-  variant (kept; not recorded here) that protected acos's metric by
-  construction.
+  4→5 — a real cross-function tradeoff. Rejected in favor of a differently
+  constrained variant that protected acos's metric by construction.
 
 - **acos_poly degree 6 → 7, i.e. an 8th coefficient (2026-07-08)**: the
   backlog framed this as "one fma of throughput for a whole extra degree
@@ -614,10 +502,10 @@ brainstorm backlog lives at the bottom of this file.
   rejected — the second failure lands on the *exact same* asin
   regression signature (max 9→12) as the Df32-leading-term entry just
   above, a striking cross-technique coincidence worth flagging for any
-  future attempt.** This session's max-capped LP technique (already
-  adopted for `exp`, `erf_poly`, `cbrt`) applied here with a genuinely
-  joint objective: weight each sample `a` by `sqrt(1-a)/ulp(caller(a))`
-  for both `acos(a)` (all `a` in `[0,1)`) and `asin(a)` (only `a>=0.25`,
+  future attempt.** A max-capped ulp-weighted Chebyshev LP applied here
+  with a genuinely joint objective: weight each sample `a` by
+  `sqrt(1-a)/ulp(caller(a))` for both `acos(a)` (all `a` in `[0,1)`)
+  and `asin(a)` (only `a>=0.25`,
   matching the "big" branch's own domain), cap *both* callers' max
   weighted error at their current shipped values simultaneously, and
   minimize the combined weighted-L1 objective. Attempt 1 (all 7
@@ -663,17 +551,14 @@ brainstorm backlog lives at the bottom of this file.
   metric yet is worse for both real callers — the acos_poly/asin
   sharing pattern (subset-domain sharing, not sinf_poly's opposite-ends
   sharing) is evidently *harder* to model correctly via a domain-uniform
-  grid than either of this session's two successful single-caller cases
-  (`exp`, `erf_poly`) or its one successful *shared* case (`cbrt`
-  and `cbrt_accurate`, where the second caller's Newton step makes it
-  fully insensitive to the seed poly's own accuracy) — `acos_poly` has
-  no such insensitivity, both callers are directly exposed to its exact
-  error. This LP technique's real success rate across every poly tried
-  this session is now 3 real wins (`exp`, `erf_poly`, `cbrt`) against 2
-  rejections (`sinf_poly`, `acos_poly`), both rejections being multi-
-  caller polys where the callers are NOT insensitive to the shared
-  poly's own error — a pattern worth checking explicitly before trying
-  this technique on any other shared poly in this crate.**
+  grid than a case like `cbrt`/`cbrt_accurate`, where the second
+  caller's Newton step makes it fully insensitive to the seed poly's own
+  accuracy — `acos_poly` has no such insensitivity, both callers are
+  directly exposed to its exact error. Both rejections in this file
+  involving a shared poly (`sinf_poly`, `acos_poly`) are multi-caller
+  polys where the callers are NOT insensitive to the shared poly's own
+  error — a pattern worth checking explicitly before trying this
+  technique on any other shared poly in this crate.**
 
 - **atan2 division-residual correction (2026-07-07, re-tested 2026-07-08
   after atan_poly's degree bump, same conclusion holds)**: added a
@@ -905,24 +790,6 @@ brainstorm backlog lives at the bottom of this file.
   is not the right fix given where the actual worst case lives. No code
   changed.
 
-- **sigmoid/logistic, implemented (2026-07-08)**: the backlog's own
-  suggested identity, `0.5 + 0.5·tanh(x/2)`, was tried first and is a real
-  *bug*, not just imprecise — for x≈-17.33, `tanh(x/2)` (≈-8.66) already
-  correctly rounds to exactly `-1.0f32` (true value within half a ulp of
-  `-1.0`, so that's tanh's own correct output), but `0.5 + 0.5·(-1.0)` then
-  computes to exactly `0.0` even though the true sigmoid value there
-  (≈2.98e-8) is nowhere near it or f32's underflow threshold. Same bug
-  class as the rejected atanh single-log1p-fusion above: composing through
-  an intermediate function that has already saturated/rounded to an
-  extreme value discards precision the outer formula still needs, even
-  though the identity is algebraically exact. Fixed by computing directly
-  instead — `1.0/(1.0+exp((-x).clamp(-87.0, 88.0)))` — which has no
-  cancellation anywhere and gracefully saturates to 0.0/1.0 over the whole
-  domain. Fuzzed clean after the fix (avg/max ulp 0.0996/4) and confirmed
-  exhaustively (0.0996/5 over all 2^32 patterns). mca: 65.09 cyc latency,
-  2.713 cyc/elem throughput (cheaper than tanh's 94.91/2.567, as expected
-  for one exp + one division vs. a rational approx).
-
 - **ln/log10: fuse the final `+ k*LN2_LO`/`+ k*LOG10_2_LO` into an fma —
   re-tested 2026-07-08, mistakenly adopted, then corrected back to
   rejected the same day.** This is the exact same idea the entry just
@@ -954,39 +821,6 @@ brainstorm backlog lives at the bottom of this file.
   repeat-and-confirm before being called "noise" — this file has now
   logged the opposite mistake too (calling a real effect noise) alongside
   its many entries logging noise mistaken for a real effect.**
-
-- **log_2_unchecked/ln_unchecked/log10_unchecked, implemented (2026-07-08)**:
-  the log family's "checked" public functions (`log_2`, `ln`, `log10`) pay
-  a denormal-rescale multiply + two post-hoc selects on every call, even
-  though the underlying `*_normal` cores (already existing, previously
-  `#[doc(hidden)]`) don't need any of that for positive normal finite
-  input. Exposed each core directly as a new public one-argument function
-  (`log_2_unchecked(x) = log_2_normal(x, 0.0)`, etc. — the `koff`
-  denormal-offset parameter is always exactly 0.0 for this contract, so
-  it's fully applied rather than exposed), same fast/full-safety split as
-  `exp2`/`exp2_checked`, just with the safe name already taken by the
-  no-suffix function, hence the `_unchecked` suffix instead of a bare
-  `log_2`/`ln`/`log10` swap. Verified bit-for-bit identical to the checked
-  versions over 99.2M positive-normal samples directly (not just
-  aggregate-ulp-similar) — expected, since it's the literal same core
-  function called with the same always-correct koff, so there is zero
-  accuracy risk by construction; exhaustive sweep confirms matching max
-  ulp on both sides (log_2 3→3, ln 3→3, log10 3→3; the *avg* ulp numbers
-  differ because the checked functions' "everywhere" sweep average also
-  includes free/exact special-cased inputs like negatives→NaN that the
-  domain-restricted unchecked sweep doesn't get to include — not a real
-  accuracy difference, confirmed by the direct bit-for-bit check). Real,
-  substantial speed win: mca throughput log2 1.556→0.958 cyc/elem (-38%),
-  ln/log10 1.714→1.145 (-33%); ln/log10 latency 55.86→38.39 cyc (-31%,
-  log2's own latency number was already measuring the unchecked core per
-  this file's own mca_target.rs convention, so no further latency win
-  there specifically). Confirmed on real wall-clock too via quickbench
-  (e.g. log10 throughput 0.383→0.269 ns, latency 10.13→8.87 ns). Backlog
-  entry for the remaining half of this idea (hypot/atan2 unchecked tiers)
-  left open above. (Numbers corrected 2026-07-08, same day: originally
-  quoted against the ln/log10-fma-fusion entry's numbers, since that
-  change was active when this one was first measured — since reverted as
-  a mistaken adoption, see that entry's own correction above.)
 
 - **Centered-variable refit for exp2's f (2026-07-08), checked via a
   10-line scipy script before writing any Rust — premise refuted before
@@ -1188,105 +1022,6 @@ brainstorm backlog lives at the bottom of this file.
   `src/lib.rs`; kept `cbrt_normal_joint_c` in `tune.rs` as reference infra
   (same precedent as `cbrt_shiftmul_c`/`cbrt_throughput_c`).
 
-- **atan2_unchecked/hypot_unchecked, implemented (2026-07-08)**: same
-  argument as `log_2_unchecked`/etc. — `atan2` pays `nonzerox`/`nonzeroy`/
-  `bothzero` bookkeeping, a select for `hpisignx`, a select for the main
-  formula, and a whole extra `bothinf` branch on every call; `hypot` pays
-  one `is_infinite` check. New functions with the domain contract "x !=
-  0.0, not both infinite" (atan2) / "x, y both finite" (hypot) drop all of
-  that. Verified bit-identical to the checked versions over ~99M samples
-  directly. Speed picture needed more care than usual to pin down
-  honestly: mca couldn't be used at all here (see below), and the
-  existing quickbench entries for both functions turned out to already be
-  measuring the wrong thing. **Two real measurement problems found and
-  fixed along the way, both worth remembering for any future two-argument
-  function's benchmark entry:**
-  1. quickbench's existing `atan2`/`hypot` entries fixed the 2nd argument
-     to a literal `1.0` — exactly readme.md's own already-documented todo
-     item ("may be letting LLVM constant-fold... a couple of
-     comparisons"). It's not hypothetical: a compile-time-constant 2nd
-     arg lets LLVM prove `nonzerox`/`is_infinite` statically and fold
-     `atan2`'s/`hypot`'s own special-case branches away entirely, making
-     the "checked" entry measure close to the *unchecked* cost already —
-     confirmed directly (first attempt showed the unchecked variant as a
-     *wash or even slightly worse*, the opposite of the real effect).
-     Fixed by `black_box`-ing the 2nd argument in both functions' own
-     quickbench entries (a real, deliberate change to their long-standing
-     readme numbers, not a regression — noted inline in readme.md).
-  2. Even after that fix, mca still couldn't measure either function:
-     `atan2`/`hypot`'s real (non-early-return, standard branchless-select)
-     conditional logic, once genuinely runtime-dependent instead of
-     compile-time-foldable, trips the same llvm-mca region-marker
-     corruption this file's top-of-mca_target.rs comment describes for
-     log1p's early return — for *both* latency (expected, matches the
-     documented "call the branchless core for latency" convention, which
-     is exactly what `_unchecked` already is) *and*, unexpectedly,
-     throughput too (the array-loop context didn't if-convert this
-     particular branch combination cleanly either). Abandoned the mca
-     route entirely for this pair rather than chase the exact codegen
-     trigger.
-  With mca unusable and wall-clock quickbench too noisy on this thermal-
-  throttling-prone machine to give a clean signal on its own (paired
-  same-run differences leaned consistently toward `atan2_unchecked` being
-  faster or tied across 8 runs, never meaningfully slower; `hypot` showed
-  no consistent direction either way), fell back to a third method:
-  directly counting instructions in `--emit=asm` output for a black-boxed
-  wrapper around each function. This gave a clean, deterministic (not
-  noisy) answer neither of the other two tools could: `atan2_unchecked`
-  compiles to 37 instructions vs `atan2`'s 70 (-47%); `hypot_unchecked`
-  compiles to 10 vs `hypot`'s 20 (-50%). Adopted on that basis — a real,
-  substantial, verified reduction in compiled work, even though the
-  wall-clock benefit is apparently too small to reliably separate from
-  this machine's own measurement noise. **General lesson: when both mca
-  and quickbench give an unreliable signal for a specific function shape,
-  a direct instruction count from `--emit=asm` (compile a black-boxed
-  wrapper, grep/count real instruction lines between the function's start
-  and its `.size` directive) is a third, deterministic option worth
-  reaching for before giving up on quantifying a change.**
-
-- **hypot_checked with branchless exponent rescale, implemented
-  (2026-07-08)**: extracts the larger argument's exponent via bit tricks,
-  rescales both arguments by an exact power of two before squaring (so
-  `x*x+y*y` can never overflow, and the dominant term never underflows —
-  if the *smaller* term flushes to 0 after scaling, its true contribution
-  was already negligible at f32 precision, so nothing real is lost),
-  scales the sqrt'd result back. Fully branchless (selects only), no
-  early returns, still auto-vectorizes. Validated the bit-trick math in a
-  Python prototype *before* writing any Rust (this session's now-standard
-  discipline) — good thing too, since the first design had a real bug: an
-  `is_zero = m == 0.0` check (`m = ax.max(ay)`) wrongly triggers for
-  `hypot_checked(NaN, 0.0)`, because `f32::max` silently returns the
-  *non-NaN* operand when only one side is NaN, so `m` comes out `0.0` and
-  the code would wrongly take the "both zero" branch and discard the
-  NaN. Fixed by checking `ax == 0.0 && ay == 0.0` directly (NaN
-  comparisons are always false, so this correctly excludes the NaN case)
-  — the exponent extraction still degrades to a garbage-but-finite scale
-  in that case, but the NaN itself propagates through the unconditional
-  multiply regardless of what that scale becomes, so the *final* result
-  still comes out correctly. The backlog's own "e odd needs a sqrt2
-  factor" hint pointed at the right fix but not quite the right framing:
-  rounding the scale exponent down to the nearest *even* value (`es =
-  2*(e>>1)`, Rust's `>>` on `i32` is arithmetic/floor shift) isn't just
-  about avoiding a sqrt2 correction, it's what keeps the scale factor's
-  own exponent within the representable *normal* range for every valid
-  `m` — using `e` directly can require constructing `2^-127`, which has
-  no normal single-word encoding at all (past the denormal boundary),
-  silently corrupting the bit pattern instead of computing the intended
-  reciprocal. Verified in Python first (~1M samples spanning the full
-  exponent range plus every zero/NaN/inf combination, max ulp 1,
-  zero mismatches), then in the real Rust implementation via
-  accuracy.rs's fuzz2 over the *entire* domain (no restriction needed,
-  unlike hypot's own overflow-avoidance domain limit): avg ulp 0.0149,
-  max ulp 1, 10M samples. Real, substantial cost vs. the naive `hypot`
-  (mca latency 21.11→57.19 cyc, +171%; throughput 0.766→1.178, +54%) —
-  expected and accepted, matching this crate's established checked/
-  unchecked tier pattern (the naive `hypot` explicitly documents *not*
-  handling overflow/underflow at all, so this isn't a regression, it's a
-  new capability). Still meaningfully faster than `std::hypot` on
-  throughput (0.403ns vs 2.72ns, quickbench) for the same correctness
-  guarantee, though slower on latency (19.94ns vs 11.87ns) — a real,
-  known tradeoff, not hidden.
-
 - **erfc domain split, [0,2]/[2,10] (2026-07-08), tested and rejected —
   the underlying math was dramatically tighter but the crate's real
   max-ulp bottleneck lives somewhere else entirely.** Checked with scipy
@@ -1424,55 +1159,28 @@ brainstorm backlog lives at the bottom of this file.
   idea, not just after, once enough instances of it have piled up in
   this file.**
 
-- **Pure-poly atan latency tier, implemented as `atan_latency`
-  (2026-07-08)**: `atan_poly`'s 3/3 rational puts a division on the
-  critical path (can't start until the numerator/denominator resolve);
-  a division-free odd degree-17 poly (fit directly against atan(r) over
-  r in [0,1], scipy-seeded, split into two 4-deep-Horner halves combined
-  with one final fma so both halves evaluate in parallel) trades that
-  division for more fma depth instead. Confirmed the exact "opposite
-  tradeoff" shape the backlog predicted: mca latency 61.09→59.09 cyc
-  (-3.3%), throughput 1.491→1.611 cyc/elem (+8.1% worse). Accuracy is
-  not a tradeoff here — fuzz confirms avg/max ulp 0.052/3 vs `atan`'s own
-  0.068/3, a slight improvement, not a cost. Wall-clock quickbench
-  latency was noisier than mca across repeated runs (sometimes better,
-  sometimes worse, within this machine's usual thermal noise), but
-  throughput consistently measured worse across every run, matching
-  mca's prediction. Shipped as an explicit opt-in tier rather than a
-  replacement — same shape as `sinh_throughput`/`cosh_throughput`
-  (same accuracy, different latency/throughput profile, pick based on
-  calling context) — for a single serial-chain call where per-call
-  latency matters more than array-loop throughput. Full harness
-  integration (edgecheck bit-exact on all special values, codegen_check
-  clean, quickbench, mca, readme) done; commit follows.
-
 - **atan_latency's poly, max-capped ulp-weighted Chebyshev LP (2026-07-09),
   screened and rejected before touching src/lib.rs's shipped state for
   real -- no measurable headroom, matching sinf_poly's own "already near
-  floor" 2026-07-07 finding rather than exp/erf_poly/cbrt's real wins.**
-  Genuinely single-caller (this poly has no shared-region or shared-
-  exposure risk -- `atan_latency` reuses it identically whether `a<1`
-  or via the `a>=1` reciprocal fold, the same single-domain pattern
-  `atan_poly` itself already established as safe), and the constant
-  term is safely un-fittable-sensitive (multiplied by `r`, so `r=0`
-  gives exactly 0 regardless of the fitted coefficients, no `acos_poly`-
-  style boundary trap). The isolated fit predicted a modest win (max
-  weighted error held at parity 0.846, avg 0.1155->0.1087, ~6%) --
-  small enough on its own to be a weak signal, and it didn't survive
-  contact with the real crate at all: `git stash`-paired 100M-sample
-  fuzz gave avg ulp 0.0516 (current) vs 0.0517 (LP-fit), max ulp 3 both
-  ways -- statistically identical, no real movement either direction.
-  Reverted (`git checkout --`, confirmed via `git diff`/`git status`);
-  no code changed. **General lesson: adds a fourth data point to this
-  session's own "isolated metric doesn't reliably predict magnitude"
-  finding (from the `erf_poly` entry) -- here the isolated prediction
-  was already small (~6%) and the real result rounded all the way down
-  to zero, suggesting a rough rule of thumb worth carrying forward: an
-  isolated-fit improvement much under ~10-15% is a weak enough signal
-  that it may not be worth the implementation/verification cost at all,
-  based on this session's now-6-poly track record (exp ~18% isolated ->
-  real win; erf_poly ~35% isolated -> small real win; cbrt ~12%
-  isolated -> real win; atan_latency ~6% isolated -> no real win).**
+  floor" 2026-07-07 finding.** Genuinely single-caller (this poly has no
+  shared-region or shared-exposure risk -- `atan_latency` reuses it
+  identically whether `a<1` or via the `a>=1` reciprocal fold, the same
+  single-domain pattern `atan_poly` itself already established as safe),
+  and the constant term is safely un-fittable-sensitive (multiplied by
+  `r`, so `r=0` gives exactly 0 regardless of the fitted coefficients, no
+  `acos_poly`-style boundary trap). The isolated fit predicted a modest
+  improvement (max weighted error held at parity 0.846, avg
+  0.1155->0.1087, ~6%) -- small enough on its own to be a weak signal,
+  and it didn't survive contact with the real crate at all: `git
+  stash`-paired 100M-sample fuzz gave avg ulp 0.0516 (current) vs 0.0517
+  (LP-fit), max ulp 3 both ways -- statistically identical, no real
+  movement either direction. Reverted (`git checkout --`, confirmed via
+  `git diff`/`git status`); no code changed. **General lesson: an
+  isolated-fit improvement much under ~10-15% has repeatedly turned out
+  to be a weak enough signal, elsewhere in this file's own testing
+  history, that it may not be worth the implementation/verification
+  cost at all -- worth checking the predicted magnitude before spending
+  time on the round-trip.**
 
 - **Centered-variable refit for erfc's xa ∈ [0,10] (2026-07-08), tested
   and rejected — confirms the exp2-centering finding transfers here too,
@@ -1538,30 +1246,27 @@ brainstorm backlog lives at the bottom of this file.
 
 - **atan_poly Horner→Estrin restructuring (2026-07-08), tested and
   rejected — the one poly in this family that hadn't had this exact
-  audit yet, and it measured backwards on every axis.** `sinf_poly` and
-  `erf_poly` are already Estrin (adopted); `acos_poly`'s and erfc's n/d
-  rational's own Estrin attempts were already tried and rejected
-  (accuracy cost); `atan_poly` itself — a 3/3 rational, still plain
-  3-deep Horner in both numerator and denominator — was the one
+  audit yet, and it measured backwards on every axis.** `acos_poly`'s
+  and erfc's n/d rational's own Estrin attempts were already tried and
+  rejected (accuracy cost); `atan_poly` itself — a 3/3 rational, still
+  plain 3-deep Horner in both numerator and denominator — was the one
   remaining untested case in this recurring audit. Regrouped both
   chains into 2-deep Estrin (same coefficients, pure reassociation, no
   new division, no algorithmic change). Real fuzz: avg ulp 0.0681→0.0721
   (worse), max ulp 3→5 (worse) — already disqualifying on its own. mca
   made the case unambiguous regardless: latency did improve modestly
   (61.09→58.09 cyc, -4.9%) but throughput got severely worse
-  (1.491→3.819 cyc/elem, **+156%**, more than 2.5x) — a much larger,
-  more one-sided regression than any other Estrin attempt in this file
-  has shown, for a smaller latency win than several of the successful
-  ones. Not adopted; `src/lib.rs`/`mca_target.rs`/`mca.rs`/
-  `accuracy.rs` scratch reverted, nothing kept as reference infra (the
-  test function is a handful of lines, cheap to reproduce). This closes
-  out the "audit every Horner-chain poly in this crate for an Estrin
-  win" line of investigation this file has run across several
-  iterations — every candidate has now been tried at least once
-  (`sinf_poly`/`erf_poly` adopted, `acos_poly`/erfc's n/d/`asin_small`/
-  `sinh_small`/`atan_poly` all rejected), so this specific recurring
-  audit is complete; a genuinely new poly would need to exist before
-  it's worth revisiting.
+  (1.491→3.819 cyc/elem, **+156%**, more than 2.5x), a much larger,
+  more one-sided regression than a Horner→Estrin restructuring typically
+  produces in this crate. Not adopted; `src/lib.rs`/`mca_target.rs`/
+  `mca.rs`/`accuracy.rs` scratch reverted, nothing kept as reference
+  infra (the test function is a handful of lines, cheap to reproduce).
+  This closes out the "audit every Horner-chain poly in this crate for
+  an Estrin win" line of investigation this file has run across several
+  iterations — every remaining candidate has now been tried at least
+  once (`acos_poly`/erfc's n/d/`asin_small`/`sinh_small`/`atan_poly` all
+  rejected), so this specific recurring audit is complete; a genuinely
+  new poly would need to exist before it's worth revisiting.
 
 - **Rational (P/Q) refits for log_2/acos_poly (2026-07-08), ruled out —
   one by strong analogy to an already-confirmed result, the other by a
@@ -1683,235 +1388,6 @@ brainstorm backlog lives at the bottom of this file.
   needs the same "verify against real fuzz, don't trust the tool's own
   report" discipline from day one, not just the original `tune()`.**
 
-- **powf/remainder quickbench/mca literal-2nd-argument fix (2026-07-08),
-  readme's own long-standing todo item — real, and worse than the
-  atan2/hypot precedent that inspired checking it.** `quickbench.rs`'s
-  `powf`/`remainder` benches and `mca_target.rs`'s matching marker
-  functions all used a literal 2nd argument (`2.0`/`3.0`), same class of
-  bug already fixed for `atan2`/`hypot` (see that entry above). Fixed by
-  `black_box`-ing the 2nd argument in both harnesses, same idiom as
-  `atan2`/`hypot`/`pown`. Unlike `atan2`/`hypot`, mca handled the
-  black-boxed version cleanly (no region-marker corruption), so both
-  tools gave a clean before/after: `powf` mca latency/throughput
-  98.03/3.898 → 105.03/4.662, `powf_checked` 105.48/6.285 → 106.31/7.359,
-  `remainder` 33.02/0.647 → 34.03/0.729, `remainder_checked` 47.02/1.034
-  → 50.03/1.424 — all four genuinely more expensive once the
-  y==0.0/y_int/y_odd (powf) and y==0.0/y.is_infinite() (remainder)
-  branches can't be constant-folded away, confirming jodie's own
-  functions were being undermeasured, not just std's. The `std powf`
-  side was **far more dramatic** and a distinct bug: quickbench showed
-  `std powf` latency 3.4ns→17.5ns and throughput 0.07ns→6.0ns (both
-  ~5-135x) — confirmed via a standalone `--emit=asm` check
-  (`x.powf(2.0)` vs `x.powf(black_box(2.0))`) that a literal integer
-  exponent doesn't just fold a branch, it makes LLVM recognize
-  `powf(x,2.0)` isn't a real libm call at all and replace the whole
-  thing with a single `vmulss` (`x*x`) — so the readme's old "powf | 24.2
-  ns | 3.2 ns | 0.1x" comparison was never measuring real `powf` on
-  either side, and the "jodie is 10-14x slower than std" conclusion it
-  implied was backwards: with an honest black-boxed exponent, jodie's
-  `powf` throughput (1.05 ns) is actually ~5.7x *faster* than std's real
-  cost (6.03 ns), and latency is roughly on par (0.8x) rather than 0.1x.
-  Also added missing `powf_checked`/`remainder_checked` rows to
-  quickbench.rs and the readme's mca table (they already existed in
-  `mca_target.rs`/`mca.rs` but were never wired into quickbench or
-  written into the readme). readme.md's latency/throughput/mca tables
-  and its own todo note updated to match; the todo item removed since
-  it's now done. **General lesson, sharper than the atan2/hypot version
-  of this same finding: a literal argument to a two-argument function
-  isn't just a branch-folding risk for the *checked-vs-unchecked*
-  comparison (the risk this file already knew about) — for a function
-  name libm/LLVM specifically recognizes and special-cases at a fixed
-  integer exponent (`pow(x, 2)`, `pow(x, 3)`, etc.), it can silently
-  replace the *reference* implementation with a trivial intrinsic,
-  making the "improvement" ratio in a comparison table not just
-  imprecise but actively backwards. Any future two-argument benchmark
-  entry in this crate should default to `black_box`-ing both arguments
-  from the start, not just the one whose own branches are in question.**
-
-- **powf_unchecked, implemented (2026-07-08), immediate follow-up to the
-  benchmark fix above.** Once the literal-arg fix confirmed `powf`'s own
-  branches (y==0.0 special case, negative-base handling: `x.is_sign_negative()`,
-  `y == y.trunc()`, `parity(y)`, two selects) have real, previously-hidden
-  cost, the natural next step (same shape as `log_2_unchecked`/
-  `atan2_unchecked`/`hypot_unchecked`) was exposing a narrower-contract
-  core that skips them: `powf_unchecked(x, y) = exp2_checked(log_2_unchecked(x) * y)`,
-  domain "x positive/normal/finite (log_2_unchecked's own contract), y !=
-  0.0". Kept `exp2_checked` rather than dropping to the even-faster
-  `exp2`, since `powf`'s own doc comment already documents why bare
-  `exp2` silently wraps into plausible-looking garbage outside its
-  range — nothing about this narrower contract removes that risk.
-  Verified bit-identical to `powf` over 50M in-domain fuzz samples
-  (scratch check, not preserved in-repo) before measuring speed, same
-  discipline as every other `_unchecked` tier. mca: latency 105.03→79.05
-  cyc (-24.7%), throughput 4.662→3.095 cyc/elem (-33.6%). Confirmed on
-  real hardware via quickbench (3 repeated runs, all agreeing in
-  direction and magnitude): latency ~20.7→18.7 ns (-9.7%), throughput
-  ~1.03→0.70 ns (-31.7%) — both axes improve, matching this crate's
-  established `_unchecked` pattern exactly. `codegen_check` confirms
-  clean vectorization (no `call`/saturating-cast in the new throughput
-  region), `edgecheck.rs` got 5 new bit-exact-vs-`powf` regression-guard
-  entries, `accuracy.rs` got a domain-restricted sweep entry (avg/max
-  ulp 0.363/135, expected to differ numerically from `powf`'s own
-  broader-domain 0.181/127 reading purely from sampling a narrower x>0
-  subset — not a real accuracy difference, same non-issue already
-  documented for `log_2_unchecked`). readme's precision/latency/
-  throughput/mca tables updated. Two harness bugs fixed along the way,
-  worth remembering for the next `_unchecked` addition: (1) `mca.rs`'s
-  region-name-to-table-row mapping is a hardcoded `order` array, not
-  derived from the compiled regions automatically — a new marker
-  function's rows silently don't print (no error, just missing from the
-  table) until its name is added there too; (2) `mca.rs` never actually
-  called `std::env::args()` at all despite looking like it might filter
-  (`./mca powf` printed the *entire* table, silently) — fixed with real
-  filter support (same substring-match idiom as `quickbench.rs`'s own
-  `run()` closure) in the same commit, so this is no longer a trap for
-  the next session. Commit `ecc8df8`.
-
-- **remainder_unchecked, implemented (2026-07-08), same follow-up idea
-  applied to remainder's smaller edge-case surface.** `remainder`'s own
-  branches are much thinner than `powf`'s (one `x == 0.0` sign-
-  preservation select, one `y.is_infinite() && x.is_finite()` no-
-  reduction select, vs. powf's whole negative-base parity chain), so this
-  was a smaller-magnitude bet than `powf_unchecked` going in, but cheap
-  to check (matching the "test with mca first" workflow): `remainder_unchecked(x,y)
-  = fma(-(x/y).round(), y, x)`, domain "x != 0.0, y finite". Bit-identical
-  to `remainder` over 100M in-domain fuzz samples. Real, if modest, win
-  on both axes: mca latency 34.03→33.00 cyc (-3.0%), throughput
-  0.729→0.646 cyc/elem (-11.4%); quickbench confirmed (3 reproducible
-  runs, identical each time): latency 9.04→8.01 ns (-11.4%), throughput
-  0.157→0.146 ns (-7.0%). Full harness treatment: codegen_check clean,
-  edgecheck.rs regression-guard entries, accuracy.rs domain-restricted
-  sweep (0/0 avg/max ulp, matching `remainder`'s own bounded-domain
-  reading exactly since the formula is identical), readme tables updated.
-  Smaller win than `powf_unchecked`'s (-25%/-34%) since there was simply
-  less edge-case work to remove, but the same pattern paid off again —
-  worth checking any other two-argument function with even a couple of
-  unconditional edge-case selects the next time this backlog runs dry.
-  Commit `f623569`.
-
-- **cbrt_unchecked, implemented (2026-07-08), same unchecked-tier idea
-  found by auditing this crate's own `#[doc(hidden)]` `*_normal` cores
-  for ones without a matching public `_unchecked` wrapper yet
-  (`cbrt_normal` was the one remaining candidate — `ln_normal`/
-  `log10_normal` already have `ln_unchecked`/`log10_unchecked`).** `cbrt`
-  pays a denormal-rescale select pair (`tiny` check, `xs`/`scale` selects)
-  plus a final zero/inf/nan-propagation select on every call, on top of
-  `cbrt_normal`'s branchless core; `cbrt_unchecked(x) = cbrt_normal(x)`,
-  domain "x normal (not denormal/zero), finite (not inf/nan)", drops all
-  of it — no koff-style trick needed since `cbrt_normal` already
-  reapplies `x`'s own sign bit internally, so unlike `log_2_unchecked`
-  this domain covers *both* signs, not positive-only. Bit-identical to
-  `cbrt` over ~200M in-domain fuzz samples (scratch check, not preserved
-  in-repo). This crate's own mca_target.rs convention (latency calls
-  `*_normal` directly already, see its own top comment) meant
-  `cbrt_unchecked`'s *latency* number was structurally guaranteed to
-  match `cbrt`'s own `lat_cbrt` row exactly (confirmed: both 35.06 cyc)
-  — no new information there, matching the same thing already noted for
-  `log_2_unchecked`'s latency row. Throughput was the real test and
-  delivered a bigger win than any `_unchecked` tier so far this session:
-  mca 1.629→0.906 cyc/elem (**-44.4%**). Confirmed on real hardware via
-  quickbench (3 reproducible runs): latency 12.75→10.08 ns (-20.9%, a
-  real win quickbench *can* see that mca's own convention structurally
-  couldn't), throughput 0.37→0.24 ns (-35.1%, matching mca's direction
-  and magnitude closely). Full harness treatment: codegen_check clean,
-  4 new edgecheck.rs bit-exact-vs-`cbrt` regression-guard entries (placed
-  outside the existing `cbrt`/`cbrt_accurate` denormal-focused loop,
-  since `cbrt_unchecked`'s contract explicitly excludes denormals),
-  accuracy.rs domain-restricted sweep (0.312/3 avg/max ulp, matching
-  `cbrt`'s own 0.326/3 within expected sampling noise, same non-issue
-  already documented for every other `_unchecked` sibling), readme
-  tables updated. **General lesson: after several rounds of "the
-  benchmark fix revealed real branch cost, so expose an unchecked tier"
-  wins on functions that already had an obvious two-argument-benchmark
-  trigger (`powf`, `remainder`), the next place to look isn't only
-  "which function's benchmark looks suspicious" — grepping for
-  `#[doc(hidden)]` `pub fn *_normal`/`*_checked`-adjacent cores directly
-  finds candidates regardless of whether their benchmark ever had an
-  literal-arg problem to begin with. `cbrt` never had a two-argument
-  literal-folding issue at all; this idea came from auditing the crate's
-  own internal-core inventory instead.** Commit `3647c77`.
-
-- **cbrt_accurate_unchecked, implemented (2026-07-08), one tier up from
-  `cbrt_unchecked` — applying the exact same idea to `cbrt_accurate`'s own
-  `*_normal` core.** `cbrt_accurate` pays a *three*-way rescale select
-  (`small`/`big`/neither, vs. `cbrt`'s single `tiny` check) plus the same
-  final zero/inf/nan select, on top of `cbrt_accurate_normal(x, scale)`.
-  `mca_target.rs`'s own `lat_cbrt_accurate` marker was already calling
-  `cbrt_accurate_normal(x, 1.0)` directly (this crate's latency-measures-
-  the-core convention), which is *exactly* what an unchecked wrapper
-  would be — just never exposed as a real public function. Added
-  `cbrt_accurate_unchecked(x) = cbrt_accurate_normal(x, 1.0)`, domain "x
-  already inside cbrt_accurate's own safe rescale range" (roughly `2^-56`
-  to `2^127`, i.e. its `!small && !big` condition exactly). Bit-identical
-  to `cbrt_accurate` over ~143M in-domain fuzz samples. Latency
-  structurally identical to `cbrt_accurate`'s own row by construction
-  (both 59.06 cyc, confirmed, same non-news as `cbrt_unchecked`'s own
-  latency row). Throughput: mca 3.129→2.067 cyc/elem (**-34.0%**),
-  confirmed via quickbench (3 runs, consistent direction/magnitude each
-  time): latency ~20.4→18.5 ns (-9.4%), throughput ~0.83→0.55 ns
-  (-33.7%) — both axes improve, matching `cbrt_unchecked`'s own shape
-  almost exactly (unsurprising, same select-stripping mechanism one
-  layer up). Full harness treatment: codegen_check clean, 4 new
-  edgecheck.rs bit-exact-vs-`cbrt_accurate` regression-guard entries
-  (placed outside the shared `cbrt`/`cbrt_accurate` denormal-focused
-  loop, same reasoning as `cbrt_unchecked`'s own entries), accuracy.rs
-  domain-restricted sweep (0.0000/1 avg/max ulp, identical to
-  `cbrt_accurate`'s own reading since it's bit-identical code — this
-  domain includes the crate's known, accepted `cbrt_accurate` 1-ulp
-  mantissa-`0x353b5` won't-fix, not a new issue), readme tables updated.
-  Confirms the general lesson from `cbrt_unchecked`'s own entry: once one
-  `_normal`/`_checked`-adjacent pair in a family gets this treatment,
-  check its siblings in the same family too — `cbrt`/`cbrt_normal` and
-  `cbrt_accurate`/`cbrt_accurate_normal` are structurally the same
-  pattern, and both paid off equally well. Commit `c80e1fa`.
-
-- **powf_checked_unchecked, implemented (2026-07-08), the third tier
-  found by the same "check the whole family, not just the one function
-  that first flagged it" instinct — this time closing out `powf`'s own
-  remaining tier.** `powf_checked` (the high-precision double-float
-  variant, not a domain-safety tier despite the name — same role
-  `cbrt_accurate` plays for `cbrt`) pays its own `is_safe`/`edge_mag`
-  fallback selects *and* the same negative-base/`y==0` chain `powf`
-  itself has, on top of `exp2_checked_df(log2_df(ax) * y)`.
-  `powf_checked_unchecked(x, y) = exp2_checked_df(log2_df(x) * y)`,
-  domain "x positive/normal/finite, y != 0.0" (same as `powf_unchecked`).
-  **Naming note**: called it `powf_checked_unchecked` for strict
-  consistency with the `cbrt_accurate` → `cbrt_accurate_unchecked`
-  precedent (append `_unchecked` to the exact existing name), even though
-  it reads awkwardly — `powf_checked`'s "checked" doesn't mean "domain-
-  safety-checked" the way `log_2`/`atan2`/`hypot`'s does, it means
-  "higher-precision," so "checked_unchecked" isn't self-contradictory
-  once you know that, just unfortunate naming inherited from an earlier
-  session's inconsistent use of "_checked" across this crate (domain-
-  safety in most places, precision-tier in this one) — not fixed here,
-  out of scope for this pass. Bit-identical to `powf_checked` over 50M
-  in-domain fuzz samples. mca: latency 106.31→105.58 cyc (-0.7%,
-  essentially flat), throughput 7.359→5.851 cyc/elem (**-20.5%**).
-  quickbench across 5 repeated runs told an honest, slightly messier
-  story than the previous two entries: throughput improved consistently
-  every single time (-13.5% to -30.4%, averaging ~-21%, matching mca's
-  prediction closely), but latency was genuinely noise-dominated — 3 of
-  5 runs showed a modest improvement (-5% to -7%), 2 of 5 showed a
-  modest *regression* (+5% to +8%) — consistent with mca's own
-  near-zero prediction, not a real directional effect either way. Kept
-  the honest picture in this entry rather than cherry-picking a
-  favorable run; adopted on throughput alone, matching this crate's
-  established priority (vectorization-first design, throughput is the
-  metric that matters — same standing justification used for several
-  earlier latency-flat-or-worse/throughput-better adoptions, e.g. asin's
-  2-branch collapse, `exp_pos_neg`'s shared reduction). Full harness
-  treatment: codegen_check clean, 3 new edgecheck.rs bit-exact-vs-
-  `powf_checked` regression-guard entries, accuracy.rs domain-restricted
-  sweep (0.047/141 avg/max ulp, `powf_checked`'s own domain-restricted
-  reading is 0.0234/137 — differs only from sampling a narrower x>0-only
-  subset, same non-issue as every other `_unchecked` sibling this
-  session), readme tables updated (skipped the precision table, matching
-  this session's own precedent of not adding a row for a parent function
-  — `powf_checked`/`remainder` — that was never listed there to begin
-  with). With this, `powf` now has all three tiers (`powf_unchecked`,
-  `powf`, `powf_checked_unchecked`, `powf_checked`) any `cbrt`-shaped
-  function in this crate could have. Commit `982135d`.
-
 ---
 
 # Brainstorm backlog (2026-07-08) — UNTESTED
@@ -1933,14 +1409,14 @@ legitimate direction here, unlike on most targets.
   exp2/log_2 (see above), but fpminimax solves the coefficient-quantization
   problem *jointly* (lattice reduction over the f32 grid), which routinely
   beats round-then-tune, especially at higher degree. Candidates where max
-  ulp is the open residual: acos_poly (max 4), erfc's n/d (max ~100, root
-  cause since traced to the exponent computation, not the poly -- see
-  tried-and-rejected log, so a tighter poly fit alone won't fix it), exp's
-  degree-5 (max 4-8 via callers). (atan_poly's own max ulp is 3 now, not
-  the "18" this entry originally cited -- fixed by the degree bump earlier
-  this session, no longer an open residual.) `sollya` is not installed on
-  this machine (`which sollya` finds nothing) -- would need it added
-  first, a bigger step than this loop should take unilaterally.
+  ulp is still an open residual and this exact technique (sollya's own
+  lattice-reduction search, distinct from the LP/scipy techniques already
+  tried elsewhere in this file) hasn't been tried: acos_poly (max 4),
+  erfc's n/d (max ~100, root cause since traced to the exponent
+  computation, not the poly -- see tried-and-rejected log, so a tighter
+  poly fit alone won't fix it). `sollya` is not installed on this machine
+  (`which sollya` finds nothing) -- would need it added first, a bigger
+  step than this loop should take unilaterally.
 
 - **Exhaustive/rlibm-style correctly-rounded coefficient search for the
   smallest polys**: for a 4-coefficient poly over a bounded f32 domain, the
@@ -1969,33 +1445,12 @@ legitimate direction here, unlike on most targets.
   realistic to try on sinf_poly (4 coeffs) or expm1's Pade (5) if a
   worst-case bound ever becomes the binding constraint there instead of
   avg ulp -- but don't expect a free lunch on avg ulp from this technique.
-
-- **Revisiting cbrt_normal's correction poly with a max-capped LP instead
-  of the plain-minimax one above (2026-07-09), implemented and adopted —
-  recovers a real avg win by fixing exactly the failure mode the entry
-  above hit.** Same poly, same `((1+r)^(-1/3)-1)/r` target and
-  `ss*r*dP` downstream-sensitivity weighting as the rejected attempt
-  above, but this time constrained (minimize the weighted-L1 objective
-  subject to the max weighted error never exceeding the *shipped*
-  coefficients' own bound, the `acos_poly`-fix-7/`erf_poly` pattern from
-  earlier this session) instead of plain Chebyshev minimax. Sampled one
-  representative octave (`a` in `[1,8)`), matching this poly's own
-  established octave-periodicity (explicitly *not* assumed to transfer
-  from the unrelated `cbrt_throughput` seed, where that assumption was
-  separately found to break down — see that entry elsewhere in this
-  file). Verified end-to-end, `git stash`-paired, exhaustive: `cbrt` avg
-  ulp 0.3112 -> 0.2813 (~9.6%, a real win this time, not the isolated
-  metric's ~12% prediction but in the same ballpark, unlike `erf_poly`'s
-  30x-off case), max ulp unchanged at 3; `cbrt_unchecked` moved the same
-  way (0.3125->0.2824); `cbrt_accurate`/`cbrt_accurate_unchecked` (reuse
-  this as a Newton seed) completely unaffected, 0.000 avg / 1 max ulp
-  both before and after — expected, Newton's quadratic convergence
-  swamps a seed-poly change this small. `cbrt_throughput`/`cbrt_fast`
-  (different seed/poly entirely) untouched. `edgecheck.rs` passes. mca
-  confirmed bit-identical (cbrt 35.06/1.629 cyc, `cbrt_accurate`
-  59.06/3.129, matching this crate's own established baseline exactly).
-  Adopted; `readme.md`'s cbrt/cbrt_unchecked rows updated. Commit
-  `fa8565f`.
+  Also since tried against a *max-capped* variant of the same LP instead
+  of plain Chebyshev minimax (minimize the weighted-L1 objective subject
+  to the max weighted error never exceeding the shipped coefficients' own
+  bound) — this fixes the avg-ulp regression the plain-minimax version
+  above hit, and is the technique worth reaching for first on any future
+  poly refit of this kind.
 
 - **Batch/slice API tier (`exp2_slice(&[f32], &mut [f32])` etc.)**: the
   crate's whole perf story assumes the *caller's* loop auto-vectorizes;
@@ -2126,8 +1581,9 @@ legitimate direction here, unlike on most targets.
 ### Cross-cutting / approximation theory
 
 - **Automated evaluation-order search per poly**: the log shows fma
-  reassociation is a per-poly coin flip (erf_poly Estrin was free,
-  acos_poly's wasn't; exp2's regroup won). Enumerate all valid
+  reassociation is a per-poly coin flip (`acos_poly`'s Estrin attempt
+  cost real accuracy, `atan_poly`'s cost real throughput, elsewhere in
+  this file). Enumerate all valid
   parenthesizations/groupings of each fixed coefficient set (there are
   only dozens for degree ≤ 9), score each with the exhaustive sweep + mca
   automatically, keep the Pareto set. Turns the recurring hand-tries into
@@ -2254,75 +1710,44 @@ legitimate direction here, unlike on most targets.
 
 ### atan / asin / acos
 
-- **atan_poly numerator refit via max-capped LP, denominator fixed
-  (2026-07-09), implemented and adopted — small real avg win, exactly
-  the "isolated metric wildly overstates the real effect" pattern this
-  session has now seen four times, but this time landing as a genuine,
-  if modest, win rather than zero or a regression.** `atan_poly` is a
-  3/3 Padé (see its own commit-history comment above for the degree-bump
-  story) — the rational form makes a *joint* max-capped LP harder to set
-  up than this session's earlier pure-poly targets (a coefficient
+- **atan_poly denominator refit via max-capped LP, numerator fixed
+  (2026-07-09), screened and rejected — no meaningful headroom found,
+  matching this session's "already near floor" pattern rather than a
+  real win.** `atan_poly` is a 3/3 Padé (see its own commit-history
+  comment for the degree-bump story) — the rational form makes a joint
+  max-capped LP harder to set up than a pure poly (a coefficient
   perturbation in the denominator doesn't enter the output linearly, due
-  to the division), so this only touched the numerator, holding the
-  denominator at its shipped values: `numer(x)/denom_fixed(x) ≈ atan(x)`
-  is linear in the numerator's 3 free coefficients once `denom_fixed` is
-  known, exactly the same LP setup as every other target this session,
-  just with `denom_fixed(x)` folded into the per-sample target and
-  weight. Single caller pattern confirmed safe (`atan`/`atan2` both
-  reuse the identical `y=min(a,1/a)` domain, no `sinf_poly`-style
-  region-splitting), and the leading term is safely un-sensitive at
-  `x=0` (multiplied by `x` itself via the constant `1.0` inside the
-  Horner form, same shape as `atan_latency`'s poly). The isolated fit
-  predicted a dramatic win (max weighted error 0.279->0.026, ~11x; avg
-  0.122->0.008, ~15x) — by far the largest isolated-metric prediction
-  this session has produced — but real, exhaustive verification found
-  only a small avg improvement: `atan` avg ulp 0.0681->0.0675 (~0.9%),
-  max ulp *unchanged* at 4, with the *exact same* worst-case `x`
-  (1.0220603) before and after. This confirms the numerator was never
-  the binding constraint for `atan`'s real worst case at all — the
-  true bottleneck lives elsewhere (most likely the denominator, or the
-  division itself), so refitting the numerator alone could only ever
-  move the average, never the max, similar in shape to the `expm1` Padé
-  degree-bump entry's own "fixed the wrong branch" outcome. Adopted
-  anyway since it's a real, `git stash`-paired, exhaustively-confirmed
-  improvement with zero perf cost (mca bit-identical, 61.09/1.491 cyc,
-  pure coefficient swap) and no regression on any axis — `edgecheck.rs`
-  passes, `atan2`/`atan2_unchecked` (which reuse this poly) unaffected
-  beyond noise-level movement on their own non-exhaustive 2-argument
-  sample. `readme.md`'s atan row updated. **General lesson: this is the
-  fourth data point (after `exp`, `erf_poly`, `cbrt`, `atan_latency`) on
-  this session's own "isolated metric predicts direction reliably, not
-  magnitude" finding, and the most extreme case yet (~11-15x predicted,
-  ~0.9% real) — when only refitting *part* of a multi-piece pipeline
-  (here, the numerator of a rational, with the denominator and division
-  untouched), the isolated metric's prediction reflects only that one
-  piece's own theoretical ceiling, which can be wildly larger than what
-  the *whole* pipeline's real bottleneck allows through. Worth checking
-  whether the refit target is a genuine sole contributor or just one
-  piece of several before trusting an unusually large isolated-metric
-  prediction.** Commit `9f997db`.
+  to the division), so this held the numerator fixed at its shipped
+  values and only fit the denominator: `output = numer_fixed(x)/denom(x2)`,
+  so `denom(x2) ≈ numer_fixed(x)/atan(x)` is a valid linear target for
+  the denominator's 3 free coefficients (denom's 3 coefficients are
+  linear in the output once the numerator is fixed). Result: max
+  weighted error 0.0257->0.0256, avg 0.007964->0.007964 — both
+  essentially unchanged (<1% movement), and the returned coefficients
+  matched the shipped denominator to 6+ significant figures — the
+  isolated metric alone was decisive enough to skip a Rust round-trip
+  this time. Not implemented; no code changed. Separately, an equivalent
+  numerator-only refit (denominator held fixed) was also tried: the
+  isolated fit predicted a dramatic win (max weighted error 0.279->0.026,
+  ~11x; avg 0.122->0.008, ~15x — by far the largest isolated-metric
+  prediction this session produced) but real, exhaustive verification
+  found only a tiny avg improvement (`atan` avg ulp 0.0681->0.0675,
+  ~0.9%) with max ulp *unchanged* at 4 and the *exact same* worst-case
+  `x` (1.0220603) before and after — confirming the numerator was never
+  the binding constraint for `atan`'s real worst case either. Between
+  the two halves, the true worst-case residual for `atan` isn't
+  reachable by tuning either the numerator or the denominator's
+  coefficients alone; it most likely lives in the division itself or
+  the `a<1`/`a>=1` reciprocal-fold boundary near `x=1`, neither of which
+  a coefficient refit can touch. **General lesson: when only refitting
+  *part* of a multi-piece pipeline (here, one half of a rational, with
+  the other half and the division itself untouched), the isolated
+  metric's prediction reflects only that one piece's own theoretical
+  ceiling, which can be wildly larger than what the whole pipeline's
+  real bottleneck allows through — worth checking whether the refit
+  target is a genuine sole contributor before trusting an unusually
+  large isolated-metric prediction.**
 
-  **Immediate follow-up, same day: completed the other half of the
-  differential-correction cycle (denominator refit, numerator now held
-  fixed at its just-adopted values) — converged to essentially the
-  shipped denominator, confirming no more coefficient-level headroom
-  either direction, screened cheaply in Python without any Rust
-  round-trip.** Same LP setup mirrored (denom's 3 coefficients are also
-  linear in the output once the numerator is fixed: `output =
-  numer_fixed(x)/denom(x2)`, so `denom(x2) ≈ numer_fixed(x)/atan(x)` is
-  a valid linear target). Result: max weighted error 0.0257->0.0256, avg
-  0.007964->0.007964 — both essentially unchanged (<1% movement, well
-  under this session's own "not worth implementing" threshold from the
-  entry above), and the returned coefficients matched the shipped
-  denominator to 6+ significant figures. Not implemented (no Rust
-  change, nothing to revert) — the isolated metric alone was decisive
-  enough to skip the round-trip this time. Confirms the true worst-case
-  residual (`x=1.0220603` for `atan`, unmoved by the numerator refit)
-  isn't reachable by further denominator tuning either; most likely
-  lives in the division itself or the `a<1`/`a>=1` reciprocal-fold
-  boundary near `x=1`, neither of which a coefficient refit can touch.
-  This closes the atan_poly coefficient-tuning question for this
-  session.
 - **Retune asin's 0.25 crossover after any acos_poly change (2026-07-08),
   checked and confirmed already near-optimal, no change**: the joint
   acos+asin refit (fix 7 in asin's own doc comment, commit `b9f9b5d`)
