@@ -19,6 +19,63 @@ brainstorm backlog lives at the bottom of this file.
   shipped coefficients — a literal zero-move local optimum. Both had already
   been tuned in an earlier session; no headroom left.
 
+- **exp2's Q(f) poly, max-capped ulp-weighted Chebyshev LP (2026-07-09),
+  implemented and rejected — a real, across-the-board max-ulp regression
+  for a modest avg gain, the technique's third failure mode this
+  session (after sinf_poly's dual-region sharing and acos_poly's direct-
+  exposure sharing): the poly was already too close to the best-possible
+  floor for the model's own approximation slop to stay safely inside.**
+  Same "zero-move" coordinate-descent finding just above was the exact
+  situation that turned out to have real headroom for `exp`'s own
+  degree-5 poly earlier this session, so this looked like a promising
+  parallel. Confirmed this poly is genuinely single-computation (5
+  literal call sites across `exp2`/`exp2_checked`/`exp10`/
+  `exp10_checked`/`exp2_checked_df`, but all evaluate the *identical*
+  `f` in `[0,1)` the same way — `exp2_checked_df` just takes a `Df32`
+  argument for higher-precision exponent tracking elsewhere in the
+  `powf` pipeline, the poly itself is untouched by that), so none of
+  `sinf_poly`/`acos_poly`'s sharing traps applied. Downstream weighting
+  simplifies unusually cleanly here: `exp2(x) = 2^k*(1+f*Q(f))`, and
+  since `ulp(exp2(x))` tracks `2^k` exactly, the `2^k` factor cancels
+  out of `doutput/dQ = 2^k*f` entirely — the weight is just `f*2^23`,
+  independent of which octave/`k`, no per-point `ulp()` lookup needed.
+  Also confirmed `g0` (the constant term) is safe to fit freely, unlike
+  `acos_poly`'s `u0`: at `f=0`, `g0`'s contribution is multiplied by
+  `f=0`, so it has zero effect on the boundary case regardless of its
+  value (the doc comment already independently confirms this, calling
+  `g0` "a fitted minimax coefficient near ln(2), not ln(2) itself,
+  deliberately"). The isolated fit looked excellent (max weighted error
+  held at parity 0.0920, avg 0.0428→0.0130, ~70%) — implemented and
+  `git stash`-paired fuzz looked promising too (`exp2`/`exp2_checked`
+  avg both improved) until the max-ulp column was checked closely:
+  **`exp2_checked`'s max ulp moved 1→2** even on a 100M-sample paired
+  fuzz (not a one-off tail hit — reproduced on the full exhaustive
+  sweep too, along with `exp2`, `exp10`, and `exp10_checked` *all four*
+  regressing 1→2 simultaneously). Root cause: unlike `exp`'s poly (whose
+  shipped baseline already had real max-ulp slack, 4 ulp, for the LP to
+  work within) or `erf_poly`/`cbrt` (also starting from a multi-ulp
+  baseline), this poly's shipped max ulp was already 1 — as tight as a
+  non-machine-precision poly realistically gets — so the LP's max-cap
+  constraint (built from the *continuous* weighted-error model, not
+  real measured ulp) had essentially no real margin to enforce; the
+  same order of model-vs-reality slop that made `erf_poly`'s predicted
+  ~35% improvement land at ~0.9% in practice was, at this much finer
+  starting scale, enough to tip the *actual* worst case over an integer
+  ulp boundary despite the *model's* own max metric staying flat.
+  Reverted (`git checkout -- src/lib.rs`, confirmed clean via `git
+  diff`/`git status`); no code changed. **General lesson: this makes a
+  third distinct failure mode for the max-capped LP technique, beyond
+  the two already logged (`sinf_poly`'s domain-region sharing,
+  `acos_poly`'s direct multi-caller exposure) — even a genuinely single-
+  caller poly with no sharing risk at all can still regress if it's
+  already close enough to its practical accuracy floor (max ulp already
+  1 here) that the LP's continuous-model max-cap doesn't have enough
+  real slack to reliably hold the *actual* measured max ulp constant.
+  Before trying this technique on any further poly, check the shipped
+  baseline's own max ulp first: a poly already at or near max ulp 1 is
+  a much riskier target than one with real headroom (4+ ulp, like
+  `exp`'s own case) for the max-cap to protect.**
+
 - **Coordinate-descent tuner methodology finding, "zero-move" isn't always
   "no headroom" (2026-07-08)**: `tune.rs`'s tuner moves each coefficient by
   integer *bit-pattern* steps (deltas of ±1..16 ulp). For a brand-new
