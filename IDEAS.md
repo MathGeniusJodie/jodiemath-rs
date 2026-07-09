@@ -61,6 +61,60 @@ brainstorm backlog lives at the bottom of this file.
   poly's domain. Max ulp unchanged (2→2), avg ulp barely moved
   (0.00248→0.00244) — already near f32's precision floor. Not applied.
 
+- **sinf_poly, ulp-weighted Chebyshev LP refit (2026-07-09), two variants
+  tried, both rejected — real regressions in the real crate despite each
+  looking like an improvement in the isolated fit, root-caused to `cos`'s
+  own reduction landing on the *opposite end* of the poly's domain from
+  `sin`'s.** Same technique that won for `exp`'s degree-5 poly earlier
+  this session (a `scipy.optimize.linprog` Chebyshev fit of the same 4
+  coefficients, weighted by `1/ulp(sin(x))`), tried here per this file's
+  own "still realistic to try on sinf_poly" backlog note. Variant 1
+  (plain minimax, minimize `t` s.t. `|error_i| <= t`): found a real ~3.8x
+  tighter worst-case bound in the isolated fit (0.364 -> 0.096
+  ulp-weighted units) — but implementing it regressed `cos_checked
+  |x|<=1e6`'s real avg ulp from 0.081 to 0.79, almost 10x worse,
+  confirmed via `git stash`-paired fuzz. This is exactly the known
+  minimax pitfall this file's own "Exhaustive/rlibm-style correctly-
+  rounded coefficient search" cross-cutting entry already warns about
+  (a pure minimax LP finds a *vertex* of the feasible polytope, trading
+  typical-case error for worst-case — the opposite of this crate's
+  avg-first priority) — reproduced here on a new function rather than
+  avoided, since the danger wasn't front-of-mind going in. Variant 2
+  (L1-minimize-subject-to-max-cap, matching `acos_poly` fix 7's own
+  successful "minimize the other objective, hold max ulp at its current
+  value" pattern): fixed the minimax problem in the *isolated* fit
+  (avg weighted error 0.094 -> 0.042, max held at parity) but **still
+  regressed `cos_checked` for real** — avg ulp worse across every bucket
+  size, including the simplest `|x|<=pi/4` case with no reduction
+  arithmetic at all (0.0495 -> 0.0542), while `sin_checked`'s own
+  numbers stayed flat (within fuzz noise) at every bucket. Root cause
+  (confirmed by reading `cos_checked`'s reduction directly, not just
+  guessed): `cos_checked(x) = ±sinf_poly(r)` with `r = x - (k+0.5)*pi`,
+  `k = round(x/pi - 0.5)` — for `x` near 0, `k` rounds to 0 or -1, so
+  `r` lands near `∓pi/2`, the poly's domain *edge*, while `sin_checked`
+  uses the same poly with `pre_offset=0` and lands `r` near 0, the
+  domain *center*, for the same small-`x` inputs. The two callers stress
+  opposite ends of the identical shared poly for their most heavily-
+  sampled (smallest-`|x|`) inputs, the same "shared poly needs a joint
+  objective" shape as `acos_poly`/`asin`'s own history — but my LP grid
+  was a plain domain-uniform sample of `r`, with no explicit per-region
+  weighting reflecting that both ends matter this much; the original
+  coordinate-descent-tuned coefficients already balance this (implicitly
+  or by luck), and both my LP variants disturbed that balance in the
+  isolated-fit metric's favor without preserving it. Reverted both;
+  `src/lib.rs` untouched (verified via `git diff` after `git stash
+  drop`). **General lesson: when a poly is shared by two callers that
+  feed it different *sub-regions* of its domain most heavily (not just
+  different downstream combine formulas, as in `acos_poly`/`asin`'s
+  already-documented case), a domain-uniform LP/minimax grid is not
+  neutral — it implicitly re-weights which caller's accuracy improves,
+  and checking one caller's numbers (or the isolated poly-only metric)
+  without checking *all* real callers across *all* their actual bucket
+  sizes can hide a real regression. The `exp` refit earlier this session
+  didn't hit this because `exp`'s poly has only the one direct caller
+  pattern (always evaluated near the same relative position in its
+  domain); this is not automatically true for every poly in this crate.**
+
 - **expm1 Pade degree bump, numerator degree 3 → 5 (2026-07-08, later
   re-checked with a proper scipy seed instead of 0.0, still not
   adopted)**: originally added a new odd term (`expm1_near0_deg5_c` in
