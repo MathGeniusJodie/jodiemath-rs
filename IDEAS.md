@@ -843,10 +843,14 @@ cousin.
 
 ### cbrt / sqrt / hypot / pow / remainder
 
-54. **cbrt seed division codegen check**: confirm LLVM lowers the u32 `/3`
-    to multiply-high in the vectorized loop (vpmuludq path) rather than
-    anything worse; if not, hand-write the exact magic-multiply. Asm-only
-    check, no accuracy risk (exact either way).
+54. **cbrt seed division codegen check (resolved 2026-07-09, no change
+    needed)**: grepped `cbrt_throughput`'s own asm region for div/mul --
+    LLVM already lowers `ax / 3` (u32, compile-time-constant divisor) to
+    `vpmuludq` (multiply-high strength reduction), no `idiv`/`vpdivd`
+    anywhere in the region. The `vdivps` instructions also present there
+    are the real, unrelated fp division in cbrt_normal's own seed/Newton
+    reciprocal (already known cheap on this CPU, see the divider-idle
+    finding elsewhere in this file). Nothing to fix.
 55. **rcbrt(x) = x^(-1/3)**: new function — negate-exponent-third bit
     seed + its own correction poly; division-free, useful in physics
     kernels, and 1/cbrt(x) costs an extra rounding this avoids.
@@ -894,8 +898,6 @@ cousin.
     decision in front of an op that previously had no upstream dependency at
     all — count what's on the critical path *before* the op, not just at
     it.*
-64. **remainder_checked: widen past 2^24 with a 2-word q** — already in
-    backlog round 1; still unclaimed.
 
 ### New API surface / tiers
 
