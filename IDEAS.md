@@ -819,11 +819,10 @@ cousin.
     might let a cbrt_fast-grade (~5 ulp) seed reach 0.5 ulp in one Df32
     Halley step, deleting cbrt_normal's poly from the accurate tier.
     Paper-screen the error budget first.
-57. **pown_small tier (|n| ≤ 255)**: 8 unrolled iterations instead of 32 —
-    4x fewer squarings for the overwhelmingly common case, still
-    branchless. Also **pown_const<const N: i32>**: compile-time exponent
-    unrolls exactly (the "same exponent, varying base" pattern that
-    motivated pown's redesign).
+57. **pown_const<const N: i32>**: compile-time exponent unrolls exactly
+    (the "same exponent, varying base" pattern that motivated pown's
+    redesign). (pown_small, the other half of this entry, is implemented
+    -- see git history.)
 58. **powf: root-cause the log2_df/exp2_checked_df ~150 max ulp** (the
     2026-07-08 entry stopped short): candidate mechanisms — exp2's
     double rounding into denormals via the t2 multiply, or Df32 mul's

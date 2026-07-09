@@ -119,6 +119,7 @@ hypot_unchecked |  5.0 ns |     -   |  -
   hypot_checked | 19.9 ns | 11.9 ns | 0.6x
         rsqrt |  6.7 ns |     -   |  -
          pown | 50.3 ns |     -   |  -
+   pown_small | 15.3 ns |     -   |  -
       powf (*)| 20.7 ns | 16.8 ns | 0.8x
 powf_unchecked | 18.7 ns | 16.8 ns | 0.9x
  powf_checked | 26.9 ns | 16.8 ns | 0.6x
@@ -189,6 +190,7 @@ hypot_unchecked | 0.17 ns  |     -    |  -
   hypot_checked | 0.40 ns  |  2.72 ns | 6.8x
         rsqrt | 0.31 ns  |     -    |  -
          pown | 1.24 ns  |     -    |  -
+   pown_small | 0.22 ns  |     -    |  -
       powf (*)| 1.03 ns  |  5.86 ns | 5.7x
 powf_unchecked | 0.70 ns  |  5.86 ns | 8.3x
  powf_checked | 1.46 ns  |  5.86 ns | 4.0x
