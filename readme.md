@@ -128,6 +128,7 @@ powf_checked_unchecked| 26.0 ns | 17.1 ns | 0.7x
  remainder (*)|  9.0 ns |     -   |  -
 remainder_unchecked|  8.0 ns |     -   |  -
 remainder_checked| 12.6 ns |     -   |  -
+   remainder_ieee|  7.9 ns |     -   |  -
 ```
 (*) atan2/hypot/powf/remainder's jodie numbers jumped here vs. older
 recordings of this table -- not a regression, a benchmark fix: a literal
@@ -200,6 +201,7 @@ powf_checked_unchecked| 1.15 ns  |  6.32 ns | 5.5x
  remainder (*)| 0.16 ns  |     -    |  -
 remainder_unchecked| 0.15 ns  |     -    |  -
 remainder_checked| 0.29 ns  |     -    |  -
+   remainder_ieee| 0.17 ns  |     -    |  -
 ```
 (*) see the latency table's own footnote above -- same benchmark fix,
 not a regression. `powf`'s throughput ratio flips especially hard here
@@ -263,6 +265,7 @@ powf_checked_unchecked |      105.58 |             5.851
 remainder           |          34.03 |             0.729
 remainder_unchecked |          33.00 |             0.646
 remainder_checked   |          46.03 |             1.282
+remainder_ieee      |          29.03 |             0.649
 ```
 
 # tools
