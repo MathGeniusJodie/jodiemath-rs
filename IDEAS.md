@@ -159,7 +159,7 @@ brainstorm backlog lives at the bottom of this file.
   near a ulp/exponent boundary at all) — worth remembering that an idea
   can still pay off for a different reason than the one that motivated
   trying it, so don't discard a combined idea just because one of its
-  two premises doesn't hold up under inspection.** Commit `<pending>`.
+  two premises doesn't hold up under inspection.** Commit `997fe7a`.
 
 ## cbrt family
 
