@@ -598,6 +598,18 @@ fn main() {
     check("powf(-0,3)", powf(-0.0, 3.0), -0.0);
     check("powf(-0,2)", powf(-0.0, 2.0), 0.0);
     check("powf(-0,-1)", powf(-0.0, -1.0), f32::NEG_INFINITY);
+    // pow(1, y) = 1 for *any* y, even inf/-inf/nan -- another dedicated
+    // C99 special case the log/exp2 formula can't derive on its own
+    // (log_2(1)=0, so 0*inf/0*nan degrade to NaN instead of the correct
+    // 1). Found via idea #87's own suspicion, checked directly against
+    // std. pow(-1,+-inf)=1 is a second, narrower case that does *not*
+    // extend to pow(-1,nan) (stays NaN, matching std).
+    check("powf(1,inf)", powf(1.0, f32::INFINITY), 1.0);
+    check("powf(1,-inf)", powf(1.0, f32::NEG_INFINITY), 1.0);
+    check("powf(1,nan)", powf(1.0, f32::NAN), 1.0);
+    check("powf(-1,inf)", powf(-1.0, f32::INFINITY), 1.0);
+    check("powf(-1,-inf)", powf(-1.0, f32::NEG_INFINITY), 1.0);
+    check("powf(-1,nan)", powf(-1.0, f32::NAN), f32::NAN);
     // powf_checked shares powf's special-case handling on top of its
     // double-float-precision magnitude for large |y| -- same edge cases
     // should hold identically, plus a couple more that exercise the
@@ -616,6 +628,12 @@ fn main() {
     check("powf_checked(2,nan)", powf_checked(2.0, f32::NAN), f32::NAN);
     check("powf_checked(-0,3)", powf_checked(-0.0, 3.0), -0.0);
     check("powf_checked(-0,-1)", powf_checked(-0.0, -1.0), f32::NEG_INFINITY);
+    check("powf_checked(1,inf)", powf_checked(1.0, f32::INFINITY), 1.0);
+    check("powf_checked(1,-inf)", powf_checked(1.0, f32::NEG_INFINITY), 1.0);
+    check("powf_checked(1,nan)", powf_checked(1.0, f32::NAN), 1.0);
+    check("powf_checked(-1,inf)", powf_checked(-1.0, f32::INFINITY), 1.0);
+    check("powf_checked(-1,-inf)", powf_checked(-1.0, f32::NEG_INFINITY), 1.0);
+    check("powf_checked(-1,nan)", powf_checked(-1.0, f32::NAN), f32::NAN);
     // the actual point of powf_checked: a large-|y| case where the plain
     // formula's error is large (see powf_checked's own doc comment).
     check(

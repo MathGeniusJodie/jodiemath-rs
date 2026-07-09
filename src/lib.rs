@@ -2706,6 +2706,22 @@ pub fn powf(x: f32, y: f32) -> f32 {
     // route `(-0.0)^3.0` through the wrong (positive) branch instead of
     // the correctly-signed `-0.0`.
     let r = if x.is_sign_negative() { neg_result } else { mag };
+    // pow(1, y) = 1 for *any* y -- even inf, -inf, or NaN -- another
+    // dedicated IEEE754/C99 special case the log/exp2 formula can't derive
+    // on its own (log_2(1)=0, so mag=exp2_checked(0*y); for y=inf/-inf/NaN
+    // that's a 0*inf or 0*NaN indeterminate form inside exp2_checked's own
+    // Df32 combine, degrading to NaN instead of the correct 1). Found by
+    // checking IDEAS.md's own "powf(+-1, huge y)" suspicion directly
+    // against std (`1.0f32.powf(f32::INFINITY)` is `1.0`, this crate's
+    // `powf`/`powf_checked` gave `NaN`) -- x==1 with a *finite* y already
+    // worked (log_2(1)*y=0*finite=0 exactly, no indeterminate form), so
+    // this was invisible to any sweep that only fuzzed finite y.
+    // pow(-1, +-inf) = 1 is a second, narrower C99 special case (unlike
+    // pow(1,y), it does *not* extend to pow(-1,NaN), which stays NaN --
+    // verified against std: `(-1.0f32).powf(f32::NAN)` is `NaN`) --
+    // handled separately since it only overrides the infinite-y case.
+    let r = if x == 1.0 { 1.0 } else { r };
+    let r = if x == -1.0 && y.is_infinite() { 1.0 } else { r };
     // pow(x, 0) = 1 for *any* x -- even 0, negative, or NaN -- a
     // dedicated IEEE754/C99 special case, not derivable from the log/exp2
     // formula (0*inf and NaN*0 both degrade to NaN above). Override last.
@@ -2899,6 +2915,12 @@ pub fn powf_checked(x: f32, y: f32) -> f32 {
     let neg_signed = if y_odd { -mag } else { mag };
     let neg_result = if y_int { neg_signed } else { f32::NAN };
     let r = if x.is_sign_negative() { neg_result } else { mag };
+    // pow(1,y)=1 for any y and pow(-1,+-inf)=1: same two C99 special cases
+    // powf's own doc comment describes, needed here too (log2_df(1) is
+    // exactly Df32(0,0), and 0*inf/0*NaN inside the Df32 multiply
+    // degrades to NaN the same way).
+    let r = if x == 1.0 { 1.0 } else { r };
+    let r = if x == -1.0 && y.is_infinite() { 1.0 } else { r };
     if y == 0.0 { 1.0 } else { r }
 }
 
