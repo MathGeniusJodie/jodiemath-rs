@@ -890,9 +890,6 @@ cousin.
 66. **exp_m1_over_x(x) = expm1(x)/x**: the well-conditioned primitive
     behind financial/ODE kernels; expm1's Pade branch is literally already
     this shape internally (numer/denom both have the x factored).
-67. **sinc(x) = sin(πx)/(πx) via sinpi**: removable singularity handled by
-    one select; sinpi's exact reduction makes this accurate everywhere —
-    DSP users currently hand-roll it badly.
 68. **lgamma (Stirling + reflection)**: big job, listed for completeness —
     the largest gap vs libm's function set that fits this crate's
     branchless style.
