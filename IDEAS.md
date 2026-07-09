@@ -895,9 +895,6 @@ cousin.
 
 ### New API surface / tiers
 
-66. **exp_m1_over_x(x) = expm1(x)/x**: the well-conditioned primitive
-    behind financial/ODE kernels; expm1's Pade branch is literally already
-    this shape internally (numer/denom both have the x factored).
 68. **lgamma (Stirling + reflection)**: big job, listed for completeness —
     the largest gap vs libm's function set that fits this crate's
     branchless style.
