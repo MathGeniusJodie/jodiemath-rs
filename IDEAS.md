@@ -1348,10 +1348,69 @@ cousin.
     y=r² registers across the *same* vector when the caller wants both —
     a sincos slice API (not scalar API, which already failed) where lane
     pairing amortizes the reduction. Only viable inside a slice tier.
-90. **Newton-free correctly-rounded sqrt-composites**: rsqrt/rhypot final
-    accuracy via one fma-based residual step (e = fma(r,r·x,-1)-style) —
-    the divider-idle finding means the extra division for the step is
-    nearly free in throughput terms.
+90. **Newton-free correctly-rounded sqrt-composites (tried 2026-07-09 for
+    rsqrt, rejected -- real accuracy win, real (if modest) cost, plus a
+    genuinely new codegen pitfall found)**: implemented `rsqrt`'s
+    residual step exactly as described -- `e = fma(r, r*x, -1)`,
+    correction `r_new = fma(-0.5*r, e, r)`. Two real bugs found before
+    it worked at all: (1) computing `r*r` first (the naive reading of
+    "r·r·x") overflows f32 for any x small enough that `r=1/sqrt(x)`
+    itself exceeds ~1.8e19 (e.g. a denormal `x=1.95e-43` gives
+    `r~2.27e21`, `r*r~5e42 > f32::MAX`), even though the true residual is
+    tiny -- fixed by computing `r*x` first (~=`sqrt(x)`, always
+    well-behaved) and multiplying by `r` after, same "which
+    multiplication order avoids a needless overflow" lesson as idea
+    #56's `cbrt_accurate` Halley investigation, tried immediately before
+    this one in the same session. (2) The correction degrades to a real
+    `0*inf=NaN` indeterminate form at `x==0`/`x==inf` (r is `+-inf`/`0`
+    there) -- both cases `rsqrt`'s own bare `1.0/x.sqrt()` already gets
+    exactly right for free via plain IEEE754 semantics, so this is a
+    real regression, not a pre-existing gap. Fixing it with the obvious
+    guard, `if x > 0.0 && x.is_finite() { corrected } else { r }`,
+    fixed correctness but caused a *catastrophic* throughput regression
+    (1.381->7.076 cyc/elem, +412%) -- inspecting the actual generated
+    assembly found why: `x.is_finite()` (or this specific compound
+    condition) compiles to a fully scalar per-lane sequence (extract
+    each of the 8 lanes with `vextractps`, run ~10 scalar integer
+    test/sub/cmp/set instructions per lane to compute "positive and
+    finite," then hand-assemble an AVX-512 mask register bit-by-bit via
+    a chain of `kmovd`/`kshiftlb`/`kshiftrb`/`korb`/`kandb`) instead of a
+    single vectorized compare -- a genuinely new de-vectorization
+    pitfall this crate's `codegen_check` doesn't currently catch at all
+    (it only greps for a scalar `call` or `cvttsd2si`/`cvttss2si`, not
+    this "scalar bit-tests reassembled into a mask" pattern). Rewriting
+    the guard with this crate's own established bit-trick idiom instead
+    (`ax = x.to_bits() & !SIGN_MASK; if ax==0 || ax>=EXPONENT_MASK {r}
+    else {corrected}`, the same shape `cbrt_accurate`'s own zero/inf/nan
+    guard already uses) fixed the vectorization completely: throughput
+    back down to 1.502 (only +8.8% over plain `rsqrt`'s 1.381), all
+    special cases verified correct again. With everything fixed:
+    real accuracy win (avg ulp 0.2599->0.1226, ~2x tighter, max ulp
+    unchanged at 1) at a real, modest cost (latency 28.00->40.03 cyc,
+    +43.0%; throughput +8.8%). Didn't clear this loop's own bar (speedup,
+    or accuracy gain *without* a perf penalty) -- both axes show a real
+    cost, even though it's far short of the `is_finite()` version's
+    catastrophic one. Also: `rsqrt`'s accuracy is already extremely
+    tight (max 1 ulp is close to the practical ceiling for a
+    two-composed-hardware-ops function), so the accuracy gain here is a
+    nice-to-have polish, not fixing a documented defect -- unlike the
+    "real perf cost to fix a genuine correctness gap" cases this crate
+    has accepted elsewhere (sin/cos's inf-for-large-x fix, tanh's
+    domain-hole fix), there's no defect being fixed, just squeezing an
+    already-excellent number further. Reverted, bit-identical to prior
+    HEAD. Not tried for `rhypot` this round (same technique, likely a
+    similar shape of result -- left for a future session if the
+    tradeoff calculus differs there). *Any time a domain guard is added
+    to protect a numerically-motivated correction (division-by-zero,
+    inf*0, etc.), check the *generated assembly* for the guard itself,
+    not just its correctness -- `.is_finite()` (or compound conditions
+    built from it) can silently de-vectorize into dozens of scalar
+    per-lane instructions even when no `call` or saturating-cast pattern
+    is present, a failure mode this crate's own `codegen_check` doesn't
+    currently detect; prefer this crate's own established bit-trick
+    idiom (`x.to_bits() & !SIGN_MASK` compared against `0`/`EXPONENT_MASK`)
+    for exactly this class of zero/inf/nan guard, which is already known
+    to vectorize cleanly everywhere else it's used.*
 91. **Exhaustive-verified minimax over *reduced* domains** (true rlibm):
     for polys whose reduced input takes ≤2^26-ish distinct values (exp2's
     f after quantization? log's s per exponent?), solve the actual integer
