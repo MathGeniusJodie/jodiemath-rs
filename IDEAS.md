@@ -1065,9 +1065,14 @@ cousin.
     "C99 doesn't care" framing) -- fixing it to mimic std's canonicalization
     would need a real `.abs()`-style op added to every mulsign-based
     NaN-producing path, for zero standards-compliance benefit. Left as is.
-85. **atan2(±0, negative-finite) etc. full C99 special-case matrix as a
-    test table** — atan2's specials were fixed piecemeal; one table test
-    locks all 16+ cases.
+85. **atan2 full C99 special-case matrix (fixed 2026-07-09)**: built the
+    matrix (all zero/inf/nan/sign combinations against std) -- found a
+    real bug, not just a coverage gap: `atan2(NaN, 0.0)`/
+    `atan2(NaN, -0.0)` returned `+-FRAC_PI_2` instead of `NaN` (the
+    `x==0` branch bypasses `atan(y/x)` and falls to a bare `mulsign`,
+    which only reads `y`'s sign bit, not its NaN-ness). Every other NaN
+    combination already worked. Fixed with a trailing override; 7 new
+    edgecheck pins lock the matrix down going forward. Commit `5732abc`.
 88. **exp10 near the decade boundaries (resolved 2026-07-09, no bug found)**:
     densely fuzzed (12M samples) right around every point where
     kr=round(x·log2_10) crosses an integer (where the floor-adjust select
