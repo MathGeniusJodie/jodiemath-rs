@@ -111,6 +111,9 @@ throughput_fn!(thr_cbrt_throughput_fn, "cbrt_throughput_fn_throughput", cbrt_thr
 latency_fn!(lat_cbrt_fast, "cbrt_fast_latency", cbrt_fast);
 throughput_fn!(thr_cbrt_fast, "cbrt_fast_throughput", cbrt_fast);
 
+latency_fn!(lat_rcbrt, "rcbrt_latency", rcbrt);
+throughput_fn!(thr_rcbrt, "rcbrt_throughput", rcbrt);
+
 latency_fn!(lat_exp2, "exp2_latency", exp2);
 throughput_fn!(thr_exp2, "exp2_throughput", exp2);
 
@@ -409,6 +412,7 @@ fn main() {
         lat_cbrt_accurate_unchecked, thr_cbrt_accurate_unchecked;
         lat_cbrt_throughput_fn, thr_cbrt_throughput_fn;
         lat_cbrt_fast, thr_cbrt_fast;
+        lat_rcbrt, thr_rcbrt;
         lat_exp2, thr_exp2;
         lat_exp2_checked, thr_exp2_checked;
         lat_exp10, thr_exp10;

@@ -467,6 +467,11 @@ fn main() {
         let s = measure!(accurate_safe_range, cbrt_accurate_unchecked, cbrt_u35);
         report("cbrt_accurate_unchecked (+)", &s, t0);
     }
+    if run("rcbrt") {
+        let rcbrt_ref = |v: F64xN| F64xN::splat(1.0) / cbrt_u35(v);
+        let s = measure!(everywhere, rcbrt, rcbrt_ref);
+        report("rcbrt", &s, t0);
+    }
     if run("log") {
         let s = measure!(everywhere, log_2, log2_u35);
         report("log_2", &s, t0);

@@ -947,6 +947,26 @@ pub fn cbrt_accurate_unchecked(x: f32) -> f32 {
     cbrt_accurate_normal(x, 1.0)
 }
 
+/// x^(-1/3) -- new function, backlog idea #55: division-free by
+/// construction wasn't pursued (that would need a fresh bit-trick seed +
+/// its own fitted correction poly, real numerical-fitting work, not a
+/// "reuse existing pieces" change); instead this composes `cbrt` with a
+/// single hardware division, the same "sqrt/division are already
+/// correctly-rounded, just compose them" reasoning `rsqrt`/`rhypot` both
+/// already use in this crate. Every zero/inf/nan/negative special case
+/// falls out of that composition for free via IEEE754 semantics (checked
+/// by hand before writing this, same discipline as `rhypot`):
+/// `rcbrt(0)=inf`, `rcbrt(-0)=-inf` (cbrt is odd, so is its reciprocal),
+/// `rcbrt(inf)=0`, `rcbrt(-inf)=-0`, `rcbrt(nan)=nan`, `rcbrt(-8)=-0.5`
+/// -- no override needed at all (unlike `rhypot`'s one inf-vs-NaN case,
+/// `cbrt` has no analogous special case to inherit). Costs one more
+/// rounding than `cbrt` itself (the division), same tradeoff `rsqrt`/
+/// `rhypot` already accept.
+#[inline(always)]
+pub fn rcbrt(x: f32) -> f32 {
+    1.0 / cbrt(x)
+}
+
 // higher throughput cbrt experiment, 5.5 ulp average error
 pub fn cbrt_throughput(x: f32) -> f32 {
     //let r = f32::from_bits(0xd461ff81u32.wrapping_sub((x.to_bits()>>16)*0x5556u32));

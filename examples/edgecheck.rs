@@ -87,6 +87,20 @@ fn main() {
     check("cbrt_accurate_unchecked(-8)", cbrt_accurate_unchecked(-8.0), cbrt_accurate(-8.0));
     check("cbrt_accurate_unchecked(1e30)", cbrt_accurate_unchecked(1e30), cbrt_accurate(1e30));
     check("cbrt_accurate_unchecked(1e-16)", cbrt_accurate_unchecked(1e-16), cbrt_accurate(1e-16));
+
+    // rcbrt(x) = 1/cbrt(x). Every special case falls out of composing
+    // cbrt with a plain division purely from IEEE754 semantics (verified
+    // by hand before writing the function) -- no override needed at all,
+    // unlike rhypot's one inf-vs-NaN case.
+    check("rcbrt(8)", rcbrt(8.0), 0.5);
+    check("rcbrt(-8)", rcbrt(-8.0), -0.5);
+    check("rcbrt(0)", rcbrt(0.0), f32::INFINITY);
+    check("rcbrt(-0)", rcbrt(-0.0), f32::NEG_INFINITY);
+    check("rcbrt(inf)", rcbrt(f32::INFINITY), 0.0);
+    check("rcbrt(-inf)", rcbrt(f32::NEG_INFINITY), -0.0);
+    check("rcbrt(nan)", rcbrt(f32::NAN), f32::NAN);
+    check("rcbrt(1)", rcbrt(1.0), 1.0);
+    check("rcbrt(-1)", rcbrt(-1.0), -1.0);
     // sin/cos (unchecked): only accurate while q = round(x/pi) is an exact
     // f32 integer, i.e. |x| < 2^22 * pi (~1.3e7) -- see sin's doc comment.
     check("sin(0)", sin(0.0), 0.0);

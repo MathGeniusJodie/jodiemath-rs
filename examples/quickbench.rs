@@ -74,6 +74,7 @@ fn main() {
     bench!("cbrt_accurate_unchecked", cbrt_accurate_unchecked);
     bench!("cbrt_throughput", cbrt_throughput);
     bench!("cbrt_fast", cbrt_fast);
+    bench!("rcbrt", rcbrt);
     bench!("exp2", exp2);
     bench!("exp2_checked", exp2_checked);
     bench!("std exp2", |x: f32| x.exp2());
