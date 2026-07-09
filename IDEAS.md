@@ -428,6 +428,40 @@ brainstorm backlog lives at the bottom of this file.
   `numer/denom` formula for |x|<0.28. Max ulp unchanged (3→3), avg ulp moved
   <0.3%. No meaningful headroom; not applied.
 
+- **Same branch, max-capped LP numerator refit with denom fixed
+  (2026-07-09), tested and rejected — a real regression, this session's
+  second case (after `sinf_poly`) of the isolated metric getting the
+  *direction* wrong, not just the magnitude.** Applied the same
+  numerator-only LP that worked for `atan_poly` (denominator held at
+  its shipped `C`/`D`, target `denom_fixed(x2) = numer(x)/erf(x)*x`
+  linear in the numerator's `A`/`B`). The coefficients barely moved (`A`
+  0.591056→0.591056, `B` 1.128379225731→1.128379164358 — the new `B` is
+  actually *closer* to the true `2/sqrt(pi)` than the shipped value,
+  which looked like a good sign) and the isolated fit predicted a large
+  win (avg weighted error 0.532→0.0826, ~84%, max only ~11% tighter) —
+  but real `git stash`-paired fuzz found `erf` avg ulp *regressed*
+  0.3166→0.3251 (max ulp unchanged at 5), with the worst-case `x`
+  landing right at `≈-0.28`, exactly the branch crossover with the tail
+  formula (`erf_poly`). Reverted immediately (`git checkout --`,
+  confirmed clean); no code changed. Root cause not fully traced (would
+  need the same `x=0` boundary-style investigation already applied to
+  `acos_poly`/`exp2`), but the crossover-adjacent worst point strongly
+  suggests this is a variant of the `acos_poly` asin-crossover fragility
+  from earlier this session — a coefficient perturbation that looks
+  locally better throughout `[0, 0.28)` in isolation can still make the
+  *transition* to the neighboring branch worse right at the boundary,
+  where the two independently-tuned pieces need to stay compatible with
+  each other in a way neither branch's own isolated objective captures.
+  **General lesson: this is now the second confirmed case (after
+  `sinf_poly`) where this LP technique's real result went the *opposite*
+  direction from an isolated prediction, not just a smaller magnitude —
+  both cases involved a branch crossover/boundary the isolated single-
+  branch objective doesn't account for. Before trusting an isolated fit
+  for any poly that sits next to a domain-split boundary (a very common
+  pattern in this crate: `erf`, `asin`/`acos`, `sin`/`cos`'s own small/
+  large-x splits), check the crossover neighborhood specifically, not
+  just each branch's own separate interior.**
+
 - **erf's tail branch (erf_poly) refit (2026-07-07)**: same recipe against
   the tail formula for xa in [0.28,10]. Max ulp unchanged (4→4), avg ulp
   moved <0.3%, stable across a 10x denser grid. Not applied.
