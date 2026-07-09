@@ -1339,11 +1339,31 @@ cousin.
 79. **Survey sinpi/cospi/sind/cosd/exp10/sigmoid max ulp** — several newer
     functions have no recorded exhaustive numbers in readme.md; can't
     prioritize what isn't measured.
-80. **exp2 poly evaluated as 1+f·Q vs direct P(f)=2^f with c0=1 pinned**:
-    the current Q form multiplies by exp2int·f then adds exp2int; a direct
-    P form changes the rounding structure of the last two ops. Paper
-    analysis first — the max is already 1, so margin is thin (see the LP
-    rejection lesson).
+80. **exp2 poly evaluated as 1+f·Q vs direct P(f)=2^f with c0=1 pinned
+    (paper-screened 2026-07-09, not implemented -- real modest op savings
+    identified, but needs a fresh fit, not a mechanical rewrite)**: traced
+    through the actual op count for both forms. Current (`Q(f)=(2^f-1)/f`
+    fit, reconstructed as `exp2int*(1+f*Q(f))`): the final combine is
+    `fma(q, exp2int*f, exp2int)`, needing a separate `exp2int*f` multiply
+    *before* the final fma (2 ops for the combine). A direct `P(f)=2^f`
+    fit (same degree-5 shape, `c0` pinned to exactly `1.0` instead of a
+    fitted constant near `ln(2)`) would combine as a single `p*exp2int`
+    multiply (1 op) -- a real, if modest, saving of one multiply out of
+    ~8 total ops in the poly+combine chain. But this is *not* a
+    mechanical rewrite of the existing coefficients: algebraically
+    expanding `P(f) = 1 + f*Q(f)` from `Q`'s own already-fitted
+    coefficients raises the degree by one (a degree-5 `Q` gives a
+    degree-6 `P`, more terms, not fewer) -- a same-degree direct `P(f)`
+    fit needs its own independent minimax fit (via `tune.rs` or
+    `lolremez`), the same real numerical-fitting effort as this session's
+    other coefficient refits. Given the idea's own caution held up on
+    inspection (`exp2`/`exp2_checked` are already at max ulp 1, avg
+    ~0.03 -- essentially no room to spare, so a fresh fit risks a real
+    regression for a payoff capped at one multiply), and no existing
+    fitted coefficients could be reused directly, not undertaken this
+    iteration -- the effort (a full fresh fit) vs. payoff (one multiply)
+    ratio is comparable to idea #52's own "not pursued" call. Left open
+    for a session that wants to invest in the fresh fit specifically.
 81. **sinf_poly's copysign(x)**: now that flip-before-poly is used in
     checked tiers, verify the copysign is still load-bearing for every
     remaining caller (it was added for the x=±0 case; sinpi/cospi/sind/
