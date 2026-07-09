@@ -710,10 +710,6 @@ cousin.
     single-log1p form died near x≈-1 where 2x/(1-x) cancels; on the
     positive side there is no cancellation (argument →+∞), so odd-symmetry
     sidesteps the entire failure mode. Halves the log1p count per call.
-47. **asinh/acosh: skip log1p's internal is_finite guard** — both callers
-    already guard d.is_finite() themselves before calling log1p; an
-    unchecked log1p variant for internal use drops a redundant select from
-    two hot composites.
 48. **sinh_accurate/cosh_accurate tier**: Df32 through the exp combine —
     only if a user asks; max 5 is comfortably documented.
 

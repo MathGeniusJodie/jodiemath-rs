@@ -237,8 +237,8 @@ sinh_throughput     |          62.00 |             1.943
 cosh_throughput     |          61.00 |             1.616
 tanh                |          86.73 |             2.039
 sigmoid             |          61.09 |             1.354
-asinh               |         120.99 |             7.716
-acosh               |         127.75 |             6.588
+asinh               |         117.05 |             7.971
+acosh               |         124.66 |             6.211
 atanh               |          79.99 |             4.331
 asin                |          59.03 |             0.968
 acos                |          37.11 |             0.820
