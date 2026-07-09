@@ -1084,7 +1084,17 @@ cousin.
     contradicting `fmod`'s own doc comment (claims to match Rust's `%`
     exactly, and `0.0f32 % 0.0f32` is NaN). Fixed uniformly (`&&
     !normal.is_nan()` added to the guard) across all five. Commit
-    `bc81831`.
+    `bc81831`. Fourth wave (same day): built the full matrix for
+    `powf`/`powf_checked` too (242 combinations) -- found `powf_checked`
+    dropping NaN `y` the same way `atan2` dropped NaN `y` (a `y > 0.0`
+    comparison silently false for NaN), plus a real, separate design
+    gap: `x == -0.0`/`x == -inf` were treated identically to a
+    genuinely negative *finite* `x` (NaN for non-integer `y`), but C99
+    exempts them -- only odd-integer `y` preserves their sign, any
+    other `y` gives the unsigned magnitude. A third rule: `y` infinite
+    always gives an unsigned result regardless of `x`'s sign. Fixed all
+    three in both functions; matrix now matches std exactly (was 15
+    mismatches). Commit `47bc7c1`.
 88. **exp10 near the decade boundaries (resolved 2026-07-09, no bug found)**:
     densely fuzzed (12M samples) right around every point where
     kr=round(x·log2_10) crosses an integer (where the floor-adjust select
