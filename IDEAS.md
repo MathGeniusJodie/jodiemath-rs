@@ -1,1798 +1,498 @@
 # Ideas tried and rejected
 
-Budget: ≤0.5 avg ulp, ≤2 max ulp. This file records ideas that were
-actually implemented and/or measured, then reverted or not adopted — kept so
-future sessions don't re-attempt them without new information. Adopted
-changes live in git history / readme.md, not here. A separate untested
-brainstorm backlog lives at the bottom of this file.
+Budget: ≤0.5 avg ulp, ≤2 max ulp. Ideas tried and reverted/not adopted, so
+they aren't re-attempted without new information. Adopted changes live in
+git history / readme.md, not here. Untested backlog is at the bottom.
 
 ## Cross-cutting
 
-- **Degree-reduction probes (2026-07-07)**: lolremez screening rejected all
-  three candidates. `log_2` deg-9→8 already failed earlier (max ulp 3-5 vs a
-  2 cap). `exp2`'s Q poly deg 5→4: estimated max relative error
-  1.01e-8→4.07e-7 (40x worse). `sinf_poly` deg 9→7: 6.97e-9→1.24e-6 (178x
-  worse). None carried through to a full implementation.
+- **Degree-reduction probes (2026-07-07)**: lolremez rejected all 3 —
+  `log_2` 9→8 (max ulp 3-5 vs 2 cap), `exp2` Q 5→4 (est. max rel error 40x
+  worse), `sinf_poly` 9→7 (178x worse). Not implemented.
 
-- **exp2/log_2 coefficient refit (2026-07-07)**: ran the coordinate-descent
-  tuner on both polys' existing coefficients. Result was bit-identical to the
-  shipped coefficients — a literal zero-move local optimum. Both had already
-  been tuned in an earlier session; no headroom left.
+- **exp2/log_2 coefficient refit (2026-07-07)**: coordinate-descent tuner
+  found bit-identical (zero-move) coefficients on both — already optimal
+  from an earlier session.
 
-- **exp2's Q(f) poly, max-capped ulp-weighted Chebyshev LP (2026-07-09),
-  implemented and rejected — a real, across-the-board max-ulp regression
-  for a modest avg gain, the technique's third failure mode this
-  session (after sinf_poly's dual-region sharing and acos_poly's direct-
-  exposure sharing): the poly was already too close to the best-possible
-  floor for the model's own approximation slop to stay safely inside.**
-  Worth trying since a coefficient already confirmed "zero-move" by
-  coordinate descent (see the entry just above) doesn't rule out a
-  properly-seeded LP finding real headroom elsewhere in this file — so
-  this looked like a reasonable parallel to attempt. Confirmed this
-  poly is genuinely single-computation (5
-  literal call sites across `exp2`/`exp2_checked`/`exp10`/
-  `exp10_checked`/`exp2_checked_df`, but all evaluate the *identical*
-  `f` in `[0,1)` the same way — `exp2_checked_df` just takes a `Df32`
-  argument for higher-precision exponent tracking elsewhere in the
-  `powf` pipeline, the poly itself is untouched by that), so none of
-  `sinf_poly`/`acos_poly`'s sharing traps applied. Downstream weighting
-  simplifies unusually cleanly here: `exp2(x) = 2^k*(1+f*Q(f))`, and
-  since `ulp(exp2(x))` tracks `2^k` exactly, the `2^k` factor cancels
-  out of `doutput/dQ = 2^k*f` entirely — the weight is just `f*2^23`,
-  independent of which octave/`k`, no per-point `ulp()` lookup needed.
-  Also confirmed `g0` (the constant term) is safe to fit freely, unlike
-  `acos_poly`'s `u0`: at `f=0`, `g0`'s contribution is multiplied by
-  `f=0`, so it has zero effect on the boundary case regardless of its
-  value (the doc comment already independently confirms this, calling
-  `g0` "a fitted minimax coefficient near ln(2), not ln(2) itself,
-  deliberately"). The isolated fit looked excellent (max weighted error
-  held at parity 0.0920, avg 0.0428→0.0130, ~70%) — implemented and
-  `git stash`-paired fuzz looked promising too (`exp2`/`exp2_checked`
-  avg both improved) until the max-ulp column was checked closely:
-  **`exp2_checked`'s max ulp moved 1→2** even on a 100M-sample paired
-  fuzz (not a one-off tail hit — reproduced on the full exhaustive
-  sweep too, along with `exp2`, `exp10`, and `exp10_checked` *all four*
-  regressing 1→2 simultaneously). Root cause: this poly's shipped max
-  ulp was already 1 — as tight as a non-machine-precision poly
-  realistically gets — so the LP's max-cap constraint (built from the
-  *continuous* weighted-error model, not real measured ulp) had
-  essentially no real margin to enforce; even a small amount of
-  model-vs-reality slop (this file's testing has repeatedly found the
-  isolated model's predicted improvement can be an order of magnitude
-  or more off from the real result) is enough, at this fine a starting
-  scale, to tip the *actual* worst case over an integer ulp boundary
-  despite the *model's* own max metric staying flat. Reverted (`git
-  checkout -- src/lib.rs`, confirmed clean via `git diff`/`git
-  status`); no code changed. **General lesson: this makes a third
-  distinct failure mode for the max-capped LP technique, beyond the two
-  already logged (`sinf_poly`'s domain-region sharing, `acos_poly`'s
-  direct multi-caller exposure) — even a genuinely single-caller poly
-  with no sharing risk at all can still regress if it's already close
-  enough to its practical accuracy floor (max ulp already 1 here) that
-  the LP's continuous-model max-cap doesn't have enough real slack to
-  reliably hold the *actual* measured max ulp constant. Before trying
-  this technique on any further poly, check the shipped baseline's own
-  max ulp first: a poly already at or near max ulp 1 is a much riskier
-  target than one with real headroom (4+ ulp) for the max-cap to
-  protect.**
+- **exp2's Q(f) poly, max-capped LP refit (2026-07-09)**: isolated fit
+  predicted a clean win (avg weighted error 0.043→0.013), but regressed
+  `exp2`/`exp2_checked`/`exp10`/`exp10_checked`'s max ulp 1→2 across the
+  board (exhaustive-confirmed). The poly's shipped max ulp was already 1 —
+  no real margin for the LP's continuous model to protect an actual ulp
+  boundary. Reverted. *Don't try this LP technique on a poly already at/near
+  max ulp 1 — no margin for the isolated model's own slop.*
 
-- **Coordinate-descent tuner methodology finding, "zero-move" isn't always
-  "no headroom" (2026-07-08)**: `tune.rs`'s tuner moves each coefficient by
-  integer *bit-pattern* steps (deltas of ±1..16 ulp). For a brand-new
-  coefficient seeded at exactly `0.0` (bit pattern `0x0`), those steps only
-  reach denormal-scale values, which have ~zero effect on the polynomial
-  and essentially never score better — the search is *structurally unable*
-  to leave 0, not evidence the extra degree of freedom is useless. Confirmed
-  by direct comparison on `atan_poly`'s degree bump (see git history): a
-  zero-seeded 3/3 rational reported "tuned max 18" (identical to the 2/2
-  form, a textbook zero-move result) while a *real* least-squares Pade fit
-  (scipy) of the exact same shape found max ulp 3 on the same grid — a
-  genuine, large local optimum the zero-seed could never reach. An
-  arbitrary nonzero seed (e.g. `1e-3`) isn't a fix either: it can start
-  from a *worse* point than the existing form and the greedy per-
-  coordinate search may never recover (measured: converged to max ulp 565,
-  far worse than not bumping the degree at all). **When a "zero-move"
-  result is reported for a genuinely new coefficient (not a re-tune of an
-  existing one), don't trust it as "no headroom" without first trying a
-  properly-computed nonzero starting point (scipy least_squares / a real
-  Pade or minimax fit) as the tuner's seed.** This may retroactively call
-  into question other zero-move entries in this file that used a bare
-  `0.0` seed for a new coefficient (e.g. `acos_poly8`, `expm1_near0_deg5`)
-  — not re-litigated here, but worth remembering if revisiting them.
+- **Tuner "zero-move" trap (2026-07-08)**: `tune.rs` moves coefficients by
+  integer bit-steps; a coefficient seeded at `0.0` can only reach
+  denormal-scale perturbations, so it's structurally stuck, not evidence of
+  no headroom. Confirmed on `atan_poly`'s degree bump: zero-seed reported
+  max 18 (unchanged); a real scipy least-squares seed found max 3 on the
+  same grid. An arbitrary nonzero seed (`1e-3`) isn't a fix either (never
+  recovered, converged to max 565). *Always seed a new coefficient with a
+  real fit, not 0.0 or an arbitrary constant.*
 
 ## exp2 / exp / sin / cos / tan
 
-- **Fused sincos / direct tan via shared reduction (2026-07-07), two
-  attempts, both reverted**: sin(x)=(-1)^q·sin(r), cos(x)=(-1)^q·cos(r) means
-  tan(r)=sin(r)/cos(r) needs no parity, just one shared reduction. Attempt 1:
-  fit a dedicated `cosf_poly` (excellent isolated fit, ~3.6e-10) —
-  catastrophic regression near tan's poles (avg ulp 0.33→1.05, max ulp
-  ~3000→32M) because the additive `1+y·R(y)` form cancels badly near
-  r=π/2. Attempt 2: use the cofunction identity `cos(r)=sin(π/2-|r|)` with
-  `sinf_poly` for both — worse (max ulp →3.4B), because `FRAC_PI_2 -
-  r.abs()` is a plain f32 subtract that itself cancels near a pole. Both
-  reverted; a real fix needs multi-word-precision reduction for the
-  cofunction transform, comparable in complexity to `reduce_pi` itself.
+- **Fused sincos / direct tan via shared reduction (2026-07-07)**: two
+  attempts, both regressed catastrophically near tan's poles (avg ulp
+  0.33→1.05/max 3000→32M, worse for the cofunction-identity variant) —
+  the additive combine forms cancel badly near r=π/2. Reverted; needs
+  multi-word reduction to fix properly.
 
-- **sinf_poly quantized refit (2026-07-07)**: tuned against f64::sin over the
-  poly's domain. Max ulp unchanged (2→2), avg ulp barely moved
-  (0.00248→0.00244) — already near f32's precision floor. Not applied.
+- **sinf_poly quantized refit (2026-07-07)**: tuned against f64::sin, max
+  ulp unchanged, avg barely moved — already near f32's precision floor.
 
-- **sinf_poly, ulp-weighted Chebyshev LP refit (2026-07-09), two variants
-  tried, both rejected — real regressions in the real crate despite each
-  looking like an improvement in the isolated fit, root-caused to `cos`'s
-  own reduction landing on the *opposite end* of the poly's domain from
-  `sin`'s.** A `scipy.optimize.linprog` Chebyshev fit of the poly's 4
-  coefficients, weighted by `1/ulp(sin(x))`, tried here per this file's
-  own "still realistic to try on sinf_poly" backlog note. Variant 1
-  (plain minimax, minimize `t` s.t. `|error_i| <= t`): found a real ~3.8x
-  tighter worst-case bound in the isolated fit (0.364 -> 0.096
-  ulp-weighted units) — but implementing it regressed `cos_checked
-  |x|<=1e6`'s real avg ulp from 0.081 to 0.79, almost 10x worse,
-  confirmed via `git stash`-paired fuzz. This is exactly the known
-  minimax pitfall this file's own "Exhaustive/rlibm-style correctly-
-  rounded coefficient search" cross-cutting entry already warns about
-  (a pure minimax LP finds a *vertex* of the feasible polytope, trading
-  typical-case error for worst-case — the opposite of this crate's
-  avg-first priority) — reproduced here on a new function rather than
-  avoided, since the danger wasn't front-of-mind going in. Variant 2
-  (L1-minimize-subject-to-max-cap, matching `acos_poly` fix 7's own
-  successful "minimize the other objective, hold max ulp at its current
-  value" pattern): fixed the minimax problem in the *isolated* fit
-  (avg weighted error 0.094 -> 0.042, max held at parity) but **still
-  regressed `cos_checked` for real** — avg ulp worse across every bucket
-  size, including the simplest `|x|<=pi/4` case with no reduction
-  arithmetic at all (0.0495 -> 0.0542), while `sin_checked`'s own
-  numbers stayed flat (within fuzz noise) at every bucket. Root cause
-  (confirmed by reading `cos_checked`'s reduction directly, not just
-  guessed): `cos_checked(x) = ±sinf_poly(r)` with `r = x - (k+0.5)*pi`,
-  `k = round(x/pi - 0.5)` — for `x` near 0, `k` rounds to 0 or -1, so
-  `r` lands near `∓pi/2`, the poly's domain *edge*, while `sin_checked`
-  uses the same poly with `pre_offset=0` and lands `r` near 0, the
-  domain *center*, for the same small-`x` inputs. The two callers stress
-  opposite ends of the identical shared poly for their most heavily-
-  sampled (smallest-`|x|`) inputs, the same "shared poly needs a joint
-  objective" shape as `acos_poly`/`asin`'s own history — but my LP grid
-  was a plain domain-uniform sample of `r`, with no explicit per-region
-  weighting reflecting that both ends matter this much; the original
-  coordinate-descent-tuned coefficients already balance this (implicitly
-  or by luck), and both my LP variants disturbed that balance in the
-  isolated-fit metric's favor without preserving it. Reverted both;
-  `src/lib.rs` untouched (verified via `git diff` after `git stash
-  drop`). **General lesson: when a poly is shared by two callers that
-  feed it different *sub-regions* of its domain most heavily (not just
-  different downstream combine formulas, as in `acos_poly`/`asin`'s
-  already-documented case), a domain-uniform LP/minimax grid is not
-  neutral — it implicitly re-weights which caller's accuracy improves,
-  and checking one caller's numbers (or the isolated poly-only metric)
-  without checking *all* real callers across *all* their actual bucket
-  sizes can hide a real regression. A poly with only one direct caller
-  (always evaluated near the same relative position in its domain, e.g.
-  `exp`'s own degree-5 poly) doesn't have this risk; this is not
-  automatically true for every poly in this crate.**
+- **sinf_poly LP refit (2026-07-09)**: two variants (plain minimax,
+  L1-with-max-cap), both regressed `cos_checked` for real (avg ulp
+  0.081→0.79 and 0.0495→0.0542) despite looking better isolated. Root
+  cause: `cos_checked`'s reduction lands `r` near the poly's domain *edge*
+  for small `x`; `sin_checked` lands `r` near the *center* — the two
+  callers stress opposite ends of the shared poly, and a domain-uniform LP
+  grid doesn't account for that. Reverted. *For a poly shared across
+  callers with different domain-region emphasis, check all callers/buckets,
+  not just the isolated metric.*
 
-- **expm1 Pade degree bump, numerator degree 3 → 5 (2026-07-08, later
-  re-checked with a proper scipy seed instead of 0.0, still not
-  adopted)**: originally added a new odd term (`expm1_near0_deg5_c` in
-  `tune.rs`, `"expm1_near0"` arg), seeded at 0.0 — a zero-move local
-  optimum, later understood (see this file's Cross-cutting tuner-
-  methodology finding) to likely be the zero-seed trap rather than a
-  genuine floor. Re-tested with a real
-  scipy `least_squares` fit as the seed (found max abs error 3.4e-9 vs
-  the shipped form's 5.3e-8, ~15x better in isolation) — this time real
-  headroom *did* show up in avg ulp (fuzz + exhaustive: 0.1382→0.1345)
-  but **not in max ulp** (exhaustive: 6→6 unchanged, worst case at
-  x≈1.09, which is in `expm1`'s *other* branch — plain `exp(x)-1`
-  for `|x|≥0.5` — entirely untouched by this change). So unlike `atan`'s
-  degree bump, the extra numerator degree here improves the branch it
-  targets but doesn't move the function's actual worst case at all, and
-  it cost real throughput (mca 1.779→1.905 cyc/elem, +7.1% worse,
-  cascading to `tanh` since it calls `expm1` internally). Reverted;
-  `src/lib.rs` and `tune.rs` restored. If `expm1`'s max ulp 6 is ever
-  worth chasing, the `b = exp(x)-1` branch (or `exp`'s own accuracy near
-  x≈1) is where the actual headroom would need to come from, not this
-  branch.
+- **expm1 Pade degree bump 3→5 (2026-07-08)**: scipy-seeded refit found
+  real avg-ulp headroom in the near-zero branch (0.138→0.135), but the
+  function's actual max ulp (6) lives in expm1's other branch (`exp(x)-1`),
+  untouched. Cost real throughput (+7%). Reverted.
 
-- **tanh: direct rational x·P(x²)/Q(x²) over the whole [0, ~9.02] domain
-  (2026-07-08), doesn't converge at a practical degree**: the backlog
-  framed this as "~6-8 fmas total," but a scipy `least_squares` fit of
-  this exact shape needed **13 free coefficients** (P deg 13 / Q deg 12)
-  to reach ~6.5e-8 max abs error (the scale needed for a few-ulp result)
-  over the full domain — far more than any poly in this crate, the same
-  wide-dynamic-range convergence problem already found for erfc's log-
-  space idea. Tried splitting into two domains instead (matching erfc's
-  own "domain split" fallback pattern): [0,4] converges beautifully with
-  a 3/3 rational (7 coefficients, max abs err 1.7e-8), but [4,9.02] (the
-  near-saturation tail) needs its own 3/3 (another 7 coefficients, max
-  abs err 4.4e-7, borderline) to get there — 14 coefficients total across
-  two branches plus a select, all evaluated unconditionally per this
-  crate's branchless convention. That's likely *more* total work than
-  the current `expm1(2x)/(expm1(2x)+2)` route, especially now that `exp`
-  itself is much faster after this session's magic-round fix — the
-  backlog's assumed win doesn't obviously hold once `exp`'s own cost
-  dropped. Not implemented; no code changed.
+- **tanh direct rational P(x²)/Q(x²) over [0,~9] (2026-07-08)**: needs 13
+  free coefficients to converge over the full domain — far more than any
+  poly in the crate. A 2-domain split needs 14 total, likely more work than
+  the current expm1-based formula. Not implemented.
 
 ## cbrt family
 
-- **Seed constant joint search, degree-2 poly (2026-07-07)**:
-  coordinate-descended a degree-2 correction (dropping c4) across 41 seed
-  offsets around the shipped constant. Best found across all seeds: max ulp
-  112 / avg 29, ~50x over budget. 3 coefficients can't correct this seed's
-  error regardless of seed choice. Also moot as a speed idea — degree-2
-  Horner is the same fma-depth as degree-3 here. Not adopted.
+- **Seed constant + degree-2 poly joint search (2026-07-07)**: best across
+  41 seeds still ~50x over budget (max ulp 112). 3 coefficients can't
+  correct this seed's error regardless of seed choice.
 
-- **Integer-division-free seed, `(bits>>16)*0x5556` instead of `ax/3`
-  (2026-07-07)**: codegen confirmed cheaper (3 instructions vs 5 for the
-  division). But refitting the degree-3 correction poly for the new seed's
-  error distribution only reached max ulp 33 / avg 5.07 — ~16x over budget.
-  The seed itself is too coarse for this correction poly to compensate. Not
-  adopted; would need the seed's own magic constants jointly re-derived to
-  go further.
+- **Integer-division-free seed (2026-07-07)**: cheaper codegen (3 vs 5
+  instructions), but too coarse for the correction poly to compensate —
+  max ulp 33, ~16x over budget.
 
 ## log_2 / ln / log10
 
-- **Integer koff: fold the tiny-branch exponent offset into `e` as an
-  integer add before the int->float convert (2026-07-08)**: changed
-  `let k = e as f32 + koff;` (koff: f32, 0.0 or -24.0) to `let k = (e +
-  koff) as f32;` (koff: i32, 0 or -24) across `log_2_normal`/`ln_normal`/
-  `log10_normal`/`log2_df` (a public signature change, `koff: f32` ->
-  `i32`, updated at the one `mca_target.rs` call site too). Verified
-  bit-exact (expected -- both forms compute the same exact-integer sum,
-  just in a different order) and mca showed **zero measurable change on
-  any axis, to the reported decimal** (log2/ln/log10/powf all identical
-  before and after) -- LLVM already performs this exact reordering
-  itself regardless of the source-level int-then-convert vs. convert-
-  then-add ordering, so the "micro-optimization" was already happening
-  for free. Reverted rather than keep a public API signature change
-  (`f32`->`i32`) for literally zero benefit.
+- **Integer koff fold (2026-07-08)**: bit-exact, but mca showed zero
+  measurable change — LLVM already performs this reordering. Reverted to
+  avoid an f32→i32 public signature change for no benefit.
 
-- **ln_normal/log10_normal: fuse the trailing `+ k*LN2_LO` into the
-  preceding fma, `fma(k, LN2_LO, fma(p, s, k_hi))` instead of `fma(p, s,
-  k_hi) + k * LN2_LO` (2026-07-08)**: the backlog framed this as "one op
-  shorter and strictly one fewer rounding" (the standalone `k * LN2_LO`
-  multiply plus the final add are two separate roundings; fusing them
-  into one outer fma removes one). True in isolation, but measured
-  outcomes on both axes were negative or flat: mca latency got
-  *deterministically worse* by exactly 1 cycle on both functions
-  (ln/log10 55.86→56.86 cyc, reproduced twice, not noise — same
-  "removing an op frees the scheduler to make a worse choice elsewhere"
-  pattern logged repeatedly elsewhere in this file), throughput was a
-  wash (ln 1.714→1.709, log10 1.714→1.714 exactly unchanged). Worse,
-  the predicted accuracy win didn't materialize either: a 100M-sample
-  fuzz (paired via `git stash`) gave avg/max ulp 0.1168/3 → 0.1168/3
-  (ln) and 0.1271/3 → 0.1270/3 (log10) — identical within sampling
-  noise. Root cause: `k * LN2_LO` doesn't depend on the poly result, so
-  it was already computed off the critical path in parallel with the
-  fma before this change; the "extra rounding" it removes is on a term
-  small enough (LN2_LO is the tiny low word of the Cody-Waite split)
-  that it isn't actually contributing to the measured ulp in practice.
-  Reverted; `src/lib.rs` restored to `fma(p, s, k_hi) + k * LN2_LO`.
+- **ln_normal/log10_normal: fuse trailing `+k*LN2_LO` into the fma
+  (2026-07-08)**: "one fewer rounding" in isolation, but mca latency got
+  deterministically *worse* by 1 cycle (reproducible); accuracy unchanged
+  (the term was already off the critical path). Reverted.
 
-- **log1p small-|x| (<0.25) dedicated Taylor/minimax branch, screened via
-  a partially-implemented `tune.rs` scratch infra found already in the
-  working tree (2026-07-08)**: the backlog's framing ("free perf-wise if
-  it replaces work rather than adding a third arm") doesn't hold given
-  this crate's established branchless-select convention (`asin`/`acos`'s
-  own history documents this explicitly: every domain branch is
-  computed *unconditionally*, then blended with a select) — `log1p`
-  currently has exactly one arm (the `ln(u)+corr` formula, used for
-  every x), so adding a small-x poly branch would be a strict *addition*
-  of a whole extra poly evaluation to every call, not a replacement.
-  Confirmed the accuracy upside is marginal anyway before spending more
-  effort: `log1p` restricted to `|x|<0.25` currently measures avg/max
-  ulp 0.0732/4 (accuracy.rs fuzz, ad hoc probe); the
-  WIP tune.rs candidate (`log1p_small_c`, a 9-coefficient Horner fit
-  directly against `x.ln_1p()`, forced c0=1.0) reached max 3/avg 0.0683
-  on tune.rs's own coarser grid — a small, unconfirmed-at-full-density
-  edge, not obviously worth a whole extra poly's cost on every call.
-  Not implemented in `src/lib.rs`; the found WIP infra in `examples/
-  tune.rs` (`log1p_small_c` + the `"log1p_small"` tuning branch) was
-  reverted rather than committed, since it was never brought to a
-  real verdict and this session's reasoning already closes the question
-  well enough to not re-attempt without new information (e.g. an actual
-  measured throughput/latency cost from implementing it, if someone
-  wants to check whether the extra branch is cheap enough to be worth
-  0.3-1 ulp).
+- **log1p small-|x| dedicated branch (2026-07-08 + follow-up 2026-07-09)**:
+  adds a whole extra poly eval every call (branchless convention evaluates
+  every branch unconditionally). Screened as marginal (max 3 vs 4, avg
+  0.068 vs 0.073, unconfirmed at full density); implemented and measured
+  for real: mca throughput **+48.1%** for that marginal gain. Rejected on
+  mca alone, before checking accuracy.
 
-  **Follow-up (2026-07-09): the exact measurement this entry asked
-  for, taken -- decisively not worth it, rejected on mca alone before
-  spending any time on the accuracy side.** Refit the same shape (8
-  free coefficients, degree-8 in x, c0 forced to 1.0, scipy
-  `least_squares` against `x.ln_1p()` directly over `|x|<0.25`) and
-  implemented it for real as an unconditionally-evaluated third branch,
-  blended via `if x.abs() < 0.25 { small } else { normal }` before the
-  existing `x == 0.0` select (matching this crate's established
-  branchless convention exactly, same shape as `asin`/`acos`'s own
-  small/big split). mca settled the question immediately: latency
-  52.19->53.17 cyc (+1.9%, minor, expected since the new branch mostly
-  runs in parallel with the existing `ln(u)+corr` chain) but throughput
-  2.337->**3.460 cyc/elem, +48.1%** -- confirming this entry's own
-  "a whole extra poly's cost on every call" framing was exactly right,
-  and settling it far more decisively than the accuracy question ever
-  could have (even the optimistic max-3/avg-0.0683 number from the
-  original screen wouldn't remotely justify a 48% throughput hit).
-  Reverted before running any accuracy verification at all -- per this
-  file's own repeated "fast falsification" pattern (e.g. the `exp`
-  k1/k2-clamp entry, killed before mca even ran), a decisive failure on
-  one axis doesn't need the other axis checked too. `src/lib.rs`
-  restored via `git checkout --` (confirmed clean via `git diff`/`git
-  status`); no code changed. This closes the open question for good:
-  not worth it, now with real numbers instead of "someone should
-  check."
+- **Direct minimax refits for ln/log10 (2026-07-08)**: coordinate-descended
+  against ln/log10 directly instead of log_2's rescaled coefficients —
+  zero-move local optimum, no headroom.
 
-- **Direct minimax refits for ln/log10, tuned against their own objective
-  instead of log_2's rescaled coefficients (2026-07-08)**: coordinate-
-  descended `ln_poly_c`/`log10_poly_c` (new permanent `tune.rs`
-  infrastructure, `"lnlog10"` arg) against `ln`/`log10` directly, matching
-  the shipped Estrin structure and Cody-Waite k-combine exactly, c[0]
-  fixed at its mathematically-required exact value (same as `log_2`'s own
-  tuning). Same outcome as the erf near-zero/tail refits above: essentially
-  a zero-move local optimum (ln avg ulp 0.2344→0.2341, log10
-  0.2551→0.2539, both max ulp unchanged) — individually rounding log_2's
-  own coefficients by a fixed constant was already close enough to a
-  direct fit that there's no meaningful headroom left. Not adopted.
-
-- **ln_normal's poly, max-capped ulp-weighted LP (2026-07-09), tested and
-  rejected — the isolated fit's most dramatic prediction yet for a "no
-  real headroom" outcome.** Despite the entry above's coordinate-descent
-  "zero-move" verdict, this looked worth trying since a coefficient
-  seeded from a real (non-zero) starting point can still have LP-findable
-  headroom a naive tuner misses (see this file's own tuner-methodology
-  finding, Cross-cutting section). Confirmed the boundary is safe first
-  (the constant term `c[0]` is multiplied by `s`, so it has zero effect
-  at `s=0` — same un-sensitive pattern as `exp2`'s `g0`, not `acos_poly`'s
-  `u0` trap), and confirmed `ln_normal` isn't shared across differently-
-  stressed sub-regions the way `sinf_poly`/`exp_pos_neg` are (its
-  `_unchecked` twin covers the same domain, just skipping the denormal
-  dance). The isolated fit predicted a huge win (avg weighted error
-  0.0901→0.0226, ~75%, the LP naturally converging `c[0]` back to within
-  1e-9 of exactly 1.0 without being forced) — but real `git stash`-paired
-  exhaustive verification found essentially nothing: `ln` avg ulp
-  0.1168→0.1167 (~0.09%, deep in exhaustive-sweep noise), max ulp
-  unchanged at 3. Reverted (`git checkout --`, confirmed clean); no
-  code changed. **General lesson: the size of an isolated LP prediction
-  carries close to zero information about whether a real improvement
-  exists at all, only whether it's worth the (cheap) cost of testing —
-  a function already coordinate-descent-confirmed as "zero-move" is not,
-  on its own, a reliable signal that a proper LP will find real headroom
-  either.**
+- **ln_normal's poly LP refit (2026-07-09)**: isolated fit predicted a 75%
+  avg improvement (largest of the session) but real exhaustive result was
+  ~0.09% — noise. Reverted. *Isolated LP predictions don't reliably predict
+  real magnitude, regardless of how large the prediction is.*
 
 ## hypot / misc
 
-- **Compensated hypot, `e = fma(r, -r, s); r + e/(2r)` (2026-07-08)**:
-  implemented exactly as scoped (guarded at `r == 0` for the `x==y==0`
-  case). Fuzz accuracy (paired via `git stash`, 10M samples both sides)
-  showed **no measurable improvement at all** — 0.0337→0.0338 avg ulp,
-  max ulp 1 unchanged both before and after, i.e. within pure sampling
-  noise. `hypot`'s existing single-fma-then-sqrt was already close enough
-  to correctly rounded (sqrt is itself correctly rounded relative to the
-  once-rounded `s`, and that one rounding rarely flips the sqrt's own
-  rounding direction) that there was no real residual left to recover.
-  Real, large cost for zero benefit: mca latency 21.11→44.05 cyc (+109%),
-  throughput 0.766→1.436 cyc/elem (+87%) — the extra fma/division/select
-  chain roughly doubled hypot's cost on both axes. Reverted before even
-  checking edgecheck.rs.
+- **Compensated hypot (2026-07-08)**: `e=fma(r,-r,s); r+e/(2r)` — no
+  measurable accuracy improvement (already near correctly-rounded) but real
+  cost: latency +109%, throughput +87%. Reverted before edgecheck.
 
 ## asin / acos / atan / atan2
 
-- **acos_poly Horner→Estrin restructuring (2026-07-07)**: regrouped 6-deep
-  Horner into 3-deep Estrin (same coefficients). Real latency win (asin
-  -15.4%, acos -21.6%) but not accuracy-neutral: fma reassociation regressed
-  asin max ulp 9→12, acos 4→5. Retuning coefficients for the Estrin form
-  specifically made it worse (acos max ulp →6). Reverted — `acos`'s accuracy
-  was specifically protected by an earlier constrained refit, and this would
-  have undone that guarantee for a latency-only win.
+- **acos_poly Horner→Estrin (2026-07-07)**: real latency win, but fma
+  reassociation regressed asin max ulp 9→12, acos 4→5 (retuning made it
+  worse, →6). Reverted — acos's accuracy is a protected invariant.
 
-- **erfc's n/d rational chains Horner→Estrin (2026-07-07)**: same
-  restructuring on the two degree-4 Padé chains. Smaller theoretical win (5
-  coefficients only saves 1 depth level) and it showed: latency -1.3%,
-  throughput +1.3% (a wash), and a real accuracy cost (avg ulp +2.7%). Not
-  adopted.
+- **erfc's n/d rational Horner→Estrin (2026-07-07)**: small theoretical
+  win, measured as a wash on speed plus a real accuracy cost (avg +2.7%).
 
-- **erf's near-zero Padé branch refit (2026-07-07)**: tuned against the
-  `numer/denom` formula for |x|<0.28. Max ulp unchanged (3→3), avg ulp moved
-  <0.3%. No meaningful headroom; not applied.
+- **erf's near-zero Padé branch refit (2026-07-07)**: max ulp unchanged,
+  avg moved <0.3%. No headroom.
 
-- **Same branch, max-capped LP numerator refit with denom fixed
-  (2026-07-09), tested and rejected — a real regression, this session's
-  second case (after `sinf_poly`) of the isolated metric getting the
-  *direction* wrong, not just the magnitude.** Applied the same
-  numerator-only LP approach used elsewhere in this file for rational
-  forms (denominator held at its shipped `C`/`D`, target
-  `denom_fixed(x2) = numer(x)/erf(x)*x` linear in the numerator's
-  `A`/`B`). The coefficients barely moved (`A`
-  0.591056→0.591056, `B` 1.128379225731→1.128379164358 — the new `B` is
-  actually *closer* to the true `2/sqrt(pi)` than the shipped value,
-  which looked like a good sign) and the isolated fit predicted a large
-  win (avg weighted error 0.532→0.0826, ~84%, max only ~11% tighter) —
-  but real `git stash`-paired fuzz found `erf` avg ulp *regressed*
-  0.3166→0.3251 (max ulp unchanged at 5), with the worst-case `x`
-  landing right at `≈-0.28`, exactly the branch crossover with the tail
-  formula (`erf_poly`). Reverted immediately (`git checkout --`,
-  confirmed clean); no code changed. Root cause not fully traced (would
-  need the same `x=0` boundary-style investigation already applied to
-  `acos_poly`/`exp2`), but the crossover-adjacent worst point strongly
-  suggests this is a variant of the `acos_poly` asin-crossover fragility
-  from earlier this session — a coefficient perturbation that looks
-  locally better throughout `[0, 0.28)` in isolation can still make the
-  *transition* to the neighboring branch worse right at the boundary,
-  where the two independently-tuned pieces need to stay compatible with
-  each other in a way neither branch's own isolated objective captures.
-  **General lesson: this is now the second confirmed case (after
-  `sinf_poly`) where this LP technique's real result went the *opposite*
-  direction from an isolated prediction, not just a smaller magnitude —
-  both cases involved a branch crossover/boundary the isolated single-
-  branch objective doesn't account for. Before trusting an isolated fit
-  for any poly that sits next to a domain-split boundary (a very common
-  pattern in this crate: `erf`, `asin`/`acos`, `sin`/`cos`'s own small/
-  large-x splits), check the crossover neighborhood specifically, not
-  just each branch's own separate interior.**
+- **Same branch, LP numerator refit (2026-07-09)**: isolated fit predicted
+  an 84% avg improvement, but real fuzz found a *regression* (0.317→0.325),
+  worst-case landing right at the 0.28 branch crossover with `erf_poly`.
+  Reverted. Second confirmed case (after sinf_poly) of the isolated metric
+  getting the *direction* wrong — both involved a branch-crossover
+  boundary. *Check the crossover neighborhood for any poly next to a
+  domain split.*
 
-- **erf's tail branch (erf_poly) refit (2026-07-07)**: same recipe against
-  the tail formula for xa in [0.28,10]. Max ulp unchanged (4→4), avg ulp
-  moved <0.3%, stable across a 10x denser grid. Not applied.
+- **erf's tail branch (`erf_poly`) refit (2026-07-07)**: max ulp unchanged,
+  avg moved <0.3%.
 
-- **acos_poly refit against joint acos+asin objective, unconstrained variant
-  (2026-07-07)**: an unconstrained joint metric (`max(acos ulp, asin ulp)`)
-  improved the joint score but let acos's own exhaustive max ulp regress
-  4→5 — a real cross-function tradeoff. Rejected in favor of a differently
-  constrained variant that protected acos's metric by construction.
+- **acos_poly unconstrained joint acos+asin objective (2026-07-07)**:
+  improved joint score but regressed acos's own max ulp 4→5. Rejected in
+  favor of a constrained variant.
 
-- **acos_poly degree 6 → 7, i.e. an 8th coefficient (2026-07-08)**: the
-  backlog framed this as "one fma of throughput for a whole extra degree
-  of freedom" (implicitly assuming Estrin, which acos_poly isn't —
-  it's shipped Horner, so an 8th term would cost one full extra depth
-  level too, not just one throughput fma). Turned out moot regardless:
-  coordinate-descending a new `acos_poly8_c` (new permanent `tune.rs`
-  infra, `"acos8"` arg) against the same joint acos+asin objective as the
-  entry directly above, starting from the shipped 7 coefficients plus a
-  prepended 0.0, converged with **that 8th coefficient at exactly 0.0** —
-  the search found no use for the extra degree at all. The remaining 7
-  coefficients it did move to match, bit-for-bit, the *already-rejected*
-  unconstrained joint-objective result immediately above (same known
-  4→5 acos regression). The extra degree of freedom buys nothing beyond
-  what degree 6 already offers under this objective; not worth the
-  latency cost of even testing in `src/lib.rs`. Not adopted.
-  **Re-checked 2026-07-08 (later, same day) with a proper scipy seed**
-  instead of 0.0, per this file's own Cross-cutting tuner-methodology
-  finding (the zero-seed trap that also affected `atan_poly`'s degree
-  bump) — this time real, if modest, headroom showed up: implemented
-  directly in `src/lib.rs` and measured against the real crate (not just
-  `tune.rs`'s grid), `acos` avg/max ulp 0.4962/4 → 0.4904/3 (genuine
-  improvement, *not* the previously-seen regression) and `asin` avg
-  improved slightly with max ulp unchanged at 9. But unlike `atan_poly`'s
-  dramatic 18→4 cut, this is a 1-ulp acos improvement with no max-ulp
-  movement at all for `asin` — for a similar-sized real mca cost (asin
-  59.03/0.968 → 63.03/1.039 cyc lat/throughput, +6.8%/+7.3%; acos
-  37.11/0.820 → 41.11/0.862, +10.8%/+5.1%). Judged not worth it at this
-  magnitude (unlike `tanh`'s domain-hole fix or `atan`'s large cut, there
-  isn't a strong enough gain to justify the cost here). Reverted;
-  `src/lib.rs` untouched, `tune.rs`'s scratch scipy-seed addition also
-  reverted.
+- **acos_poly degree 6→7 (2026-07-08)**: zero-seeded 8th coefficient
+  converged to exactly 0.0 — useless. Re-seeded with a real scipy fit:
+  found real headroom (acos avg/max 0.496/4→0.490/3) but asin was unmoved
+  and mca cost was real (+7-11% both functions) — not worth it at this
+  magnitude. Reverted.
 
-- **acos_poly: Df32 leading (constant) term, pi/2 split into an exact
-  hi+lo pair (2026-07-08)**: `fma(u, x, 1.5707963)` (single f32-rounded
-  pi/2) replaced with `fma(u, x, PI_2_HI) + PI_2_LO` (same trick as
-  `LN2_HI`/`LN2_LO`, `PI_2_HI`/`PI_2_LO` together capturing pi/2 to
-  ~1e-12 instead of f32's own ~1e-7). With the *same* 6 leading
-  coefficients unchanged: a real but genuinely mixed result -- `acos`
-  avg ulp improved dramatically (0.4961→0.0675, ~7.3x) but max ulp got
-  *worse* (4→5), and `asin` (which reuses this poly) got worse on
-  *both* (avg 0.0303→0.0376, max 9→12). Retuning the 6 leading
-  coefficients for the new split-constant structure (`tune.rs`'s
-  `acos_poly_df_c`, coordinate-descended from the shipped values)
-  recovered `asin` back to baseline exactly (avg/max statistically
-  unchanged) and kept `acos`'s avg win, but `acos`'s own max ulp still
-  regressed, now 4→6 (exhaustive-confirmed both fuzz and thorough sweep
-  agree). This is exactly the tradeoff shape the *first* `acos_poly`
-  entry in this file already tested and rejected (an unconstrained
-  joint objective that improves the joint score by letting acos's own
-  protected max ulp regress) — `acos`'s own accuracy has been treated as
-  a protected invariant in this codebase since that entry, not something
-  to trade away for a joint or single-caller average-ulp win. Also a
-  real mca cost on both functions for the extra `+PI_2_LO` add: asin
-  59.03/0.968→63.03/1.039 cyc lat/throughput (+6.8%/+7.3%), acos
-  37.11/0.820→41.11/0.858 (+10.8%/+4.6%) — and `asin` pays that cost for
-  *zero* net accuracy benefit once retuned back to baseline. Not
-  adopted; reverted (`src/lib.rs` and `tune.rs`'s scratch addition both
-  restored).
+- **acos_poly Df32 leading-term split, pi/2 hi+lo (2026-07-08)**: dramatic
+  acos avg improvement (0.496→0.068) but acos max ulp regressed (4→5) and
+  asin got worse on both axes (max 9→12). Retuning recovered asin but
+  acos max still regressed (4→6), plus a real mca cost. Not adopted.
 
-- **acos_poly, joint ulp-weighted Chebyshev LP with both acos's and
-  asin's max ulp capped simultaneously (2026-07-09), two attempts, both
-  rejected — the second failure lands on the *exact same* asin
-  regression signature (max 9→12) as the Df32-leading-term entry just
-  above, a striking cross-technique coincidence worth flagging for any
-  future attempt.** A max-capped ulp-weighted Chebyshev LP applied here
-  with a genuinely joint objective: weight each sample `a` by
-  `sqrt(1-a)/ulp(caller(a))` for both `acos(a)` (all `a` in `[0,1)`)
-  and `asin(a)` (only `a>=0.25`,
-  matching the "big" branch's own domain), cap *both* callers' max
-  weighted error at their current shipped values simultaneously, and
-  minimize the combined weighted-L1 objective. Attempt 1 (all 7
-  coefficients free): the isolated fit looked excellent (acos avg
-  weighted error 0.859→0.722, asin max weighted error 5.82→2.32, avg
-  1.737→0.543) — but implementing it regressed badly for real: `acos`
-  avg 0.496→1.905 (max 4→6), `asin` avg 0.030→0.034 (max 9→11). Root
-  cause, found by checking the worst point directly (`x≈-5e-4`, right
-  next to `a=0`): the LP let `u0` (the constant term, `P(0)` must equal
-  exactly `acos(0)=pi/2`) drift ~4e-7 in the continuous fit — negligible
-  by the weighted-error model's own accounting (a huge weight at `a=0`
-  should have prevented this, but the model's *continuous* tolerance
-  budget doesn't capture that quantizing to the nearest f32 can land on
-  a value several ulps away from optimal once the drift is large enough
-  to cross a rounding boundary) — but the resulting f32 constant
-  (`0x3fc90fd7`) is 3 ulps off the shipped value (`0x3fc90fda`, itself 1
-  ulp off true pi/2's own rounding, `0x3fc90fdb`) and directly corrupts
-  every acos/asin call near `a=0`. Attempt 2: forced `u0` to the exact
-  shipped constant (not fit at all, matching `exp`'s own forced-c0/c1
-  precedent) and re-solved for the remaining 6 coefficients only. The
-  isolated fit still looked good (acos avg weighted error 0.859→0.799,
-  asin max weighted error 5.82→3.15, avg 1.737→0.660) — but **still
-  regressed for real**: `acos` avg 0.4962→0.5067 (max unchanged at 4),
-  `asin` avg 0.0302→0.0330, **max ulp 9→12** (`git stash`-paired,
-  confirmed not noise). The new worst-case `x` for `asin` sits right at
-  `a≈0.253`, immediately past the `asin_small`/`big` branch threshold —
-  and this exact regression shape (asin max ulp landing at 12 from a
-  perturbation to acos_poly's fine behavior) already happened once
-  before in this file, via a completely unrelated change (splitting the
-  constant into a hi+lo pair, see the entry immediately above — also
-  asin max 9→12). Two independent modification techniques hitting the
-  identical failure signature suggests there's a specific input/error-
-  surface fragility around this crossover that *any* perturbation to
-  `acos_poly` risks tripping, not a coincidence specific to either
-  technique — worth treating as a real warning sign for whoever tries
-  this poly next, not just noise to re-measure past. Both attempts
-  reverted; `src/lib.rs` restored to the shipped coefficients (verified
-  via `git diff` after `git stash drop`). **General lesson, extending
-  this session's own `sinf_poly` finding: even after fixing the
-  "protect the special boundary point exactly" issue (attempt 2), a
-  poly shared by two callers with different weighted-error surfaces can
-  still have a joint LP solution that looks better in the isolated
-  metric yet is worse for both real callers — the acos_poly/asin
-  sharing pattern (subset-domain sharing, not sinf_poly's opposite-ends
-  sharing) is evidently *harder* to model correctly via a domain-uniform
-  grid than a case like `cbrt`/`cbrt_accurate`, where the second
-  caller's Newton step makes it fully insensitive to the seed poly's own
-  accuracy — `acos_poly` has no such insensitivity, both callers are
-  directly exposed to its exact error. Both rejections in this file
-  involving a shared poly (`sinf_poly`, `acos_poly`) are multi-caller
-  polys where the callers are NOT insensitive to the shared poly's own
-  error — a pattern worth checking explicitly before trying this
-  technique on any other shared poly in this crate.**
+- **acos_poly joint LP, both acos+asin max ulp capped (2026-07-09)**, two
+  attempts: attempt 1 let the pi/2 constant drift enough to land on a worse
+  f32 value at `a=0`, corrupting near-zero calls (acos avg 0.496→1.905).
+  Attempt 2 forced the constant exact, re-solved the rest — still
+  regressed for real: asin max ulp 9→12, the *identical* regression
+  signature as the Df32-split entry above (a real fragility at this
+  crossover, not a fluke). Both reverted. *acos_poly/asin's sharing
+  (subset-domain, both callers directly exposed) is much harder to model
+  via a domain-uniform LP grid than cbrt/cbrt_accurate's sharing (where
+  Newton's step makes the second caller insensitive to seed error).*
 
-- **atan2 division-residual correction (2026-07-07, re-tested 2026-07-08
-  after atan_poly's degree bump, same conclusion holds)**: added a
-  first-order Taylor correction (`atan'(d)*e`) for atan2's `y/x` division
-  rounding. First measurement looked like a 10x win (avg ulp 0.136→0.0134)
-  until the max-ulp column showed a NaN sentinel — `d=inf` made the
-  correction NaN. After guarding with `corr.is_finite()`, the "10x win"
-  evaporated entirely (0.136 vs 0.1362, statistically identical) —
-  atan's own poly-fit error already dominates atan2's total error. Real
-  cost for zero benefit: latency +13.9%, throughput +42.9%. Reverted.
-  Re-tested after `atan_poly` dropped from max ulp 18 to 4 (2026-07-08,
-  same session as the degree bump) on the theory that "atan's own error
-  dominates" might no longer hold at the lower error level — it still
-  does: avg/max ulp unchanged (0.0684/3 → 0.0693/3, noise-level), and the
-  cost was almost identically bad (latency +13.1%, throughput +41.8%,
-  nearly the exact same percentages as the original 2026-07-07 test).
-  Even atan's much-improved ~4 ulp residual still swamps a sub-ulp
-  division-rounding correction. Reverted again; this dependency is now
-  closed for good barring a much larger atan accuracy improvement.
+- **atan2 division-residual correction (2026-07-07, re-tested 2026-07-08)**:
+  looked like a 10x win until a NaN-sentinel bug was fixed — evaporated to
+  noise-level (atan's own poly error dominates). Real cost (latency +14%,
+  throughput +43%) for zero benefit, both before and after atan's own
+  accuracy later improved. Closed for good.
 
-- **exp: replace the k1/k2 split with a k-clamp (2026-07-08)**: the
-  framing ("split exists only because round can push k to 128, an
-  out-of-contract case since exp is unchecked everywhere else") was wrong
-  — k=128 is reachable from ordinary in-domain x (x*log2e in [127.5,128)
-  is still inside the documented [-126,128) range), and the split isn't
-  there to avoid inf for out-of-contract inputs, it's there to give the
-  *correct* answer for this legitimate slice of the domain. Verified by a
-  temporary exhaustive-ish (every 97th f32 bit pattern) old-vs-new
-  comparison: first mismatch at x=88.376686 (comfortably inside the ~88.7
-  ceiling), old=2.4071711e38 (correct, matches e^x), new=1.2035856e38 —
-  exactly half, i.e. clamping k to 127 silently drops a whole factor of 2
-  for real in-domain inputs near the top of the range. Never reached mca;
-  killed by the fast falsification step the task description recommends
-  (fuzz/scratch-test before the expensive latency/throughput cycle). Not
-  adopted; reverted before touching mca.
+- **exp: k1/k2 split → k-clamp (2026-07-08)**: the "only matters
+  out-of-contract" premise was wrong — k=128 is reachable from ordinary
+  in-domain x, and clamping silently drops a factor of 2 for real inputs.
+  Killed by a scratch-test before mca.
 
 ## Codegen & build hygiene
 
-- **Forcing zmm-width (AVX-512) codegen (2026-07-07)**: confirmed this CPU
-  (Tiger Lake) has full AVX-512 available but LLVM deliberately emits ymm
-  (256-bit) throughout — no `prefer-512-bit` knob exposed at the rustc level
-  independent of `-C target-cpu`'s own tuning table. Client Intel parts are
-  documented to downclock under sustained AVX-512, so this is very likely
-  LLVM's informed choice, not an oversight. Not forced; the register-pressure
-  question this was meant to investigate was never actually tested as a
-  result.
+- **Forcing zmm-width AVX-512 (2026-07-07)**: CPU supports it, but LLVM
+  deliberately avoids it (likely downclocking avoidance) — no rustc knob
+  to force it independent of target-cpu tuning. Not forced; inconclusive.
 
 ## sin_checked / cos_checked internals
 
-- **round_x_over_pi: remove sin_checked's dead `pre_offset=0.0` add
-  (2026-07-07)**: monomorphized `round_x_over_pi` so sin_checked's
-  instantiation skips the always-zero add. Confirmed via asm diff the
-  instructions were gone. Latency unchanged (109 cyc — wasn't gating the
-  critical path); throughput got *worse* (5.289→5.410 cyc/elem) despite
-  fewer instructions — removing the op let the scheduler make different
-  choices elsewhere that cost more than it saved. Reverted.
+- **round_x_over_pi: remove dead pre_offset=0.0 add (2026-07-07)**:
+  instructions confirmed gone via asm, but throughput got *worse* —
+  removing an op let the scheduler pick worse elsewhere. Reverted.
 
-- **round_x_over_pi: switch qh (`p0.round()`) to round_ties_even
-  (2026-07-06)**: ql's switch was safe and kept separately, but qh's
-  regressed cos_checked's max ulp 2→6 in-domain (worst x≈252.9) — qh's rare
-  exact-half ties interact badly with cos's -0.5 pre_offset in a way sin's
-  zero offset never hits. qh reverted to `f32::round`.
+- **round_x_over_pi: qh → round_ties_even (2026-07-06)**: regressed
+  cos_checked's max ulp 2→6 (rare exact-half ties clash with cos's -0.5
+  offset). Reverted to `f32::round`.
 
-- **reduce_pi: rebalance the 4-deep serial err chain to depth 2
-  (2026-07-07)**: `(e1b+e2b)+(e3b-e3t)` instead of left-to-right.
-  Analytically zero accuracy risk (confirmed bit-exact) but +3 cyc latency
-  on both sin_checked and cos_checked — freeing part of the chain let the
-  scheduler make a worse choice elsewhere. Reverted to the flat chain.
+- **reduce_pi: rebalance 4-deep chain to depth 2 (2026-07-07)**: bit-exact
+  but +3 cyc latency both functions. Reverted to the flat chain.
 
-- **reduce_pi: downgrade e2's two_prod to a plain multiply (2026-07-07)**:
-  unlike e3 (below), qh is unbounded, so there's no "provably zero"
-  argument. Regressed sin_checked's *in-domain* (|x|≤1e6) max ulp badly:
-  2→8 at |x|≤10, 2→144 at |x|≤1000, 2→51,054 at |x|≤1e6. Reverted before
-  even reaching mca.
+- **reduce_pi: downgrade e2's two_prod to plain multiply (2026-07-07)**:
+  regressed sin_checked's in-domain max ulp badly (2→51,054 at |x|≤1e6).
+  Reverted before mca.
 
-- **reduce_pi: downgrade e3's two_prod to a plain multiply (2026-07-07)**:
-  the "e3 is provably zero when ql∈{-1,0,1}" premise checked out exactly,
-  and gave the expected latency win (-4 cyc both functions). But: (1) mca's
-  simulated scheduling diverged between callers — sin_checked throughput
-  improved (-5.9%) while cos_checked's got *worse* (+12.3%), a
-  caller-dependent regression not visible in the port-pressure-only
-  estimate; (2) the already off-contract tail (|x|≥2^25) got dramatically
-  worse (e.g. the [1e12,1e13) bucket: avg ulp 0.28→2.35M). Reverted.
+- **reduce_pi: downgrade e3's two_prod to plain multiply (2026-07-07)**:
+  "provably zero" premise held, expected latency win — but mca diverged by
+  caller (sin_checked throughput improved, cos_checked's got worse) and the
+  off-contract tail got dramatically worse. Reverted.
 
-- **parity() via integer bit-ops instead of mul/floor/fma (2026-07-07)**:
-  read the LSB of qh/ql directly from their bit patterns instead of the
-  float `parity()` formula. Verified bit-exact against the old formula on
-  25M+ integer test values. Latency unchanged (parity was already off the
-  critical path) but throughput got *worse* for both sin_checked (+2.5%)
-  and cos_checked (+0.6%) — trading FP-port ops for integer ops didn't pay
-  off once actually scheduled. Reverted.
+- **parity() via integer bit-ops (2026-07-07)**: bit-exact, latency
+  unchanged, throughput worse for both — FP-port ops beat integer ops once
+  scheduled. Reverted.
 
-- **sin_checked/cos_checked clamp: move the bound into `y.min()` inside the
-  poly instead of the outer `r.clamp()` (2026-07-07)**: saves one op (2→1)
-  by only bounding y=r². Fails: the raw residual `x` still enters
-  `fma(p,x3,x)` unclamped and linearly, so `r≈-9.7e29` still overflows to
-  -inf — reintroducing the exact "returns inf for finite input" bug the
-  clamp exists to prevent. Not adopted.
+- **sin_checked/cos_checked clamp: move bound into poly's y.min()
+  (2026-07-07)**: saves one op, but the raw residual `x` still enters
+  unclamped, reintroducing the "inf for finite input" bug the clamp
+  prevents. Not adopted.
 
-- **Fast sin/cos: shorten the PI_A..D reduction chain from 4-deep to 3-deep
-  (2026-07-07)**: computing `t=fma(q,PI_C,q*PI_D)` in parallel to the main
-  chain. The error estimate ("floor roughly doubles/triples") was wrong by
-  orders of magnitude once measured: avg ulp 0.0645→1.4818, max ulp
-  220→866,390,494. Near sin's zeros, the correctly-reduced residual is
-  tiny, so `t`'s new single-shot rounding becomes a huge *relative* error
-  exactly where sin is most sensitive. Reverted before even running mca.
+- **Fast sin/cos: shorten PI_A..D chain 4→3-deep (2026-07-07)**: error
+  estimate was wrong by orders of magnitude — near sin's zeros the
+  single-shot rounding becomes a huge relative error (avg ulp 0.06→1.48,
+  max 220→866M). Reverted before mca.
 
-- **cos's `q = (kb - ROUND_MAGIC) + 0.5`, fold into one constant**: dies on
-  representability (`ulp(1.5·2^23)=1`, so the folded constant doesn't exist
-  as an f32). A half-magnitude magic quantizes q to halves (wrong). Folding
-  +0.5 into the PI_A chain instead reintroduces a rounding near cos's
-  zeros. Documented as investigated-and-probably-not; not attempted.
+- **cos's q fold into one constant**: dies on representability (folded
+  constant doesn't exist as f32); half-magnitude magic quantizes q wrong;
+  folding elsewhere reintroduces rounding near cos's zeros. Not attempted.
 
 ## Missed fma contractions
 
-- **asin: `a*a - a` → `fma(a, a, -a)` (2026-07-07)**: same fusion pattern
-  that won on hypot/asinh/acosh, bit-for-bit identical here too — but mca
-  showed throughput getting *worse* (1.433→1.479 cyc/elem) with latency
-  unchanged. Reverted; left as `a*a - a`.
+- **asin: a*a-a → fma(a,a,-a) (2026-07-07)**: bit-identical, but throughput
+  worse (latency unchanged). Reverted.
 
-- **Small-poly Estrin audit, asin_small/sinh_small 3-deep Horner → 2-deep
-  Estrin (2026-07-08)**: `let lo = fma(c1,x2,c0); let hi = fma(c3,x2,c2);
-  fma(hi, x4, lo)` instead of the nested Horner chain. Unlike the fma-
-  contraction idea above, this one isn't bit-exact (fma reassociation
-  changes rounding, as it does roughly half the time elsewhere in this
-  file) — and it measured backwards on every axis that matters: `sinh`
-  got *worse* on both mca latency (58.00→59.00 cyc) and throughput
-  (2.523→2.588 cyc/elem), plus a real accuracy cost (avg ulp 0.0805→
-  0.0843, `cosh` itself unaffected since it doesn't call `sinh_small`).
-  `asin` was a genuine mixed result — latency improved (59.03→56.00 cyc,
-  -5.1%) but throughput got worse (0.968→1.033 cyc/elem, +6.7%) *and*
-  max ulp regressed (9→10, `acos` unaffected, doesn't call `asin_small`).
-  Neither survives on net. Reverted; exactly the "sometimes measures
-  backwards" outcome the backlog itself predicted for this idea.
+- **Small-poly Estrin audit, asin_small/sinh_small (2026-07-08)**: not
+  bit-exact, measured backwards on every axis for both functions (sinh:
+  worse latency+throughput+accuracy; asin: max ulp regressed 9→10).
+  Reverted.
 
 ## Other spots
 
-- **atan2's `bothzero`/`hpisignx` boolean simplification (2026-07-07)**:
-  `A || (¬A∧B) ≡ A∨B` simplifies away `bothzero`/`nonzeroy` at the source
-  level. Full asm diff showed the compiled output is byte-for-byte
-  identical — LLVM's InstCombine already does this simplification. No
-  measurable change either way; not committed (nothing to gain, but
-  recorded so it isn't retried).
+- **atan2's bothzero/hpisignx boolean simplification (2026-07-07)**:
+  compiled output byte-for-byte identical — LLVM's InstCombine already
+  does this.
 
-- **erfc's final `fma(y, z, w)` → `mulsign(y, x) + w` (2026-07-07)**: trades
-  an FMA-port multiply for a sign-xor + add, intended to relieve erfc's
-  saturated FMA/mul ports. Asm confirmed the intended codegen shift
-  happened, but mca showed throughput getting *worse* (2.097→2.158
-  cyc/elem) instead of better. Reverted.
+- **erfc's final fma→mulsign+add (2026-07-07)**: intended codegen shift
+  confirmed, but throughput got worse. Reverted.
 
-- **atanh via a single log1p call, `0.5*log1p(2x/(1-x))` instead of
-  `0.5*(log1p(x)-log1p(-x))` (2026-07-08)**: algebraically equivalent (the
-  identity checks out, and unlike the backlog's framing no `mulsign` turned
-  out to be needed at all — the direct formula handles every edge, incl.
-  signed zero, x=±1, and |x|>1, for free). Implemented and fuzzed: **real
-  regression**, max ulp 3→31303 (avg only 0.031→0.046, so this is very much
-  a tail-only blowup, worst x≈-0.999998). Root cause: the two-log1p form
-  passes x and -x to log1p *completely unrounded* (they're the literal
-  input, no arithmetic before the call), so whatever error exists is only
-  log1p's own baseline error for that input. The one-log1p form instead
-  computes u=2x/(1-x) via a division that rounds once — a tiny, ordinary
-  rounding error — but log1p's derivative 1/(1+u) diverges as u→-1 (exactly
-  atanh's own singularity, which u inherits), so that tiny upstream
-  rounding error gets amplified by ~5 orders of magnitude before log1p even
-  starts its own computation. Halving the op count traded away the
-  "feed log1p an exact literal" property that was quietly doing a lot of
-  work. Reverted immediately (before mca — the accuracy regression alone
-  disqualifies it).
+- **atanh via single log1p call (2026-07-08)**: algebraically simpler, but
+  real regression — max ulp 3→31303 (tail-only, near x≈-1). The two-log1p
+  form passes exact literals; the one-log1p form's division rounds once,
+  and log1p's derivative diverges near the singularity, amplifying that
+  tiny rounding error ~5 orders of magnitude. Reverted immediately.
 
-- **erfc: exact exponent via two_prod (2026-07-08)**: computed `xa*xa`'s
-  exact rounding residual (`e = fma(xa,xa,-p)`) and folded `e*LOG2_E` into
-  the exponent (`fma(-e, LOG2_E, -p*LOG2_E)`) instead of dropping it, as
-  the backlog proposed. Real, exhaustively-confirmed accuracy win (avg/max
-  ulp 0.3106/109 → 0.3055/93), but a real mca cost too (latency
-  78.09→82.14 cyc, +5.2%; throughput 2.599→2.788 cyc/elem, +7.3% worse) —
-  unlike `tanh`'s domain-hole fix (a genuine NaN-for-legitimate-input bug),
-  this is just trimming an already-accepted, already-far-over-any-nominal-
-  budget max ulp a bit further (109→93 is still nowhere near the top-of-
-  file "≤2 max" budget this function was never going to hit anyway), so
-  the cost isn't clearly justified by the gain. Not adopted; reverted.
+- **erfc: exact exponent via two_prod (2026-07-08)**: real accuracy win
+  (avg/max 0.311/109→0.306/93) but real mca cost (+5-7%) for shaving an
+  already-far-over-budget max ulp further. Not adopted.
 
-- **erfc in log space, single polynomial over the full [0,10] clamped
-  domain (2026-07-08)**: fit `R(x) = log2(erfc(x)) + x²·log2(e)` via
-  lolremez to replace the n/d rational + division entirely (`erfc(x) =
-  exp2_checked(-x²·log2(e) + R(x))`, same shape `erf`'s own tail branch
-  already uses for `erf`, though `erf_poly` itself turned out unusable
-  here directly — see below). Convergence was poor: degree 10 only
-  reached estimated max error 6.5e-6 (need roughly 1e-7 for a few-ulp
-  result), degree 15 (16 coefficients — far more than any poly in this
-  crate) got to 3.75e-7, still short, and degrees beyond that took over
-  2 minutes without converging. The backlog's own fallback ("erfc domain
-  split... two rationals") is likely necessary for this shape to work at
-  a practical degree; not attempted (bigger scope than fits one pass).
-  Separately confirmed `erf_poly` (already log2(erfc)-shaped internally
-  for `erf`'s own tail branch) can't just be reused for `erfc` directly:
-  swapping it in gave catastrophic error (avg ulp ~297000, max ~3.6e8) —
-  `erf_poly` was fit against *erf's* accuracy objective, where erfc's
-  absolute tininess for large x barely moves erf's own ulp count (erf is
-  already ~1 there), so it was never actually accurate as a direct erfc
-  approximation, just close enough in erf's shadow. Not adopted.
+- **erfc in log space, single poly over [0,10] (2026-07-08)**: lolremez
+  convergence poor even at degree 15 (16 coefficients). `erf_poly` can't be
+  reused directly (catastrophic error, ~297000 avg ulp — only ever fit for
+  erf's own objective). Not implemented.
 
-- **powf_checked's ~150 max ulp investigated (2026-07-08): the backlog's
-  diagnosis ("exp2_checked's double-rounding into denormals") doesn't
-  survive direct measurement — the real residual lives somewhere in the
-  `log2_df`/`exp2_checked_df` double-float argument chain, not in
-  `exp2_checked`'s own rounding, and isn't a simple fix.** First checked
-  the stated premise directly: a domain-restricted sweep of
-  `exp2_checked` alone, restricted to `x` in `[-151,-120]` (its actual
-  denormal-output zone), still measured max ulp **1** — i.e.
-  `exp2_checked` itself is *not* measurably broken near the denormal
-  boundary, contradicting the "double-rounding into denormals" theory at
-  face value. Next, found `powf_checked`'s actual worst case via a
-  targeted 20M-sample search (correcting a reference-computation bug
-  along the way — `x.abs().powf(y)` alone doesn't reproduce the correct
-  NaN for negative-base/non-integer-exponent, needed an explicit
-  integer/parity check matching the crate's own convention): the worst
-  case found was `x≈0.895`, `y≈-789.4`, landing near the exponent range's
-  *upper* boundary (~125.7, close to `exp2_checked`'s +128 ceiling), not
-  the lower/denormal one at all. Checked `exp2_checked` directly at that
-  exact bit-pattern argument (not a re-derived f64 approximation, which
-  gave a misleadingly different value the first time) — it was
-  bit-exact. So the ~150 max ulp residual isn't `exp2_checked`
-  mis-rounding its argument; it's more likely a precision limit in how
-  `log2_df(ax) * y` (the `Df32` multiply) or `exp2_checked_df`'s own
-  reconstruction handles this specific regime. Not root-caused further
-  this session (would need tracing through the `Df32` arithmetic
-  step-by-step at this exact input, a bigger investigation than fits
-  here) — the backlog's "one extra multiply, only when denormal" framing
-  is not the right fix given where the actual worst case lives. No code
-  changed.
+- **powf_checked's ~150 max ulp investigated (2026-07-08)**: backlog's
+  "exp2_checked double-rounding into denormals" diagnosis doesn't survive
+  measurement — exp2_checked is bit-exact even at the actual worst-case
+  input. Residual lives in the log2_df/exp2_checked_df double-float chain;
+  not root-caused further. No code changed.
 
-- **ln/log10: fuse the final `+ k*LN2_LO`/`+ k*LOG10_2_LO` into an fma —
-  re-tested 2026-07-08, mistakenly adopted, then corrected back to
-  rejected the same day.** This is the exact same idea the entry just
-  above (commit-dated earlier the same day) already tested and rejected —
-  picked again later in the session without cross-referencing the
-  existing entry, and this time mis-measured as a win. Two errors, both
-  now corrected: (1) the "before" accuracy baseline was taken from
-  `readme.md`'s numbers (ln avg 0.126, log10 avg 0.286) instead of
-  re-measuring the actual current unfused code directly — a fresh
-  exhaustive sweep of the genuinely-unfused code gives ln avg 0.1168/max 3
-  and log10 avg 0.1270/max 3, **identical to the fused code's own
-  numbers** (`readme.md`'s log10 figure had simply gone stale at some
-  earlier point, unrelated to this change — there is no accuracy
-  difference between the two forms at all). (2) mca's ln/log10 latency
-  going from 55.86→56.86 cyc was dismissed as "run-to-run noise" without
-  checking reproducibility; re-run 3x on each form just now, it's
-  perfectly deterministic both ways (unfused always 55.86, fused always
-  56.86) — a real, reproducible +1-cycle regression, exactly matching
-  what the entry above already found. Reverted for real this time;
-  `src/lib.rs` restored to `fma(p, s, k_hi) + k * LN2_LO`. **General
-  lesson, two of them: (a) before re-testing an idea, grep this file for
-  whether it's already been tried — a duplicate test is wasted effort at
-  best and, as happened here, a chance to overwrite a correct prior
-  finding with a wrong one; (b) "before" measurements must come from
-  re-running the current code, never from a written number (a readme
-  table, a prior IDEAS.md entry, this file's own history) — those can go
-  stale, and trusting one instead of re-measuring is exactly how this
-  mistake happened. Also: any mca difference, however small, needs a
-  repeat-and-confirm before being called "noise" — this file has now
-  logged the opposite mistake too (calling a real effect noise) alongside
-  its many entries logging noise mistaken for a real effect.**
+- **ln/log10 fuse trailing fma, re-tested (2026-07-08)**: duplicate of the
+  entry above, picked again without cross-referencing, initially
+  mismeasured as a win (baseline taken from a stale readme number instead
+  of re-measured; an mca delta wrongly dismissed as noise). Re-verified:
+  real, reproducible +1-cycle regression. Reverted for real. *Grep this
+  file before retrying an idea; never trust a written number over
+  re-measuring; repeat-and-confirm any mca delta before calling it noise.*
 
-- **Centered-variable refit for exp2's f (2026-07-08), checked via a
-  10-line scipy script before writing any Rust — premise refuted before
-  implementation, nothing to revert.** The backlog's claim was "refit in
-  g = f − 0.5 so coefficients shrink" (coefficient rounding error scales
-  with coefficient magnitude, an established lesson elsewhere in this
-  file). Fit both forms with scipy `lstsq` (uncentered `R(f) = (2^f-1)/f`
-  over f ∈ [0,1) vs. centered `R(g) = (2^(g+0.5)-1)/(g+0.5)` over
-  g ∈ [-0.5,0.5)) and compared every coefficient directly: the centered
-  fit's coefficients are *larger* across the board (leading term
-  0.693→0.828, and every other coefficient likewise bigger), the opposite
-  of the claimed effect. Root cause: `R(f)` is strictly monotonically
-  increasing over the whole domain (checked explicitly, 0.693 at f=0 up
-  to 1.0 at f=1) with no interior minimum — its smallest magnitude
-  already sits exactly at the domain's own edge (f=0), which the
-  *current, uncentered* fit already exploits directly (c0 = R(0) = ln2).
-  "Centering" necessarily moves the evaluation point away from that edge
-  minimum toward the domain's middle, which is *higher*, not lower, for a
-  monotonic function. The general principle (centering shrinks
-  coefficients) only holds when the function has a genuine interior
-  minimum/root to center on — `log_2`'s own `s = m-1` decomposition works
-  for exactly this reason (`log2(1) = 0` is a real root at the center),
-  but `exp2`'s `R(f)` has no analogous root anywhere in its domain. Not
-  implemented; no code changed. The erfc half of this same backlog entry
-  is a different function shape (P/Q rational, not a monomial poly) and
-  is **not** ruled out by this finding — left open below, split out from
-  the exp2 case.
+- **Centered-variable refit for exp2's f (2026-07-08)**: backlog claimed
+  centering shrinks coefficients — scipy showed the opposite (centered
+  coefficients are *larger*). `exp2`'s R(f) is monotonic with no interior
+  minimum, so centering moves away from the edge minimum the current fit
+  already exploits. Premise refuted before any Rust written.
 
-- **Tune cbrt_throughput's magic constants (2026-07-08), tested and
-  rejected on two different grids — a real methodological finding about
-  `tune.rs` itself, not just this one function.** Added `cbrt_throughput_c`
-  and a `cbrtthroughput` tune.rs target (kept as reference infra, same
-  precedent as `cbrt_shiftmul_c`). First attempt reused `cbrt_normal`'s
-  own single-octave-is-representative grid — looked like a win on-grid
-  (max ulp 16→12) but a direct octave-by-octave accuracy check showed
-  this function's error does *not* repeat across octaves the way
-  `cbrt_normal`'s does (max ulp ranges from ~7 to ~52 depending which
-  octave gets sampled) — and implementing the "tuned" constants for real
-  confirmed the grid was misleading: full fuzz sweep got *worse*, not
-  better (avg 6.73→7.01, max 74→76). Reverted immediately, tried again
-  with a properly wide ~60-octave grid instead — this exposed a second,
-  more general problem: `score()` returns `(max, sum)` and `tune()`'s `if
-  s < best` uses Rust's default tuple ordering, which compares `max`
-  *first* and only falls back to `sum` (~avg) as a tiebreak. For
-  `cbrt_normal`'s smooth, octave-periodic error surface this never
-  mattered (minimizing max there also happens to minimize avg), but for
-  `cbrt_throughput`'s rougher landscape the search happily wrecked the
-  average to shave the worst case: max ulp did drop (68→43 on-grid) but
-  avg ulp *exploded* (6.83→22.73) — a real, severe regression by this
-  crate's own primary metric, hidden by a max-first comparison that never
-  surfaces it. Not adopted either way; `src/lib.rs` unchanged. **General
-  lesson for any future `tune.rs` use, beyond just cbrt_throughput: (1)
-  before trusting a single-octave (or any partial-domain) grid as
-  "representative," check directly whether the target function's error
-  actually repeats across the domain the way the assumption requires —
-  it's a real, checkable property, not something to inherit from a
-  different function's own comment; (2) `tune()`'s max-first tuple
-  comparison is a silent trap for any function whose error surface isn't
-  smooth/uniform — it can trade away average accuracy for a better
-  worst-case number without ever showing that tradeoff in the printed
-  output, so a real end-to-end fuzz check of any "tuned" result (not just
-  trusting tune.rs's own reported numbers) is not optional, it's load-
-  bearing.**
+- **Tune cbrt_throughput's magic constants (2026-07-08)**: single-octave
+  grid looked like a win (max 16→12) but the function's error doesn't
+  repeat across octaves like cbrt_normal's — implementing it made the real
+  fuzz sweep *worse* (avg 6.73→7.01). Wide 60-octave grid retry exposed
+  that `tune()`'s `score()` comparison is max-first (Rust tuple ordering),
+  wrecking the average to shave the worst case (avg 6.83→22.73). Not
+  adopted. *Check a target's error actually repeats across a partial grid;
+  `tune()`'s max-first comparison can hide a real average regression.*
 
-- **log_2: atanh-form reduction, `t=(m-1)/(m+1)`, `log2(m)=c·t·Q(t²)`
-  (2026-07-08), implemented and measured — mathematically a huge win,
-  practically a clear loss on both axes.** Confirmed the backlog's core
-  claim first with a quick scipy fit: a degree-4 `Q` (5 coefficients) over
-  `t∈[-0.172,0.172]` (odd symmetry, half the domain of `s=m-1`'s ~0.414)
-  hits max relative error 1.2e-11 — about 1000x tighter than the shipped
-  degree-9/10-coefficient `s·P(s)` form's 4.1e-9, with half the
-  coefficients. Implemented directly in `log_2_normal` and measured for
-  real: accuracy actually got slightly *worse* (fuzz avg ulp
-  0.0030→0.0053, max 3→5) — `log_2` was already deep in pure f32-rounding-
-  noise territory (avg 0.003 ulp), far past where a tighter *mathematical*
-  fit moves the *measured* result. Latency got substantially worse, not
-  better: mca 34.23→49.05 cyc (+43%), with throughput barely moving
-  (1.556→1.521, only ~2%). Root cause: the one division this form needs
-  (`t = s/(m+1)`) depends on `s`, available from the very first step of
-  the critical path — unlike cbrt's early-starting `rcp` (independent of
-  the seed/correction chain, so its latency hides behind other work),
-  there's nothing here for the division to overlap with, so its latency
-  (~11 cyc per this file's other division-cost notes) plus the reduced-
-  but-still-serial poly evaluation came out slower overall than the
-  original's longer, division-free chain. Reverted; `src/lib.rs`
-  unchanged (kept `log2_atanh_c` in `tune.rs` as reference infra, same
-  precedent as `cbrt_shiftmul_c`/`cbrt_throughput_c`). **General lesson,
-  same shape as the exp2-centering and cbrt_throughput-tuning entries
-  above: a dramatically tighter *mathematical* approximation doesn't
-  automatically translate into a better *measured* result once a function
-  is already accurate enough that f32 rounding, not polynomial degree, is
-  the binding constraint — and "one division buys half the poly" only
-  pays off if the division can start early enough to overlap with other
-  work; a division gated on the very first reduction step never gets that
-  chance.**
+- **log_2: atanh-form reduction t=(m-1)/(m+1) (2026-07-08)**: 1000x tighter
+  in the underlying math, but worse for real — accuracy slightly worse
+  (log_2 already deep in f32-rounding-noise territory) and latency +43%
+  (the one division depends on `s` from the first step, nothing to overlap
+  it against, unlike cbrt's early-starting reciprocal). Reverted.
 
-- **erf: joint boundary+coefficients refit (2026-07-08), screened cheaply
-  before investing in a full joint optimizer — no headroom, matching
-  what the separate fixed-boundary refits had already found.** The
-  backlog's premise: the inherited 0.28 Pade/tail crossover was never
-  swept as a free parameter, only refit-at-fixed-boundary (per this
-  file's own asin-crossover precedent, moving the threshold itself can
-  sometimes unlock headroom a fixed-boundary refit can't reach). Added a
-  temporary boundary-parameterized `erf` variant and swept 8 candidate
-  thresholds (0.20 through 0.40) against the *current, unrefit*
-  coefficients first, cheaply, via accuracy.rs's existing fuzz
-  infrastructure (100M samples each) — before spending time building a
-  full joint boundary+coefficient optimizer. Result: max ulp sits at a
-  flat 5 across the whole 0.26–0.32 range (current 0.28 already
-  comfortably inside it), only degrading outside that window (0.24→8,
-  0.20→52, 0.35→8, 0.40→24) — a wide, flat plateau, not a narrow optimum
-  the inherited value happens to miss. Combined with the backlog's own
-  already-noted finding (both branches refit *separately* at 0.28 found
-  no headroom), two independent pieces of evidence now agree this
-  function is already near its accuracy ceiling for this degree-6-tail +
-  Pade-near-zero architecture, regardless of exactly where the boundary
-  sits. Didn't build the full joint optimizer (existing `tune.rs` infra
-  for `erf_tail_c`/`erf_near0_c` already hardcodes the 0.28 boundary into
-  each grid's construction, so a true joint search would need new
-  infrastructure) — the cheap screen already answers the question with
-  reasonable confidence, and the effort/expected-payoff ratio for
-  building the fuller version doesn't look favorable given both signals
-  point the same way. Not implemented; `src/lib.rs`/`accuracy.rs` scratch
-  additions reverted, nothing shipped. **General lesson: when a
-  refit-oriented idea has an inexpensive proxy check available (here,
-  sweeping the free parameter alone against unrefit coefficients, using
-  infrastructure that already exists), run that first — it can settle
-  the question well enough to skip building a bigger joint optimizer
-  entirely, the same way this file's scipy pre-checks have repeatedly
-  settled centered-refit and rational-form questions before any Rust
-  was written.**
+- **erf: joint boundary+coefficients refit (2026-07-08)**: cheap proxy
+  sweep (8 threshold candidates against unrefit coefficients) found a flat
+  plateau around the current 0.28 boundary — no headroom, matching
+  separate fixed-boundary refits. Didn't build the full joint optimizer.
 
-- **"Resurrect the f64-reduction sin/cos as a middle tier" (2026-07-08):
-  the premise didn't survive contact with either git history or a real
-  implementation — rejected on two independent grounds.** First: the
-  backlog's own claim ("the abandoned f64 version... the code already
-  exists and was verified; it's a revert-and-rename") doesn't hold up —
-  a full search of `git log --all` and the reflog found no commit, stash,
-  or working-tree file anywhere containing a genuine hardware-`f64`-based
-  sin/cos reduction; the only "double" reduction in this repo's history
-  is `sin_checked`'s own Df32 (emulated double-float, already shipped),
-  which the backlog itself distinguishes from what it's proposing. There
-  was nothing to revert. Implemented one from scratch anyway to check the
-  underlying idea on its own merits (`sin_mid`/`cos_mid`: cast to `f64`,
-  `q = round(x*FRAC_1_PI)`, `r = (x - q*PI) as f32`, reusing `sinf_poly`
-  directly) — and it fails on accuracy by a wide margin, the second,
-  independent rejection: even in the smallest bucket tested (`|x|<1e6`)
-  max ulp was 637 (avg a reasonable-looking 0.0356, but that average
-  hides the outliers near sin's own zeros, where a tiny absolute
-  reduction error becomes a huge *relative*/ulp error), degrading to
-  millions of ulp by `1e10` and low billions by `1e11`-`1e12` — nowhere
-  close to the claimed "~1e9". Added an f64 two-product compensation for
-  `q*PI`'s own rounding (`e = q.mul_add(PI, -q*PI)`, correcting the
-  *multiplication's* rounding error) before giving up: this helped (max
-  ulp 637→70 in the smallest bucket) but didn't come close to closing the
-  gap, because the dominant remaining error isn't from the multiply's
-  rounding at all — it's that `f64`'s `PI` constant itself is only one
-  ~52-bit word, off from true π by its own fixed ~2^-53 relative error,
-  which no amount of *compensating the arithmetic around it* can correct.
-  Reaching real accuracy would need a genuine hi+lo (Cody-Waite-style)
-  split of π across *two* f64 words — at which point the design is no
-  longer a simple, cheap single-f64 reduction, and starts converging on
-  something not obviously cheaper than `sin_checked`'s existing Df32
-  approach (which already does exactly this kind of split, just in
-  native f32 arithmetic instead). Not implemented; `src/lib.rs`/
-  `accuracy.rs` scratch additions reverted, nothing shipped. **General
-  lesson: "the code already exists, it's a revert" is itself a claim
-  worth checking (`git log --all`/reflog/stash) before assuming the
-  implementation work is already done — here it wasn't, and a from-
-  scratch build was the only way to find out the accuracy claim was also
-  wrong. Separately: a single hardware `f64` word is not a free
-  drop-in replacement for a proper double-double reduction — it has
-  exactly one rounding's worth of headroom over `f32` (roughly 2^-52 vs
-  2^-24, not the "infinite precision" intuition might suggest), and for
-  an argument-reduction problem specifically (subtracting a huge multiple
-  of an irrational constant from a huge value to get a tiny, sign-
-  sensitive residual), that headroom runs out far sooner than expected.**
+- **"Resurrect the f64-reduction sin/cos" (2026-07-08)**: backlog's claim
+  that working code already existed in git history didn't hold up (nothing
+  in `git log --all`/reflog). Built one from scratch anyway — failed on
+  accuracy by a wide margin (max ulp 637 even in the smallest bucket, vs.
+  the claimed ~1e9). An f64 two-product compensation helped (637→70) but
+  couldn't close the gap — f64's own PI constant has irreducible ~2^-53
+  error no surrounding compensation fixes. Not implemented. *Verify "the
+  code already exists" claims via git log before trusting them.*
 
-- **cbrt: joint seed-constant + degree-3 coefficient search (2026-07-08),
-  double-checked via two independent methods, no headroom found.** The
-  previously-rejected joint search only tried a *degree-2* correction
-  (hopeless regardless of seed); this one keeps the shipped degree-3 (4
-  coefficients) and adds the seed offset as a 5th free parameter. Added
-  `cbrt_normal_joint_c` to `tune.rs` (seeded from the shipped values, not
-  zero) and ran the existing coordinate descent on the same grid
-  `cbrt_normal` already uses: essentially no movement (avg 0.33871→0.33856,
-  ~0.04% relative, max ulp unchanged at 2). Since coordinate descent alone
-  can miss a genuinely different basin the backlog's "basin-hopping"
-  framing was reaching for, double-checked independently with a
-  from-scratch Python sweep of the underlying continuous math (not
-  tune.rs) across a wide range of seed offsets (±2000, well beyond
-  coordinate descent's ±16-per-step reach) with a fresh least-squares
-  refit of the poly at each: best found was 1.407e-7 max relative error
-  vs. the shipped combination's own refit at 1.411e-7 — also ~0.3%,
-  negligible, and only in the underlying math (before any f32-rounding
-  effects that would likely wash out even that). Two independent methods
-  now agree the shipped seed+poly combination is already essentially
-  optimal for this architecture; not adopted. Not implemented in
-  `src/lib.rs`; kept `cbrt_normal_joint_c` in `tune.rs` as reference infra
-  (same precedent as `cbrt_shiftmul_c`/`cbrt_throughput_c`).
+- **cbrt: joint seed-constant + degree-3 search (2026-07-08)**: coordinate
+  descent and an independent Python sweep (±2000 seed offsets) both found
+  ~0.3% or less movement — shipped combination already essentially
+  optimal.
 
-- **erfc domain split, [0,2]/[2,10] (2026-07-08), tested and rejected —
-  the underlying math was dramatically tighter but the crate's real
-  max-ulp bottleneck lives somewhere else entirely.** Checked with scipy
-  first: fitting the same degree-4/4 rational shape separately per domain
-  half (against `erfc(xa)*exp(xa²)`, the actual quantity the rational
-  approximates) gave max relative error 9.8e-10 ([0,2]) and 3.25e-9
-  ([2,10]) vs. the shipped single-domain fit's 3.73e-7 — 100-380x
-  tighter. Added `erfc_lo_c`/`erfc_hi_c` to `tune.rs` (seeded from the
-  scipy fits, not zero) and coordinate-descended each against the real
-  ulp objective: `erfc_lo` converged essentially where it started (max
-  6→5), but `erfc_hi` — covering the exact region the crate's own max-ulp
-  109 comes from — only moved from max 110→94, nowhere near the
-  backlog's own stated bar ("only worth it if 109 → single digits").
-  Implemented the split for real (a `xa<2.0` branchless select between
-  the two rationals) and confirmed via the actual accuracy.rs fuzz
-  harness, not just tune.rs's grid: avg ulp genuinely improved a lot
-  (0.3105→0.1889, ~39%) but max ulp barely moved (106→105), and the
-  worst-case `x` stayed in the same narrow neighborhood both before and
-  after (8.77 vs 8.70) — strong evidence the worst case isn't limited by
-  the rational's fit quality at all, matching the original log-space
-  entry's own caution ("check whether the 109 is actually...noise before
-  crediting any fix"). Whatever caps it (most likely accumulated rounding
-  through `exp2_checked`/`xa*xa`/the final multiply, not investigated
-  further this pass) sits downstream of the correction term entirely, so
-  no refit of *that* piece — however precise — can fix it. Not adopted
-  (real avg win, but the specific bar this idea was proposed against
-  wasn't met, and shipping ~2x the rational cost for an avg-only
-  improvement wasn't judged worth it given how far short of "single
-  digits" the max ulp still is); `src/lib.rs`/`accuracy.rs` scratch
-  reverted, `erfc_lo_c`/`erfc_hi_c` kept in `tune.rs` as reference infra.
-  **General lesson, sharpening this file's now-repeated finding: a
-  dramatically tighter mathematical fit for one *piece* of a pipeline
-  doesn't help if the real bottleneck is a *different* piece — before
-  crediting any refit, check where the worst case actually sits (same
-  `x`, same order of magnitude, before and after) to see whether the fix
-  even touched the right part of the computation.**
+- **erfc domain split [0,2]/[2,10] (2026-07-08)**: underlying math
+  100-380x tighter per-domain; real implementation improved avg ulp a lot
+  (0.311→0.189, ~39%) but max ulp barely moved (106→105), same worst-case
+  neighborhood. Bottleneck lives downstream of the correction term
+  entirely. Not adopted (bar was 109→single digits).
 
-- **Select-tree "LUT" for exp2 (2026-07-08), tested and rejected — the
-  backlog's own "2-level, degree 2-3" framing didn't survive a scipy
-  check, and even the corrected parameters came up short once tuned
-  against real ulp.** Split `f` into an 8-way quantized `f_hi` (2^(i/8),
-  i=0..7, a 3-level blend tree — one level more than the backlog's
-  "2-level vblendvps" framing, needed because a scipy check found the
-  backlog's own k=4/degree-3 combination only reaches 2.94e-7 max
-  relative error, ~24x worse than the shipped degree-5 form's 1.22e-8)
-  plus a residual `f_lo` fit directly with a degree-3 poly (k=8 gets
-  back to 1.84e-8, close to competitive). Added `exp2_lut8_c` to
-  `tune.rs`, seeded from the scipy fit (not zero), and coordinate-
-  descended against the real `x.exp2()` objective: landed at max ulp 3 /
-  avg 0.43 on this file's own exp2 grid, a real regression from the
-  shipped form's max 2 / avg 0.20 on the identical grid — despite the
-  scipy math suggesting near-parity at k=8. No implementation bug found
-  on a quick review of the blend-tree/`f_lo` boundary consistency (exact
-  power-of-two thresholds, checked by hand at a boundary value). Not
-  chased further, and not even brought to an mca latency check — the
-  accuracy regression alone disqualifies it under this loop's own bar.
-  Not implemented in `src/lib.rs`; kept `exp2_lut8_c` in `tune.rs` as
-  reference infra. Also removed the backlog's "same trick applies to
-  exp's e^r poly" follow-on, since the exact mechanism this rejected
-  (mathematical fit tightness not being the real constraint once other
-  rounding in the pipeline dominates) has no reason to behave
-  differently for a structurally similar poly.
+- **Select-tree "LUT" for exp2 (2026-07-08)**: backlog's 2-level/degree-3
+  combination doesn't reach competitive accuracy per scipy (24x worse);
+  even the corrected 3-level/degree-8 version regressed on real ulp (max
+  2→3, avg 0.20→0.43). Not implemented.
 
-- **Dedicated sinh/cosh kernels via cosh_k/sinh_k reassociation
-  (2026-07-08), tested and rejected — a real, measured mixed result on
-  both axes, not a clean win either way.** `exp_pos_neg`'s existing e/o
-  split already computes `cosh(r)` (=`e`) and `sinh(r)` (=`r*o`)
-  internally; this idea reassociates the *combine* step around
-  `cosh_k`/`sinh_k` = `(2^k ± 2^-k)/2` instead of forming `exp(x)`/
-  `exp(-x)` separately and subtracting/adding once at the end. A hand
-  derivation beforehand suggested this was roughly op-count-neutral (a
-  wash) — wrong, matching this file's standing lesson to measure rather
-  than trust hand-counted op estimates: `sinh_kernel_test`/
-  `cosh_kernel_test` mca showed a real, consistent latency win for both
-  (58.00→51.00 cyc, cosh 57.00→51.00 cyc, ~11-12%), but throughput split
-  in different directions — `sinh` improved (2.523→2.214, ~12% better)
-  while `cosh` got *worse* (2.074→2.214, ~7% worse). Accuracy split
-  the other way: `cosh_kernel_test` matched shipped `cosh` almost
-  exactly (avg 0.0710 vs 0.0713, max 5 both), but `sinh_kernel_test`
-  showed a real ~12x average-ulp regression (0.0806→0.9557, max ulp
-  unchanged at 5 — spread across many samples gaining 1-2 ulp each,
-  not one catastrophic outlier, confirmed by direct spot-checks showing
-  no individual wildly-wrong value). Root cause not fully chased down,
-  but plausibly more total roundings in the reassociated form (forming
-  `cosh_k`/`sinh_k` as their own intermediate values, each independently
-  rounded, before the final combine) vs. the current form's fewer,
-  later-arriving roundings. Net: `sinh` gets a real speed win at a real
-  accuracy cost; `cosh` keeps its accuracy but only wins on one of two
-  speed axes — neither clears this loop's "speeds up without an
-  accuracy penalty" bar on its own. Not adopted for either function; all
-  scratch reverted (`src/lib.rs`/`mca_target.rs`/`mca.rs`/`accuracy.rs`),
-  nothing kept as reference infra this time (the mca_target.rs test
-  functions were simple enough to reproduce cheaply if revisited).
-  **General lesson: this file has repeatedly found fma-reassociation
-  changes can move latency and throughput in opposite directions (see
-  the sinh/cosh even/odd-split entry itself, and several others) — this
-  is the first case where it *also* split accuracy asymmetrically
-  between two functions sharing the exact same reassociated intermediate
-  values, so "check both mca axes" isn't enough on its own; when two
-  sibling functions share a reassociation, check accuracy for *both*
-  separately, don't assume symmetry.**
+- **Dedicated sinh/cosh kernels via reassociation (2026-07-08)**: real
+  latency win for both (~11-12%) but throughput split by function (sinh
+  better, cosh worse) and accuracy split the other way (cosh fine, sinh
+  regressed ~12x avg ulp). Neither clears the bar. Not adopted. *When two
+  functions share a reassociated intermediate, check accuracy for both —
+  don't assume symmetry.*
 
-- **Three-interval atan reduction (2026-07-08), tested and rejected —
-  a genuinely great accuracy result completely swamped by a severe
-  speed regression, matching the risk already flagged going in.**
-  Scipy check first: a degree-2/2 rational fit over `u` in
-  `[-tan(pi/8), tan(pi/8)]` (the shared reduced domain both the
-  direct-`r<t` and transformed-`r>=t` branches land in) reaches 8.7e-10
-  max relative error — tighter than the shipped degree-3/3's 1.87e-8,
-  with 2 fewer coefficients. Coordinate-descended `atan_three_c` in
-  `tune.rs` (seeded from the scipy fit) against the real `x.atan()`
-  objective: max ulp 3 / avg 0.275, matching or marginally beating the
-  shipped 3/3's max 3 / avg 0.286 — the accuracy case was fully
-  confirmed. Implemented for real and measured via mca: catastrophic,
-  not just "a real cost" — latency 61.09→104.94 cyc (+72%), throughput
-  1.491→2.974 cyc/elem (+99%, essentially doubled). Root cause exactly
-  as flagged when this idea was first considered: the `u`-transform's
-  own division must resolve *before* the (still-a-rational) poly's own
-  division can even start for every input landing in the upper half
-  (`r>=t`, roughly half the domain) — two sequential divisions instead
-  of one, each carrying independent full division latency with no
-  chance to overlap, unlike cbrt's early-starting `rcp` or any of the
-  other "division buys a smaller poly" ideas that worked out. Not
-  adopted; `src/lib.rs`/`mca_target.rs`/`mca.rs` scratch reverted,
-  `atan_three_c` kept in `tune.rs` as reference infra given how clean the
-  accuracy result was (a future attempt restructuring *which* interval
-  needs the extra division, or finding a division-free reformulation of
-  the transform, could still reuse this fit). **General lesson: a
-  correctly-flagged division-on-critical-path risk can turn out to be
-  much worse in practice than "a real cost" — here it nearly doubled
-  throughput cost, not a modest tradeoff — reinforcing that this
-  specific failure mode (new division gated on a value only available
-  partway through an existing division-containing pipeline) deserves a
-  quick mca check *before* investing in the accuracy side of any such
-  idea, not just after, once enough instances of it have piled up in
-  this file.**
+- **Three-interval atan reduction (2026-07-08)**: accuracy case fully
+  confirmed, but implementing it nearly doubled cost (latency +72%,
+  throughput +99%) — the u-transform's division must resolve before the
+  poly's own division can start for half the domain, two sequential
+  full-latency divisions instead of one. Not adopted. *A flagged
+  division-on-critical-path risk deserves an mca check before the accuracy
+  work, not after.*
 
-- **atan_latency's poly, max-capped ulp-weighted Chebyshev LP (2026-07-09),
-  screened and rejected before touching src/lib.rs's shipped state for
-  real -- no measurable headroom, matching sinf_poly's own "already near
-  floor" 2026-07-07 finding.** Genuinely single-caller (this poly has no
-  shared-region or shared-exposure risk -- `atan_latency` reuses it
-  identically whether `a<1` or via the `a>=1` reciprocal fold, the same
-  single-domain pattern `atan_poly` itself already established as safe),
-  and the constant term is safely un-fittable-sensitive (multiplied by
-  `r`, so `r=0` gives exactly 0 regardless of the fitted coefficients, no
-  `acos_poly`-style boundary trap). The isolated fit predicted a modest
-  improvement (max weighted error held at parity 0.846, avg
-  0.1155->0.1087, ~6%) -- small enough on its own to be a weak signal,
-  and it didn't survive contact with the real crate at all: `git
-  stash`-paired 100M-sample fuzz gave avg ulp 0.0516 (current) vs 0.0517
-  (LP-fit), max ulp 3 both ways -- statistically identical, no real
-  movement either direction. Reverted (`git checkout --`, confirmed via
-  `git diff`/`git status`); no code changed. **General lesson: an
-  isolated-fit improvement much under ~10-15% has repeatedly turned out
-  to be a weak enough signal, elsewhere in this file's own testing
-  history, that it may not be worth the implementation/verification
-  cost at all -- worth checking the predicted magnitude before spending
-  time on the round-trip.**
+- **atan_latency's poly LP refit (2026-07-09)**: isolated fit predicted a
+  modest 6% improvement — too weak a signal, and found nothing real (avg
+  ulp 0.0516 vs 0.0517, statistically identical). Reverted. *An isolated LP
+  prediction under ~10-15% has repeatedly turned out not worth the
+  round-trip.*
 
-- **Centered-variable refit for erfc's xa ∈ [0,10] (2026-07-08), tested
-  and rejected — confirms the exp2-centering finding transfers here too,
-  despite erfc's very different function shape.** This was explicitly
-  split out from the exp2-centering rejection earlier in this file as
-  "worth checking independently" since erfc's target (a P/Q rational
-  fitting `erfc(xa)·exp(xa²)`) decays/grows across many orders of
-  magnitude, unlike exp2's bounded, monotonic `R(f)` — a real reason the
-  same conclusion might not transfer. Checked directly with scipy: fit
-  the same degree-4/4 rational shape both uncentered (max relerr
-  3.74e-7, matching the shipped form) and centered at the domain
-  midpoint (`g = xa − 5`, max relerr 2.72e-5) — centering is **~73x
-  worse**, not better, confirming the exp2 finding does transfer despite
-  the different function shape. Not chased further (erfc's own domain-
-  split experiment already separately established the real max-ulp
-  bottleneck lives outside the rational entirely, so even a *successful*
-  centering refit wouldn't have moved the crate's actual accuracy
-  number). Not implemented, no code written beyond the scipy check.
-  **General lesson: "this function's shape looks different enough that
-  a prior rejection might not transfer" is a reasonable thing to flag
-  for later checking (as the original exp2 entry did), but the actual
-  check can still be a five-minute scipy script — worth doing before
-  assuming either way.**
+- **Centered-variable refit for erfc's xa (2026-07-08)**: confirmed the
+  exp2-centering finding transfers — centering measured ~73x worse despite
+  erfc's different function shape.
 
-- **Compensated-Horner accuracy tier for erfc (2026-07-08), tested and
-  rejected — and it finally pinpointed exactly where erfc's real
-  bottleneck lives, closing the loop on three separate prior
-  "not investigated further" notes in this file.** The backlog's atan
-  half was already moot (atan's max ulp is 3 now, not the stale "18" the
-  entry cited — fixed by the atan_poly degree bump long before this
-  pass). For erfc: reused the crate's existing `Df32`/two_sum/two_prod
-  machinery (already used elsewhere for `reduce_pi`, `log2_df`, etc. —
-  no new infrastructure needed) to evaluate erfc's n/d rational in
-  double-float instead of plain f32 Horner, leaving `exp2_checked`/
-  `xa*xa` untouched. Result: avg ulp improved modestly (0.3104→0.2671,
-  ~14%) but max ulp was flat (102→105, worst `x` still ≈8.6-9.0) — the
-  *exact* same shape as the domain-split rejection above: tighter
-  evaluation helps the average, doesn't touch the worst case. This time,
-  chased the "not investigated further" root cause directly instead of
-  leaving it open a fourth time: computed `-(xa*xa)*LOG2_E` (erfc's own
-  exponent expression, plain f32 arithmetic) against the exact f64 value
-  at the actual worst-case `x`'s — found up to **87 ulp of error in the
-  exponent itself**, before `exp2_checked` even runs. This is exactly
-  what this file's own already-tested-and-rejected "erfc: exact exponent
-  via two_prod" entry (above) already fixed and measured (avg/max ulp
-  0.3106/109 → 0.3055/93) — three independent approaches (log-space
-  refit, domain-split, and now compensated-Horner) all converge on the
-  same already-diagnosed cause, none of them touching it because none
-  correct the exponent computation itself. Not re-implementing the
-  two_prod fix (already tried, already judged not worth its mca cost
-  given erfc's max ulp was already so far over any nominal budget that
-  closing part of the gap doesn't change its practical
-  characterization); not implementing compensated-Horner either, since
-  it doesn't reach the actual bottleneck. No code changed. **General
-  lesson: when the same symptom (fits the average, doesn't move the
-  max, same worst-case `x` every time) shows up across three unrelated
-  fixes in a row, stop proposing a fourth fix in the same spot and
-  instead directly measure the *specific upstream computation* the
-  refits keep failing to touch — a five-minute direct comparison against
-  an exact f64 reference at the known worst-case inputs settled in
-  minutes what three separate refit attempts across this session
-  couldn't.**
+- **Compensated-Horner accuracy tier for erfc (2026-07-08)**: double-float
+  evaluation improved avg ulp modestly (~14%) but left max ulp flat — same
+  shape as the domain-split rejection. Chased the root cause directly:
+  erfc's own exponent expression has up to 87 ulp of error in plain f32
+  arithmetic, before exp2_checked even runs — the same cause an
+  already-rejected two_prod fix already found (not worth its mca cost). No
+  code changed; closes a question three separate refits had each left open.
 
-- **atan_poly Horner→Estrin restructuring (2026-07-08), tested and
-  rejected — the one poly in this family that hadn't had this exact
-  audit yet, and it measured backwards on every axis.** `acos_poly`'s
-  and erfc's n/d rational's own Estrin attempts were already tried and
-  rejected (accuracy cost); `atan_poly` itself — a 3/3 rational, still
-  plain 3-deep Horner in both numerator and denominator — was the one
-  remaining untested case in this recurring audit. Regrouped both
-  chains into 2-deep Estrin (same coefficients, pure reassociation, no
-  new division, no algorithmic change). Real fuzz: avg ulp 0.0681→0.0721
-  (worse), max ulp 3→5 (worse) — already disqualifying on its own. mca
-  made the case unambiguous regardless: latency did improve modestly
-  (61.09→58.09 cyc, -4.9%) but throughput got severely worse
-  (1.491→3.819 cyc/elem, **+156%**, more than 2.5x), a much larger,
-  more one-sided regression than a Horner→Estrin restructuring typically
-  produces in this crate. Not adopted; `src/lib.rs`/`mca_target.rs`/
-  `mca.rs`/`accuracy.rs` scratch reverted, nothing kept as reference
-  infra (the test function is a handful of lines, cheap to reproduce).
-  This closes out the "audit every Horner-chain poly in this crate for
-  an Estrin win" line of investigation this file has run across several
-  iterations — every remaining candidate has now been tried at least
-  once (`acos_poly`/erfc's n/d/`asin_small`/`sinh_small`/`atan_poly` all
-  rejected), so this specific recurring audit is complete; a genuinely
-  new poly would need to exist before it's worth revisiting.
+- **atan_poly Horner→Estrin (2026-07-08)**: measured backwards on every
+  axis — fuzz accuracy worse (avg 0.068→0.072, max 3→5), mca throughput
+  much worse (+156%). Not adopted. Closes the "audit every Horner poly for
+  an Estrin win" line — every candidate now tried.
 
-- **Rational (P/Q) refits for log_2/acos_poly (2026-07-08), ruled out —
-  one by strong analogy to an already-confirmed result, the other by a
-  reproducible numerical dead end before any coefficients could even be
-  tested.** For `log_2`: any direct P/Q rational (in `s = m-1`, the
-  crate's existing decomposition variable) needs a new division sitting
-  in exactly the same critical-path position the already-tested atanh-
-  form idea's division occupied — right after `s` is computed, with
-  nothing independent to overlap it against (that idea measured +43%
-  latency for exactly this reason). Since the position and dependency
-  structure don't change based on which variable the rational is
-  expressed in, this was ruled out by analogy without needing a fresh
-  mca run: the same fundamental problem applies regardless of fit
-  quality. For `acos_poly`: structurally more promising going in (`acos`
-  already has a `sqrt` in its critical path that a new division might
-  genuinely overlap, unlike `log_2`'s case) — but a scipy `least_squares`
-  fit of a degree-2/2 and degree-3/3 rational against `acos(x)/sqrt(1-x)`
-  (seeded from the shipped poly's own coefficients, not zero) failed to
-  converge within 60s for *both* degrees, a clear, reproducible
-  numerical dead end (checked the rational-evaluation code for bugs
-  directly — Horner ordering and the fixed leading-1.0 denominator term
-  both traced correctly by hand). Not chased further (e.g. with a more
-  robust solver or a different parameterization) given the effort/
-  payoff ratio once the fit itself won't cooperate; no Rust written for
-  either. **General lesson: (1) once a specific "new division's exact
-  critical-path position" has been measured as fatal for one function,
-  the same structural argument rules out the same idea for a different
-  function using the same variable/position, without needing to
-  re-measure via mca — but only if the position is genuinely the same,
-  which is worth double-checking, not just assumed; (2) a rational
-  refit's *fit* can fail outright (not just fail to beat a poly) for
-  some target-function shapes, even seeded well — this is a distinct,
-  earlier failure mode from the ones this file has logged so far (which
-  were all "fits fine, doesn't help enough" or "fits fine, costs too
-  much"), worth recognizing quickly (a short timeout) rather than
-  letting an optimizer grind indefinitely.**
+- **Rational (P/Q) refits for log_2/acos_poly (2026-07-08)**: log_2 ruled
+  out by analogy (needs a division in the same fatal critical-path
+  position as an already-rejected idea). acos_poly's fit failed to
+  converge within 60s at two degrees — a reproducible dead end.
 
-- **Rational (P/Q) refits for sinf_poly and erf_poly (2026-07-08) —
-  closes out the "Rational (P/Q) refits of pure polys" backlog entry
-  entirely: 4 for 4 rejected, no candidate left untested.** Following
-  directly on the log_2/acos_poly rejections above, checked the
-  remaining two named candidates with a short-timeout scipy screen
-  each. `sinf_poly`: fit `(sin(x)-x)/x³` (the shipped poly's actual
-  target, computed via its own convergent Taylor series to sidestep a
-  catastrophic-cancellation bug the first attempt at this script hit
-  computing `sin(x)-x` directly in float64 for small x) as degree-1/1
-  and degree-2/2 rationals, seeded from the shipped poly's own
-  coefficients — both converged (no timeout this time) but landed at
-  max relative error ~8.4e-2, five orders of magnitude *worse* than the
-  shipped 4-coefficient poly's own 1.1e-7. `erf_poly`: fit `log2(erfc(xa))`
-  (erf's tail branch's actual target) as degree-2/2 and degree-3/3
-  rationals, same seeding approach — timed out at 30s for both, the
-  same non-convergence failure mode as `acos_poly`. Not chased further
-  for either. **General lesson: this backlog entry's own framing ("a
-  degree-(m/n) rational typically matches a degree-(m+n) poly's
-  accuracy") turned out not to hold for a single one of its four named
-  candidates in this crate — every candidate either failed to fit at
-  all (`acos_poly`, `erf_poly`) or fit far worse than the incumbent poly
-  (`sinf_poly`), or was ruled out on structural grounds before fitting
-  even mattered (`log_2`). A plausible-sounding general claim about
-  rational vs. polynomial approximation theory doesn't automatically
-  transfer to a *specific* already-well-fit target function — worth
-  remembering before assuming a "rational should beat a poly of similar
-  total degree" framing applies to any particular case without
-  checking.**
+- **Rational (P/Q) refits for sinf_poly and erf_poly (2026-07-08)**:
+  sinf_poly's fit converged but landed 5 orders of magnitude worse than the
+  incumbent poly; erf_poly's fit timed out at 30s both degrees (same dead
+  end as acos_poly). Closes the backlog entry: 4 for 4 rejected.
 
-- **cos (fast tier) dedicated even poly in r² (2026-07-08): quick scipy
-  check confirms the backlog's own "probably dies" prediction was
-  correct — a validated-not-refuted case, worth recording since this
-  session has found predictions wrong at least as often as right.** The
-  entry itself already predicted failure (relative error blows up near
-  cos's zeros for an absolute-error-fit even poly) without implementing
-  anything, just recording the reasoning. Checked directly: fit a
-  degree-6 even poly for `cos(r)` over `r ∈ [-pi/2,pi/2]` (Taylor-seeded)
-  and measured relative error specifically near the domain edge (within
-  0.05 of `±pi/2`, where `cos(r)` shrinks to ~1e-6) vs. the rest of the
-  domain: 6.8e-5 near the edge vs. 2.8e-5 elsewhere — measurably worse
-  near the zero, and the absolute error there (1.36e-6) doesn't shrink
-  with the true value the way it would need to for the relative error
-  to stay flat, confirming it diverges (unbounded relative error) at the
-  exact zero itself. Not implemented (no Rust written, no mca run) —
-  the accuracy failure was already the backlog's own stated reason not
-  to pursue this, and the quick check confirms rather than refutes it,
-  so there's nothing more to gain from a full implementation.
+- **cos (fast tier) dedicated even poly in r² (2026-07-08)**: backlog
+  itself predicted failure (relative error blows up near cos's zeros) — a
+  quick scipy check confirmed it (unbounded relative error at the zero).
+  Not implemented.
 
-- **Simulated annealing / basin-hopping over coefficient space
-  (2026-07-08), implemented and tested on acos_poly — rejected, and it
-  walked straight into the exact known trap this file already documented
-  for cbrt_throughput's tuning.** Added `tune_basin_hop` to `tune.rs`:
-  runs the usual single-axis coordinate descent to a local optimum,
-  then repeatedly perturbs 2-3 random coefficients simultaneously (a
-  wider jump than the descent's own ±16-per-step reach, meant to cross
-  "diagonal valleys" a single-axis search can't) and re-descends,
-  keeping the result only if it improves. First attempt used the full
-  10000-step grid `acos_poly`'s own tuning already uses and 100-2000
-  restarts — far too slow to be practical (each restart re-runs a full
-  descent; killed after several minutes with no result). Switched to a
-  100x coarser grid (1M-step) for speed, 50 restarts: found a candidate
-  reporting max ulp 2 vs. the single-axis descent's max 3 *on that same
-  coarse grid*. Implemented it for real and checked against the actual
-  accuracy.rs fuzz (100M samples) before trusting it, given this file's
-  own established discipline: the candidate measured max ulp 4 (no
-  better than shipped) and avg ulp 0.9611 vs. shipped's 0.4961 — nearly
-  *double*, a real regression, not the improvement the coarse grid
-  promised. Root cause is the same `score()`-returns-`(max,sum)`-compared-
-  by-Rust's-default-tuple-ordering issue already documented for
-  cbrt_throughput: `descend()` (the basin-hop's own inner loop) inherits
-  this exact max-first bias, so it can find a coefficient set that
-  shaves the *coarse grid's* worst case while quietly wrecking the
-  average on the *real* domain the coarse grid doesn't fully represent.
-  Not adopted; `src/lib.rs`/`accuracy.rs` scratch reverted, kept
-  `tune_basin_hop` in `tune.rs` as reference infra (its own doc comment
-  now documents this exact failure prominently, so a future user doesn't
-  have to rediscover it). **General lesson: a *new* search technique
-  built on top of `tune()`'s existing `score()`/comparison machinery
-  inherits that machinery's known flaws automatically — extending the
-  tuner doesn't launder away the max-first-bias caveat already on record
-  for the base coordinate descent, and any new tuning tool built this way
-  needs the same "verify against real fuzz, don't trust the tool's own
-  report" discipline from day one, not just the original `tune()`.**
+- **Simulated annealing / basin-hopping (2026-07-08)**: implemented as
+  `tune_basin_hop`, tested on acos_poly. Coarse-grid candidate reported max
+  ulp 2 (vs. descent's 3) — real fuzz showed it was actually a regression
+  (avg 0.961 vs shipped 0.496, nearly double). Same `score()`-tuple
+  max-first bias already documented for cbrt_throughput. Not adopted; kept
+  as reference infra with the failure documented.
 
 ---
 
-# Brainstorm backlog (2026-07-08) — UNTESTED
+# Brainstorm backlog — UNTESTED
 
-Kitchen-sink candidates, none implemented or measured. Every one must
-survive the usual gauntlet before adoption: auto-vectorization check
-(`--emit=asm`, no scalar fallbacks), exhaustive/fuzz accuracy.rs sweep,
-edgecheck.rs, and mca latency+throughput (both axes — this file is full of
-"latency won, throughput lost" reversals). Ideas already tried and rejected
-above are deliberately absent. Hardware context that shapes several of
-these: the FP divider is nearly idle in every measured hot loop while the
-FMA/mul ports are the bottleneck, so "add a division to remove fmas" is a
-legitimate direction here, unlike on most targets.
+Every candidate needs: auto-vectorization check, exhaustive/fuzz accuracy
+sweep, edgecheck.rs, and mca latency+throughput (both axes). FP divider is
+nearly idle in every measured hot loop while FMA/mul ports are the
+bottleneck, so "add a division to remove fmas" is a legitimate direction.
 
 ## Cross-cutting / methodology
 
-- **Sollya `fpminimax` instead of lolremez + coordinate descent**: the
-  coordinate-descent tuner has hit literal zero-move local optima on
-  exp2/log_2 (see above), but fpminimax solves the coefficient-quantization
-  problem *jointly* (lattice reduction over the f32 grid), which routinely
-  beats round-then-tune, especially at higher degree. Candidates where max
-  ulp is still an open residual and this exact technique (sollya's own
-  lattice-reduction search, distinct from the LP/scipy techniques already
-  tried elsewhere in this file) hasn't been tried: acos_poly (max 4),
-  erfc's n/d (max ~100, root cause since traced to the exponent
-  computation, not the poly -- see tried-and-rejected log, so a tighter
-  poly fit alone won't fix it). `sollya` is not installed on this machine
-  (`which sollya` finds nothing) -- would need it added first, a bigger
-  step than this loop should take unilaterally.
+- **Sollya `fpminimax`**: not installed. Candidates: `acos_poly` (max 4),
+  erfc's n/d (max ~100, root cause already traced elsewhere — a tighter
+  fit alone won't fix it).
 
-- **Exhaustive/rlibm-style correctly-rounded coefficient search for the
-  smallest polys**: for a 4-coefficient poly over a bounded f32 domain, the
-  set of coefficient vectors that round correctly at every domain point is
-  an intersection of half-planes (linear in the coefficients) — an LP/
-  interval search can find the *global* optimum rather than a local one.
-  Tested on cbrt's correction poly (4 coeffs): modeled the downstream
-  error-propagation tolerance for cbrt_normal's `ss*(1+r*p(r))` combine as a
-  per-sample-point linear constraint, ran `scipy.optimize.linprog` to find
-  the coefficient vector needing the least tolerance headroom (`t=0.56`,
-  i.e. a feasible fit using only 56% of a conservative 1-ulp budget
-  everywhere sampled) — genuinely a different search technique from
-  least-squares/coordinate-descent, and it delivered on its own promise: a
-  real domain-matched fuzz + exhaustive sweep confirmed max ulp 3 -> 2. But
-  avg ulp got *worse*, 0.3125 -> 0.4487 (confirmed both quick-fuzz and
-  exhaustive, stable, ~43% relative regression) — same failure shape as
-  the acos_poly basin-hop: an LP feasibility search finds a *vertex* of the
-  feasible polytope, which is inherently a minimax-flavored (Chebyshev-like)
-  solution that trades typical-case error for a tighter worst-case bound,
-  the opposite of this crate's established priority (this exact poly's own
-  last shipped refit explicitly optimized avg ulp with max ulp held
-  constant, not the reverse). A secondary L1-minimization pass at a looser
-  fixed tolerance just reconverges to the plain analytic Taylor
-  coefficients (no rounding-awareness), which the doc comment already shows
-  is worse on avg than the current tuned poly. Rejected; reverted. Still
-  realistic to try on sinf_poly (4 coeffs) or expm1's Pade (5) if a
-  worst-case bound ever becomes the binding constraint there instead of
-  avg ulp -- but don't expect a free lunch on avg ulp from this technique.
-  Also since tried against a *max-capped* variant of the same LP instead
-  of plain Chebyshev minimax (minimize the weighted-L1 objective subject
-  to the max weighted error never exceeding the shipped coefficients' own
-  bound) — this fixes the avg-ulp regression the plain-minimax version
-  above hit, and is the technique worth reaching for first on any future
-  poly refit of this kind.
+- **Exhaustive/rlibm-style LP coefficient search**: tested on cbrt's
+  correction poly — plain-minimax found max ulp 3→2 but avg *regressed*
+  43% (minimax trades typical-case error for worst-case). A max-capped
+  variant (minimize weighted-L1 subject to max weighted error never
+  exceeding shipped) fixes this — use the max-capped version first on any
+  future poly of this kind.
 
-- **Batch/slice API tier (`exp2_slice(&[f32], &mut [f32])` etc.)**: the
-  crate's whole perf story assumes the *caller's* loop auto-vectorizes;
-  fixed-chunk slice entry points make that the crate's job instead
-  (process in `[f32; 16]` chunks internally, same idiom as the bench
-  harness), and open the door to explicit `core::simd` internals later
-  without changing the scalar API. Also the natural place for a `sincos`
-  (below).
+- **Batch/slice API tier** (`exp2_slice` etc.): lets the crate own
+  vectorization instead of the caller's loop; natural home for a fast
+  sincos too.
 
-- **Explicit `core::simd` internals as a fallback tier**: not to replace
-  autovectorization, but for the few constructs autovectorization can't
-  form at all (gathers for LUT variants, per-lane shuffles). Only worth it
-  if a LUT idea below ever survives screening.
+- **Explicit core::simd fallback tier**: only worth it if a LUT idea ever
+  survives screening.
 
 ## log_2 / ln / log10
 
-- **Shared denormal-rescale helper**: log_2/ln/log10 triplicate the
-  tiny/xs/koff dance. Pure hygiene, no perf claim — only worth doing if
-  touching these anyway.
+- **Shared denormal-rescale helper**: pure hygiene (log_2/ln/log10
+  triplicate the tiny/xs/koff dance), no perf claim.
 
 ## sin / cos / tan
 
-- **`sincos_checked` returning both values from one reduction (2026-07-08),
-  implemented and measured — bit-exact but no real speedup, reverted**:
-  confirmed the entry's own premise exactly: `round_x_over_pi`'s `qh =
-  p0.round()` and `reduce_pi`'s qh-only half (`p1/p2` two_prods and
-  everything folded from them) are provably identical between sin's
-  pre_offset=0 and cos's pre_offset=-0.5 (only `ql` differs) — factored
-  `round_x_over_pi`/`reduce_pi` into a shared qh-part + a per-branch
-  ql-tail (bit-exact refactor, verified against the unfused functions with
-  zero behavior change), then built `sincos_checked` computing the shared
-  part once and only the two ql-tails + two poly evals twice. Verified
-  bit-exact against calling `sin_checked`+`cos_checked` separately across
-  50M fuzz samples *and* all 2^32 f32 bit patterns exhaustively (caught and
-  fixed one real bug along the way: the fused cos branch's parity flip
-  needs the raw pre-+0.5 `kl`, not `kl+0.5` — cos_checked's own `pl =
-  parity(kl)` uses a different variable than the `kl + 0.5` passed to
-  `reduce_pi`, an easy detail to lose when refactoring). llvm-mca predicted
-  a real win (latency unchanged 123.58 cyc — LLVM's own CSE already merges
-  the shared computation when both `#[inline(always)]` calls are adjacent
-  in the *scalar* chain — but throughput 8.466→6.852 cyc/elem, ~19%
-  better, since the vectorized loop apparently doesn't get the same CSE for
-  free). Real wall-clock quickbench flatly disagreed: a naive `s+c`-combine
-  bench first showed the *opposite* direction (fused ~7% worse), which
-  turned out to be a bench-shape artifact; switching to a
-  two-separate-output-array bench (matching how a real caller and mca's
-  own methodology would use it) narrowed it to a wash within thermal
-  noise, and a final noise-resistant interleaved measurement (10 rounds
-  alternating separate/fused, 4096-pass min-of-many each) settled it: fused
-  ~1.4% *slower*, not faster. Not adopted; all reverted (src/lib.rs,
-  mca.rs, mca_target.rs, quickbench.rs). **General lesson: this is the
-  first time in this whole session that llvm-mca's theoretical prediction
-  and real wall-clock measurement flatly *disagreed in direction* (not just
-  magnitude) on a change with a clean, verified mathematical justification
-  — a reminder that mca models an idealized scheduler, not the real
-  vectorizer's actual decisions once closures/tuples/CSE-across-inlined-
-  calls are in play, and that discrepancy itself only showed up because
-  this session's own "verify before trusting one tool" discipline caught
-  it. When mca and quickbench disagree, trust quickbench (real hardware),
-  but don't stop at the first quickbench number either if the bench shape
-  itself is suspect (the s+c-combine variant's answer flipped again once
-  the bench was changed to match realistic usage) — triangulate with a
-  third, noise-controlled measurement before deciding.**
+- **sincos_checked, shared reduction (2026-07-08)**: bit-exact refactor
+  verified exhaustively, mca predicted ~19% throughput win — real
+  wall-clock (after fixing two bench-shape artifacts) found it ~1.4%
+  *slower*. Not adopted. *The one case this session where mca and real
+  hardware disagreed in direction, not just magnitude — triangulate with
+  more than mca on closures/CSE-sensitive changes.*
 
-- **tan via mod-pi/2 reduction + dedicated tan poly with reciprocal branch
-  (2026-07-08), implemented and measured — premise was wrong, real
-  regression on every axis, reverted**: the backlog framed this as fixing
-  "max ulp ~3000 near poles" via `sin(x)/cos(x)` allegedly amplifying
-  error when dividing by a near-zero `cos(x)`. Implemented in full (new
-  `PI_HALF_A..D` Cody-Waite split, `q=round(x*2/pi)`, `r` in `[-pi/4,
-  pi/4]`, a dedicated degree-6 `tanf_poly(r)` fitted with scipy, `-1/t`
-  reciprocal branch by q's parity) — and direct spot-checks at exact odd
-  multiples of pi/2 (`k*pi/2` for `k` up to 1001) showed the *old*
-  `sin(x)/cos(x)` form was already 0-1 ulp exactly at the actual poles.
-  The premise doesn't hold for this crate: `sin`/`cos` preserve *relative*
-  precision even as their value shrinks toward zero (their own reduction
-  + poly don't suffer cancellation), so dividing two independently-
-  accurate values doesn't catastrophically amplify error the way the
-  backlog assumed — the real ~3000 max ulp turned out to come entirely
-  from `sin`/`cos`'s own well-known large-`|x|` degradation near their
-  *domain* cliff (~1.3e7), inherited by any tan built on top, not from
-  evaluating near a pole at moderate `x` at all. Measured comparison
-  (exhaustive-adjacent fuzz, bucketed by `|x|`): the new reduction is
-  *worse* in every practical bucket (`|x|<10`: max ulp 4→5; `|x|<1000`:
-  4→5; `|x|<1e6`: 9→17; `|x|<2^22*pi/2≈6.6e6`: 136→9656) and additionally
-  has a *narrower* safe domain than the old form (its own cliff sits at
-  `2^22*(pi/2)≈6.6e6`, half of `sin`/`cos`'s `2^22*pi≈1.3e7`, since `q`'s
-  magnitude scales with `2/pi` instead of `1/pi`). Reverted; `src/lib.rs`
-  untouched. **General lesson: before implementing a fix framed around
-  "operation X amplifies error near Y," check the actual current
-  behavior at Y directly (a handful of spot-check values) — here it took
-  under a minute and would have saved the whole implementation effort.**
+- **tan via mod-pi/2 reduction + dedicated poly (2026-07-08)**: backlog's
+  premise (division near a pole amplifies error) was wrong — spot-checks
+  showed the old sin(x)/cos(x) form was already 0-1 ulp at the actual
+  poles. The real ~3000 max ulp comes from sin/cos's own large-x domain
+  cliff, inherited regardless. New reduction measured worse everywhere and
+  has a narrower safe domain. Reverted. *Check the actual behavior at a
+  claimed failure point before implementing a fix.*
 
-
-- **cbrt: rational correction, (1+r)^(-1/3) ≈ P(r)/Q(r), 2/2 with the same
-  4 coefficients as the shipped degree-3 poly (2026-07-08)**: scipy
-  `least_squares` found a 2/2 rational fitting the underlying math
-  ~100x tighter than the shipped poly (max abs error 1.9e-9 vs 1.9e-7,
-  same coefficient count) — looked very promising in isolation. Didn't
-  survive contact with the real crate: `tune.rs`'s own coordinate-descent
-  (seeded from the scipy fit, not 0.0) converged to max ulp unchanged (2)
-  with avg *slightly worse* (0.339→0.359) on the tuning grid, and
-  implementing it directly confirmed this on the real exhaustive/fuzz
-  pipeline too (avg ulp 0.3113→0.4675, max unchanged at 3) — the
-  underlying approximation is tighter, but both forms are already deep
-  enough into f32's own rounding-noise floor (a handful of fma/mul/div
-  ops each contributing up to 0.5 ulp) that a 100x-tighter *mathematical*
-  fit doesn't move the *computed* result's ulp count; the rational's
-  extra division adds one more rounding step, roughly a wash on accuracy
-  or slightly worse. Also failed on speed, contrary to the backlog's
-  "divider is idle" framing: mca latency 35.06→45.06 cyc (+28.5%),
-  throughput 1.629→1.657 cyc/elem (+1.7%, also worse) — unlike
-  `cbrt_normal`'s existing `rcp` (started immediately, independent of the
-  seed chain, so its latency hides behind other work), this new division
-  sits *after* the seed/r computation on the critical path, with nothing
-  to hide behind. Not adopted; reverted.
-
+- **cbrt: 2/2 rational correction (2026-07-08)**: ~100x tighter in
+  isolation, but both forms are already deep in f32's rounding-noise
+  floor, and the extra division sits after the seed on the critical path
+  with nothing to overlap (latency +28.5%, avg ulp regressed slightly).
 
 ## hypot / misc
 
-- **remainder_checked beyond 2^24**: double-float q (qh, ql) like
-  sin_checked's reduction, with two correction candidates instead of one.
-  Heavy; only worth it if a real use case needs |x/y| > 2^24.
+- **remainder_checked beyond 2^24**: double-float q like sin_checked's
+  reduction. Only worth it if a real use case needs it.
 
-
-## Backlog round 2 (2026-07-08) — also untested
+## Backlog round 2
 
 ### Cross-cutting / approximation theory
 
-- **Automated evaluation-order search per poly**: the log shows fma
-  reassociation is a per-poly coin flip (`acos_poly`'s Estrin attempt
-  cost real accuracy, `atan_poly`'s cost real throughput, elsewhere in
-  this file). Enumerate all valid
-  parenthesizations/groupings of each fixed coefficient set (there are
-  only dozens for degree ≤ 9), score each with the exhaustive sweep + mca
-  automatically, keep the Pareto set. Turns the recurring hand-tries into
-  one script.
+- **Automated evaluation-order search per poly**: fma reassociation is a
+  per-poly coin flip (acos_poly's Estrin cost accuracy, atan_poly's cost
+  throughput). Could enumerate Horner/Estrin groupings and score
+  automatically.
 
-- **ulp-weighted minimax fits**: lolremez weights target relative error,
-  but the actual objective is *ulp*, which is a staircase in the result's
-  exponent — near an output power-of-two boundary, relative error and ulp
-  disagree by up to 2x. A weight of 1/ulp(f(x)) (piecewise-constant) in
-  the fit could buy back exactly the boundary cases that show up as
-  max-ulp outliers.
+- **ulp-weighted minimax fits**: weight coefficient fits by 1/ulp(f(x))
+  instead of plain relative error, since ulp is a staircase near output
+  power-of-two boundaries.
 
-- **Worst-case patch lists**: functions whose exhaustive sweep leaves a
-  literal handful of failing inputs could compare-select against the known
-  bad bit patterns (1-2 vcmpps+blend if the misses share a mantissa or
-  cluster). Fragile (any refit invalidates the list) and only sane where
-  the count is tiny and stable; record which functions actually have
-  concentrated misses first. Checked erfc (2026-07-08), the obvious
-  candidate given three separate refit attempts all converged on the same
-  reported "worst x ~8.6-9.0" -- scanned x in [0,15] and found ~4900 points
-  with ulp>=90, spread *continuously* across x in [8.00, 9.17], not a
-  concentrated handful. Makes sense in hindsight: the root cause (already
-  diagnosed, see erfc compensated-Horner's entry) is a continuous precision
-  loss in the upstream exponent computation across a whole magnitude band,
-  not a few isolated rounding-boundary coin-flips -- exactly the "systematic
-  vs. rare-tie-break" distinction that determines whether this idea even
-  applies. Not viable for erfc. cbrt_accurate's own single recurring bad
-  mantissa (0x353b5) would fit the "tiny and stable" bar but is an
-  already-decided won't-fix, not something to patch. No other function in
-  this crate is known to have a concentrated-miss profile; this idea stays
-  parked until one shows up.
+- **Worst-case patch lists**: compare-select against known bad bit
+  patterns for functions with a tiny, stable set of failures. Checked
+  erfc — not viable (~4900 bad points spread continuously, not
+  concentrated). cbrt_accurate's one bad mantissa fits the bar but is an
+  accepted won't-fix. Parked.
 
-- **FTZ/DAZ feature flag**: under a cargo feature declaring "caller runs
-  with FTZ+DAZ on" (the common game/audio configuration), every denormal
-  branch (log family's tiny rescale, cbrt's, exp2_checked's low clamp)
-  becomes dead code. Free speed for users who already flush anyway;
-  compile-time contract, no runtime cost for anyone else.
+- **FTZ/DAZ feature flag**: a cargo feature assuming caller-side FTZ/DAZ
+  would let every denormal branch (log family, cbrt, exp2_checked) become
+  dead code.
 
-- **f32x16/AVX-512 via function-level `#[target_feature]`**: the rejected
-  zmm attempt went through rustc-wide flags; an explicit `core::simd`
-  f32x16 slice-API path under `#[target_feature(enable = "avx512f")]`
-  sidesteps LLVM's tuning-table choice entirely. Downclocking concern
-  stands, but it was never actually measured — a slice-API experiment
-  would settle the register-pressure question the flags route couldn't.
+- **f32x16/AVX-512 via #[target_feature]**: an explicit core::simd path
+  sidesteps LLVM's refusal to force zmm-width; never measured.
 
-- **Cross-check mca with uiCA and real counters**: llvm-mca's scheduling
-  model has already produced caller-dependent surprises (e3 downgrade).
-  uiCA is measurably more accurate for Tiger Lake, and `perf stat` on the
-  quickbench loops validates either. Methodology, but it de-risks every
-  other entry here.
+- **Cross-check mca with uiCA and real perf counters**: mca's scheduling
+  model has already produced caller-dependent surprises; uiCA is
+  reportedly more accurate for this CPU.
 
 ### sin / cos
 
-- **mod-pi/2 reduction with paired even/odd polys (2026-07-08), screened
-  with scipy + a rounding-faithful f32 simulation before touching Rust —
-  the domain-halving accuracy win is real but too small, and the "evaluate
-  both + blend" framing undercounts the real op cost; not implemented.**
-  Original idea: reduce with q = round(x·2/pi) so |r| ≤ pi/4, then select
-  sin(r)/cos(r) by quadrant, speculating the poly degree "drops hard" on
-  the halved range and that sharing r²/r⁴ makes evaluating both polys cost
-  much less than 2x. Checked both claims before writing any Rust:
-  1. **Degree only drops by one coefficient, not dramatically.** Fit the
-     same odd/even reduced forms this crate already uses (`sinf_poly`'s
-     `r+r³·P(r²)`, cos's `1-r²/2+r⁴·Q(r²)`) via least-squares at both
-     domain half-widths: at pi/2, 4 correction coefficients are needed to
-     reach ~6.9e-8 max relative error (this fit reproduced the shipped
-     `sinf_poly` coefficients almost exactly — a good sanity check on the
-     method); at pi/4, 2 coefficients only reaches ~1.2e-5 (confirmed too
-     loose below), 3 reaches ~3e-8 (sin) / ~2.4e-9 (cos). Halving the
-     domain buys exactly one fewer coefficient per poly, not the "drops
-     hard" the entry hoped for.
-  2. **"Costs much less than 2x" doesn't survive a real op count.** This
-     crate's existing `sin`/`cos` already share a *single* poly
-     (`sinf_poly`, 4 coefficients) via the phase-shift trick, with 1-bit
-     parity — so the real comparison is 1 poly/4 coeffs/1-bit-select vs. 2
-     polys/3+3 coeffs (both `sin(r)` and `cos(r)` must be evaluated
-     unconditionally per this crate's branchless-select convention, since
-     the quadrant is a runtime value) plus a 2-bit quadrant blend. Hand-
-     counting fma/mul ops for a standalone `sin(x)` call: current ≈16 (6
-     reduction + 3 mul + 4 fma poly + copysign + 1-bit xor); mod-pi/2 ≈20
-     (6 reduction + 2 shared mul + 4 fma sin_r + 4 fma cos_r + ~4 for the
-     2-bit select/sign) — ~25% *more* hot-loop arithmetic, not less.
-  Confirmed accuracy separately with a rounding-faithful f32 numpy
-  simulation (round every op to f32, this crate's own established
-  pre-Rust screening idiom) using the crate's real PI_A..D split halved
-  exactly (`PI2_A = PI_A/2` etc., bit-exact since these constants already
-  carry trailing mantissa zero bits): the 3-coefficient version gives
-  avg/max ulp 0.136/2 (sin) and 0.147/14 (cos) over a log-uniform
-  |x|≤1e6 sweep — about as tight as the real shipped numbers (re-measured
-  fresh via `accuracy.rs`: sin |x|≤1e6 avg/max 0.0409/3, cos 0.0830/3),
-  so accuracy was never the blocker. The aggressive 2-coefficient version
-  (the one that would actually cut total ops below the current 16) blows
-  up badly instead (avg ulp ~6.3/5.9, both catastrophically over the
-  sub-ulp-average bar) — the "drops hard" framing fails at the aggressive
-  end too. Given the op-count math already predicts a real throughput
-  regression (more fma/mul port pressure, this crate's own repeatedly-
-  measured hot-loop bottleneck) for zero accuracy benefit (current `sin`/
-  `cos` are already ~10-100x tighter than the sub-ulp-average bar), a full
-  implementation (new pi/2 constants, quadrant-select logic, re-verifying
-  the domain cliff at its 2x-tighter bound, full accuracy.rs/edgecheck/mca
-  cycle) isn't justified by the likely outcome. Not implemented — killed
-  by reasoning from real op counts one step earlier than usual (before
-  even a hand-written Rust prototype, let alone mca), same discipline as
-  the `exp` k1/k2-clamp entry's fast falsification. One narrower case
-  would likely still come out ahead: a hypothetical combined
-  `sincos(x) -> (f32,f32)` amortizes the second poly across both outputs
-  (~24 ops for both together vs. ~32 for two separate current-style
-  calls) — but this crate has no fast-tier combined sincos today, and the
-  *checked*-tier version of exactly that sharing idea (`sincos_checked`,
-  sharing only the reduction, not the poly) already measured no real
-  wall-clock win despite a clean bit-exact/mca-predicted-win setup (see
-  that entry above) — discouraging enough to not build a new API just to
-  pair with this. Left open only for that narrower, not-yet-existing
-  case; the entry as originally scoped (speed up the existing standalone
-  `sin`/`cos`) is closed.
+- **mod-pi/2 reduction with paired even/odd polys (2026-07-08)**: checked
+  both backlog claims before writing Rust — degree only drops by 1
+  coefficient (not "hard"), and real op count is ~25% *more*, not less,
+  once both polys are evaluated unconditionally. Accuracy was never the
+  blocker; killed by op-count reasoning alone. A hypothetical combined
+  sincos might still pay off, but sincos_checked's own real-hardware result
+  discourages building a new API for it.
 
-- **Vectorized Payne-Hanek "exact" tier**: full-range correct reduction
-  needs the 2/pi product against x's mantissa with the window selected by
-  x's exponent — per-lane variable shifts exist (vpsrlvd, AVX2) and the
-  2/pi table is small enough for a 4-8 constant select tree instead of a
-  gather. Would make a `sin_exact` with no accuracy cliff anywhere in
-  f32. Big job, listed for completeness (the "graceful degradation"
-  contract makes it optional, not required).
+- **Vectorized Payne-Hanek "exact" tier**: full-range correct reduction via
+  a 2/pi mantissa product with a per-lane variable shift. Big job, optional
+  given the graceful-degradation contract.
 
 ### atan / asin / acos
 
-- **atan_poly denominator refit via max-capped LP, numerator fixed
-  (2026-07-09), screened and rejected — no meaningful headroom found,
-  matching this session's "already near floor" pattern rather than a
-  real win.** `atan_poly` is a 3/3 Padé (see its own commit-history
-  comment for the degree-bump story) — the rational form makes a joint
-  max-capped LP harder to set up than a pure poly (a coefficient
-  perturbation in the denominator doesn't enter the output linearly, due
-  to the division), so this held the numerator fixed at its shipped
-  values and only fit the denominator: `output = numer_fixed(x)/denom(x2)`,
-  so `denom(x2) ≈ numer_fixed(x)/atan(x)` is a valid linear target for
-  the denominator's 3 free coefficients (denom's 3 coefficients are
-  linear in the output once the numerator is fixed). Result: max
-  weighted error 0.0257->0.0256, avg 0.007964->0.007964 — both
-  essentially unchanged (<1% movement), and the returned coefficients
-  matched the shipped denominator to 6+ significant figures — the
-  isolated metric alone was decisive enough to skip a Rust round-trip
-  this time. Not implemented; no code changed. Separately, an equivalent
-  numerator-only refit (denominator held fixed) was also tried: the
-  isolated fit predicted a dramatic win (max weighted error 0.279->0.026,
-  ~11x; avg 0.122->0.008, ~15x — by far the largest isolated-metric
-  prediction this session produced) but real, exhaustive verification
-  found only a tiny avg improvement (`atan` avg ulp 0.0681->0.0675,
-  ~0.9%) with max ulp *unchanged* at 4 and the *exact same* worst-case
-  `x` (1.0220603) before and after — confirming the numerator was never
-  the binding constraint for `atan`'s real worst case either. Between
-  the two halves, the true worst-case residual for `atan` isn't
-  reachable by tuning either the numerator or the denominator's
-  coefficients alone; it most likely lives in the division itself or
-  the `a<1`/`a>=1` reciprocal-fold boundary near `x=1`, neither of which
-  a coefficient refit can touch. **General lesson: when only refitting
-  *part* of a multi-piece pipeline (here, one half of a rational, with
-  the other half and the division itself untouched), the isolated
-  metric's prediction reflects only that one piece's own theoretical
-  ceiling, which can be wildly larger than what the whole pipeline's
-  real bottleneck allows through — worth checking whether the refit
-  target is a genuine sole contributor before trusting an unusually
-  large isolated-metric prediction.**
+- **atan_poly denominator LP refit, numerator fixed (2026-07-09)**:
+  essentially no movement (<1%, coefficients matched shipped to 6+ digits)
+  — decisive enough to skip a Rust round-trip. Combined with a separate
+  numerator-only refit (isolated fit predicted 11-15x, largest of the
+  session, but real result was only ~0.9% with max ulp unmoved and the
+  identical worst-case x before/after): atan's true worst-case residual
+  isn't reachable by tuning either half; likely lives in the division
+  itself or the a<1/a>=1 reciprocal-fold boundary.
 
-- **Retune asin's 0.25 crossover after any acos_poly change (2026-07-08),
-  checked and confirmed already near-optimal, no change**: the joint
-  acos+asin refit (fix 7 in asin's own doc comment, commit `b9f9b5d`)
-  changed `acos_poly`'s coefficients *after* fix 6 had picked the 0.25
-  threshold against the *old* coefficients -- exactly the situation this
-  bookkeeping entry existed to catch. Probed both branches' real error
-  curves (bucketed max/avg ulp vs f64::asin ground truth, same methodology
-  as fix 5) across a in [0, 0.5] using the *current* (post-refit)
-  `acos_poly`. Found the true max-ulp crossover sits around a~0.26, not
-  0.25 -- but the exhaustive accuracy.rs sweep's own reported worst case
-  (max ulp 9 at x=0.24595731) sits *inside* `asin_small`'s own domain,
-  a local peak in the Taylor branch's own truncation error right before
-  the 0.25 edge, not a boundary-placement artifact: `big`'s error in that
-  exact neighborhood (a in [0.245, 0.25)) is *worse* (~15-16 ulp per the
-  probe), so no threshold placement in this region rescues that specific
-  point -- moving the boundary earlier trades into `big`'s even-worse
-  region there, moving it later just lets `asin_small`'s own peak keep
-  climbing. 0.25 is already close enough to the true crossover (~0.26)
-  that the difference is noise-level and doesn't touch the function's
-  actual max-ulp bottleneck either way. No change made; this closes out
-  the bookkeeping entry with a definitive negative answer rather than
-  leaving it open.
+- **Retune asin's 0.25 crossover after acos_poly changes (2026-07-08)**:
+  true crossover sits around 0.26, but the reported max-ulp point sits
+  inside asin_small's own domain regardless of threshold placement. 0.25
+  already close enough; no change.
 
-- **asin_small: one more Taylor term (2026-07-08), immediate follow-up to
-  the crossover check above -- real avg win, max ulp unmoved, real perf
-  cost, rejected**: since the crossover investigation just above found
-  `asin`'s max ulp (9) sitting *inside* `asin_small`'s own truncation
-  error right at its domain edge, the natural next question is whether
-  the Taylor series itself (not the crossover) is the fixable part. Added
-  the next exact term (`35/1152 * x^9`, one more fma in the Horner chain).
-  Exhaustive sweep: avg ulp improved a real 16% (0.0303 -> 0.0254), but
-  max ulp stayed exactly 9 -- just relocated from x=0.24595731 (inside
-  `asin_small`'s domain) to x=0.3321139 (inside the `big`/acos_poly
-  branch's domain). The two branches were tied co-bottlenecks at 9 ulp
-  each at their respective worst points; fixing one just exposes the
-  other, unchanged, as the new reported max. mca confirmed a real cost for
-  that non-improvement: latency 59.03 -> 63.03 cyc (+6.8%), throughput
-  0.968 -> 1.044 cyc/elem (+7.9%), both worse, matching the plain +1-fma
-  op-count change. Fails the bar cleanly (no max-ulp win, and a real perf
-  penalty for the avg-only gain). Not adopted; reverted. **General lesson:
-  when two independent branches happen to tie at the same max-ulp value,
-  improving either one in isolation looks like it "didn't help" not
-  because the fix was wrong, but because the *other*, untouched branch was
-  always going to cap the reported number regardless -- worth checking
-  which branch a worst-case x actually falls in before assuming a fix to
-  that branch will move the crate-wide statistic.**
-
-
+- **asin_small: one more Taylor term (2026-07-08)**: real 16% avg
+  improvement, but max ulp just relocated to a tied co-bottleneck in the
+  acos_poly branch, unchanged overall, plus a real perf cost. Not adopted.
+  *When two branches tie at the same max-ulp value, fixing one just exposes
+  the other.*
