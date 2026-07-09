@@ -1411,6 +1411,46 @@ cousin.
     idiom (`x.to_bits() & !SIGN_MASK` compared against `0`/`EXPONENT_MASK`)
     for exactly this class of zero/inf/nan guard, which is already known
     to vectorize cleanly everywhere else it's used.*
+
+    **Follow-up (same day): swept the crate for this exact pattern in
+    already-shipped functions.** `powf_checked`'s own `ax > 0.0 &&
+    ax.is_finite()` guard (a compound `&&` of two conditions, the same
+    shape that broke here) turned out to have the *identical* live
+    regression -- confirmed via the actual assembly (`vextractps` +
+    scalar int test/cmp/set chains + `kshiftlb`/`kshiftrb`/`korb`
+    mask reassembly, all present) before fixing it with the same
+    bit-trick rewrite: bit-identical accuracy (verified via fuzz +
+    edgecheck, all special cases unchanged), real mca win, throughput
+    9.293->9.105 cyc/elem (-2.0%), latency 130.67->130.33 (-0.3%).
+    Commits `3d9c67d` (code), `69164a5` (readme sync). Also checked
+    `remainder`/`remainder_ieee`/`remainder_checked`/`remainder_wide`/
+    `fmod`, which all share an *identical-looking* `y.is_infinite() &&
+    x.is_finite()` compound guard -- a naive broad grep for
+    `vextractps|kmovd|kshiftlb|kshiftrb|korb|kandb` suggested
+    `remainder_checked`/`remainder_wide` had the same issue (4 matches
+    each) while the other three didn't (0 matches), but checking
+    specifically for `vextractps`/`kshiftlb` (the actual catastrophic
+    signature, not just any `kmovd`) showed **zero** in all five --
+    the same textual guard pattern does *not* uniformly trigger the bad
+    codegen, apparently depending on surrounding context LLVM sees
+    (register pressure, nearby ops) rather than the condition's own
+    shape alone. Applied the bit-trick rewrite to
+    `remainder_checked`/`remainder_wide` anyway on the (wrong) assumption
+    the broad grep was meaningful, then measured mca before committing
+    (per this session's own discipline) -- numbers came back **bit-for-
+    bit identical** to the pre-rewrite baseline (46.13/1.287 and
+    179.20/8.876, exactly matching readme.md's existing values),
+    confirming these two never had the expensive pattern at all; the
+    broad grep's "4 matches" were benign, ordinary AVX-512 mask usage
+    unrelated to this bug. Reverted that unnecessary rewrite (kept only
+    the two confirmed-beneficial fixes above) rather than leave in
+    complexity with no measured payoff. *A grep for `kmovd`/`kshiftlb`-
+    family mnemonics alone is not a reliable detector for this
+    de-vectorization class -- always confirm the specific
+    `vextractps`-plus-mask-reassembly *chain* is present (and ideally
+    confirm via an actual mca before/after, not just instruction-count
+    grepping) before spending effort "fixing" a guard that was already
+    vectorizing fine.*
 91. **Exhaustive-verified minimax over *reduced* domains** (true rlibm):
     for polys whose reduced input takes ≤2^26-ish distinct values (exp2's
     f after quantization? log's s per exponent?), solve the actual integer
