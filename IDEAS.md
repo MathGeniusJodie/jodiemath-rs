@@ -391,7 +391,7 @@ brainstorm backlog lives at the bottom of this file.
   ~18%, accurate that time; erf: predicted ~35%, got ~0.9%, off by 30x+)
   — trust it to decide which candidates are worth building and testing
   for real, never trust its predicted size as the actual expected
-  result.**
+  result.** Commit `d5bb848`.
 
 - **acos_poly refit against joint acos+asin objective, unconstrained variant
   (2026-07-07)**: an unconstrained joint metric (`max(acos ulp, asin ulp)`)
