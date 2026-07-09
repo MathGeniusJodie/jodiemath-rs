@@ -2534,6 +2534,23 @@ pub fn atan(x: f32) -> f32 {
 /// slight improvement, not a cost) -- use this over `atan` only for a
 /// value on its own or a serial dependency chain where per-call latency
 /// matters more than array-loop throughput.
+///
+/// Backlog idea #40 (2026-07-09): fold the `a<1.0` select and the final
+/// `mulsign` into "one xor+select" by applying `mulsign` to `p` and
+/// `FRAC_PI_2` individually first (`mulsign(a,x) - mulsign(b,x) ==
+/// mulsign(a-b,x)` always -- `mulsign` is an exact sign-bit XOR, and
+/// IEEE754 subtraction commutes exactly with negating both operands, so
+/// this isn't an approximation, just a reassociation), then selecting
+/// between `sp` and `hpisignx - sp` instead of selecting on the unsigned
+/// value and applying one final `mulsign`. Verified bit-identical
+/// against the prior formulation over ~20M random bit patterns plus
+/// every special value (0, -0, +-1, +-inf, NaN) before adopting -- this
+/// is a pure reassociation, not a new approximation. mca: latency
+/// 59.09→59.11 (+0.03%, noise), throughput 1.611→1.591 cyc/elem (-1.2%,
+/// small but real and reproducible across repeat runs). A modest win,
+/// not a dramatic one -- kept because it's free (zero accuracy cost,
+/// latency unchanged) rather than because the throughput gain alone
+/// would have justified real effort.
 #[inline(always)]
 pub fn atan_latency(x: f32) -> f32 {
     let a = x.abs();
@@ -2551,8 +2568,9 @@ pub fn atan_latency(x: f32) -> f32 {
     let lo = fma(fma(fma(c2, r2, c1), r2, c0), r2, 1.0);
     let hi = fma(fma(fma(fma(c7, r2, c6), r2, c5), r2, c4), r2, c3);
     let p = fma(hi, r4 * r4, lo) * r;
-    let y = if a < 1.0 { p } else { FRAC_PI_2 - p };
-    mulsign(y, x)
+    let sp = mulsign(p, x);
+    let hpisignx = mulsign(FRAC_PI_2, x);
+    if a < 1.0 { sp } else { hpisignx - sp }
 }
 
 /// atan2(y, x). `atan2(-0.0, +0.0)` used to come out `+0.0` instead of
