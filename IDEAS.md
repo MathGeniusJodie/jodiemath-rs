@@ -750,8 +750,33 @@ cousin.
     `cospi`'s extra reduction rounding gave the fix any real room to work;
     measure both functions sharing an idea separately, don't assume a
     shared reduction trick pays off identically for both.*
-28. **sind/cosd: same trick for d·DEG_TO_RAD_SMALL** — 2-constant split of
-    π/180 (hi with zeroed tail bits so d·HI is exact, lo folded via fma).
+28. **sind/cosd: same trick for d·DEG_TO_RAD_SMALL (two_prod variant tried
+    2026-07-09, rejected -- literal HI/LO split still untested)**: tested
+    idea #27's `two_prod`-based correction (recovers `d*DEG_TO_RAD_SMALL`'s
+    own rounding error, not literally this idea's proposed HI/LO constant
+    split, but attacking the same reduction step) on `sind`/`cosd`
+    separately per this session's own "test siblings independently, don't
+    assume shared payoff" lesson (from idea #27's own sinpi/cospi
+    finding). Result was more clear-cut than sinpi/cospi's own mixed
+    outcome: **zero** measurable accuracy improvement on *both* functions
+    (`sind` avg ulp 0.1237 unchanged -- actually 0.1247, marginally worse
+    within noise; `cosd` avg ulp 0.0725 bit-for-bit identical), while mca
+    showed a real cost on both: `sind` throughput 1.151->1.461 cyc/elem
+    (+27%), `cosd` 1.406->1.798 (+27.9%). Reverted, bit-identical to
+    prior HEAD. Consistent with idea #27's own conclusion that
+    `sinf_poly`'s polynomial fit (not the reduction's own rounding)
+    dominates the error budget here -- if recovering the *multiplication's*
+    rounding error doesn't help at all, the *constant's* own quantization
+    (idea #28's actual literal proposal, a HI/LO split of DEG_TO_RAD_SMALL)
+    likely wouldn't either, though that specific variant remains formally
+    untested if someone wants full closure. *When a backlog idea's
+    literal proposal (constant split) is close in spirit but not
+    identical to an already-tested one (residual correction via
+    two_prod), testing the already-implemented variant first is a cheap,
+    informative proxy -- a zero-benefit result there is a strong (if not
+    airtight) signal the untested literal variant would fare similarly,
+    since both attack the same reduction step and the dominant error
+    source (the poly fit) is unaffected by either.*
 29. **tanpi / tand (implemented 2026-07-09)**: added as plain
     `sinpi(x)/cospi(x)` and `sind(x)/cosd(x)` ratios -- correct by
     construction, not an approximation: `tan(pi*x)` has period 1 in
