@@ -1382,6 +1382,26 @@ cousin.
     56.00/2.089; `cosh_checked` 58.06/2.212 vs `cosh`'s 55.00/1.754 --
     modest overhead for full-range correctness, same tradeoff shape as
     `exp_checked` vs `exp`. Commit `d3b99ac`.
+    Sixth wave (2026-07-09, later the same day): applied the matrix to
+    `softplus`/`logaddexp` -- clean, no bug found. Full 9x9 grid over
+    `{0, -0, +-1, +-inf, NaN, +-100}` for `logaddexp` (81 combinations)
+    plus the 1-argument set for `softplus`, checked by hand against known
+    closed forms (`logaddexp(0,0)=ln(2)`, `logaddexp(100,100)=100+ln(2)`,
+    `logaddexp(1,-1)=ln(e+1/e)`, etc.) and against the "infinity beats
+    everything except NaN" pattern expected for a log-sum-exp: every
+    `+-inf`/finite combination, every `+-inf`/`+-inf` combination
+    (including the `inf-(-inf)=inf` and `(-inf)-inf=NaN`-then-`min`-
+    discards-NaN internal path for `logaddexp(+-inf,+-inf)`'s own `d`
+    computation) all resolved to the mathematically correct answer
+    despite an internal NaN intermediate in two of the four `+-inf,+-inf`
+    cases -- `f32::min`'s NaN-discarding semantics (the same mechanism
+    `softplus`'s own doc comment already flags as a fixed hazard
+    elsewhere) happens to route around itself harmlessly here, verified
+    directly rather than assumed. Any input `NaN` correctly propagates
+    to `NaN` unconditionally (by this function's own design choice, not
+    a C99-mandated "infinity wins" exemption the way `hypot`/`atan2` have
+    -- `logaddexp` isn't a standard function, so there's no external
+    convention being violated either way). No code change.
 88. **exp10 near the decade boundaries (resolved 2026-07-09, no bug found)**:
     densely fuzzed (12M samples) right around every point where
     kr=round(x·log2_10) crosses an integer (where the floor-adjust select
