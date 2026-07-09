@@ -851,9 +851,6 @@ cousin.
     are the real, unrelated fp division in cbrt_normal's own seed/Newton
     reciprocal (already known cheap on this CPU, see the divider-idle
     finding elsewhere in this file). Nothing to fix.
-55. **rcbrt(x) = x^(-1/3)**: new function — negate-exponent-third bit
-    seed + its own correction poly; division-free, useful in physics
-    kernels, and 1/cbrt(x) costs an extra rounding this avoids.
 56. **cbrt_accurate via Halley from a cheaper seed**: cubic convergence
     might let a cbrt_fast-grade (~5 ulp) seed reach 0.5 ulp in one Df32
     Halley step, deleting cbrt_normal's poly from the accurate tier.
