@@ -814,9 +814,51 @@ cousin.
 
 ### hyperbolics / sigmoid
 
-42. **tanh via exp_pos_neg ratio**: (ep-en)/(ep+en) + a small-|x| Taylor
-    branch (x - x³/3 + 2x⁵/15 - 17x⁷/315), replacing the expm1 route and
-    its 2·x clamp interplay. Division is idle; may beat expm1's max 6.
+42. **tanh via exp_pos_neg ratio (tried 2026-07-09, rejected)**: implemented
+    exactly as described -- `(ep-en)/(ep+en)` via `exp_pos_neg`, plus a
+    small-`|x|` Taylor branch to avoid the cancellation `sinh_small`/
+    expm1's Pade branch also exist for. Two real problems, one fixed, one
+    fatal to the idea's own premise. First, the literal formula as
+    described is unsafe at moderate-to-large `|x|`: reusing a
+    wide-saturating exp helper (or even `exp_checked`'s own `88.7228`
+    overflow bound directly) lets `ep`/`en` reach literal `inf`, and
+    `inf/inf = NaN` -- not the correct `+-1.0`. Fixed with a much tighter
+    `+-40.0` clamp (`tanh` already saturates to exactly `1.0f32` by
+    `x~11`, so this has huge margin on both sides without ever reaching
+    the field-split's own overflow edge). Second, the suggested 4-term
+    Taylor branch (`x - x^3/3 + 2x^5/15 - 17x^7/315`) is nowhere near
+    accurate enough out to the idea's own implied `|x|<0.5` threshold
+    (matching `sinh_small`'s own convention) -- `tanh`'s Taylor series has
+    a much smaller analytic radius of convergence than `sinh`/`cosh`'s
+    (a real pole at `+-i*pi/2` vs. entire/no poles), so at `x=0.5` the
+    first dropped term alone is already ~800 ulp of error. An initial
+    fuzz run at the `0.5` threshold confirmed this directly: avg ulp
+    1.05, max ulp 1302. Swept the threshold empirically (hand-deriving
+    the exact truncation bound seemed more effort than just measuring)
+    and found `0.2` is the sweet spot -- avg ulp 0.0239, max ulp 6,
+    matching plain `tanh`'s own max-ulp floor, with the 4 terms as given
+    (no need for more). So the accuracy side is a genuine, substantial
+    win (avg ulp 0.024 vs `tanh`'s existing 0.146, ~6x tighter on
+    average, same max). But the idea's own core premise -- "division is
+    idle, may beat expm1's max 6" -- didn't survive mca measurement: this
+    formula needs `exp_pos_neg` to evaluate **two** full polynomials
+    (`p_pos` and `p_neg`, sharing only the reduction) where `tanh`'s
+    existing expm1(2x) route evaluates **one**, and both routes already
+    have exactly one division at the end (`e/(e+2.0)` vs `(ep-en)/
+    (ep+en)`) -- so the "idle divider" framing was never the actual cost
+    driver, the extra polynomial evaluation is. Measured: latency
+    86.73->89.08 cyc (+2.7%), throughput 2.039->2.565 cyc/elem (+25.8%) --
+    a real, not marginal, regression on the axis this idea was supposed
+    to win on. Since the loop's own bar requires *either* a speedup *or*
+    an accuracy gain *without* a perf penalty, and this is a real accuracy
+    gain *with* a real perf penalty (the same three-way-tradeoff shape as
+    idea #46's atanh/log1p rejection), reverted -- bit-identical to prior
+    HEAD. *A plausible-sounding resource-idleness argument ("division is
+    idle") is only as good as identifying the actual bottleneck it's
+    supposed to route around -- here the real cost was a doubled
+    polynomial-evaluation count that had nothing to do with the divider at
+    all, and only showed up once actually measured with mca rather than
+    reasoned about on paper.*
 46. **atanh via single log1p on |x| + mulsign (tried 2026-07-09, rejected)**:
     implemented exactly as described — this time it does *not* die
     catastrophically (max ulp only 3→4, not 3→31303 like the earlier
