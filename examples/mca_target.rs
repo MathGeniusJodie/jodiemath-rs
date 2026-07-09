@@ -331,6 +331,14 @@ throughput_fn!(thr_remainder_checked, "remainder_checked_throughput", {
     let y = black_box(3.0);
     move |x: f32| remainder_checked(x, y)
 });
+latency_fn!(lat_remainder_ieee, "remainder_ieee_latency", {
+    let y = black_box(3.0);
+    move |x: f32| remainder_ieee(x, y)
+});
+throughput_fn!(thr_remainder_ieee, "remainder_ieee_throughput", {
+    let y = black_box(3.0);
+    move |x: f32| remainder_ieee(x, y)
+});
 
 fn main() {
     // smoke test only: exercises every marked function once so `cargo run
@@ -407,6 +415,7 @@ fn main() {
         lat_remainder, thr_remainder;
         lat_remainder_unchecked, thr_remainder_unchecked;
         lat_remainder_checked, thr_remainder_checked;
+        lat_remainder_ieee, thr_remainder_ieee;
     );
     black_box(&arr_out);
 }

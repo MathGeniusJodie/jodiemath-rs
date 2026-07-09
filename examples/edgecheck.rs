@@ -614,6 +614,24 @@ fn main() {
         remainder_checked(1.0e7, 3.0),
         remainder_ref_exact(1.0e7, 3.0),
     );
+    // remainder_ieee: ties-to-even instead of remainder's own ties-away,
+    // matching true IEEE754 remainder. Away from ties it's identical to
+    // remainder; at an exact tie (x/y = 2.5, an odd/even boundary) it
+    // must disagree with remainder's own ties-away answer.
+    check("remainder_ieee(4,2)", remainder_ieee(4.0, 2.0), 0.0);
+    check("remainder_ieee(-0,3)", remainder_ieee(-0.0, 3.0), -0.0);
+    check("remainder_ieee(0,3)", remainder_ieee(0.0, 3.0), 0.0);
+    check("remainder_ieee(3,inf)", remainder_ieee(3.0, f32::INFINITY), 3.0);
+    check("remainder_ieee(inf,3)", remainder_ieee(f32::INFINITY, 3.0), f32::NAN);
+    // x/y=2.5: ties-away rounds q to 3 (remainder -1); ties-to-even rounds
+    // q to 2 (the even neighbor), remainder +1 -- must actually differ.
+    check("remainder_ieee(5,2) ties-even", remainder_ieee(5.0, 2.0), 1.0);
+    check("remainder(5,2) ties-away (contrast)", remainder(5.0, 2.0), -1.0);
+    // x/y=1.5: ties-to-even rounds q to 2 (even), remainder -0.5; matches
+    // remainder's own ties-away answer here since ties-away *also* picks
+    // the higher magnitude 2 for a positive 1.5 (both conventions agree
+    // whenever the "away" and "even" neighbors happen to coincide).
+    check("remainder_ieee(3,2)", remainder_ieee(3.0, 2.0), -1.0);
 }
 
 /// f64-computed exact reference for a single spot-check triple, used only

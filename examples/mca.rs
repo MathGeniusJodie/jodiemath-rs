@@ -163,6 +163,7 @@ fn main() {
         "remainder",
         "remainder_unchecked",
         "remainder_checked",
+        "remainder_ieee",
     ];
 
     println!();

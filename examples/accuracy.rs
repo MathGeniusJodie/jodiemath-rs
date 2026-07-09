@@ -971,6 +971,24 @@ fn main() {
         let s = fuzz2(TWOARG_SAMPLES, remainder_domain, remainder_checked, remainder_ref);
         report("remainder_checked", &s, t0);
     }
+    if run("remainder_ieee") {
+        // remainder_ieee rounds q ties-to-even instead of remainder's own
+        // ties-away, matching sleef's true-IEEE754 reference exactly at
+        // ties (verified separately in edgecheck.rs with pinned exact-tie
+        // cases, e.g. remainder_ieee(5,2)==1.0 vs remainder(5,2)==-1.0).
+        // This sweep still excludes near_tie, same as remainder/
+        // remainder_checked above: that exclusion is about a different,
+        // already-known issue (x/y's own division rounding flipping which
+        // *integer* q lands on near, but not exactly at, a tie -- the
+        // problem remainder_checked exists to fix), which affects
+        // remainder_ieee identically to remainder since both share the
+        // same plain `x/y` division, only differing in the final
+        // rounding-mode convention.
+        let remainder_domain =
+            |x: f32, y: f32| y != 0.0 && (x / y).abs() < 1000.0 && !near_tie(x, y);
+        let s = fuzz2(TWOARG_SAMPLES, remainder_domain, remainder_ieee, remainder_ref);
+        report("remainder_ieee", &s, t0);
+    }
 
     println!("total: {:.2}s", t0.elapsed().as_secs_f64());
 }

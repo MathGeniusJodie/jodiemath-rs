@@ -2796,6 +2796,23 @@ pub fn remainder(x: f32, y: f32) -> f32 {
     if y.is_infinite() && x.is_finite() { x } else { r }
 }
 
+/// [`remainder`], but with the quotient rounded ties-to-even instead of
+/// ties-away-from-zero, matching true IEEE754 remainder semantics (the
+/// two conventions differ only when `x/y` lands on an exact half-integer
+/// tie -- `remainder`'s own doc comment documents this crate's ties-away
+/// choice as a deliberate divergence, not an oversight; this variant is
+/// for callers who need the standard instead). `f32::round_ties_even`
+/// lowers to the same `vroundps` family instruction as `.round()`, just
+/// a different rounding-mode immediate, so this is expected to cost the
+/// same as `remainder` itself -- confirmed via mca before trusting that.
+#[inline(always)]
+pub fn remainder_ieee(x: f32, y: f32) -> f32 {
+    let q = (x / y).round_ties_even();
+    let normal = fma(-q, y, x);
+    let r = if x == 0.0 { x } else { normal };
+    if y.is_infinite() && x.is_finite() { x } else { r }
+}
+
 /// remainder without domain checks: valid for `x != 0.0` and `y` finite
 /// (not `+-inf`) -- skips the two special-case selects [`remainder`]'s own
 /// doc comment describes (the `x == 0.0` sign-preservation guard and the
