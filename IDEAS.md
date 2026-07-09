@@ -705,11 +705,22 @@ cousin.
     it first.
 45. **softplus/log1pexp(x) = ln(1+e^x)**: new function, ML-relevant;
     branchless as max(x,0) + log1p(exp(-|x|)). All pieces exist.
-46. **atanh via single log1p on |x| + mulsign**: atanh is odd — compute
-    0.5·log1p(2a/(1-a)) on a=|x| only, restore sign. The rejected
-    single-log1p form died near x≈-1 where 2x/(1-x) cancels; on the
-    positive side there is no cancellation (argument →+∞), so odd-symmetry
-    sidesteps the entire failure mode. Halves the log1p count per call.
+46. **atanh via single log1p on |x| + mulsign (tried 2026-07-09, rejected)**:
+    implemented exactly as described — this time it does *not* die
+    catastrophically (max ulp only 3→4, not 3→31303 like the earlier
+    signed-x rejection), confirming the odd-symmetry reasoning was right:
+    `2a/(1-a)` for a=|x| only ever approaches log1p's benign `u→+inf` edge,
+    never the derivative-diverging `u→-1` edge that killed the earlier
+    attempt. But it's still a real, exhaustive-confirmed net loss on
+    accuracy (avg 0.0313→0.0352, max 3→4) with a genuinely mixed perf
+    result: mca throughput improved a lot (4.649→3.289 cyc/elem, -29%,
+    halving the log1p count really did help) but latency got *worse*
+    (74.06→76.22, +2.9%) — three-way tradeoff (better throughput, worse
+    latency, worse accuracy), not a clean win on either axis. Reverted,
+    bit-identical to prior HEAD. *Sidestepping a catastrophic failure mode
+    doesn't mean the replacement is free of smaller, real cost — still
+    check the actual before/after numbers, not just whether the disaster
+    case recurred.*
 48. **sinh_accurate/cosh_accurate tier**: Df32 through the exp combine —
     only if a user asks; max 5 is comfortably documented.
 
