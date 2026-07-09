@@ -1751,7 +1751,7 @@ legitimate direction here, unlike on most targets.
   confirmed bit-identical (cbrt 35.06/1.629 cyc, `cbrt_accurate`
   59.06/3.129, matching this crate's own established baseline exactly).
   Adopted; `readme.md`'s cbrt/cbrt_unchecked rows updated. Commit
-  `<pending>`.
+  `fa8565f`.
 
 - **Batch/slice API tier (`exp2_slice(&[f32], &mut [f32])` etc.)**: the
   crate's whole perf story assumes the *caller's* loop auto-vectorizes;
