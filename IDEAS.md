@@ -994,9 +994,49 @@ cousin.
     theory was right -- check where the swapped formula's branch
     selection actually lands relative to its own internal thresholds
     before trusting a "removes a cancellation" story.*
-51. **erfcx(x) = e^{x²}·erfc(x)**: new function — just the n/d rational,
-    no exp at all; sidesteps the exponent-error bottleneck entirely and is
-    what numerics users often actually want in the tail.
+51. **erfcx(x) = e^{x²}·erfc(x) (implemented 2026-07-09)**: the idea's own
+    "just the n/d rational, no exp at all" premise held up exactly for
+    `x>=0` -- factored `erfc`'s own n/d rational into a shared
+    `erfc_rational(xa)` helper (verified by direct code inspection to be
+    a pure move, bit-identical to `erfc`'s prior body: same clamp, same
+    fma sequence, same exponent computation, just relocated), and for
+    `x>=0` `erfcx` collapses to exactly that rational alone -- the
+    `e^{x²}`/`e^{-x²}` factors cancel algebraically, so this really does
+    sidestep the exponent computation entirely, not just numerically
+    approximate the cancellation. For `x<0`, needed one real
+    `exp2_checked` call after all (via `erfc`'s own reflection identity,
+    `erfcx(x) = 2·exp(x²) - erfcx(-x)`) -- `erfcx` genuinely diverges to
+    `+inf` there, so this isn't avoidable, just correctly saturating
+    instead of wrapping to garbage. Verified against known reference
+    values (`erfcx(1)~0.4276`, `erfcx(5)~0.1107`, `erfcx(10)~0.05614`,
+    all matched) and a fresh f64 reference (`exp(x²)·erfc_u15(x)`, safe
+    over this `|x|<=10` domain since `x²<=100` is nowhere near f64's own
+    ~709 exponent overflow). Fuzz accuracy: avg ulp 0.377, max ulp 125
+    (same order as `erfc`'s own 0.311/109-ish budget, one more rounding
+    step on the negative side accounts for the difference). 7 new
+    edgecheck pins, codegen_check clean (71 regions, up from 70). mca:
+    throughput 2.278 cyc/elem (a real, modest win vs `erfc`'s 2.530,
+    from skipping the `z`/`w` sign-handling erfc pays) -- but the
+    *latency* number (39.36 vs erfc's 64.03) is a `mca mix()` sign
+    blind spot artifact, not trustworthy: the harness's latency chain
+    always folds its value into `[2,4)` (mask away the sign bit
+    entirely), so `erfcx`'s `x<0` branch (with the real `exp2_checked`
+    call) is never exercised there, same pitfall this crate has hit
+    before for other sign-dependent functions -- documented directly in
+    `erfcx`'s own doc comment so this doesn't get miscited later.
+    Incidentally also found `erfc`'s own mca latency number in readme.md
+    was stale (78.09, now re-measured at 64.03 with this refactor in
+    place) -- confirmed via direct code-diff that the refactor itself
+    is behavior-preserving, so this is a re-measurement catching drift,
+    not a regression from the change. Commits `994dc98` (code+harness),
+    `945b9ea` (readme sync). **General lesson: whenever a new function's
+    correctness depends on a runtime sign branch, check whether either
+    benchmark harness's own input-generation scheme (mca's `mix()`,
+    quickbench's own latency chain) can actually reach both signs before
+    trusting its latency number -- if the harness folds the chain into a
+    fixed-sign range (as `mix()` does here), the branch with the real
+    cost can go completely unmeasured in latency mode while still
+    showing up correctly in throughput mode's real mixed-sign array.**
 52. **erf_poly's a0 ≈ 3.4e-5 (screened 2026-07-09, naive substitution
     fails hard; full refit not attempted)**: the cheap first check --
     naively zero `a0` without refitting anything else -- confirms it's
