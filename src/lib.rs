@@ -1155,6 +1155,25 @@ pub fn log1p(x: f32) -> f32 {
     if x == 0.0 { x } else { normal }
 }
 
+/// log1p without the `corr.is_finite()` guard: valid whenever `x` is
+/// finite and `x != -1.0` (i.e. `u = 1+x` is itself finite and nonzero,
+/// the two edges the guard exists to suppress -- see log1p's own doc
+/// comment). `asinh`/`acosh` both already check `d.is_finite()` before
+/// calling log1p at all, and by construction (their own doc comments) the
+/// value they pass is never `-1.0` on the path where it matters (asinh:
+/// `d = ax + sm1` with both terms `>= 0`; acosh: `d = (x-1.0) + s` with
+/// `s >= 0` over the valid `x >= 1` domain) -- so the guard is
+/// unreachable for either caller and this drops one redundant select from
+/// two hot composites.
+#[inline(always)]
+fn log1p_finite(x: f32) -> f32 {
+    let u = 1.0 + x;
+    let c = x - (u - 1.0);
+    let corr = c / u;
+    let normal = ln(u) + corr;
+    if x == 0.0 { x } else { normal }
+}
+
 /// exp(x) via a proper Cody-Waite reduction instead of `exp2(x * LOG2_E)`.
 /// The naive form rounds `x * LOG2_E` *once* before ever calling exp2 --
 /// that rounding lands on the *argument*, and since exp2's derivative
@@ -1635,7 +1654,7 @@ pub fn asinh(x: f32) -> f32 {
     let sq = if small { direct_sq } else { rescaled_sq };
     let sm1 = if small { ax2 / (sq + 1.0) } else { sq - 1.0 };
     let d = ax + sm1;
-    let r = if d.is_finite() { log1p(d) } else { ln(ax) + LN_2 };
+    let r = if d.is_finite() { log1p_finite(d) } else { ln(ax) + LN_2 };
     mulsign(r, x)
 }
 
@@ -1701,7 +1720,7 @@ pub fn acosh(x: f32) -> f32 {
     let rescaled = x * fma(-inv_x2, 1.0, 1.0).sqrt();
     let s = if x < 2048.0 { direct } else { rescaled };
     let d = (x - 1.0) + s;
-    let r = if d.is_finite() { log1p(d) } else { ln(x) + LN_2 };
+    let r = if d.is_finite() { log1p_finite(d) } else { ln(x) + LN_2 };
     if x < 1.0 { f32::NAN } else { r }
 }
 
