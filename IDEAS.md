@@ -657,8 +657,9 @@ cousin.
     added a whole poly (+48% mca). Instead refit *ln's own* coefficients
     jointly with log1p's c/u correction term as part of the objective —
     zero new ops, may shave log1p's max 4.
-23. **log10 exact-decade check**: verify log10(10^n) is exact for n∈[-38,38];
-    if not, decide whether a fixup is worth it (probably document instead).
+23. **log10 exact-decade check (resolved 2026-07-09, no bug)**: checked --
+    `log10(10^n)` is exact (bit-for-bit `== n as f32`) for every
+    `n in [-38,38]`.
 24. **log_2/ln/log10 shared-core macro**: the three `_normal` bodies are
     identical modulo constants (and log2_df quadruplicates it). A macro or
     generic-const core removes 3 hand-synced copies — hygiene, zero perf
@@ -833,9 +834,25 @@ cousin.
     pinned to exactly 0.0 (frees a degree of freedom for the other
     coefficients and deletes one fma if it holds). LP with max-cap,
     exhaustive-verify; cheap experiment.
-53. **erfc negative-side accuracy survey**: the w=2 branch computes 2-y;
-    quantify whether the x<0 half has its own error structure — every
-    refit so far scored the whole domain blended.
+53. **erfc negative-side accuracy survey (resolved 2026-07-09, structural,
+    not actionable)**: split the exhaustive sweep by sign (temporary
+    accuracy.rs domain split, not kept) -- confirmed a real asymmetry:
+    x>=0 avg ulp 0.4815/max 109 (worst x=9.00551, the already-known case),
+    x<0 avg ulp 0.1397/max 6, comfortably inside this crate's usual
+    budget. Root cause is structural, not a fixable blended-refit
+    artifact: for x<0, erfc(x)=2-(the same n/d rational), and the output
+    magnitude there is near 2 (large), so a given absolute error in the
+    shared rational corresponds to far fewer ulp than the *same* absolute
+    error does for large positive x, where erfc(x) itself is tiny
+    (approaching underflow) -- ulp is a *relative* measure, and the two
+    sides sit at very different output magnitudes for the same input
+    magnitude. The max-109 worst case is already the one idea #49's own
+    mask-based/two_prod investigations targeted (and partially improved,
+    109->93, at real extra cost) -- this survey doesn't open a new,
+    cheaper avenue, just confirms *where* the existing hard case lives and
+    *why* a differential (sign-split) refit wouldn't help (the underlying
+    rational is shared; the asymmetry is in how ulp itself scales with
+    output magnitude, not in the fit quality per side).
 
 ### cbrt / sqrt / hypot / pow / remainder
 
