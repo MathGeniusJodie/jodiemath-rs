@@ -668,12 +668,6 @@ cousin.
 
 ### asin / acos / atan / atan2
 
-34. **Dedicated asin-only coefficient copy of acos_poly**: every joint-fit
-    attempt died protecting acos (three separate rejections). Duplicating
-    the 7 literals decouples the two callers permanently — asin gets its
-    own LP fit over its own domain weighting, acos keeps its protected
-    values, zero runtime cost (same instruction count, different
-    constants).
 35. **atan: correct the 1/a fold's division rounding (tried 2026-07-09,
     rejected)** — implemented `e = fma(recip, a, -1.0)`, `corr = -e·y/(1+y²)`
     folded into the existing `FRAC_PI_2 - y` else-branch (needed an
