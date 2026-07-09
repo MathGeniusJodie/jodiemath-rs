@@ -570,10 +570,6 @@ cousin.
 
 ### exp family
 
-16. **expm1's exp(x)-1 branch: single-rounding tail** — b = fma(p·t1, t2,
-    -1.0) instead of (p·t1·t2)-1.0. One rounding fewer exactly in the
-    branch where expm1's actual max ulp (6) lives (the rejected Pade bump
-    targeted the *other* branch). Near-zero cost.
 17. **exp: weave t1 into the poly like exp2_checked does (tried 2026-07-09,
     rejected)** — implemented exactly as described (Q(r) = 1 + c0·r + ... +
     c3·r^4, `p = fma(q, t1*r, t1); p*t2`). Real accuracy win, confirmed
