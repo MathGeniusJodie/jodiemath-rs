@@ -849,9 +849,32 @@ cousin.
     `acos_poly`'s own doc comment for the full story. Commit `0862c58`.
     No separate accurate tier needed -- the shared default's own
     accuracy already improved dramatically for free.
-37. **asin small branch: check 1-a rounding in [0.25,0.5)** — 1-a is only
-    Sterbenz-exact for a≥0.5; quantify what the sub-0.5 rounding costs
-    through sqrt+poly before deciding anything.
+37. **asin small branch: check 1-a rounding in [0.25,0.5) (quantified
+    2026-07-09, real but modest, not actioned)**: probed the "big"
+    branch's own accuracy specifically in `a in [0.25, 0.5)` (both a
+    dense linear sweep and a random-bit-pattern sweep, cross-checked
+    against each other) -- avg ulp ~1.4, max ulp 6-7 in that band alone,
+    noticeably higher than asin's own domain-wide average (0.0251, per
+    fix 8) but *not* a new max-ulp record (the domain-wide worst case,
+    max 9, sits at x~0.246, just inside `asin_small`'s own domain, per
+    fix 8's own note -- confirmed still true). So this specific concern
+    doesn't set the binding constraint on `asin`'s worst case, but it is
+    a real, quantifiable, disproportionate contributor to the *average*:
+    `asin`'s own accuracy.rs sweep uses the unrestricted `everywhere`
+    domain, and random-bit-pattern sampling gives each octave inside
+    `(0,1]` roughly equal weight regardless of its linear width -- with
+    ~149 such octaves down through the denormal range each contributing
+    comparably, a single octave averaging 1.4 (vs. a "well-behaved"
+    octave's typical <0.5) is a disproportionately large single
+    contributor to the overall 0.0251 average, even though no individual
+    octave dominates outright. Fixing this would need another numerical
+    refit (via `examples/tune.rs`) of either `asin_poly` or the mid-range
+    construction specifically targeting this octave -- real work, and
+    the expected payoff is average-only (this session's own refit
+    attempts elsewhere have repeatedly found average-only gains modest
+    relative to the effort, e.g. idea #52's own "effort/payoff ratio"
+    call). Not pursued this session; left open with the concrete numbers
+    above for whoever wants to chase the average further.
 38. **asin via atan2(x, sqrt((1-x)(1+x)))**: different algorithm entirely
     (correctly-rounded sqrt, atan max 4). Probably slower (division inside
     atan) but it's a one-evening accuracy ceiling probe for asin's max 9.
