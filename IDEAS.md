@@ -1379,6 +1379,34 @@ brainstorm backlog lives at the bottom of this file.
   integration (edgecheck bit-exact on all special values, codegen_check
   clean, quickbench, mca, readme) done; commit follows.
 
+- **atan_latency's poly, max-capped ulp-weighted Chebyshev LP (2026-07-09),
+  screened and rejected before touching src/lib.rs's shipped state for
+  real -- no measurable headroom, matching sinf_poly's own "already near
+  floor" 2026-07-07 finding rather than exp/erf_poly/cbrt's real wins.**
+  Genuinely single-caller (this poly has no shared-region or shared-
+  exposure risk -- `atan_latency` reuses it identically whether `a<1`
+  or via the `a>=1` reciprocal fold, the same single-domain pattern
+  `atan_poly` itself already established as safe), and the constant
+  term is safely un-fittable-sensitive (multiplied by `r`, so `r=0`
+  gives exactly 0 regardless of the fitted coefficients, no `acos_poly`-
+  style boundary trap). The isolated fit predicted a modest win (max
+  weighted error held at parity 0.846, avg 0.1155->0.1087, ~6%) --
+  small enough on its own to be a weak signal, and it didn't survive
+  contact with the real crate at all: `git stash`-paired 100M-sample
+  fuzz gave avg ulp 0.0516 (current) vs 0.0517 (LP-fit), max ulp 3 both
+  ways -- statistically identical, no real movement either direction.
+  Reverted (`git checkout --`, confirmed via `git diff`/`git status`);
+  no code changed. **General lesson: adds a fourth data point to this
+  session's own "isolated metric doesn't reliably predict magnitude"
+  finding (from the `erf_poly` entry) -- here the isolated prediction
+  was already small (~6%) and the real result rounded all the way down
+  to zero, suggesting a rough rule of thumb worth carrying forward: an
+  isolated-fit improvement much under ~10-15% is a weak enough signal
+  that it may not be worth the implementation/verification cost at all,
+  based on this session's now-6-poly track record (exp ~18% isolated ->
+  real win; erf_poly ~35% isolated -> small real win; cbrt ~12%
+  isolated -> real win; atan_latency ~6% isolated -> no real win).**
+
 - **Centered-variable refit for erfc's xa ∈ [0,10] (2026-07-08), tested
   and rejected — confirms the exp2-centering finding transfers here too,
   despite erfc's very different function shape.** This was explicitly
