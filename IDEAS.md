@@ -1095,6 +1095,40 @@ cousin.
     always gives an unsigned result regardless of `x`'s sign. Fixed all
     three in both functions; matrix now matches std exactly (was 15
     mismatches). Commit `47bc7c1`.
+    Fifth wave (same day): applied the matrix to `sinh`/`cosh` -- found
+    `sinh`/`cosh(+-inf)` both return `NaN` instead of `+-inf`/`inf`, and
+    for large finite `|x|` (e.g. `1000`) they wrap around to a
+    wrong-sign or garbage finite value, because `exp_pos_neg` (their
+    shared `exp(x)`/`exp(-x)` helper) has no domain clamp at all, so the
+    magic-round exponent-field split silently wraps outside its own safe
+    range instead of saturating. Added `sinh_checked`/`cosh_checked`
+    (full-range siblings, mirroring `exp_checked`'s existing pattern)
+    built on a new `exp_pos_neg_checked_half` helper. Fixing this
+    surfaced a second, larger bug along the way: `sinh`/`cosh` apply
+    their `0.5` scale factor *after* computing the full `exp(x)`, so the
+    intermediate overflows to `inf` right around `x~88.7` even though
+    the true (halved) answer is still finite up to `x~89.4` -- invisible
+    to the existing accuracy.rs sweep because plain `sinh`/`cosh` use
+    their own `sinh_domain` closure that deliberately excludes this
+    exact window. Fixed by pushing the `0.5` into the exact-power-of-two
+    field split itself (`t1 * 0.5`, exact for any power-of-two float)
+    before the final multiply, rather than scaling the final result.
+    Also found, via a standalone exhaustive probe (hand-deriving the
+    bound got too intricate to trust): the field split's own safe `k`
+    range is `[-254, 254]`, not the `[-128, 128]` initially assumed by
+    naively applying `exp_checked`'s own asymmetric overflow bound
+    symmetrically to both `+k` and `-k` -- `exp_checked`'s `88.7228`
+    bound is where `exp(x)` *alone* overflows, not where the split's bit
+    trick mechanically breaks. Landed on a `170.0` clamp (`k` up to
+    ~245.3), comfortably inside the proven-safe window. Verified:
+    fuzz-mode accuracy clean (`sinh_checked` avg ulp 0.0421 max 5,
+    `cosh_checked` avg ulp 0.0373 max 5, matching `sinh`/`cosh`'s own
+    baseline), `codegen_check` clean (no scalar fallback), 16 new
+    edgecheck pins (`+-inf`, `+-1000`, the `89.415`/`89.416` boundary).
+    mca: `sinh_checked` 58.06/2.527 cyc (latency/throughput) vs `sinh`'s
+    56.00/2.089; `cosh_checked` 58.06/2.212 vs `cosh`'s 55.00/1.754 --
+    modest overhead for full-range correctness, same tradeoff shape as
+    `exp_checked` vs `exp`. Commit `d3b99ac`.
 88. **exp10 near the decade boundaries (resolved 2026-07-09, no bug found)**:
     densely fuzzed (12M samples) right around every point where
     kr=round(x·log2_10) crosses an integer (where the floor-adjust select
