@@ -2235,6 +2235,27 @@ legitimate direction here, unlike on most targets.
   piece of several before trusting an unusually large isolated-metric
   prediction.** Commit `9f997db`.
 
+  **Immediate follow-up, same day: completed the other half of the
+  differential-correction cycle (denominator refit, numerator now held
+  fixed at its just-adopted values) — converged to essentially the
+  shipped denominator, confirming no more coefficient-level headroom
+  either direction, screened cheaply in Python without any Rust
+  round-trip.** Same LP setup mirrored (denom's 3 coefficients are also
+  linear in the output once the numerator is fixed: `output =
+  numer_fixed(x)/denom(x2)`, so `denom(x2) ≈ numer_fixed(x)/atan(x)` is
+  a valid linear target). Result: max weighted error 0.0257->0.0256, avg
+  0.007964->0.007964 — both essentially unchanged (<1% movement, well
+  under this session's own "not worth implementing" threshold from the
+  entry above), and the returned coefficients matched the shipped
+  denominator to 6+ significant figures. Not implemented (no Rust
+  change, nothing to revert) — the isolated metric alone was decisive
+  enough to skip the round-trip this time. Confirms the true worst-case
+  residual (`x=1.0220603` for `atan`, unmoved by the numerator refit)
+  isn't reachable by further denominator tuning either; most likely
+  lives in the division itself or the `a<1`/`a>=1` reciprocal-fold
+  boundary near `x=1`, neither of which a coefficient refit can touch.
+  This closes the atan_poly coefficient-tuning question for this
+  session.
 - **Retune asin's 0.25 crossover after any acos_poly change (2026-07-08),
   checked and confirmed already near-optimal, no change**: the joint
   acos+asin refit (fix 7 in asin's own doc comment, commit `b9f9b5d`)
