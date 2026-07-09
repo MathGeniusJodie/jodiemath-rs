@@ -41,6 +41,7 @@ cbrt_accurate_unchecked (+) | 0.000 |     1     | (bit-identical to cbrt_accurat
                   log1p |    0.106   |     4     |  0.000  |    0
                 log2p1  |    0.102   |     3     | (no std log2p1)
         exp (in-domain) |    0.075   |     3     |  0.000  |    1
+            exp_checked |    0.039   |     3     |  0.000  |    1
       expm1 (in-domain) |    0.130   |     6     |  0.000  |    0
 exp_m1_over_x (in-domain)| 0.073   |     6     | (no std exp_m1_over_x)
                 exp2m1  |    0.077   |     4     | (no std exp2m1)
@@ -103,6 +104,7 @@ log10_unchecked|  8.8 ns |     -   |  -
         log1p | 16.5 ns | 21.1 ns | 1.3x
        log2p1 | 12.8 ns |     -   |  -
           exp |  9.9 ns |  9.5 ns | 1.0x
+  exp_checked | 12.0 ns |  9.5 ns | 0.8x
         expm1 | 11.3 ns | 13.7 ns | 1.2x
 exp_m1_over_x | 12.8 ns |     -   |  -
        exp2m1 | 11.5 ns |     -   |  -
@@ -186,6 +188,7 @@ log10_unchecked| 0.26 ns  |     -    |  -
         log1p | 0.60 ns  | 6.28 ns | 10.4x
        log2p1 | 0.54 ns  |     -    |  -
           exp | 0.31 ns  | 2.47 ns | 8.0x
+  exp_checked | 0.39 ns  | 2.47 ns | 6.3x
         expm1 | 0.46 ns  | 5.56 ns | 12.1x
 exp_m1_over_x | 0.44 ns  |     -    |  -
        exp2m1 | 0.49 ns  |     -    |  -
@@ -267,6 +270,7 @@ log10_unchecked     |          38.39 |             1.146
 log1p               |          61.16 |             2.276
 log2p1              |          52.19 |             2.328
 exp                 |          42.00 |             1.327
+exp_checked         |          46.06 |             1.729
 expm1               |          71.00 |             1.695
 exp_m1_over_x       |          83.00 |             1.798
 exp2m1              |          76.06 |             1.844
