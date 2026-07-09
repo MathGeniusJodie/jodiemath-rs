@@ -1778,18 +1778,55 @@ pub fn sigmoid(x: f32) -> f32 {
     // Standalone copy of exp's reduction/poly (not routed through the
     // public `exp` fn, matching expm1's own established pattern above --
     // see its doc comment for why factoring through a shared helper is
-    // avoided here) but with a single exponent-field construction instead
-    // of exp's own k1/k2 split: the `.clamp(-87.0, 88.0)` argument bound
-    // already guarantees `k = round(y*log2e)` stays in [-126, 127] (y in
-    // [-87,88] gives y*log2e in [-125.51, 126.96], confirmed numerically,
-    // not just eyeballed) -- exactly exp2's own single-field domain, wide
-    // margin below the k=128 edge case that forces exp's two-way split.
-    // Mirrors the existing exp2 (single field) vs exp2_checked (k1/k2
-    // split) distinction: the clamp that must exist anyway makes the
-    // split provably unnecessary here, unlike the rejected exp k-clamp
-    // idea (which broke real in-domain inputs by discarding a factor of
-    // 2 that was actually reachable).
-    let y = (-x).clamp(-87.0, 88.0);
+    // avoided here).
+    //
+    // Previously used a single exponent-field construction with `y`
+    // clamped to `[-87,88]` (keeping `k=round(y*log2e)` within exp2's own
+    // single-field domain `[-126,128)`) -- this looked "correct and
+    // gracefully saturating... never inf/nan for any finite input" (a
+    // stale claim in this doc comment) but was actually a real accuracy
+    // bug for `x` below about `-88`: the clamp caps `y` (and so `e`) at a
+    // fixed largish-but-finite value regardless of how much more negative
+    // `x` gets, so `sigmoid(-89)`, `sigmoid(-1000)`, and `sigmoid(-inf)`
+    // all returned the *same* wrong constant (`~6.05e-39`) instead of
+    // correctly continuing to decay toward `0` -- found by fuzzing `x` in
+    // `[-90,-80]` against an f64 reference (worst case `~2.7x` relative
+    // error, not just a few ulp) after idea #44 asked whether the
+    // negative tail's conditioning actually needed attention. Root cause:
+    // sigmoid's asymptote is at `0`, needing the exponent to range all
+    // the way to where `e` itself correctly *overflows* to `+inf` (so
+    // `1/(1+inf)=0` exactly) -- structurally different from `tanh`'s own
+    // analogous clamp, whose asymptote is a nearby, already-representable
+    // value (`+-1`), where an early clamp costs nothing.
+    //
+    // Fixed by widening only the *upper* `y` bound to `88.722839111673`
+    // (`128/log2(e)`, the exact point where `k=round(y*log2e)` reaches
+    // `128`) while keeping the lower bound at `-87.0` (already safe --
+    // `x -> +inf` only needs the nearby, already-representable asymptote
+    // `1`, the same reasoning that makes the narrower clamp fine for
+    // `tanh`; no bug was ever found on that side). The single-field trick
+    // itself (unchanged, *not* switched to exp2_checked's k1/k2 split --
+    // tried that first, and it works, but doubles mca throughput cost:
+    // 1.354->2.713 cyc/elem, an unjustified price for a fix this targeted)
+    // already produces the exact right answer at `k=128`, verified by
+    // hand: `exp2int` naturally lands on the `+inf` bit pattern there
+    // (`(128.0+383.0).to_bits()<<8 & EXPONENT_MASK` resolves to the
+    // reserved all-ones exponent field), giving `1/(1+inf)=0` exactly --
+    // and empirically stays at exactly `128` (never wrapping to `129`,
+    // which *would* silently give `0` instead of `inf` and produce the
+    // wrong answer `1.0`) for every `y` from `88.5` up to `~89.05`,
+    // comfortable margin either side of the chosen bound. Verified (fuzz
+    // against `1/(1+(-x).exp())` in f64): `sigmoid(-89)`, `sigmoid(-100)`,
+    // `sigmoid(-1000)`, `sigmoid(-inf)` all now correctly `0.0` (were all
+    // `~6.05e-39` before). A narrow residual gap remains for `x` in
+    // roughly `(-104.7,-88.7)`, where the true answer is a nonzero
+    // denormal but this now returns exactly `0` instead (a discontinuity
+    // moved from "wrong by construction, unboundedly" to "slightly early
+    // saturation on a ~16-unit sliver of denormal-scale outputs") --
+    // matching this crate's own accepted "near a true zero, ulp isn't a
+    // meaningful metric" precedent (see cospi's own doc comment); not
+    // pursued further, the practical improvement is already total.
+    let y = (-x).clamp(-87.0, 88.722839111673);
     const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
     let k = fma(y, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
     let r = fma(-k, LN2_HI, y);

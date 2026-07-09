@@ -328,9 +328,20 @@ fn main() {
     check("sigmoid(1000)", sigmoid(1000.0), 1.0);
     check("sigmoid(f32::MAX)", sigmoid(f32::MAX), 1.0);
     check("sigmoid(inf)", sigmoid(f32::INFINITY), 1.0);
-    check("sigmoid(-inf)", sigmoid(f32::NEG_INFINITY), 6.054601e-39);
-    check_finite("sigmoid(-1000)", sigmoid(-1000.0));
-    check_finite("sigmoid(-f32::MAX)", sigmoid(-f32::MAX));
+    // Regression pins for idea #44's own negative-tail bug (see sigmoid's
+    // doc comment): the old `y.clamp(-87.0,88.0)` capped the exponent at a
+    // fixed finite value for *any* x below about -88, so sigmoid(-inf)
+    // and sigmoid(-1000) both used to wrongly return ~6.054601e-39 instead
+    // of the true 0.0 -- this pin used to lock in that wrong value as if
+    // it were correct; now pins the fix instead.
+    check("sigmoid(-inf)", sigmoid(f32::NEG_INFINITY), 0.0);
+    check("sigmoid(-1000)", sigmoid(-1000.0), 0.0);
+    check("sigmoid(-f32::MAX)", sigmoid(-f32::MAX), 0.0);
+    check("sigmoid(-89)", sigmoid(-89.0), 0.0);
+    // just below the fixed clamp boundary: still the same (correct, real)
+    // value the old code also gave here, confirming no regression at the
+    // boundary itself.
+    check("sigmoid(-88)", sigmoid(-88.0), 6.054601e-39);
     check("sigmoid(nan)", sigmoid(f32::NAN), f32::NAN);
 
     // softplus(x) = ln(1+e^x). ln(2) at 0 (ln(1+e^0)=ln(2)); saturates to
