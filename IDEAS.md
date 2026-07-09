@@ -768,8 +768,6 @@ cousin.
     is well-conditioned; for x≪0 compute e^x/(1+e^x) instead (both
     branchless-selected). Survey whether current accuracy actually needs
     it first.
-45. **softplus/log1pexp(x) = ln(1+e^x)**: new function, ML-relevant;
-    branchless as max(x,0) + log1p(exp(-|x|)). All pieces exist.
 46. **atanh via single log1p on |x| + mulsign (tried 2026-07-09, rejected)**:
     implemented exactly as described — this time it does *not* die
     catastrophically (max ulp only 3→4, not 3→31303 like the earlier
