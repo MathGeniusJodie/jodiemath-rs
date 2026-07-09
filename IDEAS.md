@@ -858,10 +858,25 @@ cousin.
 59. **exp2_checked_df: second-order lo correction** — exp2(lo) ≈ 1 +
     lo·ln2 + (lo·ln2)²/2; one fma. Only matters if #58 says the
     first-order truncation is the binding term.
-60. **powf special-exponent select tier**: y ∈ {1, 2, 0.5, -1} handled by
-    exact ops behind one select ladder. Costs every call; likely rejected
-    on mca — but powf is expensive enough that the relative cost may be
-    tolerable. Screen with mca first.
+60. **powf special-exponent select tier (screened 2026-07-09, rejected)**:
+    implemented just the `y==2.0 -> x*x` case as a single-select probe
+    (matching "screen with mca first"). Real accuracy win where it hits:
+    powf(x,2.0) avg ulp 5.42/max 45 -> exact 0/0. But mca showed a real,
+    non-negligible cost paid on *every* call regardless of `y` -- since
+    this crate's branchless-select style computes every branch
+    unconditionally, llvm-mca gave identical numbers whether the
+    benchmark's own `y` was `2.0` (the "hit" case) or `2.5` (a "miss"),
+    confirming the extra select's cost isn't hidden by the fast path ever
+    being cheaper to reach: throughput 5.098->5.319 cyc/elem (+4.3%),
+    latency 103.05->101.08 (-1.9%, a wash). Extrapolating to the full
+    4-case ladder the idea originally proposed (`y` in `{1,2,0.5,-1}`)
+    would compound this further for benefit that only manifests when `y`
+    lands on one of exactly 4 values -- narrow relative to powf's whole
+    input space, and callers who specifically need exact squaring/sqrt/
+    reciprocal already have a zero-cost workaround (write `x*x`,
+    `x.sqrt()`, `1.0/x` directly, or use `pown_const::<2>` for a
+    compile-time-known integer exponent). Reverted (single-case probe,
+    no lib.rs changes survived).
 62. **hypot: fma pairing choice (tried 2026-07-09, rejected)** — implemented
     max-first pairing for hypot/hypot_unchecked/hypot_checked (compare+select
     on the signed operands). Real, consistent avg-ulp win (~15% better: hypot
