@@ -891,8 +891,6 @@ cousin.
 68. **lgamma (Stirling + reflection)**: big job, listed for completeness —
     the largest gap vs libm's function set that fits this crate's
     branchless style.
-69. **logaddexp(a,b)**: max + log1p(exp(-|a-b|)) — two existing calls,
-    branchless, ML-relevant.
 70. **Slice/batch API + runtime multiversioning**: backlog round 1 has the
     slice tier; add `is_x86_feature_detected` dispatch at the slice level
     (per-call dispatch is un-inlinable, per-slice is free).
