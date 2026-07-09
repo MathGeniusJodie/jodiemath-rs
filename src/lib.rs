@@ -2477,6 +2477,20 @@ pub fn atan_latency(x: f32) -> f32 {
 /// opposite-sign-zero case. Fixed by skipping the addition entirely when
 /// `base` would be that exact `+0.0` -- `nonzerox` already selects
 /// between the two shapes, so no new branch, just moved.
+///
+/// `atan2(NaN, 0.0)`/`atan2(NaN, -0.0)` used to come out `+-FRAC_PI_2`
+/// instead of the correct `NaN` (found 2026-07-09 building a systematic
+/// C99 special-case matrix against std, backlog idea #85): when
+/// `nonzerox` is false, `r` collapses to bare `correction =
+/// mulsign(FRAC_PI_2 - hpisignx, y)` with no `atan(y/x)` call at all --
+/// but `mulsign` only ever reads `y`'s *sign bit*, it doesn't propagate
+/// `y` being NaN, so a NaN `y` here silently degrades to a finite
+/// `+-FRAC_PI_2` depending on which way that one bit happened to be set.
+/// Every other input combination avoids this because `x != 0.0` routes
+/// through `atan(y/x)`, and `y/x` is itself NaN whenever `y` is NaN
+/// (`atan` propagates it correctly from there) -- only the `x == 0`
+/// branch bypasses that path entirely. Fixed with an explicit trailing
+/// override.
 #[inline(always)]
 pub fn atan2(y: f32, x: f32) -> f32 {
     let nonzerox = x != 0.0;
@@ -2485,6 +2499,7 @@ pub fn atan2(y: f32, x: f32) -> f32 {
     let hpisignx = if nonzerox || bothzero { mulsign(FRAC_PI_2, x) } else { 0.0 };
     let correction = mulsign(FRAC_PI_2 - hpisignx, y);
     let r = if nonzerox { atan(y / x) + correction } else { correction };
+    let r = if y.is_nan() { f32::NAN } else { r };
     // atan2(+-inf, +-inf): y/x is inf/inf, which is NaN, so the general
     // formula above can't produce an answer here at all. IEEE754/C99
     // define a canonical result by quadrant regardless (+-pi/4 or

@@ -465,6 +465,20 @@ fn main() {
     check("atan2(inf,-inf)", atan2(f32::INFINITY, f32::NEG_INFINITY), 3.0 * std::f32::consts::FRAC_PI_4);
     check("atan2(-inf,inf)", atan2(f32::NEG_INFINITY, f32::INFINITY), -std::f32::consts::FRAC_PI_4);
     check("atan2(-inf,-inf)", atan2(f32::NEG_INFINITY, f32::NEG_INFINITY), -3.0 * std::f32::consts::FRAC_PI_4);
+    // atan2(NaN, 0.0)/atan2(NaN, -0.0) used to come out +-FRAC_PI_2 instead
+    // of NaN (backlog idea #85, found building a systematic C99
+    // special-case matrix against std): the x==0 branch bypasses
+    // atan(y/x) entirely and falls straight to mulsign(...,y), which only
+    // reads y's sign bit and doesn't propagate NaN. Every other NaN
+    // combination already worked (x!=0 routes through atan(y/x), which
+    // does propagate correctly).
+    check("atan2(nan,0)", atan2(f32::NAN, 0.0), f32::NAN);
+    check("atan2(nan,-0)", atan2(f32::NAN, -0.0), f32::NAN);
+    check("atan2(nan,1)", atan2(f32::NAN, 1.0), f32::NAN);
+    check("atan2(nan,inf)", atan2(f32::NAN, f32::INFINITY), f32::NAN);
+    check("atan2(nan,nan)", atan2(f32::NAN, f32::NAN), f32::NAN);
+    check("atan2(0,nan)", atan2(0.0, f32::NAN), f32::NAN);
+    check("atan2(1,nan)", atan2(1.0, f32::NAN), f32::NAN);
     // atan2_unchecked: contract is x != 0.0, not both infinite -- must
     // match atan2 exactly wherever that contract holds.
     check("atan2_unchecked(1,2)", atan2_unchecked(1.0, 2.0), atan2(1.0, 2.0));
