@@ -52,6 +52,45 @@ git history / readme.md, not here. Untested backlog is at the bottom.
   callers with different domain-region emphasis, check all callers/buckets,
   not just the isolated metric.*
 
+- **sinf_poly: decoupled per-caller copy for sin_checked/cos_checked
+  (paper-screened 2026-07-09, not implemented)**: tried the asin_poly
+  playbook (full decoupling instead of joint reweighting) on the theory
+  that the LP rejection above was a joint-fit constraint, not a real
+  no-headroom result. numpy screen replicating each caller's *actual*
+  reduction (first attempt used the wrong formula for cos_checked --
+  `q = round(x/pi-0.5)` directly instead of the real `k=round(x/pi-0.5);
+  q=k+0.5`, which looked like a catastrophic 3.3e-3 error at x≈0 before
+  the bug was found and fixed) shows both callers land on the *exact same*
+  worst-case r once the reduction is correct: max abs err 2.169e-08,
+  identical for both, since both ultimately draw `r` from the same
+  distribution regardless of caller. Decoupled per-caller least-squares
+  refit only bought ~1.25x (sin_checked) to ~3x (cos_checked) tighter
+  continuous-math error, avg ~2x -- real, but at the "isolated LP
+  predictions under ~10-15% has repeatedly turned out not worth the
+  round-trip" magnitude already established elsewhere in this file
+  (atan_latency's own LP refit), compounded by sinf_poly already being
+  documented near f32's precision floor (2026-07-07 entry above). Not
+  implemented; the earlier LP rejection's "opposite ends of the domain"
+  framing was directionally right about *why the joint reweighting
+  failed* but doesn't imply large decoupled headroom the way asin/
+  acos_poly's *domain-restriction* (asin only needing `[0.25,1)` vs
+  acos_poly's `[0,1)`) did -- sinf_poly's callers don't restrict `r`'s
+  own range at all, they just weight it differently, a structurally
+  smaller opportunity.
+
+- **exp_pos_neg: decoupled per-caller e/o copy for sinh/cosh
+  (paper-screened 2026-07-09, not implemented)**: same playbook, ruled
+  out even faster. sinh's `|x|<0.5` restriction is on the *input* `x`,
+  which only selects which integer `k` the Cody-Waite reduction picks --
+  it does not narrow the reduced residual `r`'s own range, which stays
+  `[-ln2/2, ln2/2]` identically for sinh and cosh regardless of caller.
+  Confirmed numerically: current `e`/`o` coefficients give the *exact
+  same* max error (1.325e-07) evaluated as either `e+r*o` (cosh/sinh's
+  `ep`) or `e-r*o` (`en`) across the shared `r` range -- no domain
+  difference exists to exploit at all, unlike acos_poly/asin's genuine
+  restricted-vs-full domain split. Not implemented; ruled out on paper
+  before writing any Rust or running any tuner.
+
 - **expm1 Pade degree bump 3→5 (2026-07-08)**: scipy-seeded refit found
   real avg-ulp headroom in the near-zero branch (0.138→0.135), but the
   function's actual max ulp (6) lives in expm1's other branch (`exp(x)-1`),
