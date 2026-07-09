@@ -392,6 +392,39 @@ brainstorm backlog lives at the bottom of this file.
   own coefficients by a fixed constant was already close enough to a
   direct fit that there's no meaningful headroom left. Not adopted.
 
+- **ln_normal's poly, max-capped ulp-weighted LP (2026-07-09), tested and
+  rejected — the isolated fit's most dramatic prediction yet for a "no
+  real headroom" outcome, adding a fifth confirming data point.**
+  Despite the entry above's coordinate-descent "zero-move" verdict,
+  this looked worth trying since that's the exact situation that turned
+  out to have real LP-findable headroom for `exp`'s own poly earlier
+  this session. Confirmed the boundary is safe first (the constant term
+  `c[0]` is multiplied by `s`, so it has zero effect at `s=0` — same
+  un-sensitive pattern as `exp2`'s `g0`, not `acos_poly`'s `u0` trap),
+  and confirmed `ln_normal` isn't shared across differently-stressed
+  sub-regions the way `sinf_poly`/`exp_pos_neg` are (its `_unchecked`
+  twin covers the same domain, just skipping the denormal dance). The
+  isolated fit predicted a huge win (avg weighted error 0.0901→0.0226,
+  ~75%, the LP naturally converging `c[0]` back to within 1e-9 of
+  exactly 1.0 without being forced) — but real `git stash`-paired
+  exhaustive verification found essentially nothing: `ln` avg ulp
+  0.1168→0.1167 (~0.09%, deep in exhaustive-sweep noise), max ulp
+  unchanged at 3. Reverted (`git checkout --`, confirmed clean); no
+  code changed. **General lesson: this is now the fifth data point on
+  this session's "isolated metric doesn't reliably predict magnitude"
+  finding, and unlike `erf_poly`/`atan_poly`'s at-least-small real wins,
+  this one (like `atan_latency`) found *nothing* despite the largest
+  predicted improvement of the whole session (~75%) — reinforcing that
+  the size of the isolated prediction carries close to zero information
+  about whether a real improvement exists at all, only whether it's
+  worth the (cheap) cost of testing. A function already coordinate-
+  descent-confirmed as "zero-move" is not, on its own, a reliable
+  signal that LP will find real headroom either — it worked for `exp`
+  but that may have been the exception, not the rule, among this
+  session's now 6 "already-tuned, tried LP anyway" attempts (`exp` win;
+  `sinf_poly`, `acos_poly`, `exp2`, `atan_latency`, `ln_normal` all
+  no-gain-or-regression).**
+
 ## hypot / misc
 
 - **Compensated hypot, `e = fma(r, -r, s); r + e/(2r)` (2026-07-08)**:
