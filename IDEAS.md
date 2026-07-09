@@ -1073,6 +1073,18 @@ cousin.
     which only reads `y`'s sign bit, not its NaN-ness). Every other NaN
     combination already worked. Fixed with a trailing override; 7 new
     edgecheck pins lock the matrix down going forward. Commit `5732abc`.
+    Immediate follow-up (same day): applied the same matrix technique to
+    `hypot`/`hypot_checked`/`rhypot` (clean, no bugs) and to
+    `remainder`/`remainder_checked`/`remainder_ieee`/`remainder_wide`/
+    `fmod` -- found the *same* NaN-discarding shape recurring: all five
+    share `if x==0.0 {x} else {normal}`, and `normal` already correctly
+    evaluates to NaN whenever `y` is `0` or NaN, but the guard fired
+    unconditionally anyway, silently overriding it. `remainder(0,0)`,
+    `fmod(0,0)`, etc. all returned `0`/`-0` instead of NaN, directly
+    contradicting `fmod`'s own doc comment (claims to match Rust's `%`
+    exactly, and `0.0f32 % 0.0f32` is NaN). Fixed uniformly (`&&
+    !normal.is_nan()` added to the guard) across all five. Commit
+    `bc81831`.
 88. **exp10 near the decade boundaries (resolved 2026-07-09, no bug found)**:
     densely fuzzed (12M samples) right around every point where
     kr=round(x·log2_10) crosses an integer (where the floor-adjust select
