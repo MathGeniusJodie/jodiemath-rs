@@ -771,10 +771,32 @@ cousin.
 61. **rhypot(x,y) = 1/hypot**: new function, divider is idle; normalizing
     2D vectors is the dominant hypot use case and this deletes the
     caller's division.
-62. **hypot: fma pairing choice** — fma(x,x,y·y) rounds y·y once; selecting
-    the *larger* operand for the fma slot (fma on max², plain mul on min²)
-    provably tightens the bound. Two selects; check if max ulp actually
-    moves (currently ~1).
+62. **hypot: fma pairing choice (tried 2026-07-09, rejected)** — implemented
+    max-first pairing for hypot/hypot_unchecked/hypot_checked (compare+select
+    on the signed operands). Real, consistent avg-ulp win (~15% better: hypot
+    0.0338→0.0288, hypot_unchecked 0.0339→0.0288, hypot_checked 0.0149→0.0127,
+    stable across repeat fuzz runs) but max ulp never moved off 1 as
+    predicted, and mca showed a real, deterministic perf cost: hypot latency
+    21.11→26.20 cyc (+24%), throughput 0.766→0.797 (+4%); hypot_checked
+    58.22/1.278 (+1.8%/+8.5%). Tried a second variant using hardware
+    `.max()`/`.min()` instead of compare+select (cheaper instructions in
+    principle) — measured *worse* latency still (29.20 cyc, +38% vs baseline),
+    confirming the real cost isn't the compare-vs-max/min instruction choice
+    but that determining operand order at all forces a serial step (abs +
+    compare/max) in front of the fma, which the naive `fma(x,x,y*y)` avoids
+    entirely by squaring both raw inputs immediately in parallel — nothing
+    to reorder before the multiply can start. (`.max()`/`.min()` also isn't a
+    correctness-neutral swap on its own: Rust's `f32::max`/`min` follow IEEE
+    maxNum/minNum and *discard* NaN — return the other operand — rather than
+    propagate it, unlike the plain compare+select `if a>=b` used here, which
+    happens to preserve NaN because the same condition picks both outputs
+    complementarily. Would have needed an extra NaN-restoring select on top,
+    even before the latency finding killed it outright.) Reverted, bit-
+    identical to prior HEAD. *A pairing/reordering change that looks free in
+    isolation (same op count) can still cost real latency if it inserts a
+    decision in front of an op that previously had no upstream dependency at
+    all — count what's on the critical path *before* the op, not just at
+    it.*
 63. **fmod family**: trunc-based sibling of remainder/remainder_checked —
     C-parity gap in the API, same machinery, mostly copy-paste.
 64. **remainder_checked: widen past 2^24 with a 2-word q** — already in
