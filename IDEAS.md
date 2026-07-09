@@ -689,12 +689,30 @@ cousin.
     sind/cosd ratios). tan's period-π means parity cancels in the ratio —
     check whether the parity xors can be skipped entirely for the pi/deg
     variants.
-30. **sinpi/cospi/sind/cosd harness coverage**: confirm these four are in
-    accuracy.rs's sweep at all; they were added later than the harness.
-31. **cospi large-x probe**: kb=(x-0.5)+MAGIC — for x with ulp>1 the -0.5
-    rounds away entirely (the exact pre_offset bug class fixed in
-    round_x_over_pi). Past 2^23 every f32 is an even integer so cos(πx)=1;
-    check the parity/select path actually lands there rather than by luck.
+30. **sinpi/cospi/sind/cosd harness coverage (resolved 2026-07-09)**:
+    sinpi/cospi were in the sweep, but domain-restricted to |x|<1e6, well
+    below 2^22 -- widened to the full f32 range, which is what caught
+    idea #31's real bug below. sind/cosd's own |x|<1e6 restriction stays
+    (their own, unrelated, still-accurate ~4.7e7 limit).
+31. **cospi large-x probe (confirmed real bug, fixed 2026-07-09)**: the
+    suspicion was right -- not "by luck", a genuine bug. sinpi/cospi's
+    magic-round trick (x + 1.5*2^23) is only exact for |x|<=2^22, unlike
+    every other magic-round use in this crate (which only ever rounds an
+    already-small reduced value, not raw unbounded input); for
+    2^22 < |x| < 2^24 it silently gave *wrong* results (e.g.
+    cospi(2^22+1) ~ -0.0033 instead of -1.0), contradicting the doc
+    comment's "exact out to f32::MAX" claim. Fixed with `x.round()`
+    (full-range correct) + the existing `parity()` helper instead of the
+    magic-constant's bit-trick sign extraction; cospi restructured via
+    `cos(pi*x)=sin(pi*(x+0.5))` without ever forming `x+0.5` or `k+1` as
+    single floats (same lossy-for-large-x trap). Also fixed an identical
+    bug in accuracy.rs's own `cospi_ref` (same trap at f64's ~2^53 limit)
+    and a `sinpi(-0.0)` sign regression the fix introduced (`x.round()`'s
+    `-0.0` case loses its sign in the following subtraction -- same
+    "opposite-signed-zero" mechanism as sinf_poly's own -0.0 fix,
+    guarded the same way). Real mca cost (~25-45% both functions),
+    accepted -- correctness for documented in-range inputs isn't
+    optional. See git history (commit 5f13f7d) for full details.
 32. **Intermediate sin/cos tier (|x|≤~1e5)**: single extra correction word
     over the fast tier's 4-fma Cody-Waite, well short of checked's full
     double-float q — a third point on the speed/domain curve if any user

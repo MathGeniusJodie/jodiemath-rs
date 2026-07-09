@@ -23,8 +23,8 @@ cbrt_accurate_unchecked (+) | 0.000 |     1     | (bit-identical to cbrt_accurat
         cos (|x|<1.3e7) |    0.293   |   2780    |  0.002  |    1
  sin_checked (|x|<=1e6) |    0.036   |     2     |  0.000  |    1
  cos_checked (|x|<=1e6) |    0.081   |     3     |  0.000  |    1
-         sinpi (|x|<1e6)|    0.336   |     2     | (no std sinpi)
-         cospi (|x|<1e6)|    0.094   |     2     | (no std cospi)
+        sinpi (all f32) |    0.197   |     2     | (no std sinpi)
+        cospi (all f32) |    0.281   | 8.7e8 (near a zero of cospi -- tiny absolute error, huge ulp) | (no std cospi)
           sind (|x|<1e6)|    0.119   |     2     | (no std sind)
           cosd (|x|<1e6)|    0.067   |     2     | (no std cosd)
 ```
@@ -224,8 +224,8 @@ sin                 |          46.00 |             1.151
 sin_checked         |         109.02 |             5.476
 cos                 |          54.00 |             1.406
 cos_checked         |         113.00 |             4.537
-sinpi               |          38.00 |             0.925
-cospi               |          46.00 |             1.150
+sinpi               |          48.02 |             1.338
+cospi               |          56.00 |             1.618
 sind                |          46.00 |             1.151
 cosd                |          54.00 |             1.406
 ln                  |          55.86 |             1.714
