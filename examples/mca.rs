@@ -138,6 +138,7 @@ fn main() {
         "log2p1",
         "exp",
         "expm1",
+        "exp_m1_over_x",
         "exp2m1",
         "sinh",
         "cosh",

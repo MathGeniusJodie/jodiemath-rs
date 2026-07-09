@@ -1437,6 +1437,49 @@ pub fn expm1(x: f32) -> f32 {
     if x.abs() < 0.5 { a } else { b }
 }
 
+/// (e^x - 1)/x -- new function, backlog idea #66: the well-conditioned
+/// primitive behind financial (continuously-compounded-rate) and ODE
+/// (exponential-integrator) kernels, where callers currently have to
+/// write `expm1(x)/x` themselves and hope `x` never lands exactly on the
+/// removable singularity at 0. `expm1`'s own Pade branch is *already*
+/// exactly this shape internally: `a = x * N(x)/D(x)`, so `a/x = N(x)/D(x)`
+/// with the `x` factor cancelling algebraically, before any rounding ever
+/// touches it -- no new cancellation risk, not even at `x=0` itself
+/// (verified by hand: `N(0)=fma(-1.9999927,0,-120)=-120`,
+/// `D(0)=fma(0,fma(0,-12.00003,60),-120)=-120`, so `N(0)/D(0)=1.0`
+/// exactly, matching the true limit `lim_{x->0}(e^x-1)/x=1` with no
+/// explicit `x==0.0` select needed at all). The direct branch (`|x|>=0.5`,
+/// where there's no cancellation to begin with) is just `expm1`'s own
+/// combine divided by `x`, a single extra rounding. Duplicates `expm1`'s
+/// reduction/poly rather than routing through it, matching `expm1`'s own
+/// standalone-copy precedent (see its doc comment for why sharing a
+/// helper here previously regressed an unrelated caller's codegen).
+/// Inherits `expm1`'s own unchecked-exp2 domain limit (see `exp`'s doc
+/// comment) -- garbage outside roughly `x in [-87.3, 88.7)`, same as
+/// `expm1` itself.
+#[inline(always)]
+pub fn exp_m1_over_x(x: f32) -> f32 {
+    let a = fma(-1.9999927, x * x, -120.0) / fma(x, fma(x, x - 12.000030, 59.999996), -120.0);
+    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+    let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
+    let r = fma(-k, LN2_HI, x);
+    let r = fma(-k, LN2_LO, r);
+    let c: [f32; 4] = [4.9999300e-1, 1.6667245e-1, 4.1883811e-2, 8.3009899e-3];
+    let r2 = r * r;
+    let r4 = r2 * r2;
+    let l0 = r + 1.0;
+    let l1 = fma(c[1], r, c[0]);
+    let l2 = fma(c[3], r, c[2]);
+    let r0 = fma(l1, r2, l0);
+    let p = fma(l2, r4, r0);
+    let k1b = fma(k, 0.5, ROUND_MAGIC) - (ROUND_MAGIC - 383.0);
+    let k2b = (k + 766.0) - k1b;
+    let t1 = f32::from_bits((k1b.to_bits() << 8) & EXPONENT_MASK);
+    let t2 = f32::from_bits((k2b.to_bits() << 8) & EXPONENT_MASK);
+    let b = fma(p * t1, t2, -1.0) / x;
+    if x.abs() < 0.5 { a } else { b }
+}
+
 /// 2^x - 1 (C23 `exp2m1`). Same cancellation problem as `expm1` (2^x is
 /// close to 1 whenever x is close to 0, so computing 2^x first and
 /// subtracting 1 loses low bits) and the same fix: `expm1`'s own Pade

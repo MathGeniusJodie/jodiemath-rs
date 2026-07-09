@@ -275,6 +275,16 @@ fn main() {
 
     check("expm1(0)", expm1(0.0), 0.0);
 
+    // exp_m1_over_x(x) = (e^x-1)/x, with the removable singularity at 0
+    // resolving to exactly 1.0 for free from the Pade branch's own
+    // algebra (N(0)/D(0)=-120/-120=1.0 exactly) -- no explicit x==0.0
+    // select needed, unlike sinc's own removable-singularity handling.
+    check("exp_m1_over_x(0)", exp_m1_over_x(0.0), 1.0);
+    check("exp_m1_over_x(-0)", exp_m1_over_x(-0.0), 1.0);
+    check_known_1ulp("exp_m1_over_x(1)", exp_m1_over_x(1.0), (1.0f64.exp_m1()) as f32);
+    check_finite("exp_m1_over_x(80)", exp_m1_over_x(80.0));
+    check("exp_m1_over_x(-80)", exp_m1_over_x(-80.0), 0.0125);
+
     // exp2m1(x) = 2^x - 1. Total (inherits exp2_checked's own full
     // [-151,128) clamp, see exp2m1's doc comment) so -inf/inf both give an
     // exact finite/saturated answer rather than NaN, unlike expm1's own

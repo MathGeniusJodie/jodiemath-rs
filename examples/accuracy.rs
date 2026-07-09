@@ -702,6 +702,18 @@ fn main() {
         let s = measure!(exp_domain, |x: f32| x.exp_m1(), expm1_u10);
         report("std expm1", &s, t0);
     }
+    if run("exp_m1_over_x") {
+        // Same inherited unchecked-exp2 domain as expm1 itself (see its
+        // own doc comment).
+        let exp_domain = |x: f32| (-126.0..128.0).contains(&(x * std::f32::consts::LOG2_E));
+        // removable singularity at 0: (e^x-1)/x -> 1 as x -> 0.
+        let exp_m1_over_x_ref = |v: F64xN| {
+            let is_zero = v.simd_eq(F64xN::splat(0.0));
+            is_zero.select(F64xN::splat(1.0), expm1_u10(v) / v)
+        };
+        let s = measure!(exp_domain, exp_m1_over_x, exp_m1_over_x_ref);
+        report("exp_m1_over_x", &s, t0);
+    }
     if run("exp2m1") {
         // 2^x - 1 via expm1_u10(x*ln2), not naive exp2_u35(v)-1.0: same
         // cancellation-trap reasoning as log2p1_ref just above, mirrored

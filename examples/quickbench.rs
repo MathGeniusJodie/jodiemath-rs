@@ -108,6 +108,7 @@ fn main() {
     bench!("std exp", |x: f32| x.exp());
     bench!("expm1", expm1);
     bench!("std expm1", |x: f32| x.exp_m1());
+    bench!("exp_m1_over_x", exp_m1_over_x);
     bench!("exp2m1", exp2m1);
     bench!("sinh", sinh);
     bench!("std sinh", |x: f32| x.sinh());
