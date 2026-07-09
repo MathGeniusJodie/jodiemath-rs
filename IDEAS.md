@@ -968,13 +968,13 @@ cousin.
 85. **atan2(±0, negative-finite) etc. full C99 special-case matrix as a
     test table** — atan2's specials were fixed piecemeal; one table test
     locks all 16+ cases.
-87. **powf(±1, huge y)**: log_2(1)=0, 0·y=0, exp2(0)=1 — fine; but
-    powf(1+ulp, 3e38): log2≈8.5e-8, ·3e38 overflows f? No — f32 holds it.
-    Check the k-clamp path saturates correctly rather than wrapping.
-88. **exp10 near the decade boundaries**: k=round(x·log2_10) crossing
-    integers at x = n·log10(2)-ish points — sweep a dense band around
-    every such crossing (the floor-adjust select is the only branchy-ish
-    logic in the function).
+88. **exp10 near the decade boundaries (resolved 2026-07-09, no bug found)**:
+    densely fuzzed (12M samples) right around every point where
+    kr=round(x·log2_10) crosses an integer (where the floor-adjust select
+    flips), plus every crossing point exactly -- clean, max ulp 1 both
+    ways, matching exp10_checked's own documented budget. The
+    floor-adjust logic is correct at its own boundaries; no sinpi/cospi-
+    style bug here.
 
 ### Longer shots / research-flavored
 
