@@ -719,11 +719,37 @@ cousin.
 
 ### sin / cos / tan (radians, half-turns, degrees)
 
-27. **sinpi/cospi: two_prod(π, r) + derivative correction** — π·r's single
-    rounding is likely these functions' dominant error; e = two_prod
-    residual, add e (or e·(1-y/2) using the poly's own y) into the result.
-    Two cheap ops, targets the one inexact step in an otherwise-exact
-    reduction.
+27. **sinpi/cospi: two_prod(π, r) + derivative correction (tried 2026-07-09,
+    rejected)**: implemented exactly as described -- `(p,e) =
+    two_prod(PI, r)`, `sinf_poly(p) + e*(1-p²/2)` via a single fma. The
+    premise's own "π·r's single rounding is likely the dominant error"
+    turned out to be only half right: `sinpi`'s own average ulp was
+    *bit-for-bit unchanged* (0.1969 both ways -- the correction does
+    shift ~0.23% of individual outputs by 1 ulp in a random-sample probe,
+    but not enough to move the aggregate at all), meaning `sinf_poly`'s
+    own ~4-term minimax fit error already dominates `sinpi`'s budget, not
+    the reduction's rounding step -- "two cheap ops" was never going to
+    help there regardless of cost. `cospi` did see a real, if modest,
+    improvement (avg ulp 0.0861->0.0768, ~11%; near-a-zero max ulp also
+    dropped from 823550->411775, though that's an already-documented
+    "huge relative error at a true zero, harmless in absolute terms"
+    artifact either way) -- `cospi`'s own extra reduction step
+    (`k=round(x-0.5)`, `r=(x-k)-0.5`, one more subtraction than `sinpi`'s
+    plain `r=x-q`) apparently does leave more rounding on the table for
+    this correction to recover. But "two cheap ops" wasn't actually
+    cheap: mca showed a real, substantial throughput regression on both
+    -- `sinpi` 1.149->1.400 cyc/elem (+21.8%) for *zero* accuracy gain,
+    `cospi` 1.283->1.653 cyc/elem (+28.8%) for the 11% avg-ulp gain.
+    Neither clears this loop's own bar (speedup, or accuracy gain *without*
+    a perf penalty) -- `sinpi_tp` fails on both axes, `cospi_tp`'s real
+    accuracy gain comes at a real, non-trivial cost. Reverted, bit-identical
+    to prior HEAD. *A "single inexact step in an otherwise-exact reduction"
+    is only the dominant error term if everything downstream of it is
+    exact or near-exact -- here `sinf_poly`'s own several-ulp-of-headroom
+    polynomial fit swallowed the correction whole for `sinpi`, and only
+    `cospi`'s extra reduction rounding gave the fix any real room to work;
+    measure both functions sharing an idea separately, don't assume a
+    shared reduction trick pays off identically for both.*
 28. **sind/cosd: same trick for d·DEG_TO_RAD_SMALL** — 2-constant split of
     π/180 (hi with zeroed tail bits so d·HI is exact, lo folded via fma).
 29. **tanpi / tand**: new functions from existing pieces (sinpi/cospi,
