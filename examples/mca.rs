@@ -159,6 +159,7 @@ fn main() {
         "erfc",
         "hypot",
         "hypot_checked",
+        "rhypot",
         "rsqrt",
         "powf",
         "powf_unchecked",

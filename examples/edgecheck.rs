@@ -477,6 +477,24 @@ fn main() {
     check_finite("hypot_checked(MAX/2,MAX/2)", hypot_checked(f32::MAX / 2.0, f32::MAX / 2.0));
     check_finite("hypot_checked(min_denorm,min_denorm)", hypot_checked(f32::from_bits(1), f32::from_bits(1)));
 
+    // rhypot(x,y) = 1/hypot(x,y). Every special case here falls out of the
+    // naive fma(x,x,y*y).sqrt() composition purely from IEEE754 semantics
+    // (verified by hand before writing the function) *except* the same
+    // inf-vs-NaN case hypot itself needs an override for.
+    check("rhypot(0,0)", rhypot(0.0, 0.0), f32::INFINITY);
+    check("rhypot(-0,0)", rhypot(-0.0, 0.0), f32::INFINITY);
+    check("rhypot(3,4)", rhypot(3.0, 4.0), 0.2);
+    check("rhypot(inf,1)", rhypot(f32::INFINITY, 1.0), 0.0);
+    check("rhypot(1,inf)", rhypot(1.0, f32::INFINITY), 0.0);
+    check("rhypot(-inf,1)", rhypot(f32::NEG_INFINITY, 1.0), 0.0);
+    check("rhypot(inf,inf)", rhypot(f32::INFINITY, f32::INFINITY), 0.0);
+    check("rhypot(nan,1)", rhypot(f32::NAN, 1.0), f32::NAN);
+    check("rhypot(nan,nan)", rhypot(f32::NAN, f32::NAN), f32::NAN);
+    // the actual point of the inf-vs-NaN override: matches hypot's own
+    // "infinity wins over NaN" special case, reciprocated.
+    check("rhypot(inf,nan)", rhypot(f32::INFINITY, f32::NAN), 0.0);
+    check("rhypot(nan,inf)", rhypot(f32::NAN, f32::INFINITY), 0.0);
+
     check("rsqrt(1)", rsqrt(1.0), 1.0);
     check("rsqrt(4)", rsqrt(4.0), 0.5);
     check("rsqrt(0)", rsqrt(0.0), f32::INFINITY);

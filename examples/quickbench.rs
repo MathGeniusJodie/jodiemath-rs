@@ -152,6 +152,7 @@ fn main() {
     bench!("std hypot", move |x: f32| x.hypot(hypot_y));
     bench!("hypot_unchecked", move |x: f32| hypot_unchecked(x, hypot_y));
     bench!("hypot_checked", move |x: f32| hypot_checked(x, hypot_y));
+    bench!("rhypot", move |x: f32| rhypot(x, hypot_y));
     bench!("rsqrt", rsqrt);
     // black_box'd 2nd arg, same reasoning as atan2/hypot above -- a literal
     // exponent lets LLVM constant-fold powf's y==0.0/y_int/y_odd branches

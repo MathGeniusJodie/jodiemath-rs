@@ -2577,6 +2577,30 @@ pub fn hypot_checked(x: f32, y: f32) -> f32 {
     if x.is_infinite() || y.is_infinite() { f32::INFINITY } else { normal }
 }
 
+/// 1/hypot(x,y) -- new function, backlog idea #61: normalizing a 2D vector
+/// (`(x,y) / hypot(x,y)`) is hypot's single most common real use case, and
+/// computing the reciprocal directly saves the caller their own separate
+/// division. Same "sqrt and division are each already correctly-rounded
+/// hardware operations, just compose them" reasoning as `rsqrt` (see its
+/// own doc comment) -- no bit-trick seed needed, `hypot_unchecked`'s own
+/// `fma(x,x,y*y)` core plus one hardware sqrt and one division. The naive
+/// composition already gets every zero/inf/nan special case right *except
+/// one*, purely from IEEE754 semantics: `rhypot(0,0)=inf` (`1/0`),
+/// `rhypot(x,inf)=rhypot(inf,y)=0` (`1/inf`), `rhypot(NaN,y)=NaN` all fall
+/// out for free (verified by hand before writing this). The one exception
+/// mirrors `hypot`'s own documented special case: `+-inf` paired with
+/// `NaN` degrades to `1/sqrt(NaN)=NaN` here, but IEEE754/C99 defines
+/// `hypot(+-inf, NaN) = +inf` (infinity "wins" over NaN), so the
+/// reciprocal should be `0`, not `NaN` -- same override `hypot` itself
+/// uses. No anti-overflow rescaling tier (unlike `hypot_checked`): not
+/// requested by the backlog idea, and `x*x+y*y` overflowing is already a
+/// documented, accepted tradeoff of the crate's default `hypot`.
+#[inline(always)]
+pub fn rhypot(x: f32, y: f32) -> f32 {
+    let normal = 1.0 / fma(x, x, y * y).sqrt();
+    if x.is_infinite() || y.is_infinite() { 0.0 } else { normal }
+}
+
 /// log2(x) as a double-float (Df32) instead of a collapsed f32, for
 /// positive finite x only (same domain log_2_normal assumes -- callers
 /// must guard zero/negative/inf/nan themselves). Reuses log_2_normal's

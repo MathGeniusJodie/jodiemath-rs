@@ -903,6 +903,18 @@ fn main() {
         let s = fuzz2(TWOARG_SAMPLES, |_, _| true, hypot_checked, hypot_u35);
         report("hypot_checked", &s, t0);
     }
+    if run("rhypot") {
+        // Same overflow/underflow tradeoff as hypot/hypot_unchecked (see
+        // hypot's own domain comment above) -- rhypot shares the identical
+        // fma(x,x,y*y) core.
+        let hypot_domain = |x: f32, y: f32| {
+            let ok = |v: f32| v == 0.0 || (v.abs() > 1e-15 && v.abs() < 1e18);
+            ok(x) && ok(y)
+        };
+        let rhypot_ref = |v: F64xN, w: F64xN| F64xN::splat(1.0) / hypot_u35(v, w);
+        let s = fuzz2(TWOARG_SAMPLES, hypot_domain, rhypot, rhypot_ref);
+        report("rhypot", &s, t0);
+    }
     if run("pown") {
         // pown(x, n) takes an i32 exponent, not the f32/f64 pair shape
         // the rest of this harness is built around (SIMD reference via
