@@ -312,6 +312,36 @@ fn main() {
 
     check("sinh(0)", sinh(0.0), 0.0);
     check("cosh(0)", cosh(0.0), 1.0);
+
+    // sinh_checked/cosh_checked: full range (backlog idea #85's fifth
+    // wave) -- exp_pos_neg_checked_half clamps x to +-170 (comfortably
+    // inside the field split's own proven-safe |k|<=254 window, see its
+    // doc comment) and applies the 0.5 scale factor inside the split
+    // itself so the intermediate never overflows before the halving does.
+    // sinh/cosh (unchecked) get this all wrong: wrong-sign garbage at
+    // x=1000, NaN at +-inf.
+    check("sinh_checked(0)", sinh_checked(0.0), 0.0);
+    check("cosh_checked(0)", cosh_checked(0.0), 1.0);
+    check("sinh_checked(1000)", sinh_checked(1000.0), f32::INFINITY);
+    check("sinh_checked(-1000)", sinh_checked(-1000.0), f32::NEG_INFINITY);
+    check("cosh_checked(1000)", cosh_checked(1000.0), f32::INFINITY);
+    check("cosh_checked(-1000)", cosh_checked(-1000.0), f32::INFINITY);
+    check("sinh_checked(inf)", sinh_checked(f32::INFINITY), f32::INFINITY);
+    check("sinh_checked(-inf)", sinh_checked(f32::NEG_INFINITY), f32::NEG_INFINITY);
+    check("cosh_checked(inf)", cosh_checked(f32::INFINITY), f32::INFINITY);
+    check("cosh_checked(-inf)", cosh_checked(f32::NEG_INFINITY), f32::INFINITY);
+    check("sinh_checked(nan)", sinh_checked(f32::NAN), f32::NAN);
+    check("cosh_checked(nan)", cosh_checked(f32::NAN), f32::NAN);
+    // Boundary just below/at the true overflow threshold (x ~= 89.416,
+    // where exp(x) alone would already be inf but sinh/cosh(x) is still
+    // finite -- half of a not-yet-overflowed exp(x)). This is the premature-
+    // overflow-before-scaling gap the halving trick fixes; pinned so it
+    // can't silently come back.
+    check_finite("sinh_checked(89.415)", sinh_checked(89.415));
+    check_finite("cosh_checked(89.415)", cosh_checked(89.415));
+    check("sinh_checked(89.416)", sinh_checked(89.416), f32::INFINITY);
+    check("cosh_checked(89.416)", cosh_checked(89.416), f32::INFINITY);
+
     check("tanh(0)", tanh(0.0), 0.0);
     // Domain hole fixed 2026-07-08: 2*x used to be passed to expm1
     // unclamped, inheriting exp's unchecked-domain garbage for |x| > ~44

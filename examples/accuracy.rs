@@ -754,6 +754,16 @@ fn main() {
         let s = measure!(sinh_domain, cosh_throughput, cosh_u35);
         report("cosh_throughput", &s, t0);
     }
+    if run("sinh_checked") {
+        // Full range (backlog idea #85's fifth wave): properly saturates
+        // to +-inf instead of sinh/cosh's own wraparound-to-garbage or
+        // NaN-at-infinity, so unlike sinh/cosh's own sinh_domain
+        // restriction above, this gets the whole f32 domain.
+        let s = measure!(everywhere, sinh_checked, sinh_u35);
+        report("sinh_checked", &s, t0);
+        let s = measure!(everywhere, cosh_checked, cosh_u35);
+        report("cosh_checked", &s, t0);
+    }
     if run("tanh") {
         // tanh uses exp(2x): same reasoning as sinh/cosh, halved.
         let tanh_domain = |x: f32| {

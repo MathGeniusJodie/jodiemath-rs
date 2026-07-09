@@ -145,6 +145,8 @@ fn main() {
         "cosh",
         "sinh_throughput_fn",
         "cosh_throughput_fn",
+        "sinh_checked",
+        "cosh_checked",
         "tanh",
         "sigmoid",
         "softplus",

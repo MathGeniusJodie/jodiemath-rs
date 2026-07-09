@@ -1685,6 +1685,99 @@ pub fn cosh(x: f32) -> f32 {
     0.5 * (ep + en)
 }
 
+/// `exp_pos_neg`, but with `x` clamped first so `k = round(x*log2e)`
+/// never leaves the safe range for *both* `exp2_field_split(k)` (used
+/// for `exp(x)`) and its reciprocal-based negation (used for `exp(-x)`),
+/// AND returning `0.5*exp(x)`/`0.5*exp(-x)` directly instead of the raw
+/// pair -- found 2026-07-09 (backlog idea #85's fifth wave, the
+/// special-case matrix technique applied to `sinh`/`cosh`/`tanh`/
+/// `sigmoid`):
+///
+/// 1) `exp_pos_neg` has no clamp at all, so for `|x|` large enough that
+///    `k` leaves `exp2_field_split`'s own safe domain, the bit-trick
+///    exponent construction wraps around instead of saturating --
+///    `sinh(1000)` came out `-inf` (*wrong sign*, should be `+inf`),
+///    `sinh(-1000)` came out a finite garbage value (should be `-inf`),
+///    and `sinh`/`cosh(+-inf)` both came out `NaN` (should be
+///    `+-inf`/`+inf`). A standalone probe enumerating every integer `k`
+///    found the split (and its reciprocal-bit-trick negation) exactly
+///    matches `2^k`/`2^-k` cast to f32 -- including correct saturation
+///    to `0`/`inf` -- for `k` in `[-254, 254]`; wraparound starts right
+///    outside that (first mismatch at `k = +-255`). That's much wider
+///    than initially assumed (an earlier version of this fix clamped to
+///    `|k|<128`, matching `exp_checked`'s own asymmetric bound applied
+///    symmetrically) -- `128` is where `exp_checked` itself needs to
+///    stop (`exp(x)` alone overflows there), not where the split's
+///    bit-trick construction actually breaks. The clamp below uses
+///    `170.0` (`k` up to ~245.3), comfortably inside the proven-safe
+///    `254` ceiling with margin, and far past the true `sinh`/`cosh`
+///    overflow threshold below -- so it only ever discards inputs whose
+///    correct answer is already exactly `+-inf` anyway.
+/// 2) The initial (too-tight, `|x|<=88.72`) clamp also surfaced a
+///    second, larger-magnitude bug: for `x` in roughly `[87.3, 89.4]`,
+///    `sinh(x)`/`cosh(x)` are still finite and f32-representable
+///    (they're *half* of `exp(x)`, which overflows a bit earlier), but
+///    `sinh`/`cosh`'s `p_pos * t1 * t2` computes the full unscaled
+///    `exp(x)` first and only applies the `0.5` factor afterward in the
+///    caller -- so the intermediate overflows to `inf` before the
+///    caller ever gets to halve it. An exhaustive sweep confirmed this:
+///    max ulp *8388030* right at the boundary (previously invisible --
+///    the old accuracy.rs sweep for plain `sinh`/`cosh` deliberately
+///    excludes this exact window via its own `sinh_domain` restriction,
+///    so the gap was never measured). Fixed by pushing the `0.5` into
+///    the exact-power-of-two field split instead of the final result:
+///    `t1` (or `t1n`) is halved (`t1 * 0.5`, exact for any power-of-two
+///    float down to the denormal floor) *before* multiplying by
+///    `t2`/`t2n`, so the product only needs to represent `0.5*exp(x)`
+///    rather than the (larger, earlier-overflowing) `exp(x)` itself.
+///    Combined with the wide `170.0` clamp above, this now covers the
+///    whole legitimately-finite window (`|x|` up to ~`89.4`) exactly,
+///    with `+-inf` returned correctly everywhere beyond it.
+#[inline(always)]
+fn exp_pos_neg_checked_half(x: f32) -> (f32, f32) {
+    let x = x.clamp(-170.0, 170.0);
+    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+    let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
+    let r = fma(-k, LN2_HI, x);
+    let r = fma(-k, LN2_LO, r);
+    let c: [f32; 4] = [4.999897e-1, 1.6666329e-1, 4.1917525e-2, 8.3811125e-3];
+    let r2 = r * r;
+    let r4 = r2 * r2;
+    let e = fma(c[2], r4, fma(c[0], r2, 1.0));
+    let o = fma(c[3], r4, fma(c[1], r2, 1.0));
+    let p_pos = fma(r, o, e);
+    let p_neg = fma(-r, o, e);
+    let (t1, t2) = exp2_field_split(k);
+    let t1n = f32::from_bits(0x7F00_0000u32.wrapping_sub(t1.to_bits()));
+    let t2n = f32::from_bits(0x7F00_0000u32.wrapping_sub(t2.to_bits()));
+    (p_pos * (t1 * 0.5) * t2, p_neg * (t1n * 0.5) * t2n)
+}
+
+/// Full-range sibling of [`sinh`] -- same construction, just built on
+/// [`exp_pos_neg_checked_half`] instead of the unchecked `exp_pos_neg`
+/// (which already returns the `0.5*exp(+-x)` halves, so no separate
+/// `0.5*` multiply here, unlike `sinh`). See that function's own doc
+/// comment for the correctness gaps this closes (`sinh`'s own
+/// wrong-sign/NaN behavior for large `|x|`, plus a premature-overflow
+/// gap just below that, both found via backlog idea #85's fifth wave).
+#[inline(always)]
+pub fn sinh_checked(x: f32) -> f32 {
+    let a = sinh_small(x);
+    let (ep, en) = exp_pos_neg_checked_half(x);
+    let b = ep - en;
+    if x.abs() < 0.5 { a } else { b }
+}
+
+/// Full-range sibling of [`cosh`] -- same construction, just built on
+/// [`exp_pos_neg_checked_half`] instead of the unchecked `exp_pos_neg`.
+/// See [`exp_pos_neg_checked_half`]'s own doc comment for the
+/// correctness gaps this closes.
+#[inline(always)]
+pub fn cosh_checked(x: f32) -> f32 {
+    let (ep, en) = exp_pos_neg_checked_half(x);
+    ep + en
+}
+
 /// Throughput-tier sinh: computes `exp(-x)` as `1.0 / exp(x)` instead of a
 /// second full exp evaluation, trading one whole poly evaluation for one
 /// division. On this CPU the FP divider is close to idle even when the
