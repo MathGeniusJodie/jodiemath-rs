@@ -1669,10 +1669,31 @@ cousin.
     outputs fall well outside that stated domain by design (use
     `exp2_checked` there, which this sweep confirms does the right
     thing). No code change.
-98. **Karatsuba-style Df32 multiply**: doublefloat.rs's mul does 2-3
-    two_prods; for the powf chain, an error-bounded cheaper mul (drop
-    lo·lo, keep cross terms in one fma) might cut powf_checked's +61%
-    throughput cost — audit what Df32::mul actually does first.
+98. **Karatsuba-style Df32 multiply (audited 2026-07-09, premise doesn't
+    apply -- found and removed genuinely dead code instead)**: did the
+    requested audit first. The full `Df32*Df32` multiply (`impl Mul for
+    Df32`, the "2-3 two_prods" this idea targets) turned out to have
+    **zero call sites anywhere in the crate** -- `powf_checked`'s actual
+    chain (`log2_df(ax) * y`, `exp2_checked_df`'s own `v.1*LN_2`
+    correction) only ever multiplies a `Df32` by a plain `f32` (the
+    already-cheap 3-op `Mul<f32> for Df32` impl), never `Df32` by
+    `Df32`. Confirmed via exhaustive grep across `src/` and `examples/`
+    (only comment mentions, no actual type-level usage) --
+    `doublefloat.rs` is a private module with no external consumers
+    either, so this wasn't reachable any other way. So the idea's own
+    premise (cheapen the Df32*Df32 multiply to help powf_checked) can't
+    apply: that code path doesn't exist in the powf chain at all, and
+    powf_checked's own real cost lives elsewhere (`log2_df`'s own poly,
+    `exp2_checked_df`'s field split). Removed the now-confirmed-dead
+    `impl Mul for Df32` entirely (12 lines) rather than leave it as
+    unreachable complexity -- verified behavior-unchanged via
+    `cargo test`, `accuracy.rs` (powf/cbrt/remainder families, all
+    unchanged), and `edgecheck.rs` (0 failures). Commit `3c375f3`.
+    *Auditing a target function's actual call graph before optimizing a
+    piece of shared infrastructure it's assumed to use is worth doing
+    first every time -- here it revealed the assumed dependency doesn't
+    exist at all, redirecting the useful outcome from "cheapen a hot
+    multiply" to "delete an unreachable one."*
 99. **Precision-tapered polys**: evaluate the high-order (small-magnitude)
     poly tail in a *cheaper* form (fewer fmas, plain Horner) and only the
     dominant terms carefully — the tail terms' own rounding is provably
