@@ -875,8 +875,6 @@ cousin.
     decision in front of an op that previously had no upstream dependency at
     all — count what's on the critical path *before* the op, not just at
     it.*
-63. **fmod family**: trunc-based sibling of remainder/remainder_checked —
-    C-parity gap in the API, same machinery, mostly copy-paste.
 64. **remainder_checked: widen past 2^24 with a 2-word q** — already in
     backlog round 1; still unclaimed.
 
