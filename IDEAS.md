@@ -948,14 +948,23 @@ cousin.
     checked tiers, verify the copysign is still load-bearing for every
     remaining caller (it was added for the x=±0 case; sinpi/cospi/sind/
     cosd route sign differently).
-82. **log1p at x=+1.0 boundary**: u=2.0, Sterbenz window edge — one-input
-    check that c is still exact there.
-83. **hypot_checked denormal-pair path**: pre-scale by 2^24 then exponent
-    trick — sweep a grid of denormal×denormal pairs specifically (the
-    Python prototype sampled broadly, maybe thinly there).
-84. **erf/erfc NaN sign convention audit**: mulsign-based paths can flip
-    NaN payload signs; C99 doesn't care but a cheap consistency check
-    against std across all specials would close the book.
+82. **log1p at x=+1.0 boundary (resolved 2026-07-09, no bug)**: checked --
+    `log1p(1.0)` is bit-exact (`c` is exact at `u=2.0`, right at Sterbenz's
+    inclusive boundary), and a dense sweep either side of `x=1.0` shows
+    max ulp 1, matching log1p's own documented budget.
+83. **hypot_checked denormal-pair path (resolved 2026-07-09, no bug)**:
+    20M-sample fuzz of denormal x denormal pairs (both signs) against an
+    f64 reference: max ulp 1. The Python prototype's broad sampling wasn't
+    thin here after all.
+84. **erf/erfc NaN sign convention audit (resolved 2026-07-09, no action)**:
+    checked directly -- several mulsign-based paths (erf, atan2, atan,
+    asin) do preserve a negative-NaN input's sign bit through to the
+    output, while std canonicalizes to a positive NaN. Confirmed this is
+    NaN sign/payload propagation, which IEEE754/C99 leaves
+    implementation-defined (not a spec violation, matching the idea's own
+    "C99 doesn't care" framing) -- fixing it to mimic std's canonicalization
+    would need a real `.abs()`-style op added to every mulsign-based
+    NaN-producing path, for zero standards-compliance benefit. Left as is.
 85. **atan2(±0, negative-finite) etc. full C99 special-case matrix as a
     test table** — atan2's specials were fixed piecemeal; one table test
     locks all 16+ cases.
