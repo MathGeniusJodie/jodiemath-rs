@@ -283,6 +283,20 @@ fn main() {
     check_finite("sigmoid(-f32::MAX)", sigmoid(-f32::MAX));
     check("sigmoid(nan)", sigmoid(f32::NAN), f32::NAN);
 
+    // softplus(x) = ln(1+e^x). ln(2) at 0 (ln(1+e^0)=ln(2)); saturates to
+    // x itself for large positive x, to exactly 0 for large negative x
+    // (both via the correction-term cutoff, see softplus's own doc
+    // comment for why a hard cutoff instead of a clamped exp argument).
+    check("softplus(0)", softplus(0.0), std::f32::consts::LN_2);
+    check("softplus(-0)", softplus(-0.0), std::f32::consts::LN_2);
+    check("softplus(1000)", softplus(1000.0), 1000.0);
+    check("softplus(f32::MAX)", softplus(f32::MAX), f32::MAX);
+    check("softplus(inf)", softplus(f32::INFINITY), f32::INFINITY);
+    check("softplus(-inf)", softplus(f32::NEG_INFINITY), 0.0);
+    check("softplus(-1000)", softplus(-1000.0), 0.0);
+    check("softplus(-f32::MAX)", softplus(-f32::MAX), 0.0);
+    check("softplus(nan)", softplus(f32::NAN), f32::NAN);
+
     check("asinh(0)", asinh(0.0), 0.0);
     // small-x cancellation (see asinh's doc comment) is fixed: asinh(x) ~ x
     // for tiny x, no longer collapses to exactly 0.

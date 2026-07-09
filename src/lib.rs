@@ -1674,6 +1674,48 @@ pub fn sigmoid(x: f32) -> f32 {
     1.0 / (1.0 + e)
 }
 
+/// softplus(x) = ln(1+e^x), the smooth approximation to `max(x,0)` ML
+/// frameworks call `log1pexp`/`softplus`. Naive `(1.0+exp(x)).ln()`
+/// overflows for large `x` (`exp(x)` alone does) and loses precision for
+/// very negative `x` (`1.0+tiny` rounds to exactly `1.0`, the same
+/// cancellation `log1p` exists to avoid) -- the standard numerically
+/// stable form instead: `softplus(x) = max(x,0) + log1p(exp(-|x|))`
+/// (verified algebraically: for `x>=0`, `x + ln(1+e^-x) =
+/// ln(e^x) + ln(1+e^-x) = ln(e^x(1+e^-x)) = ln(e^x+1)`; for `x<0`,
+/// `max(x,0)=0` and this reduces to `ln(1+e^x)` directly).
+///
+/// Two real bugs in a first attempt that clamped `exp`'s argument
+/// directly (`exp((-x.abs()).max(-87.0))`), both found by a scratch
+/// probe before this was ever wired into the real test harness:
+/// 1. For `x<-87`-ish, `max(x,0)=0`, so the *entire* result comes from
+///    the correction term alone -- there, clamping the exponent to
+///    exactly `-87.0` doesn't just avoid `exp`'s out-of-contract domain,
+///    it also *replaces* the true (much smaller) correction with a
+///    fixed, comparatively huge stand-in (e.g. `softplus(-100)` came out
+///    `~1.6e-38` instead of the true `~3.7e-44` -- for positive `x` this
+///    error rounds away against `x`'s own magnitude, but for negative
+///    `x` nothing hides it). Fixed by *selecting* the correction to
+///    exactly `0.0` once `|x|` is far enough out that the true value is
+///    already negligible at f32 precision, instead of feeding `exp` a
+///    clamped-but-wrong argument and hoping the result is close enough.
+/// 2. `f32::max`/`min` follow IEEE `maxNum`/`minNum` semantics and
+///    *discard* NaN (return the other operand) rather than propagate it
+///    -- both `x.max(0.0)` (this function's own core operation, not an
+///    incidental clamp) and the exponent-clamping `min`/`max` calls
+///    silently turned `softplus(NaN)` into a finite garbage value. Same
+///    class of trap as the rejected `hypot` `.max()`/`.min()` idea
+///    earlier this session, just harder to avoid here since `max(x,0)`
+///    isn't optional the way it was there. Guarded with an explicit
+///    trailing `is_nan` check instead.
+#[inline(always)]
+pub fn softplus(x: f32) -> f32 {
+    let ax = x.abs();
+    let e = exp(-ax.min(87.0));
+    let corr = if ax > 87.0 { 0.0 } else { log1p(e) };
+    let normal = x.max(0.0) + corr;
+    if x.is_nan() { f32::NAN } else { normal }
+}
+
 /// asinh(x) = ln(x + sqrt(x^2+1)), fixed for two bugs in the straight-ported
 /// form (the doc comment used to describe only the first; the exhaustive
 /// sweep that found it also turned up the second, worse one):

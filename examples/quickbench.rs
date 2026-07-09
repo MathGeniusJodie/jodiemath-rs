@@ -115,6 +115,7 @@ fn main() {
     bench!("tanh", tanh);
     bench!("std tanh", |x: f32| x.tanh());
     bench!("sigmoid", sigmoid);
+    bench!("softplus", softplus);
     bench!("asinh", asinh);
     bench!("std asinh", |x: f32| x.asinh());
     bench!("acosh", acosh);

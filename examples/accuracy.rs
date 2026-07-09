@@ -733,6 +733,24 @@ fn main() {
         let s = measure!(sigmoid_domain, sigmoid, sigmoid_ref);
         report("sigmoid", &s, t0);
     }
+    if run("softplus") {
+        // Restricted to |x|<80: softplus's own correction-term cutoff
+        // (see its doc comment) creates a real, deliberate discontinuity
+        // right around |x|=87 -- true value ~1.6e-38 on one side, exactly
+        // 0.0 on the other, both equally "correct" in the sense that
+        // neither is distinguishable from the other at any scale that
+        // matters, but a raw ulp comparison right at that seam reports
+        // millions of ulp for what's actually a sub-denormal-scale
+        // difference (the same "near a value too small to matter"
+        // artifact already documented for cospi elsewhere in this file).
+        // |x|<80 stays comfortably clear of the seam on both sides.
+        let softplus_domain = |x: f32| x.abs() < 80.0;
+        let softplus_ref = |v: F64xN| {
+            v.simd_max(F64xN::splat(0.0)) + log1p_u10(exp_u10(-v.abs()))
+        };
+        let s = measure!(softplus_domain, softplus, softplus_ref);
+        report("softplus (|x|<80)", &s, t0);
+    }
     if run("asinh") {
         let s = measure!(everywhere, asinh, asinh_u10);
         report("asinh", &s, t0);

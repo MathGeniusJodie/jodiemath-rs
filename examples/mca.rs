@@ -142,6 +142,7 @@ fn main() {
         "cosh_throughput_fn",
         "tanh",
         "sigmoid",
+        "softplus",
         "asinh",
         "acosh",
         "atanh",
