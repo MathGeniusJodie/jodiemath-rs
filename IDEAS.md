@@ -834,9 +834,32 @@ cousin.
 39. **atan2 octant-symmetric exhaustive harness**: sweep all x at a few
     thousand fixed y/x ratios (and vice versa) — turns the binary-input
     problem into affordable near-exhaustive slices.
-40. **atan_latency: fold FRAC_PI_2-p select into sign trickery** — the
-    a<1.0 select and final mulsign might merge into one xor+select. Asm
-    check; remember the mca mix() sign blind spot — throughput mode only.
+40. **atan_latency: fold FRAC_PI_2-p select into sign trickery (adopted
+    2026-07-09)**: implemented as described -- apply `mulsign` to `p` and
+    `FRAC_PI_2` individually first (`mulsign(a,x) - mulsign(b,x) ==
+    mulsign(a-b,x)` exactly: `mulsign` is a sign-bit XOR, and IEEE754
+    subtraction commutes exactly with negating both operands, so this is
+    a pure reassociation, not a new approximation), then select between
+    `sp` and `hpisignx - sp` instead of selecting on the unsigned value
+    and applying one final `mulsign`. Verified bit-identical against the
+    prior formulation over ~20M random bit patterns plus every special
+    value (0, -0, ±1, ±inf, NaN) before trusting it. Paper reasoning
+    beforehand (counting ops in each formulation) actually suggested this
+    *wouldn't* help -- the new form needs one extra `mulsign` (2 instead
+    of 1) -- so this was measured anyway per this session's own
+    "measure, don't just reason" precedent, and the paper reasoning
+    turned out to be an incomplete predictor of the actual generated
+    code: mca showed a small, real, reproducible throughput win
+    (1.611->1.591 cyc/elem, -1.2%, confirmed via repeat runs) with
+    latency unchanged (59.09->59.11, within noise). A modest win, not a
+    dramatic one -- adopted because it's free (zero accuracy cost, no
+    latency cost), not because the throughput gain alone justified the
+    effort. Commits `997dec1` (code), `7bcafe7` (readme sync). *Even when
+    a hand-counted op tally says a reassociation shouldn't help (or
+    should hurt), LLVM's actual instruction selection/scheduling can
+    still land differently than the naive op-count model predicts --
+    worth a quick mca check before dismissing an idea on paper alone,
+    especially when verifying bit-identical accuracy is cheap.*
 
 ### hyperbolics / sigmoid
 
