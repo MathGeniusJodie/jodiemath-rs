@@ -38,8 +38,10 @@ cbrt_accurate_unchecked (+) | 0.000 |     1     | (bit-identical to cbrt_accurat
                   log10 |    0.127   |     3     |  0.000  |    0
   log10_unchecked (+)   |    0.255   |     3     | (bit-identical to log10 on its domain)
                   log1p |    0.106   |     4     |  0.000  |    0
+                log2p1  |    0.102   |     3     | (no std log2p1)
         exp (in-domain) |    0.075   |     3     |  0.000  |    1
       expm1 (in-domain) |    0.130   |     6     |  0.000  |    0
+                exp2m1  |    0.077   |     4     | (no std exp2m1)
        sinh (in-domain) |    0.081   |     5     |  0.000  |    1
        cosh (in-domain) |    0.071   |     5     |  0.000  |    0
 sinh_throughput (in-domain)| 0.072   |     5     |  0.000  |    1
@@ -95,8 +97,10 @@ log2_unchecked |  8.5 ns |     -   |  -
         log10 | 14.3 ns | 16.6 ns | 1.2x
 log10_unchecked|  8.8 ns |     -   |  -
         log1p | 16.5 ns | 21.1 ns | 1.3x
+       log2p1 | 12.8 ns |     -   |  -
           exp |  9.9 ns |  9.5 ns | 1.0x
         expm1 | 11.3 ns | 13.7 ns | 1.2x
+       exp2m1 | 11.5 ns |     -   |  -
          sinh | 14.0 ns | 14.0 ns | 1.0x
          cosh | 13.8 ns | 14.0 ns | 1.0x
          tanh | 17.7 ns | 16.5 ns | 0.9x
@@ -172,8 +176,10 @@ log2_unchecked | 0.23 ns  |     -    |  -
         log10 | 0.53 ns  | 5.30 ns | 10.1x
 log10_unchecked| 0.26 ns  |     -    |  -
         log1p | 0.60 ns  | 6.28 ns | 10.4x
+       log2p1 | 0.54 ns  |     -    |  -
           exp | 0.31 ns  | 2.47 ns | 8.0x
         expm1 | 0.46 ns  | 5.56 ns | 12.1x
+       exp2m1 | 0.49 ns  |     -    |  -
          sinh | 0.58 ns  | 5.62 ns | 9.7x
          cosh | 0.50 ns  | 5.55 ns | 11.2x
          tanh | 0.64 ns  | 5.23 ns | 8.2x
@@ -247,8 +253,10 @@ ln_unchecked        |          38.39 |             1.145
 log10               |          55.86 |             1.714
 log10_unchecked     |          38.39 |             1.146
 log1p               |          61.16 |             2.276
+log2p1              |          52.19 |             2.328
 exp                 |          42.00 |             1.327
 expm1               |          71.00 |             1.695
+exp2m1              |          76.06 |             1.844
 sinh                |          56.00 |             2.089
 cosh                |          55.00 |             1.754
 sinh_throughput     |          62.00 |             1.943
