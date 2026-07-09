@@ -1261,10 +1261,45 @@ cousin.
     lower to vblendvps or mask registers (vmovaps{k}) with target-cpu=
     native, and whether mask ops relieve port 5 pressure in the hottest
     loops.
-72. **`-C llvm-args=-force-vector-interleave=N` sweep** (2/4/8) on the mca
-    and wall-clock harnesses — interleave choice is LLVM's guess; several
-    past "scheduler made a worse choice elsewhere" surprises suggest the
-    default isn't always right.
+72. **`-C llvm-args=-force-vector-interleave=N` sweep (tried 2026-07-09,
+    rejected -- real but genuinely mixed, not adoptable as a global
+    default)**: swept N=2/4/8 via `RUSTFLAGS` over the *entire* mca
+    suite (~70 functions), comparing against a freshly-captured default
+    baseline from the same session (same machine state, no thermal
+    confound since mca is a static model). N=4 and N=8 came back
+    **bit-for-bit identical** to the default in every single region --
+    LLVM's own default choice for this harness's fixed-size (`ARR_LEN=16`,
+    two 8-wide AVX2 vectors) loop already effectively *is* 4 (or the
+    array is small enough to fully unroll regardless, making the
+    interleave knob moot at that point). N=2 was the only setting that
+    actually changed anything, and it's a real, substantial, genuinely
+    *mixed* result across the whole suite, not a clean win: roughly 60%
+    of functions improved (several by double digits --
+    `powf_checked` -14.0%, `powf_checked_unchecked` -16.7%,
+    `remainder_wide` -17.0%, `softplus`/`logaddexp` -15.9%,
+    `cbrt_accurate` -15.1%, `sin_checked` -19.0%, `tanh` -13.9%), but a
+    real minority regressed (`atan2` +19.5%, `acosh` +10.0%, `sinc`
+    +9.8%, `cospi` +8.7%, `erf` +8.6%), and one function regressed
+    **catastrophically**: `pown` 3.805->10.103 cyc/elem, **+165.6%**.
+    Since `-C llvm-args` is a whole-crate `RUSTFLAGS` setting with no
+    per-function scoping available in stable Cargo, there's no way to
+    keep the broad wins while avoiding `pown`'s collapse short of a much
+    more invasive build setup (per-module compilation units with
+    different flags, or an opt-in Cargo feature/profile) -- out of scope
+    for adopting this as the crate's actual default. Not adopted; the
+    idea's own premise ("the default isn't always right") is confirmed
+    true for roughly a third of the functions in this crate, but "isn't
+    always right" cuts in a direction (helps most, devastates one) that
+    makes a uniform crate-wide flag change a net loss for `pown`'s own
+    users specifically, not a free lunch. *A compiler-flag-level
+    experiment's "aggregate" result (most functions better) can hide a
+    severe per-function regression that a per-function code change would
+    never get away with shipping -- when a change can't be scoped to
+    just the functions that benefit, a single catastrophic outlier
+    (here, +165.6% on `pown`) should veto adoption even if the majority
+    of the suite improves, unless the crate is prepared to accept that
+    tradeoff explicitly (e.g. via an opt-in build profile, not the
+    default).*
 73. **PGO (+ BOLT) probe on the bench binaries**: mostly affects branchy
     code, which this crate avoids — cheap to try once, likely a null
     result, worth knowing.
