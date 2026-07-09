@@ -598,10 +598,25 @@ cousin.
     Newton step) into a template: candidates rsqrt_accurate,
     exp_accurate/ln_accurate (each is the other's Newton residual),
     sin_accurate near zeros. Paper-screen the residual budget first.
-14. **ln_accurate/log2_accurate tier from existing log2_df**: log2_df
-    already returns a Df32; collapsing it carefully (Cody-Waite vs LN2 as
-    a Df32 constant) gives a higher-accuracy log tier nearly for free —
-    the machinery exists, only the collapse is new.
+14. **ln_accurate/log2_accurate tier from existing log2_df (tried 2026-07-09,
+    rejected)**: implemented `log2_accurate(x) = log2_df(x).to_f32()` plus
+    `log_2`'s own domain selects, right after idea #58's own log2_df
+    precision fix (so this got the *best-case* version of log2_df, not
+    the pre-fix one). **No measurable accuracy benefit**: a 20M-sample
+    fuzz gave identical avg/max ulp to plain `log_2` (0.0061/3 both), and
+    a 1.63-billion-sample strided sweep across the entire positive-normal
+    domain found only 7 bit-differing outputs total (~4e-9 of the
+    domain). Root cause: `log2_df`'s extra double-float precision only
+    matters once something *downstream* (like `powf_checked`'s multiply
+    by `y`) amplifies the low-order bits it preserves -- collapsing
+    straight back to a single f32 with no such amplification, `log_2`'s
+    own single-rounding `fma(p,s,k)` already lands on the same
+    correctly-rounded result almost every time, since f32's own 24-bit
+    output resolution can't distinguish the extra precision in the first
+    place. Unlike `cbrt_accurate` (which gains real accuracy from Newton
+    iteration's quadratic convergence on the seed error, a genuinely
+    different mechanism), collapsing a double-float log doesn't transfer
+    that same win. Reverted, no lib.rs changes survived.
 15. **Integer fixed-point poly evaluation** for mantissa-only reductions
     (log's s): i32 mul-high chains free up FMA ports. Precedent warning:
     parity()'s integer version lost to FP ports — but that was 3 ops, not
