@@ -882,10 +882,21 @@ cousin.
 51. **erfcx(x) = e^{x²}·erfc(x)**: new function — just the n/d rational,
     no exp at all; sidesteps the exponent-error bottleneck entirely and is
     what numerics users often actually want in the tail.
-52. **erf_poly's a0 ≈ 3.4e-5**: suspiciously near zero — refit with a0
-    pinned to exactly 0.0 (frees a degree of freedom for the other
-    coefficients and deletes one fma if it holds). LP with max-cap,
-    exhaustive-verify; cheap experiment.
+52. **erf_poly's a0 ≈ 3.4e-5 (screened 2026-07-09, naive substitution
+    fails hard; full refit not attempted)**: the cheap first check --
+    naively zero `a0` without refitting anything else -- confirms it's
+    genuinely load-bearing, not just numerically small by fitting
+    coincidence: exhaustive sweep avg ulp 0.3166->2.3367, max ulp 5->539.
+    Reverted immediately. The idea's actual proposal (a full LP refit
+    with `a0` *constrained* to 0, letting the other 6 coefficients
+    compensate) is real numerical-fitting work -- a new scipy/linprog
+    setup against an accurate erf reference, not a quick edit -- and the
+    speculative payoff if it works is modest (at most one `fma`->`mul`
+    substitution in `b0`, which this session's own `log2_df` and
+    exp2_checked pure-integer screens both suggest often isn't a real
+    speedup even when it "removes an op"). Not pursued further given the
+    effort/payoff ratio; left open for a session that wants to invest in
+    the full LP setup.
 53. **erfc negative-side accuracy survey (resolved 2026-07-09, structural,
     not actionable)**: split the exhaustive sweep by sign (temporary
     accuracy.rs domain split, not kept) -- confirmed a real asymmetry:
