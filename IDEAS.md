@@ -574,10 +574,34 @@ cousin.
     -1.0) instead of (p·t1·t2)-1.0. One rounding fewer exactly in the
     branch where expm1's actual max ulp (6) lives (the rejected Pade bump
     targeted the *other* branch). Near-zero cost.
-17. **exp: weave t1 into the poly like exp2_checked does** — write P(r) =
-    1 + r·Q(r), result = fma(Q·r, t1, t1)·t2: replaces one multiply with an
-    fma and drops one rounding. exp2_checked already ships this shape;
-    exp never got it.
+17. **exp: weave t1 into the poly like exp2_checked does (tried 2026-07-09,
+    rejected)** — implemented exactly as described (Q(r) = 1 + c0·r + ... +
+    c3·r^4, `p = fma(q, t1*r, t1); p*t2`). Real accuracy win, confirmed
+    exhaustively: exp avg/max ulp 0.0745/3→0.0522/2, cascading to expm1
+    (0.1304/6→0.1273/5), sinh_throughput (0.0723/5→0.0677/4),
+    cosh_throughput (0.0507/4→0.0466/3), tanh (0.1457/6→0.1447/5). But mca
+    showed a real, 3x-reproducible throughput *regression* on exp itself
+    (1.327→1.393 cyc/elem, latency flat) and expm1 latency +2 cyc
+    (74→76). Root cause (bottleneck-analysis + hand depth/instruction-count
+    accounting): unlike exp2_checked's Q(f), which has no cheap way to fold
+    in its "+1" (the un-weaved form would need an *extra* fma to
+    materialize `1+f·q` before scaling), exp's original P(r) already got
+    its "+1" for free from a plain, fully-parallel `r+1.0` add outside the
+    poly's dependency chain. Weaving replaces that free add with an extra
+    `t1*r` multiply landing on the same contended fma/mul ports as the
+    poly itself — old and new both total exactly 7 instructions at the
+    same critical-path depth (5), so it's a pure lateral shift onto busier
+    ports, not a real reduction. Also confirmed on paper (not implemented,
+    correctness-fatal): precomputing `t12=t1*t2` off the critical path to
+    collapse the tail to one multiply would break the `exp(88.37628)`
+    edgecheck (k=128 boundary) by prematurely overflowing `t1*t2` to inf
+    before the sub-1 polynomial factor brings it back down to a finite
+    result — the two-stage multiply is load-bearing for that boundary, not
+    incidental. Reverted (bit-identical to prior HEAD). *A "drop one
+    rounding" premise from one function's poly shape doesn't transfer to a
+    sibling with a differently-derived poly — check whether the "+1" (or
+    equivalent identity term) was already free before assuming the weave
+    saves anything.*
 18. **exp_checked tier**: exp currently has no full-range sibling (exp10
     does). Clamp + the existing k1/k2 split — trivial, closes an API gap,
     and callers like sigmoid/tanh could then drop their own ad-hoc clamps.
