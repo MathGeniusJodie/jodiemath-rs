@@ -231,8 +231,8 @@ log10_unchecked     |          38.39 |             1.146
 log1p               |          61.16 |             2.276
 exp                 |          42.00 |             1.327
 expm1               |          71.00 |             1.695
-sinh                |          58.00 |             2.523
-cosh                |          57.00 |             2.074
+sinh                |          56.00 |             2.089
+cosh                |          55.00 |             1.754
 sinh_throughput     |          62.00 |             1.943
 cosh_throughput     |          61.00 |             1.616
 tanh                |          91.72 |             2.463

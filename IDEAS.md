@@ -696,12 +696,6 @@ cousin.
 
 ### hyperbolics / sigmoid
 
-41. **exp_pos_neg: reciprocal exponent fields by integer subtract** —
-    for exact powers of two, bits(2^-e) = 0x7F000000 - bits(2^e). t1n/t2n
-    can be built from t1/t2 with two integer subtracts, deleting the whole
-    second exp2_field_split (two fmas + two adds + shifts). Sinh/cosh
-    throughput win candidate. Validity bound: both ±k1, ±k2 must stay in
-    normal-exponent range — check the k-split guarantees this.
 42. **tanh via exp_pos_neg ratio**: (ep-en)/(ep+en) + a small-|x| Taylor
     branch (x - x³/3 + 2x⁵/15 - 17x⁷/315), replacing the expm1 route and
     its 2·x clamp interplay. Division is idle; may beat expm1's max 6.
