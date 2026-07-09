@@ -142,11 +142,11 @@ hypot_unchecked |  5.0 ns |     -   |  -
 powf_unchecked | 18.7 ns | 16.8 ns | 0.9x
  powf_checked | 37.2 ns | 16.8 ns | 0.5x
 powf_checked_unchecked| 38.1 ns | 17.1 ns | 0.4x
- remainder (*)|  9.0 ns |     -   |  -
+ remainder (*)|  8.6 ns |     -   |  -
 remainder_unchecked|  8.0 ns |     -   |  -
-remainder_checked| 12.6 ns |     -   |  -
-   remainder_ieee|  7.9 ns |     -   |  -
-   remainder_wide| 44.4 ns |     -   |  -
+remainder_checked| 12.3 ns |     -   |  -
+   remainder_ieee|  7.1 ns |     -   |  -
+   remainder_wide| 45.4 ns |     -   |  -
          fmod|  7.6 ns |     -   |  -
 fmod_unchecked|  6.6 ns |     -   |  -
 ```
@@ -302,14 +302,24 @@ powf                |         103.05 |             5.098
 powf_unchecked      |          79.05 |             3.095
 powf_checked        |         130.53 |             9.231
 powf_checked_unchecked |      129.74 |             7.234
-remainder           |          34.03 |             0.729
+remainder           |          34.11 |                 ? (*)
 remainder_unchecked |          33.00 |             0.646
-remainder_checked   |          46.03 |             1.282
-remainder_ieee      |          29.03 |             0.649
-remainder_wide      |         179.13 |             8.351
-fmod                |          29.03 |             0.649
+remainder_checked   |          46.13 |             1.287
+remainder_ieee      |          29.11 |                 ? (*)
+remainder_wide      |         179.20 |             8.876
+fmod                |          29.11 |                 ? (*)
 fmod_unchecked      |          28.00 |             0.643
 ```
+(*) remainder/remainder_ieee/fmod: throughput no longer measurable via
+llvm-mca after their 2026-07-09 zero/nan fix (backlog idea #85's own
+follow-up) -- LLVM branch-specializes these short functions' vectorized
+loop on the harness's own shared black_box'd `y`, producing multiple
+physical exit paths that corrupt llvm-mca's region parser (same class
+of harness limitation as `pown_small`'s own precedent; confirmed via a
+standalone `--emit=asm` probe with genuinely per-lane-varying inputs
+that the real functions still vectorize cleanly, no scalar fallback).
+See the throughput table above for their real wall-clock numbers
+instead.
 
 # tools
 - `cargo +nightly run --release --example accuracy [thorough] [filter]` - avg/max ulp against an f64
