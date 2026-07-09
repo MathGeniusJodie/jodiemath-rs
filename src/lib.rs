@@ -1754,6 +1754,33 @@ fn acos_poly(x: f32) -> f32 {
     fma(u, x, 1.5707963)
 }
 
+/// Dedicated asin-only copy of `acos_poly`'s shape (same 7-coefficient
+/// Estrin/Horner form, same `sqrt(1-x)*poly` combine, independently
+/// tuned), decoupling asin from acos's protected coefficients entirely
+/// instead of sharing the joint-constrained fit `acos_poly` carries.
+/// Every previous *joint* refit attempt died protecting acos's own
+/// accuracy (three separate rejections, see IDEAS.md); this sidesteps
+/// that by not sharing coefficients at all, so acos can't regress no
+/// matter what this poly converges to. Seeded from a real scipy
+/// least-squares fit of the same shape against `acos(x)/sqrt(1-x)`
+/// (asin's own target, since `asin(x) = pi/2 - sqrt(1-x)*P(x)`)
+/// restricted to asin's actual domain for this branch, `x` in `[0.25,
+/// 1)` (not `[0,1)`, unlike acos_poly, which also needs `x` near 0) --
+/// this narrower domain plus not needing to also satisfy acos's own
+/// requirement is exactly the extra degree of freedom the joint fits
+/// couldn't use. Coordinate-descent tuned from that seed
+/// (`examples/tune.rs`'s `asin_poly_c`/"asinpoly").
+#[inline(always)]
+fn asin_poly(x: f32) -> f32 {
+    let u = 1.3137129e-3f32;
+    let u = fma(u, x, -7.664533e-3);
+    let u = fma(u, x, 2.2003133e-2);
+    let u = fma(u, x, -4.5330178e-2);
+    let u = fma(u, x, 8.745548e-2);
+    let u = fma(u, x, -2.1434246e-1);
+    fma(u, x, 1.5707785)
+}
+
 /// acos(x), domain x in [-1,1] (result always in [0,pi], never negative --
 /// unlike sin/asinh/etc., acos isn't an odd function, so x=-0.0 has no
 /// legitimate negative result the way it does for those). `mulsign`
@@ -1930,11 +1957,32 @@ fn asin_small(x: f32) -> f32 {
 ///    bit-for-bit identical to its pre-refit values). Zero perf cost for
 ///    either function (same instructions, only the 7 literal constants
 ///    differ).
+/// 8. `acos_poly` split into a dedicated `asin_poly` copy (2026-07-09):
+///    fix 7's *joint* constrained refit could only move within the room
+///    left by never letting acos's own on-grid max regress -- a real but
+///    narrow window. Decoupling entirely (separate coefficients, only
+///    `asin` calls `asin_poly`) removes that constraint altogether: a
+///    scipy least-squares fit of the same 7-coefficient shape against
+///    `acos(x)/sqrt(1-x)`, restricted to asin's actual domain for this
+///    branch (`x` in `[0.25, 1)`, narrower than acos_poly's own `[0,1)`
+///    since asin never needs this branch below 0.25) found ~10-20x
+///    tighter continuous-math error before any f32 rounding was even
+///    considered; seeded `examples/tune.rs`'s coordinate descent with
+///    that fit (not 0.0 or an arbitrary constant -- this file's own
+///    "zero-move trap" precedent) and verified against the real crate.
+///    Exhaustive sweep: asin avg ulp 0.0302 -> 0.0251 (~17% better); max
+///    ulp unchanged at 9 (that worst case sits at x~0.246, just inside
+///    `asin_small`'s domain, untouched by this branch). acos exactly
+///    unchanged (avg 0.4962, max 4, bit-for-bit identical -- structurally
+///    guaranteed now, not just empirically confirmed, since acos no
+///    longer shares any coefficient with this poly at all). Zero perf
+///    cost for either function (mca bit-identical: asin 59.03/0.968,
+///    acos 37.11/0.820, same instruction shape, only literals differ).
 #[inline(always)]
 pub fn asin(x: f32) -> f32 {
     let a = x.abs();
     let small = asin_small(x);
-    let big = mulsign(FRAC_PI_2 - (1.0 - a).sqrt() * acos_poly(a), x);
+    let big = mulsign(FRAC_PI_2 - (1.0 - a).sqrt() * asin_poly(a), x);
     if a < 0.25 { small } else { big }
 }
 

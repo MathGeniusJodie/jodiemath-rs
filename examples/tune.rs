@@ -344,6 +344,26 @@ fn acos_poly8_c(x: f32, c: &[f32]) -> f32 {
     (1.0 - x).sqrt() * poly
 }
 
+// Dedicated asin-only copy of acos_poly's shape (backlog idea #34):
+// every attempt to jointly fit acos_poly for both callers died protecting
+// acos's own accuracy (three separate rejections logged in IDEAS.md), so
+// this decouples them entirely -- same 7-coefficient Estrin/Horner shape,
+// independently tuned, scored as asin's *own* actual combine (FRAC_PI_2 -
+// sqrt(1-x)*poly, sign restored elsewhere) rather than acos's. Only
+// scored where asin actually uses this branch (x >= 0.25); acos_poly
+// itself is untouched by this, so acos's protected accuracy can't regress
+// no matter what this converges to.
+#[inline(always)]
+fn asin_poly_c(x: f32, c: &[f32]) -> f32 {
+    let u = fma(c[0], x, c[1]);
+    let u = fma(u, x, c[2]);
+    let u = fma(u, x, c[3]);
+    let u = fma(u, x, c[4]);
+    let u = fma(u, x, c[5]);
+    let poly = fma(u, x, c[6]);
+    std::f32::consts::FRAC_PI_2 - (1.0 - x).sqrt() * poly
+}
+
 // erf's tail branch (see src/lib.rs's erf): scored as the whole
 // mulsign(1.0 - exp2(erf_poly(xa)), x) formula, xa in [0.28, 10] (exactly
 // where this branch is used in the shipped code; the Pade near-zero
@@ -940,6 +960,30 @@ fn main() {
             b += 1_000_000;
         }
         tune_basin_hop("acos_poly_bh", &acos_poly_c, &|x| x.acos(), &coarse_grid, &init, 50);
+    }
+    if which.contains("asinpoly") {
+        // Decoupled asin-only fit (backlog idea #34) -- grid restricted to
+        // asin's own actual domain [0.25, 1.0) for this branch, seeded
+        // from a real scipy least-squares fit (not 0.0 or an arbitrary
+        // constant -- this file's own "zero-move trap" precedent) of the
+        // same 7-coefficient shape against acos(x)/sqrt(1-x) weighted by
+        // 1/target over exactly this domain.
+        let mut grid = vec![];
+        let mut b = 0.25f32.to_bits();
+        while b < 1.0f32.to_bits() {
+            grid.push(f32::from_bits(b));
+            b += 4000;
+        }
+        let seed = [
+            1.31372110e-03,
+            -7.66449216e-03,
+            2.20032403e-02,
+            -4.53301432e-02,
+            8.74553484e-02,
+            -2.14342581e-01,
+            1.57077849e+00,
+        ];
+        tune("asin_poly", &asin_poly_c, &|x| x.asin(), &grid, &seed);
     }
     if which.contains("asinacos") {
         // asin now calls acos_poly_c directly for a >= 0.25 (pi/2 -
