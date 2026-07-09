@@ -354,6 +354,32 @@ brainstorm backlog lives at the bottom of this file.
   wants to check whether the extra branch is cheap enough to be worth
   0.3-1 ulp).
 
+  **Follow-up (2026-07-09): the exact measurement this entry asked
+  for, taken -- decisively not worth it, rejected on mca alone before
+  spending any time on the accuracy side.** Refit the same shape (8
+  free coefficients, degree-8 in x, c0 forced to 1.0, scipy
+  `least_squares` against `x.ln_1p()` directly over `|x|<0.25`) and
+  implemented it for real as an unconditionally-evaluated third branch,
+  blended via `if x.abs() < 0.25 { small } else { normal }` before the
+  existing `x == 0.0` select (matching this crate's established
+  branchless convention exactly, same shape as `asin`/`acos`'s own
+  small/big split). mca settled the question immediately: latency
+  52.19->53.17 cyc (+1.9%, minor, expected since the new branch mostly
+  runs in parallel with the existing `ln(u)+corr` chain) but throughput
+  2.337->**3.460 cyc/elem, +48.1%** -- confirming this entry's own
+  "a whole extra poly's cost on every call" framing was exactly right,
+  and settling it far more decisively than the accuracy question ever
+  could have (even the optimistic max-3/avg-0.0683 number from the
+  original screen wouldn't remotely justify a 48% throughput hit).
+  Reverted before running any accuracy verification at all -- per this
+  file's own repeated "fast falsification" pattern (e.g. the `exp`
+  k1/k2-clamp entry, killed before mca even ran), a decisive failure on
+  one axis doesn't need the other axis checked too. `src/lib.rs`
+  restored via `git checkout --` (confirmed clean via `git diff`/`git
+  status`); no code changed. This closes the open question for good:
+  not worth it, now with real numbers instead of "someone should
+  check."
+
 - **Direct minimax refits for ln/log10, tuned against their own objective
   instead of log_2's rescaled coefficients (2026-07-08)**: coordinate-
   descended `ln_poly_c`/`log10_poly_c` (new permanent `tune.rs`
