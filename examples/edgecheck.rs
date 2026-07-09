@@ -689,10 +689,15 @@ fn main() {
     check("powf_checked(-1,nan)", powf_checked(-1.0, f32::NAN), f32::NAN);
     // the actual point of powf_checked: a large-|y| case where the plain
     // formula's error is large (see powf_checked's own doc comment).
+    // Value updated 2026-07-09 for the log2_df two-product fix (backlog
+    // idea #58) -- confirmed via an independent Decimal-precision Python
+    // reference (true value ~1.1009300443688705e-35) that the new value
+    // is genuinely closer to correct than the old pin was (was
+    // 1.1009411e-35, off by ~1.106e-41; now off by ~8.456e-42).
     check(
         "powf_checked(0.86967933,576.48004)",
         powf_checked(0.86967933, 576.48004),
-        1.1009411e-35,
+        1.1009385e-35,
     );
     // powf_checked_unchecked: contract is x positive/normal/finite, y !=
     // 0.0 -- must match powf_checked inside that domain (verified more

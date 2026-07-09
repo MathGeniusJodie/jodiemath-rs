@@ -2704,14 +2704,39 @@ pub fn rhypot(x: f32, y: f32) -> f32 {
 /// log2(x) as a double-float (Df32) instead of a collapsed f32, for
 /// positive finite x only (same domain log_2_normal assumes -- callers
 /// must guard zero/negative/inf/nan themselves). Reuses log_2_normal's
-/// exact decomposition and poly (`s = m - 1`, `P(s)`) but keeps the
-/// integer exponent `k` and the poly correction `s*P(s)` apart via
-/// `Df32::from_add` (a proper two-sum, not a naive pair) instead of
-/// collapsing them with a single `fma(p, s, k)` -- `s*P(s)` alone already
-/// has full relative f32 precision, but adding it to `k` in a single
-/// rounding (as log_2_normal does) throws away exactly the low bits a
-/// later multiply-by-y would otherwise be able to use. Denormal input is
-/// handled the same way log_2's own wrapper does (scale up, offset k).
+/// exact decomposition and poly (`s = m - 1`, `P(s)`).
+///
+/// `p * s` (the poly correction) is combined with the exact integer
+/// exponent `k` via `Df32::from_mul(p, s)` (an exact two-product, keeping
+/// `p*s`'s own rounding error as the Df32's low word) added to `k` --
+/// *not* the plain `p * s` single multiply this used until backlog idea
+/// #58's own root-cause investigation (2026-07-09). The original form,
+/// `Df32::from_add(k, p * s)`, has a real hole: `Df32::from_add`'s two-sum
+/// only captures the rounding error of *adding* `k` and `p*s` together --
+/// but `p * s` was already computed as a single, already-rounded f32
+/// multiply *before* that add ever runs, so its own rounding error is
+/// silently gone, never entering either Df32 word. Harmless when `k` is
+/// large enough that the combine's own rounding dominates, but for `x`
+/// near 1 (`k=0`, a common case, e.g. iteratively-refined bases) adding
+/// exactly `0` is *itself* lossless -- meaning the entire "double-float"
+/// result was, in that regime, silently no more accurate than a single
+/// f32 multiply, defeating the whole point of this function relative to
+/// `log_2_normal`'s own single-rounding `fma(p,s,k)`. Found by tracing a
+/// concrete `powf_checked` worst-case (`x=1.0281241, y=2695.4136`, 183
+/// ulp) against a Decimal-precision Python reference at each intermediate
+/// step: the exact `p*s` product differed from the crate's *computed*
+/// `p*s` by ~3.79e-9, purely from this dropped rounding, on top of the
+/// poly's own ~2.66e-9 inherent fit error -- confirming the multiply's
+/// own rounding was the larger of the two contributors, not just a minor
+/// addition. Fixed by computing `p*s` as a real two-product instead.
+/// Verified (100M-sample targeted fuzz concentrated on `x` in `[0.7,1.5]`
+/// -- the `k=0` regime this fixes -- paired via git stash against the
+/// same unfixed code): avg ulp 5.81->5.05 (-13%), max ulp 261->211
+/// (-19%), count of samples over 100 ulp 160472->71836 (-55%) -- a real,
+/// substantial improvement, though not a complete fix (the poly's own
+/// ~2.66e-9 fit error is a separate, remaining contributor, not chased
+/// here). Denormal input is handled the same way log_2's own wrapper does
+/// (scale up, offset k).
 #[inline(always)]
 fn log2_df(x: f32) -> Df32 {
     let tiny = x < f32::MIN_POSITIVE;
@@ -2744,7 +2769,7 @@ fn log2_df(x: f32) -> Df32 {
     let r1 = fma(l3, s2, l2);
     let r2 = fma(l4, s4, r1);
     let p = fma(r2, s4, r0);
-    Df32::from_add(k, p * s)
+    Df32::from_f32(k) + Df32::from_mul(p, s)
 }
 
 /// exp2 of a double-float argument, reusing exp2_checked's own clamp/
@@ -3003,14 +3028,26 @@ pub fn pown_const<const N: i32>(x: f32) -> f32 {
 /// (see [`log2_df`]/[`exp2_checked_df`]). Confirmed by fuzzing (25M
 /// samples, apples-to-apples against the plain formula on the same
 /// inputs): avg ulp 0.36 -> 0.05 (-87%), max ulp 170 -> 154 -- both
-/// improve, though the remaining ~150 max ulp is a separate, pre-existing
-/// `exp2_checked` characteristic near the denormal/underflow boundary
-/// (present, and about equally large, in *both* the plain and precise
-/// formula there), not something this fix introduces or was meant to
-/// close. Real mca cost though (double-float bookkeeping plus the poly
+/// improve. Real mca cost though (double-float bookkeeping plus the poly
 /// evaluation isn't free): latency 98.03->105.48 cyc (+7.6%), throughput
 /// 3.898->6.285 cyc/elem (+61.2%) -- kept as an opt-in tier rather than
 /// the default, matching sin/sin_checked and exp2/exp2_checked.
+///
+/// The remaining max-ulp cases (backlog idea #58, root-caused
+/// 2026-07-09) were *not* an `exp2_checked` denormal/underflow artifact
+/// as previously assumed here -- they're dominated by `log2_df` itself
+/// silently losing precision for `x` near 1 (`k=0`), where the exponent
+/// `k` contributes nothing to the double-float combine, fixed directly in
+/// `log2_df`'s own doc comment/implementation (a real two-product instead
+/// of a lossy single multiply for `p*s`). See there for the numbers; this
+/// function inherits that fix automatically. Updated mca cost after that
+/// fix (measured against this function's own most recent baseline,
+/// 106.63/7.726, which already includes the unrelated `pow(1,y)`
+/// special-case selects added later the same session): latency
+/// 106.63->130.53 cyc (+22.4%), throughput 7.726->9.231 cyc/elem
+/// (+19.5%) -- a further real cost for a further, partial (not complete)
+/// accuracy gain, accepted for the same "opt-in accuracy tier, pay more
+/// for more correctness" reasoning as the original fix above.
 #[inline(always)]
 pub fn powf_checked(x: f32, y: f32) -> f32 {
     let ax = x.abs();
