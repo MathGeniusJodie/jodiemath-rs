@@ -26,8 +26,10 @@ cbrt_accurate_unchecked (+) | 0.000 |     1     | (bit-identical to cbrt_accurat
  cos_checked (|x|<=1e6) |    0.081   |     3     |  0.000  |    1
         sinpi (all f32) |    0.197   |     2     | (no std sinpi)
         cospi (all f32) |    0.281   | 8.7e8 (near a zero of cospi -- tiny absolute error, huge ulp) | (no std cospi)
+        tanpi (all f32) |    0.275   | 3.6e6 (near a pole of tanpi -- tiny denominator, huge ulp) | (no std tanpi)
         sind (|x|<4.7e7)|    0.124   |     2     | (no std sind)
         cosd (|x|<4.7e7)|    0.073   |     2     | (no std cosd)
+     tand (|x|<4.7e7)|    0.177   |     3     | (no std tand)
          sinc (|x|<1e6)|    0.094   |     4     | (no std sinc)
 ```
 
@@ -130,8 +132,10 @@ atan2_unchecked | 18.1 ns |     -   |  -
           tan | 23.5 ns | 27.3 ns | 1.2x
         sinpi |  9.0 ns |     -   |  -
         cospi | 10.7 ns |     -   |  -
+        tanpi | 16.0 ns |     -   |  -
          sind | 10.8 ns |     -   |  -
          cosd | 12.6 ns |     -   |  -
+         tand | 17.3 ns |     -   |  -
           erf | 21.0 ns |     -   |  -
          erfc | 22.9 ns |     -   |  -
       hypot (*) |  5.1 ns | 13.9 ns | 2.7x
@@ -216,8 +220,10 @@ atan2_unchecked | 0.48 ns  |     -    |  -
           tan | 0.76 ns  |  9.07 ns | 11.9x
         sinpi | 0.18 ns  |     -    |  -
         cospi | 0.25 ns  |     -    |  -
+        tanpi | 0.65 ns  |     -    |  -
          sind | 0.24 ns  |     -    |  -
          cosd | 0.31 ns  |     -    |  -
+         tand | 0.58 ns  |     -    |  -
           erf | 0.70 ns  |     -    |  -
          erfc | 0.68 ns  |     -    |  -
   hypot (*) | 0.17 ns  |  2.42 ns | 14.2x
@@ -266,9 +272,11 @@ cos                 |          54.00 |             1.406
 cos_checked         |         113.00 |             4.537
 sinpi               |          43.02 |             1.149
 cospi               |          51.00 |             1.283
+tanpi               |          66.97 |             2.521
 sinc                |          54.05 |             1.220
 sind                |          46.00 |             1.151
 cosd                |          54.00 |             1.406
+tand                |          70.02 |             2.533
 ln                  |          55.86 |             1.714
 ln_unchecked        |          38.39 |             1.145
 log10               |          55.86 |             1.714
