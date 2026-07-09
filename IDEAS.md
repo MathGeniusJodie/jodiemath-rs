@@ -1410,6 +1410,21 @@ cousin.
     cases all correct: `acosh(x<1)` (including `-1`, `-0`, `0`) is `NaN`,
     `acosh(1)=0`, `atanh(+-1)=+-inf`, `atanh(|x|>1)=NaN`,
     `atanh(+-inf)=NaN`. No code change.
+    Eighth wave (2026-07-09, later still): `erf`/`erfc`/`erfcx` and
+    `asin`/`acos`/`atan`, same value set plus `+-10`/`+-0.28`. All clean
+    -- `erf`/`erfc`/`erfcx` consistent with behavior already verified
+    when `erfcx` was implemented earlier this session (`erfc(+-inf)`'s
+    own clamped-rational bound, `erfcx`'s extrapolation-past-fit-domain
+    caveat), and `asin`/`acos`/`atan` came back **bit-exact** against an
+    f64 reference at every tested point, no even-1-ulp misses -- expected
+    given both families already went through extensive dedicated
+    refitting earlier this session (asin's own 8-fix history, atan's
+    poly refits). No code change. Given three consecutive clean waves
+    now across most of the remaining function families, the special-
+    case-matrix technique has reached diminishing returns for this
+    session -- worth switching to a different technique for the next
+    idea rather than continuing exhaustive sweeps of already-hardened
+    functions.
 88. **exp10 near the decade boundaries (resolved 2026-07-09, no bug found)**:
     densely fuzzed (12M samples) right around every point where
     kr=round(x·log2_10) crosses an integer (where the floor-adjust select
