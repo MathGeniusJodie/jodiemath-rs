@@ -773,11 +773,24 @@ cousin.
 
 ### erf / erfc
 
-49. **erfc exponent via mantissa-mask hi/lo split** (Cephes trick): xh =
-    xa with low ~12 mantissa bits masked → xh² exact; exponent =
-    -xh²·L - (xa-xh)(xa+xh)·L. Cheaper than the rejected two_prod fix
-    (mask+sub+fma vs two_prod's mul+fma each use) aimed at the same traced
-    87-ulp exponent error behind erfc's max 109.
+49. **erfc exponent via mantissa-mask hi/lo split (tried 2026-07-09,
+    rejected)** (Cephes trick): implemented as described -- `xh = xa` with
+    low 12 mantissa bits masked (`xh²` exact), `xa² = fma(xa-xh, xa+xh,
+    xh²)` (difference-of-squares identity, one rounding instead of
+    `xa*xa`'s one rounding but on a much smaller correction term).
+    **Zero effect**: exhaustive sweep bit-identical to baseline in every
+    field (avg 0.3106, max 109, worst x=9.00551, confirmed via git stash
+    on the unmodified code). Root cause: this only compensates the
+    *squaring* step; the very next op, `-xa2 * LOG2_E`, is still a single
+    uncompensated multiply, and that rounding apparently dominates
+    wherever the true worst case actually lives -- the already-rejected
+    two_prod fix's real (if modest) 109→93 improvement must come from
+    compensating *that* multiply too, not just the square. Reverted
+    (5 extra ops for literally zero measured benefit, not even a
+    borderline case). *A "compensate step N" idea only helps if step N is
+    actually the dominant error source at the specific worst-case point --
+    verify with the real worst-x, don't assume from "this step also
+    rounds."*
 50. **erf tail via expm1-shape**: b = -expm1_2(p)·sign form instead of
     1 - exp2(p) — removes the 1-(≈1) subtraction that's mildest exactly at
     the 0.28 crossover where erf's confirmed fragile spot sits. Needs an
