@@ -1539,7 +1539,35 @@ pub fn tanh(x: f32) -> f32 {
 /// finite input.
 #[inline(always)]
 pub fn sigmoid(x: f32) -> f32 {
-    let e = exp((-x).clamp(-87.0, 88.0));
+    // Standalone copy of exp's reduction/poly (not routed through the
+    // public `exp` fn, matching expm1's own established pattern above --
+    // see its doc comment for why factoring through a shared helper is
+    // avoided here) but with a single exponent-field construction instead
+    // of exp's own k1/k2 split: the `.clamp(-87.0, 88.0)` argument bound
+    // already guarantees `k = round(y*log2e)` stays in [-126, 127] (y in
+    // [-87,88] gives y*log2e in [-125.51, 126.96], confirmed numerically,
+    // not just eyeballed) -- exactly exp2's own single-field domain, wide
+    // margin below the k=128 edge case that forces exp's two-way split.
+    // Mirrors the existing exp2 (single field) vs exp2_checked (k1/k2
+    // split) distinction: the clamp that must exist anyway makes the
+    // split provably unnecessary here, unlike the rejected exp k-clamp
+    // idea (which broke real in-domain inputs by discarding a factor of
+    // 2 that was actually reachable).
+    let y = (-x).clamp(-87.0, 88.0);
+    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+    let k = fma(y, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
+    let r = fma(-k, LN2_HI, y);
+    let r = fma(-k, LN2_LO, r);
+    let c: [f32; 4] = [4.9999300e-1, 1.6667245e-1, 4.1883811e-2, 8.3009899e-3];
+    let r2 = r * r;
+    let r4 = r2 * r2;
+    let l0 = r + 1.0;
+    let l1 = fma(c[1], r, c[0]);
+    let l2 = fma(c[3], r, c[2]);
+    let r0 = fma(l1, r2, l0);
+    let p = fma(l2, r4, r0);
+    let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
+    let e = p * exp2int;
     1.0 / (1.0 + e)
 }
 
