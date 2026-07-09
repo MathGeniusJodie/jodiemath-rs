@@ -37,13 +37,13 @@ cbrt_accurate_unchecked (+) | 0.000 |     1     | (bit-identical to cbrt_accurat
                   log10 |    0.127   |     3     |  0.000  |    0
   log10_unchecked (+)   |    0.255   |     3     | (bit-identical to log10 on its domain)
                   log1p |    0.106   |     4     |  0.000  |    0
-        exp (in-domain) |    0.091   |     4     |  0.000  |    1
-      expm1 (in-domain) |    0.138   |     6     |  0.000  |    0
+        exp (in-domain) |    0.075   |     3     |  0.000  |    1
+      expm1 (in-domain) |    0.130   |     6     |  0.000  |    0
        sinh (in-domain) |    0.081   |     5     |  0.000  |    1
        cosh (in-domain) |    0.071   |     5     |  0.000  |    0
-sinh_throughput (in-domain)| 0.084   |     7     |  0.000  |    1
-cosh_throughput (in-domain)| 0.061   |     4     |  0.000  |    0
-       tanh (in-domain) |    0.148   |     9     |  0.000  |    0
+sinh_throughput (in-domain)| 0.072   |     5     |  0.000  |    1
+cosh_throughput (in-domain)| 0.051   |     4     |  0.000  |    0
+       tanh (in-domain) |    0.146   |     6     |  0.000  |    0
                 sigmoid |    0.100   |     5     | (no std sigmoid)
                   asinh |    0.173   |     4     | 
                   acosh |    0.063   |     4     |  0.000  |    1

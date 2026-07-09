@@ -1211,9 +1211,29 @@ pub fn exp(x: f32) -> f32 {
     // exp(r) = 1 + r + r^2*P(r) for tiny r, so a c1 off from 1.0 by even
     // ~6e-8 relative is a systematic bias right where exp(x) is most
     // commonly called (x near 0). l0 = r + 1.0 needs no fma since both its
-    // coefficients are now exactly 1.0. c2..c5 coordinate-descent refit
-    // for this constraint (examples/tune.rs's exp_r_c/"exp_r").
-    let c: [f32; 4] = [4.9999008e-1, 1.6666375e-1, 4.1917525e-2, 8.3811125e-3];
+    // coefficients are now exactly 1.0. c2..c5 refit (2026-07-09) via a
+    // proper ulp-weighted Chebyshev LP (scipy.optimize.linprog: minimize t
+    // s.t. |P(r_i)-exp(r_i)| <= t/ulp(exp(r_i)) over a dense r grid),
+    // superseding the plain coordinate-descent fit from IDEAS.md's
+    // exp_r_c/"exp_r" tuner target -- coordinate descent had converged to a
+    // real but non-global local optimum (the residual's worst points all
+    // clustered near the domain edge |r|~0.3, not near a ulp-boundary, so
+    // this was mostly the LP finding a better balance across the domain
+    // than greedy per-coefficient steps, not a boundary-crossing effect).
+    // Verified against the real crate, exhaustive all-2^32-pattern sweep,
+    // paired via git stash: exp avg/max ulp 0.0911/4 -> 0.0745/3; cascades
+    // to every caller since they all reuse this poly directly -- tanh
+    // 0.1482/9 -> 0.1457/6 (the biggest win, since tanh's own worst case
+    // sat inside this poly's residual), sinh_throughput 0.0839/7 ->
+    // 0.0723/5, cosh_throughput 0.0606/4 -> 0.0507/4 (avg only), expm1
+    // 0.1381/6 -> 0.1304/6 (avg only -- expm1's own max ulp lives entirely
+    // in its other, exp-free Pade branch, untouched by this change, see
+    // that branch's own doc comment). sinh/cosh exactly unchanged (their
+    // own worst case doesn't sit in this residual). mca: latency/
+    // throughput bit-for-bit identical on exp/sinh/tanh (42.00/1.327,
+    // 58.00/2.523, 94.91/2.567) -- expected, pure coefficient swap, same
+    // instructions.
+    let c: [f32; 4] = [4.9999300e-1, 1.6667245e-1, 4.1883811e-2, 8.3009899e-3];
     let r2 = r * r;
     let r4 = r2 * r2;
     let l0 = r + 1.0;

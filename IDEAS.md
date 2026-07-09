@@ -102,6 +102,65 @@ brainstorm backlog lives at the bottom of this file.
   backlog's assumed win doesn't obviously hold once `exp`'s own cost
   dropped. Not implemented; no code changed.
 
+- **exp's degree-5 poly (`exp_r`), ulp-weighted Chebyshev LP refit
+  (2026-07-09), implemented and adopted — real, exhaustively-confirmed
+  win on every axis, zero perf cost.** Combined two still-open backlog
+  entries into one test: the cross-cutting sollya/fpminimax entry names
+  `exp`'s degree-5 as one of the few remaining "max ulp is the open
+  residual" candidates (sollya itself isn't installed), and a separate
+  entry proposes ulp-weighted minimax fitting (weighting by 1/ulp(f(x))
+  instead of plain relative error) as a generic technique nobody had
+  applied to a specific function yet. Before writing any Rust: built a
+  rounding-faithful Python simulation of the *entire* `exp()` pipeline
+  (Cody-Waite reduction, the c2..c5 poly, the k1/k2 exponent-split
+  reconstruction — same discipline as this file's other pre-Rust
+  screens), confirmed it reproduces the shipped code's real numbers
+  exactly under bit-pattern-uniform sampling (avg ulp 0.09103 vs
+  readme's documented 0.091) before trusting it for a before/after
+  comparison. Found the current coefficients' worst points all cluster
+  near the domain edge (`|r|~0.3`, not near `r=0`/output=1.0's ulp
+  boundary) — so the *ulp-weighting* half of the idea wasn't actually
+  the operative mechanism here, but it was still worth trying the *LP*
+  half: a `scipy.optimize.linprog` Chebyshev fit (minimize `t` s.t.
+  `|P(r_i)-exp(r_i)| <= t/ulp(exp(r_i))` over a dense grid) against the
+  existing coordinate-descended coefficients as a sanity check found a
+  real ~40% tighter bound in the underlying continuous math (2.245 ->
+  1.350 ulp-weighted units) — evidence the existing coordinate descent
+  (from IDEAS.md's own `exp_r_c`/`"exp_r"` tuner target) had converged
+  to a real but non-global local optimum, not a floor. Quantized the LP
+  solution to f32 and verified in the Python simulation first (30M-point
+  grid and 30M-sample fuzz both agreed: max ulp 4->3, avg 0.912->0.714
+  under uniform-value sampling; bit-pattern-uniform sampling, matching
+  the crate's actual methodology, gave avg 0.09103->0.07444). Implemented
+  in `src/lib.rs` (only the 4 literal constants changed, same Estrin
+  structure) and verified against the real crate, paired via `git stash`,
+  **exhaustively** (all 2^32 bit patterns, not just fuzz) for every
+  caller: `exp` avg/max ulp 0.0911/4 -> 0.0745/3 (both improved);
+  `tanh` 0.1482/9 -> 0.1457/6 (the standout — a 33% max-ulp cut, since
+  tanh's own worst case sat inside this poly's residual); `sinh_
+  throughput` 0.0839/7 -> 0.0723/5 (both improved); `cosh_throughput`
+  0.0606/4 -> 0.0507/4 (avg only); `expm1` 0.1381/6 -> 0.1304/6 (avg
+  only — expm1's own max ulp lives entirely in its other, exp-free Pade
+  branch, per this file's own earlier "expm1 Pade degree bump" entry);
+  `sinh`/`cosh` exactly unchanged (their own worst case doesn't sit in
+  this residual). No regressions found anywhere. `edgecheck.rs` passes
+  unchanged. mca confirmed bit-for-bit identical latency/throughput on
+  `exp`/`sinh`/`tanh` (42.00/1.327, 58.00/2.523, 94.91/2.567) — expected
+  for a pure coefficient swap with no structural change, but confirmed
+  rather than assumed. Adopted; `readme.md`'s precision table updated
+  (exp/expm1/sinh_throughput/cosh_throughput/tanh rows). **General
+  lesson: a function already coordinate-descent-tuned from a good (non-
+  zero) seed can still have real headroom for a proper global solver —
+  unlike the zero-seed trap this file documents elsewhere, this wasn't
+  about escaping a bad starting point, just about coordinate descent's
+  greedy per-coefficient steps not finding as good a joint balance as an
+  LP does directly. Also: the ulp-weighting half of the originating idea
+  turned out not to be the actual mechanism (the worst points weren't
+  near a ulp/exponent boundary at all) — worth remembering that an idea
+  can still pay off for a different reason than the one that motivated
+  trying it, so don't discard a combined idea just because one of its
+  two premises doesn't hold up under inspection.** Commit `<pending>`.
+
 ## cbrt family
 
 - **Seed constant joint search, degree-2 poly (2026-07-07)**:
