@@ -258,7 +258,7 @@ powf_checked        |         106.31 |             7.359
 powf_checked_unchecked |      105.58 |             5.851
 remainder           |          34.03 |             0.729
 remainder_unchecked |          33.00 |             0.646
-remainder_checked   |          50.03 |             1.424
+remainder_checked   |          46.03 |             1.282
 ```
 
 # tools
