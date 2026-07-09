@@ -959,9 +959,6 @@ cousin.
 85. **atan2(±0, negative-finite) etc. full C99 special-case matrix as a
     test table** — atan2's specials were fixed piecemeal; one table test
     locks all 16+ cases.
-86. **remainder's ties-away vs IEEE ties-even**: documented divergence
-    from IEEE 754 remainder — add a `remainder_ieee` variant via
-    round_ties_even (vroundps has the mode; may even be the same cost).
 87. **powf(±1, huge y)**: log_2(1)=0, 0·y=0, exp2(0)=1 — fine; but
     powf(1+ulp, 3e38): log2≈8.5e-8, ·3e38 overflows f? No — f32 holds it.
     Check the k-clamp path saturates correctly rather than wrapping.
