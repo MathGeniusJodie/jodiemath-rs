@@ -49,6 +49,8 @@ exp_m1_over_x (in-domain)| 0.073   |     6     | (no std exp_m1_over_x)
        cosh (in-domain) |    0.071   |     5     |  0.000  |    0
 sinh_throughput (in-domain)| 0.072   |     5     |  0.000  |    1
 cosh_throughput (in-domain)| 0.051   |     4     |  0.000  |    0
+       sinh_checked (all f32) | 0.042 |     5     |  0.000  |    1
+       cosh_checked (all f32) | 0.037 |     5     |  0.000  |    0
        tanh (in-domain) |    0.146   |     6     |  0.000  |    0
                 sigmoid |    0.100   |     5     | (no std sigmoid)
        softplus (|x|<80)|    0.084   |     4     | (no std softplus)
@@ -110,6 +112,8 @@ exp_m1_over_x | 12.8 ns |     -   |  -
        exp2m1 | 11.5 ns |     -   |  -
          sinh | 14.0 ns | 14.0 ns | 1.0x
          cosh | 13.8 ns | 14.0 ns | 1.0x
+ sinh_checked | 21.5 ns | 14.0 ns | 0.7x
+ cosh_checked | 20.1 ns | 14.0 ns | 0.7x
          tanh | 17.7 ns | 16.5 ns | 0.9x
       sigmoid | 15.4 ns |     -   |  -
      softplus | 24.7 ns |     -   |  -
@@ -194,6 +198,8 @@ exp_m1_over_x | 0.44 ns  |     -    |  -
        exp2m1 | 0.49 ns  |     -    |  -
          sinh | 0.58 ns  | 5.62 ns | 9.7x
          cosh | 0.50 ns  | 5.55 ns | 11.2x
+ sinh_checked | 0.81 ns  | 5.62 ns | 6.9x
+ cosh_checked | 0.73 ns  | 5.55 ns | 7.6x
          tanh | 0.64 ns  | 5.23 ns | 8.2x
       sigmoid | 0.43 ns  |     -    |  -
      softplus | 1.33 ns  |     -    |  -
@@ -278,6 +284,8 @@ sinh                |          56.00 |             2.089
 cosh                |          55.00 |             1.754
 sinh_throughput     |          62.00 |             1.943
 cosh_throughput     |          61.00 |             1.616
+sinh_checked        |          58.06 |             2.527
+cosh_checked        |          58.06 |             2.212
 tanh                |          86.73 |             2.039
 sigmoid             |          61.09 |             1.354
 softplus            |         102.20 |             5.570
