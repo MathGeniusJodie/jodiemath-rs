@@ -869,9 +869,6 @@ cousin.
     exact ops behind one select ladder. Costs every call; likely rejected
     on mca — but powf is expensive enough that the relative cost may be
     tolerable. Screen with mca first.
-61. **rhypot(x,y) = 1/hypot**: new function, divider is idle; normalizing
-    2D vectors is the dominant hypot use case and this deletes the
-    caller's division.
 62. **hypot: fma pairing choice (tried 2026-07-09, rejected)** — implemented
     max-first pairing for hypot/hypot_unchecked/hypot_checked (compare+select
     on the signed operands). Real, consistent avg-ulp win (~15% better: hypot
