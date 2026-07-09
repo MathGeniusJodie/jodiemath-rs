@@ -807,10 +807,29 @@ cousin.
     actually the dominant error source at the specific worst-case point --
     verify with the real worst-x, don't assume from "this step also
     rounds."*
-50. **erf tail via expm1-shape**: b = -expm1_2(p)·sign form instead of
-    1 - exp2(p) — removes the 1-(≈1) subtraction that's mildest exactly at
-    the 0.28 crossover where erf's confirmed fragile spot sits. Needs an
-    exp2m1 helper (see below).
+50. **erf tail via expm1-shape (tried 2026-07-09, rejected)**: implemented
+    `b = mulsign(-exp2m1(erf_poly(...)), x)` in place of
+    `mulsign(1.0 - exp2_checked(erf_poly(...)), x)`, now that idea #65
+    supplies the needed `exp2m1` helper. **Zero accuracy effect**: exhaustive
+    sweep bit-identical to baseline (avg 0.3166, max 5, worst x=0.28000325,
+    confirmed via git stash) -- a direct point-by-point comparison over
+    711k samples in [0.28,10] found *literally* zero differing bit patterns,
+    not just equal aggregates. Root cause: erf_poly's output at the branch's
+    own worst point (x≈0.28) is already ~-0.53 in magnitude, past
+    exp2m1's own |x|<0.5 Pade/direct split -- so exp2m1 lands on the
+    *same* direct branch (`fma(p,t2,-1.0)`, one fused rounding) that
+    `exp2_checked` effectively already gets close to; the theorized
+    "1-(≈1) cancellation" doesn't actually occur at the real worst point.
+    Also a real, deterministic **mixed perf regression**, not a clean
+    win: mca latency 85.97->70.42 cyc (-18%, genuinely better) but
+    throughput 2.788->3.167 cyc/elem (+13.6%, worse) -- paying for
+    exp2m1's own unused Pade branch (an extra division) on every
+    vectorized call for zero accuracy return. Reverted, bit-identical to
+    prior HEAD. *A "helper X now exists, idea Y needs it" dependency
+    being unblocked doesn't mean the original idea's own error-source
+    theory was right -- check where the swapped formula's branch
+    selection actually lands relative to its own internal thresholds
+    before trusting a "removes a cancellation" story.*
 51. **erfcx(x) = e^{x²}·erfc(x)**: new function — just the n/d rational,
     no exp at all; sidesteps the exponent-error bottleneck entirely and is
     what numerics users often actually want in the tail.
