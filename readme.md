@@ -320,7 +320,7 @@ rsqrt               |          28.00 |             1.381
 pown                |         176.00 |             3.805
 powf                |         102.99 |             5.651
 powf_unchecked      |          79.05 |             3.095
-powf_checked        |         130.67 |             9.293
+powf_checked        |         130.33 |             9.105
 powf_checked_unchecked |      129.74 |             7.234
 remainder           |          34.11 |                 ? (*)
 remainder_unchecked |          33.00 |             0.646
