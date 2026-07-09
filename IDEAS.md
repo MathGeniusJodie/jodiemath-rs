@@ -783,10 +783,22 @@ cousin.
     conclusion from an unrelated refit (the numerator-only LP attempt)
     doesn't mean a *targeted* fix at that location will actually move the
     number — measure, don't just aim.*
-36. **acos_accurate opt-in tier**: Df32 π/2 constant + two_prod'd
-    sqrt(1-a)·poly product. Distinct from the rejected Df32 leading-term
-    split — that changed the *shared default* and broke asin; a separate
-    tier touches nothing shared.
+36. **acos_accurate opt-in tier (tried 2026-07-09, superseded by a bigger
+    win)**: implemented the proposed Df32 pi/2 + two-product
+    sqrt(1-a)*poly(a) combine as a standalone tier -- measured *zero*
+    improvement (avg/max ulp identical to plain acos, same "extra
+    precision doesn't survive collapsing back to f32 without a
+    downstream user" lesson idea #14's own rejection established).
+    While investigating why, found the real story: `acos_poly`'s own
+    leading constant (meant to be exactly pi/2) was parsed from a
+    literal one ulp short of the correctly-rounded value, a real,
+    previously-uninvestigated bug in the *shared default* itself (not
+    the "protected coefficient" idea #36's own text worried about --
+    this wasn't a refit choice, just a transcription slip). Fixed
+    directly: avg ulp 0.4962->0.0676 (-86%), zero perf cost. See
+    `acos_poly`'s own doc comment for the full story. Commit `0862c58`.
+    No separate accurate tier needed -- the shared default's own
+    accuracy already improved dramatically for free.
 37. **asin small branch: check 1-a rounding in [0.25,0.5)** — 1-a is only
     Sterbenz-exact for a≥0.5; quantify what the sub-0.5 rounding costs
     through sqrt+poly before deciding anything.
