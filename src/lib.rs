@@ -2081,6 +2081,33 @@ pub fn atanh(x: f32) -> f32 {
 // poly (asin reuses it directly, see asin's own doc comment fix 7 for
 // the full story) -- asin's accuracy improved, acos's own left exactly
 // unchanged by construction (the refit was constrained to guarantee it).
+//
+// Leading constant fixed 2026-07-09 (backlog idea #36's own
+// investigation): this term is `acos_poly(0)`, which should equal
+// exactly pi/2 (`acos(0)=pi/2`, and at `x=0` every other coefficient's
+// contribution vanishes) -- but the literal `1.5707963` only carries 8
+// significant digits, just short of enough precision to round to the
+// nearest f32, so it parsed to `0x3fc90fda`, one ulp *below* the true
+// correctly-rounded pi/2 (`0x3fc90fdb`, `std::f32::consts::FRAC_PI_2`).
+// Not an intentional fitting choice (there's no reason a joint refit
+// targeting the *whole* domain would prefer being wrong specifically at
+// `x=0`, and this was carried over unchanged from before the 2026-07-07
+// refit too) -- just short of enough digits when the constant was
+// originally transcribed. Fixed by using `1.5707964` (confirmed by hand
+// to parse to the exact same bits as `FRAC_PI_2`). Found while idea #36
+// was screening a much more involved Df32-accurate-tier redesign (a
+// two-product `sqrt(1-a)*poly(a)` combine, tested first and found to
+// give *zero* improvement on its own -- the extra precision doesn't
+// survive collapsing straight back to f32 without something downstream
+// to use it, the same lesson idea #14's own rejection already
+// established) -- this single-constant fix was a much bigger, unplanned
+// win found along the way. Verified via exhaustive sweep: avg ulp
+// 0.4962->0.0676 (-86%), `acos(0)`/`acos(-0)` now bit-exact instead of 1
+// ulp off (previously accepted as "already-accepted fit imprecision" in
+// edgecheck.rs, not actually true). Max ulp moved 4->6 (a different,
+// smaller worst point elsewhere in the domain), a minor tradeoff against
+// the large average improvement. Zero perf cost (same instructions, one
+// literal constant differs).
 #[inline(always)]
 fn acos_poly(x: f32) -> f32 {
     let u = 2.2960256e-3f32;
@@ -2089,7 +2116,7 @@ fn acos_poly(x: f32) -> f32 {
     let u = fma(u, x, -4.8802543e-2);
     let u = fma(u, x, 8.8755615e-2);
     let u = fma(u, x, -2.1458544e-1);
-    fma(u, x, 1.5707963)
+    fma(u, x, 1.5707964)
 }
 
 /// Dedicated asin-only copy of `acos_poly`'s shape (same 7-coefficient
