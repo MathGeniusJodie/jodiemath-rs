@@ -461,6 +461,26 @@ pub fn sinc(x: f32) -> f32 {
     if x == 0.0 { 1.0 } else { normal }
 }
 
+/// tan(pi*x), argument in half-turns -- new function (backlog idea #29),
+/// built directly from `sinpi`/`cospi`'s own ratio: `tan` has period 1 in
+/// half-turns (unlike `sin`/`cos` individually, which flip sign every
+/// integer), so `sinpi(x)/cospi(x)` is exactly `tan(pi*x)` with no
+/// separate reduction of its own needed -- whichever integer `sinpi`'s
+/// `q=round(x)` and `cospi`'s own `k=round(x-0.5)` each resolve to, their
+/// respective sign corrections (`parity(q)`/`parity(k)`) cancel exactly
+/// in the division (both numerator and denominator flip together or not
+/// at all, since `tan(theta+n*pi) == tan(theta)` regardless of `n`'s
+/// parity) -- so this is correct by construction, not an approximation
+/// that happens to work. At `cospi`'s own zeros (`x` a half-integer,
+/// `tan`'s true poles), IEEE754 division by a signed zero already gives
+/// the correctly-signed `+-inf` for free, no extra handling needed
+/// (`sinpi` is nonzero there, so this is a real `finite/0`, never the
+/// `0/0` that would need a NaN override).
+#[inline(always)]
+pub fn tanpi(x: f32) -> f32 {
+    sinpi(x) / cospi(x)
+}
+
 // 1/180: precomputed reciprocal for the magic-round trick, same idiom as
 // sin's own FRAC_1_PI.
 const INV_180: f32 = 1.0 / 180.0;
@@ -523,6 +543,16 @@ pub fn cosd(x: f32) -> f32 {
     let s = sinf_poly((d * DEG_TO_RAD_SMALL).clamp(-POLY_SAFE_BOUND, POLY_SAFE_BOUND));
     let parity = !kb.to_bits() << 31;
     f32::from_bits(s.to_bits() ^ parity)
+}
+
+/// tan(x*pi/180), argument in degrees -- new function (backlog idea #29),
+/// same `sind(x)/cosd(x)` ratio construction as `tanpi`'s own doc
+/// comment describes (period-180 cancellation, poles handled for free by
+/// IEEE754 division). See `sind`'s own doc comment for the shared
+/// reduction's exactness limit (`|x|` up to ~4.7e7) and safety clamp.
+#[inline(always)]
+pub fn tand(x: f32) -> f32 {
+    sind(x) / cosd(x)
 }
 
 // q = round(x/pi) must be an *exact* integer for x - q*pi to land accurately

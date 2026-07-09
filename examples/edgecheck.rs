@@ -176,6 +176,22 @@ fn main() {
     check("sinpi(1e20)", sinpi(1e20), 0.0);
     check("cospi(1e20)", cospi(1e20), 1.0);
 
+    // tanpi(x) = sinpi(x)/cospi(x): new function (backlog idea #29).
+    // Poles at half-integer x are real (cospi(x)==0 there) and correctly
+    // give +-inf via IEEE754 division, not NaN -- pinned so that stays
+    // true. tanpi(inf)/(-inf) are NaN, matching sinpi/cospi's own
+    // existing (inherited, not new) convention at infinity.
+    check("tanpi(0)", tanpi(0.0), 0.0);
+    check("tanpi(-0)", tanpi(-0.0), -0.0);
+    check("tanpi(0.25)", tanpi(0.25), 1.0);
+    check("tanpi(1)", tanpi(1.0), 0.0);
+    check("tanpi(0.5)", tanpi(0.5), f32::NEG_INFINITY);
+    check("tanpi(-0.5)", tanpi(-0.5), f32::NEG_INFINITY);
+    check("tanpi(1.5)", tanpi(1.5), f32::NEG_INFINITY);
+    check("tanpi(nan)", tanpi(f32::NAN), f32::NAN);
+    check("tanpi(inf)", tanpi(f32::INFINITY), f32::NAN);
+    check("tanpi(-inf)", tanpi(f32::NEG_INFINITY), f32::NAN);
+
     // sinc(x) = sin(pi*x)/(pi*x), removable singularity at x=0.
     check("sinc(0)", sinc(0.0), 1.0);
     check("sinc(-0)", sinc(-0.0), 1.0);
@@ -210,6 +226,21 @@ fn main() {
     check_finite("cosd(f32::MAX)", cosd(f32::MAX));
     check_finite("sind(1e10)", sind(1e10));
     check_finite("cosd(1e10)", cosd(1e10));
+
+    // tand(x) = sind(x)/cosd(x): new function (backlog idea #29), same
+    // "poles are real, IEEE754 division handles them for free" reasoning
+    // as tanpi above.
+    check("tand(0)", tand(0.0), 0.0);
+    check("tand(-0)", tand(-0.0), -0.0);
+    check("tand(45)", tand(45.0), 1.0);
+    check("tand(180)", tand(180.0), 0.0);
+    check("tand(90)", tand(90.0), f32::NEG_INFINITY);
+    check("tand(-90)", tand(-90.0), f32::NEG_INFINITY);
+    check("tand(270)", tand(270.0), f32::NEG_INFINITY);
+    check("tand(nan)", tand(f32::NAN), f32::NAN);
+    check("tand(inf)", tand(f32::INFINITY), f32::NAN);
+    check("tand(-inf)", tand(f32::NEG_INFINITY), f32::NAN);
+    check_finite("tand(1e10)", tand(1e10));
 
     // ln/log10/log1p: same zero/negative/inf edges as log_2 (they're all
     // log_2 rescaled or composed with it).

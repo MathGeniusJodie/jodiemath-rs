@@ -91,9 +91,11 @@ fn main() {
     bench!("std cos", |x: f32| x.cos());
     bench!("sinpi", sinpi);
     bench!("cospi", cospi);
+    bench!("tanpi", tanpi);
     bench!("sinc", sinc);
     bench!("sind", sind);
     bench!("cosd", cosd);
+    bench!("tand", tand);
 
     bench!("ln", ln);
     bench!("ln_unchecked", ln_unchecked);

@@ -118,6 +118,17 @@ fn sinc_ref(v: F64xN) -> F64xN {
         is_zero.select(F64xN::splat(1.0), normal)
     })
 }
+// tanpi/tand's own references: same ratio construction as the real
+// functions (see their doc comments) -- reuses sinpi_ref/cospi_ref
+// (resp. sind_ref/cosd_ref below) directly rather than a naive
+// tan(pi*x)/tan(x*pi/180), for the same "don't reintroduce the
+// large-x reduction imprecision the real function exists to avoid"
+// reasoning as sinc_ref above. sinpi_ref/cospi_ref already each handle
+// non-finite input via their own trig_safe wrapper, so no extra
+// wrapping needed here.
+fn tanpi_ref(v: F64xN) -> F64xN {
+    sinpi_ref(v) / cospi_ref(v)
+}
 // sind/cosd's own point (see their doc comments): q=round(x/180),
 // d=x-q*180 keeps the residual small and precise, so d*pi/180 is a
 // small, accurate angle -- computing x*pi/180 directly (the naive
@@ -140,6 +151,9 @@ fn cosd_ref(v: F64xN) -> F64xN {
         let sign = F64xN::splat(2.0) * parity_f64(q - F64xN::splat(0.5)) - F64xN::splat(1.0);
         s * sign
     })
+}
+fn tand_ref(v: F64xN) -> F64xN {
+    sind_ref(v) / cosd_ref(v)
 }
 
 fn ulp_diff(a: f32, b: f32) -> u64 {
@@ -615,6 +629,17 @@ fn main() {
         let s = measure!(everywhere, cospi, cospi_ref);
         report("cospi (all f32)", &s, t0);
     }
+    if run("tanpi") {
+        // Same full-range exactness as sinpi/cospi (tanpi is built
+        // directly on their own reduction, see its doc comment) -- no
+        // domain restriction needed for the reduction itself, but real
+        // poles (cospi(x)==0, at half-integer x) mean huge ulp right at
+        // those points is expected and harmless (matching cospi's own
+        // "near a zero" caveat, just amplified by the division) rather
+        // than a bug.
+        let s = measure!(everywhere, tanpi, tanpi_ref);
+        report("tanpi (all f32)", &s, t0);
+    }
     if run("sinc") {
         // sinc(x) = sin(pi*x)/(pi*x) via sinpi, so sinc_ref reuses
         // sinpi_ref directly rather than a naive sin(pi*x)/(pi*x) (which
@@ -647,6 +672,11 @@ fn main() {
         report("sind (|x|<4.7e7)", &s, t0);
         let s = measure!(sind_domain, cosd, cosd_ref);
         report("cosd (|x|<4.7e7)", &s, t0);
+        // tand: same domain as sind/cosd (built directly on their own
+        // reduction); real poles at cosd(x)==0 give expected huge ulp
+        // there, same caveat as tanpi above.
+        let s = measure!(sind_domain, tand, tand_ref);
+        report("tand (|x|<4.7e7)", &s, t0);
     }
 
     if run("ln") {
