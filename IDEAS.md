@@ -699,11 +699,6 @@ cousin.
 42. **tanh via exp_pos_neg ratio**: (ep-en)/(ep+en) + a small-|x| Taylor
     branch (x - x³/3 + 2x⁵/15 - 17x⁷/315), replacing the expm1 route and
     its 2·x clamp interplay. Division is idle; may beat expm1's max 6.
-43. **sigmoid: single exponent-field construction** — sigmoid's clamp
-    already bounds k∈[-126,127], so the k1/k2 split is provably
-    unnecessary *because of the clamp that must exist anyway* (distinct
-    from the rejected exp k-clamp, where the clamp broke real inputs).
-    Same idea for tanh's clamped expm1 path.
 44. **sigmoid: branch on sign for conditioning** — for x≫0, 1/(1+e^-x)
     is well-conditioned; for x≪0 compute e^x/(1+e^x) instead (both
     branchless-selected). Survey whether current accuracy actually needs
