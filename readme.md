@@ -130,9 +130,9 @@ hypot_unchecked |  5.0 ns |     -   |  -
          pown | 50.3 ns |     -   |  -
    pown_small | 15.3 ns |     -   |  -
  pown_const<N>|  4.2 ns |     -   |  -
-      powf (*)| 20.7 ns | 16.8 ns | 0.8x
+      powf (*)| 22.1 ns | 16.8 ns | 0.8x
 powf_unchecked | 18.7 ns | 16.8 ns | 0.9x
- powf_checked | 26.9 ns | 16.8 ns | 0.6x
+ powf_checked | 28.7 ns | 16.8 ns | 0.6x
 powf_checked_unchecked| 26.0 ns | 17.1 ns | 0.7x
  remainder (*)|  9.0 ns |     -   |  -
 remainder_unchecked|  8.0 ns |     -   |  -
@@ -210,9 +210,9 @@ hypot_unchecked | 0.17 ns  |     -    |  -
          pown | 1.24 ns  |     -    |  -
    pown_small | 0.22 ns  |     -    |  -
  pown_const<N>| 0.05 ns  |     -    |  -
-      powf (*)| 1.03 ns  |  5.86 ns | 5.7x
+      powf (*)| 1.07 ns  |  5.86 ns | 5.5x
 powf_unchecked | 0.70 ns  |  5.86 ns | 8.3x
- powf_checked | 1.46 ns  |  5.86 ns | 4.0x
+ powf_checked | 1.50 ns  |  5.86 ns | 3.9x
 powf_checked_unchecked| 1.15 ns  |  6.32 ns | 5.5x
  remainder (*)| 0.16 ns  |     -    |  -
 remainder_unchecked| 0.15 ns  |     -    |  -
@@ -282,9 +282,9 @@ hypot               |          21.11 |             0.766
 hypot_checked       |          57.19 |             1.178
 rsqrt               |          28.00 |             1.381
 pown                |         176.00 |             3.805
-powf                |         105.03 |             4.662
+powf                |         103.05 |             5.098
 powf_unchecked      |          79.05 |             3.095
-powf_checked        |         106.31 |             7.359
+powf_checked        |         106.63 |             7.726
 powf_checked_unchecked |      105.58 |             5.851
 remainder           |          34.03 |             0.729
 remainder_unchecked |          33.00 |             0.646
