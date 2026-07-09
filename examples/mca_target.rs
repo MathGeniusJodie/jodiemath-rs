@@ -336,10 +336,18 @@ latency_fn!(lat_remainder, "remainder_latency", {
     let y = black_box(3.0);
     move |x: f32| remainder(x, y)
 });
-throughput_fn!(thr_remainder, "remainder_throughput", {
-    let y = black_box(3.0);
-    move |x: f32| remainder(x, y)
-});
+// remainder_throughput deliberately NOT wired up here (same reasoning as
+// pown_small's own precedent above): after the x==0.0 zero/nan fix
+// (backlog idea #85's own follow-up, 2026-07-09), LLVM branch-specializes
+// this short function's vectorized loop on the shared black_box'd `y`,
+// producing multiple physical return paths that each carry their own
+// copy of this macro's inline-asm END marker, corrupting llvm-mca's
+// region parser ("found an invalid region end directive"). codegen_check
+// still confirms the real function has no scalar-fallback signatures --
+// a harness limitation, not a code correctness issue. remainder_checked/
+// remainder_wide (longer, already more complex bodies) don't hit this
+// threshold and stay wired up normally. See quickbench.rs for
+// remainder's own real wall-clock numbers instead.
 
 latency_fn!(lat_remainder_unchecked, "remainder_unchecked_latency", {
     let y = black_box(3.0);
@@ -362,10 +370,9 @@ latency_fn!(lat_remainder_ieee, "remainder_ieee_latency", {
     let y = black_box(3.0);
     move |x: f32| remainder_ieee(x, y)
 });
-throughput_fn!(thr_remainder_ieee, "remainder_ieee_throughput", {
-    let y = black_box(3.0);
-    move |x: f32| remainder_ieee(x, y)
-});
+// remainder_ieee_throughput deliberately NOT wired up here -- same
+// branch-specialization issue as remainder_throughput above (identical
+// short-body shape, same fix), see that comment for the full mechanism.
 latency_fn!(lat_remainder_wide, "remainder_wide_latency", {
     let y = black_box(3.0);
     move |x: f32| remainder_wide(x, y)
@@ -379,10 +386,9 @@ latency_fn!(lat_fmod, "fmod_latency", {
     let y = black_box(3.0);
     move |x: f32| fmod(x, y)
 });
-throughput_fn!(thr_fmod, "fmod_throughput", {
-    let y = black_box(3.0);
-    move |x: f32| fmod(x, y)
-});
+// fmod_throughput deliberately NOT wired up here -- same
+// branch-specialization issue as remainder_throughput above (identical
+// short-body shape, same fix), see that comment for the full mechanism.
 latency_fn!(lat_fmod_unchecked, "fmod_unchecked_latency", {
     let y = black_box(3.0);
     move |x: f32| fmod_unchecked(x, y)
@@ -473,13 +479,16 @@ fn main() {
         lat_pown, thr_pown;
         lat_powf_checked, thr_powf_checked;
         lat_powf_checked_unchecked, thr_powf_checked_unchecked;
-        lat_remainder, thr_remainder;
         lat_remainder_unchecked, thr_remainder_unchecked;
-        lat_fmod, thr_fmod;
         lat_fmod_unchecked, thr_fmod_unchecked;
         lat_remainder_checked, thr_remainder_checked;
-        lat_remainder_ieee, thr_remainder_ieee;
         lat_remainder_wide, thr_remainder_wide;
     );
+    // remainder/remainder_ieee/fmod: latency-only (see their own
+    // throughput_fn! omission comments above for why), same standalone
+    // call shape as lat_cbrt_wrapped above.
+    black_box(lat_remainder(black_box(1.234)));
+    black_box(lat_remainder_ieee(black_box(1.234)));
+    black_box(lat_fmod(black_box(1.234)));
     black_box(&arr_out);
 }

@@ -3212,7 +3212,7 @@ pub fn powf_checked_unchecked(x: f32, y: f32) -> f32 {
 pub fn remainder(x: f32, y: f32) -> f32 {
     let q = (x / y).round();
     let normal = fma(-q, y, x);
-    let r = if x == 0.0 { x } else { normal };
+    let r = if x == 0.0 && !normal.is_nan() { x } else { normal };
     // remainder(finite x, +-inf) = x (IEEE754/C99 special case): q rounds
     // to exactly 0.0 for any finite x, but `fma(-q, y, x)` then multiplies
     // that zero by an *infinite* y, giving NaN (0*inf is NaN) instead of
@@ -3236,7 +3236,7 @@ pub fn remainder(x: f32, y: f32) -> f32 {
 pub fn remainder_ieee(x: f32, y: f32) -> f32 {
     let q = (x / y).round_ties_even();
     let normal = fma(-q, y, x);
-    let r = if x == 0.0 { x } else { normal };
+    let r = if x == 0.0 && !normal.is_nan() { x } else { normal };
     if y.is_infinite() && x.is_finite() { x } else { r }
 }
 
@@ -3288,7 +3288,7 @@ pub fn remainder_checked(x: f32, y: f32) -> f32 {
     let adj = if (r0 > 0.0) == (y > 0.0) { 1.0 } else { -1.0 };
     let r1 = fma(-adj, y, r0);
     let normal = if r0.abs() > y.abs() * 0.5 { r1 } else { r0 };
-    let r = if x == 0.0 { x } else { normal };
+    let r = if x == 0.0 && !normal.is_nan() { x } else { normal };
     if y.is_infinite() && x.is_finite() { x } else { r }
 }
 
@@ -3378,7 +3378,7 @@ pub fn remainder_wide(x: f32, y: f32) -> f32 {
     let r2 = fma(-adj2, ys, r1);
     let normal = if r1.abs() > ys.abs() * 0.5 { r2 } else { r1 };
     let normal = normal * (1.0 / scale);
-    let r = if x == 0.0 { x } else { normal };
+    let r = if x == 0.0 && !normal.is_nan() { x } else { normal };
     if y.is_infinite() && x.is_finite() { x } else { r }
 }
 
@@ -3409,7 +3409,7 @@ pub fn remainder_wide(x: f32, y: f32) -> f32 {
 pub fn fmod(x: f32, y: f32) -> f32 {
     let q = (x / y).trunc();
     let normal = fma(-q, y, x);
-    let r = if x == 0.0 { x } else { normal };
+    let r = if x == 0.0 && !normal.is_nan() { x } else { normal };
     if y.is_infinite() && x.is_finite() { x } else { r }
 }
 

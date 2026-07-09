@@ -761,6 +761,20 @@ fn main() {
     // was already correct).
     check("remainder(-0,3)", remainder(-0.0, 3.0), -0.0);
     check("remainder(0,3)", remainder(0.0, 3.0), 0.0);
+    // remainder(0,0)/remainder(0,nan) used to come out 0 instead of NaN
+    // (backlog idea #85's own follow-up, 2026-07-09, found via the same
+    // systematic special-case matrix technique that caught atan2's NaN
+    // bug immediately before this): the `x==0.0` sign-preservation guard
+    // fired unconditionally, silently overriding a `normal` that had
+    // already correctly evaluated to NaN (via `q=(x/y).round()`, itself
+    // NaN whenever `y` is 0 or NaN) with plain `x` instead. Same root
+    // cause and same fix (guard now also requires `!normal.is_nan()`)
+    // across remainder/remainder_checked/remainder_ieee/remainder_wide/
+    // fmod -- all five share this exact `if x==0.0 {x} else {normal}`
+    // shape.
+    check("remainder(0,0)", remainder(0.0, 0.0), f32::NAN);
+    check("remainder(-0,0)", remainder(-0.0, 0.0), f32::NAN);
+    check("remainder(0,nan)", remainder(0.0, f32::NAN), f32::NAN);
     // remainder(finite x, +-inf) = x (IEEE754/C99 special case): q rounds
     // to exactly 0.0 for any finite x, but multiplying that zero by an
     // *infinite* y used to give NaN (0*inf is NaN) instead of the
@@ -775,6 +789,8 @@ fn main() {
     check("remainder_checked(4,2)", remainder_checked(4.0, 2.0), 0.0);
     check("remainder_checked(-0,3)", remainder_checked(-0.0, 3.0), -0.0);
     check("remainder_checked(0,3)", remainder_checked(0.0, 3.0), 0.0);
+    check("remainder_checked(0,0)", remainder_checked(0.0, 0.0), f32::NAN);
+    check("remainder_checked(0,nan)", remainder_checked(0.0, f32::NAN), f32::NAN);
     check("remainder_checked(3,inf)", remainder_checked(3.0, f32::INFINITY), 3.0);
     check("remainder_checked(-3,inf)", remainder_checked(-3.0, f32::INFINITY), -3.0);
     check("remainder_checked(inf,3)", remainder_checked(f32::INFINITY, 3.0), f32::NAN);
@@ -792,6 +808,8 @@ fn main() {
     check("remainder_ieee(4,2)", remainder_ieee(4.0, 2.0), 0.0);
     check("remainder_ieee(-0,3)", remainder_ieee(-0.0, 3.0), -0.0);
     check("remainder_ieee(0,3)", remainder_ieee(0.0, 3.0), 0.0);
+    check("remainder_ieee(0,0)", remainder_ieee(0.0, 0.0), f32::NAN);
+    check("remainder_ieee(0,nan)", remainder_ieee(0.0, f32::NAN), f32::NAN);
     check("remainder_ieee(3,inf)", remainder_ieee(3.0, f32::INFINITY), 3.0);
     check("remainder_ieee(inf,3)", remainder_ieee(f32::INFINITY, 3.0), f32::NAN);
     // x/y=2.5: ties-away rounds q to 3 (remainder -1); ties-to-even rounds
@@ -810,6 +828,8 @@ fn main() {
     check("remainder_wide(4,2)", remainder_wide(4.0, 2.0), 0.0);
     check("remainder_wide(-0,3)", remainder_wide(-0.0, 3.0), -0.0);
     check("remainder_wide(0,3)", remainder_wide(0.0, 3.0), 0.0);
+    check("remainder_wide(0,0)", remainder_wide(0.0, 0.0), f32::NAN);
+    check("remainder_wide(0,nan)", remainder_wide(0.0, f32::NAN), f32::NAN);
     check("remainder_wide(3,inf)", remainder_wide(3.0, f32::INFINITY), 3.0);
     check("remainder_wide(-3,inf)", remainder_wide(-3.0, f32::INFINITY), -3.0);
     check("remainder_wide(inf,3)", remainder_wide(f32::INFINITY, 3.0), f32::NAN);
@@ -865,6 +885,9 @@ fn main() {
     check("fmod(inf,3)", fmod(f32::INFINITY, 3.0), f32::NAN);
     check("fmod(3,0)", fmod(3.0, 0.0), f32::NAN);
     check("fmod(nan,3)", fmod(f32::NAN, 3.0), f32::NAN);
+    check("fmod(0,0)", fmod(0.0, 0.0), 0.0f32 % 0.0f32);
+    check("fmod(-0,0)", fmod(-0.0, 0.0), (-0.0f32) % 0.0f32);
+    check("fmod(0,nan)", fmod(0.0, f32::NAN), 0.0f32 % f32::NAN);
     check("fmod_unchecked(5,3)", fmod_unchecked(5.0, 3.0), fmod(5.0, 3.0));
     check("fmod_unchecked(-5,3)", fmod_unchecked(-5.0, 3.0), fmod(-5.0, 3.0));
 }
