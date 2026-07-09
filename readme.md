@@ -138,6 +138,7 @@ powf_checked_unchecked| 26.0 ns | 17.1 ns | 0.7x
 remainder_unchecked|  8.0 ns |     -   |  -
 remainder_checked| 12.6 ns |     -   |  -
    remainder_ieee|  7.9 ns |     -   |  -
+   remainder_wide| 44.4 ns |     -   |  -
          fmod|  7.6 ns |     -   |  -
 fmod_unchecked|  6.6 ns |     -   |  -
 ```
@@ -217,6 +218,7 @@ powf_checked_unchecked| 1.15 ns  |  6.32 ns | 5.5x
 remainder_unchecked| 0.15 ns  |     -    |  -
 remainder_checked| 0.29 ns  |     -    |  -
    remainder_ieee| 0.17 ns  |     -    |  -
+   remainder_wide| 1.76 ns  |     -    |  -
          fmod| 0.15 ns  |     -    |  -
 fmod_unchecked| 0.15 ns  |     -    |  -
 ```
@@ -288,6 +290,7 @@ remainder           |          34.03 |             0.729
 remainder_unchecked |          33.00 |             0.646
 remainder_checked   |          46.03 |             1.282
 remainder_ieee      |          29.03 |             0.649
+remainder_wide      |         179.13 |             8.351
 fmod                |          29.03 |             0.649
 fmod_unchecked      |          28.00 |             0.643
 ```
