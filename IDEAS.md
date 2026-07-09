@@ -2233,7 +2233,7 @@ legitimate direction here, unlike on most targets.
   the *whole* pipeline's real bottleneck allows through. Worth checking
   whether the refit target is a genuine sole contributor or just one
   piece of several before trusting an unusually large isolated-metric
-  prediction.**
+  prediction.** Commit `9f997db`.
 
 - **Retune asin's 0.25 crossover after any acos_poly change (2026-07-08),
   checked and confirmed already near-optimal, no change**: the joint
