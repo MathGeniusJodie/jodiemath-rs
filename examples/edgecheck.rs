@@ -569,6 +569,27 @@ fn main() {
     check_finite("erfc(-9.5)", erfc(-9.5));
     check_finite("erfc(-10)", erfc(-10.0));
 
+    // erfcx(x) = e^(x^2)*erfc(x), backlog idea #51. For x>=0 the
+    // exponentials cancel exactly (see its doc comment), so erfcx(0)
+    // reduces to the same trivial case erfc(0) does.
+    check("erfcx(0)", erfcx(0.0), 1.0);
+    check("erfcx(-0)", erfcx(-0.0), 1.0);
+    check("erfcx(nan)", erfcx(f32::NAN), f32::NAN);
+    // Positive side never needs its own exp2_checked call (see doc
+    // comment), so it's finite for any finite input by construction --
+    // pinned mainly to guard the negative side, which does route through
+    // exp2_checked and genuinely diverges to +inf past the point where
+    // 2*exp(x^2) itself overflows (see doc comment) -- confirm the
+    // still-representable region stays finite.
+    check_finite("erfcx(1e6)", erfcx(1e6));
+    check_finite("erfcx(-1)", erfcx(-1.0));
+    check_finite("erfcx(-9)", erfcx(-9.0));
+    // Past the point where 2*e^(x^2) itself overflows f32 (x^2 > ~176.7,
+    // i.e. |x| > ~13.3), erfcx correctly saturates to +inf rather than
+    // wrapping to garbage -- exp2_checked's own established saturation
+    // guarantee, inherited here for free.
+    check("erfcx(-1000)", erfcx(-1000.0), f32::INFINITY);
+
     check("hypot(0,0)", hypot(0.0, 0.0), 0.0);
     check("hypot(3,4)", hypot(3.0, 4.0), 5.0);
     // hypot(+-inf, anything) = +inf even with a NaN other argument --

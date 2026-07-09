@@ -153,6 +153,7 @@ fn main() {
     bench!("std tan", |x: f32| x.tan());
     bench!("erf", erf);
     bench!("erfc", erfc);
+    bench!("erfcx", erfcx);
     // black_box'd 2nd arg, same reasoning as atan2 above.
     let hypot_y = std::hint::black_box(1.0);
     bench!("hypot", move |x: f32| hypot(x, hypot_y));

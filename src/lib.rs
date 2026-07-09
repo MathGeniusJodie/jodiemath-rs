@@ -2749,6 +2749,26 @@ pub fn erf(x: f32) -> f32 {
     if xa < 0.28 { a } else { b }
 }
 
+// Shared n/d rational (degree 4 in xa) behind both `erfc` and `erfcx`
+// (backlog idea #51 factored this out of erfc's own body): NaN-preserving
+// clamp to |xa| <= 10 first (same reasoning erfc's own doc comment gives
+// -- `f32::min`-style clamp, not a ternary, so NaN passes through instead
+// of being silently replaced), matching the domain the coefficients were
+// fit against.
+#[inline(always)]
+fn erfc_rational(xa: f32) -> f32 {
+    let xa = if xa > 10.0 { 10.0 } else { xa };
+    let n = fma(f32::from_bits(0x35c42f59), xa, f32::from_bits(0x3daf42cd));
+    let n = fma(n, xa, f32::from_bits(0x3ee32e39));
+    let n = fma(n, xa, f32::from_bits(0x3f7a7525));
+    let n = fma(n, xa, 1.0);
+    let d = fma(f32::from_bits(0x3e1b69eb), xa, f32::from_bits(0x3f48fdde));
+    let d = fma(d, xa, f32::from_bits(0x3fe918da));
+    let d = fma(d, xa, f32::from_bits(0x4006d464));
+    let d = fma(d, xa, 1.0);
+    n / d
+}
+
 /// A rational*gaussian tail, clamped to |x| <= 10 before evaluation
 /// (matching the C original) -- the polynomial (n/d, degree 4 in xa)
 /// still needs that bound to avoid overflowing for huge x, but the
@@ -2774,21 +2794,59 @@ pub fn erfc(x: f32) -> f32 {
     // one subtract instead of a second compare+select on the same
     // condition z already resolved.
     let w = 1.0 - z;
-    // NaN-preserving clamp: f32::min suppresses NaN (returns the other
-    // operand), unlike C's `x>10.f?10.f:x` ternary (false for NaN, so it
-    // takes the x branch, keeping NaN). This if/else matches the ternary.
     let xa = x.abs();
-    let xa = if xa > 10.0 { 10.0 } else { xa };
-    let n = fma(f32::from_bits(0x35c42f59), xa, f32::from_bits(0x3daf42cd));
-    let n = fma(n, xa, f32::from_bits(0x3ee32e39));
-    let n = fma(n, xa, f32::from_bits(0x3f7a7525));
-    let n = fma(n, xa, 1.0);
-    let d = fma(f32::from_bits(0x3e1b69eb), xa, f32::from_bits(0x3f48fdde));
-    let d = fma(d, xa, f32::from_bits(0x3fe918da));
-    let d = fma(d, xa, f32::from_bits(0x4006d464));
-    let d = fma(d, xa, 1.0);
-    let y = exp2_checked(-(xa * xa) * LOG2_E) * n / d;
+    // Same clamp erfc_rational applies internally, computed again here
+    // (redundant but cheap -- a single extra `min`) because the exponent
+    // below needs the *clamped* xa too, matching this function's
+    // pre-factoring behavior exactly.
+    let xa_bounded = if xa > 10.0 { 10.0 } else { xa };
+    let y = exp2_checked(-(xa_bounded * xa_bounded) * LOG2_E) * erfc_rational(xa);
     fma(y, z, w)
+}
+
+/// erfcx(x) = e^(x^2)*erfc(x), the "scaled complementary error function"
+/// -- new function, backlog idea #51. For x >= 0, this collapses to
+/// exactly `erfc_rational(x)` alone with *no exponential at all*: erfc's
+/// own construction is `exp(-x^2) * erfc_rational(x)`, so multiplying by
+/// `exp(x^2)` cancels the exponential exactly (not approximately --
+/// `exp(x^2)*exp(-x^2)` is algebraically 1, so this sidesteps the
+/// exponent computation entirely rather than computing and cancelling
+/// it). This is exactly what erfcx is *for*: the naive
+/// `exp(x*x)*erfc(x)` a caller might otherwise write already breaks
+/// down numerically before this function's own domain gets interesting
+/// -- `exp(x*x)` alone overflows f32 for `|x| >~ 9.3`, while `erfcx`'s
+/// true value there is still a small, well-behaved, easily-representable
+/// number (`erfcx(x) ~ 1/(x*sqrt(pi))` for large positive x).
+///
+/// For x < 0, uses erfc's own reflection identity (`erfc(x) = 2 -
+/// erfc(-x)` for x<0) to derive `erfcx(x) = 2*exp(x^2) - erfcx(-x)` --
+/// unlike the x>=0 branch this does need one real `exp2_checked` call,
+/// because `erfcx` genuinely diverges to `+inf` for sufficiently
+/// negative x (`erfcx(-10) ~ 2*e^100`, far past `f32::MAX`) -- that's
+/// this function's true mathematical behavior, not an implementation
+/// gap, and `exp2_checked`'s own saturation makes it come out `+inf`
+/// correctly rather than wrapping to garbage.
+///
+/// Like `erfc`, `erfc_rational`'s own |xa|<=10 fit domain means this is
+/// only verified accurate for `|x| <= 10` -- for x > 10 (still finite
+/// and well short of erfcx's true asymptotic falloff), the rational is
+/// extrapolated past where it was fit, so treat larger x as "bounded,
+/// not necessarily accurate," the same contract this crate's other
+/// fast tiers carry past their own documented range.
+///
+/// mca's own latency number for this function (see readme.md) is not
+/// trustworthy: this is a sign-dependent branch (`x >= 0.0`), and the
+/// latency harness's `mix()` step always folds its chained value into
+/// `[2, 4)` (masks the sign bit away entirely) -- so the `x<0` arm
+/// (with its real `exp2_checked` call) is never exercised in that
+/// measurement, the same "mca mix() sign blind spot" this crate has
+/// hit before for other sign-shuffling functions. Only the throughput
+/// number (built from a real mixed-sign array) is meaningful here.
+#[inline(always)]
+pub fn erfcx(x: f32) -> f32 {
+    let xa = x.abs();
+    let r = erfc_rational(xa);
+    if x >= 0.0 { r } else { 2.0 * exp2_checked(x * x * LOG2_E) - r }
 }
 
 /// 1/sqrt(x). Unlike most functions in this crate, no bit-trick seed or
