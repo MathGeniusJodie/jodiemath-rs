@@ -459,6 +459,72 @@ brainstorm backlog lives at the bottom of this file.
   adopted; reverted (`src/lib.rs` and `tune.rs`'s scratch addition both
   restored).
 
+- **acos_poly, joint ulp-weighted Chebyshev LP with both acos's and
+  asin's max ulp capped simultaneously (2026-07-09), two attempts, both
+  rejected — the second failure lands on the *exact same* asin
+  regression signature (max 9→12) as the Df32-leading-term entry just
+  above, a striking cross-technique coincidence worth flagging for any
+  future attempt.** This session's max-capped LP technique (already
+  adopted for `exp`, `erf_poly`, `cbrt`) applied here with a genuinely
+  joint objective: weight each sample `a` by `sqrt(1-a)/ulp(caller(a))`
+  for both `acos(a)` (all `a` in `[0,1)`) and `asin(a)` (only `a>=0.25`,
+  matching the "big" branch's own domain), cap *both* callers' max
+  weighted error at their current shipped values simultaneously, and
+  minimize the combined weighted-L1 objective. Attempt 1 (all 7
+  coefficients free): the isolated fit looked excellent (acos avg
+  weighted error 0.859→0.722, asin max weighted error 5.82→2.32, avg
+  1.737→0.543) — but implementing it regressed badly for real: `acos`
+  avg 0.496→1.905 (max 4→6), `asin` avg 0.030→0.034 (max 9→11). Root
+  cause, found by checking the worst point directly (`x≈-5e-4`, right
+  next to `a=0`): the LP let `u0` (the constant term, `P(0)` must equal
+  exactly `acos(0)=pi/2`) drift ~4e-7 in the continuous fit — negligible
+  by the weighted-error model's own accounting (a huge weight at `a=0`
+  should have prevented this, but the model's *continuous* tolerance
+  budget doesn't capture that quantizing to the nearest f32 can land on
+  a value several ulps away from optimal once the drift is large enough
+  to cross a rounding boundary) — but the resulting f32 constant
+  (`0x3fc90fd7`) is 3 ulps off the shipped value (`0x3fc90fda`, itself 1
+  ulp off true pi/2's own rounding, `0x3fc90fdb`) and directly corrupts
+  every acos/asin call near `a=0`. Attempt 2: forced `u0` to the exact
+  shipped constant (not fit at all, matching `exp`'s own forced-c0/c1
+  precedent) and re-solved for the remaining 6 coefficients only. The
+  isolated fit still looked good (acos avg weighted error 0.859→0.799,
+  asin max weighted error 5.82→3.15, avg 1.737→0.660) — but **still
+  regressed for real**: `acos` avg 0.4962→0.5067 (max unchanged at 4),
+  `asin` avg 0.0302→0.0330, **max ulp 9→12** (`git stash`-paired,
+  confirmed not noise). The new worst-case `x` for `asin` sits right at
+  `a≈0.253`, immediately past the `asin_small`/`big` branch threshold —
+  and this exact regression shape (asin max ulp landing at 12 from a
+  perturbation to acos_poly's fine behavior) already happened once
+  before in this file, via a completely unrelated change (splitting the
+  constant into a hi+lo pair, see the entry immediately above — also
+  asin max 9→12). Two independent modification techniques hitting the
+  identical failure signature suggests there's a specific input/error-
+  surface fragility around this crossover that *any* perturbation to
+  `acos_poly` risks tripping, not a coincidence specific to either
+  technique — worth treating as a real warning sign for whoever tries
+  this poly next, not just noise to re-measure past. Both attempts
+  reverted; `src/lib.rs` restored to the shipped coefficients (verified
+  via `git diff` after `git stash drop`). **General lesson, extending
+  this session's own `sinf_poly` finding: even after fixing the
+  "protect the special boundary point exactly" issue (attempt 2), a
+  poly shared by two callers with different weighted-error surfaces can
+  still have a joint LP solution that looks better in the isolated
+  metric yet is worse for both real callers — the acos_poly/asin
+  sharing pattern (subset-domain sharing, not sinf_poly's opposite-ends
+  sharing) is evidently *harder* to model correctly via a domain-uniform
+  grid than either of this session's two successful single-caller cases
+  (`exp`, `erf_poly`) or its one successful *shared* case (`cbrt`
+  and `cbrt_accurate`, where the second caller's Newton step makes it
+  fully insensitive to the seed poly's own accuracy) — `acos_poly` has
+  no such insensitivity, both callers are directly exposed to its exact
+  error. This LP technique's real success rate across every poly tried
+  this session is now 3 real wins (`exp`, `erf_poly`, `cbrt`) against 2
+  rejections (`sinf_poly`, `acos_poly`), both rejections being multi-
+  caller polys where the callers are NOT insensitive to the shared
+  poly's own error — a pattern worth checking explicitly before trying
+  this technique on any other shared poly in this crate.**
+
 - **atan2 division-residual correction (2026-07-07, re-tested 2026-07-08
   after atan_poly's degree bump, same conclusion holds)**: added a
   first-order Taylor correction (`atan'(d)*e`) for atan2's `y/x` division
