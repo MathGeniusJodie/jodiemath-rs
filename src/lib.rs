@@ -3369,7 +3369,18 @@ pub fn powf_checked(x: f32, y: f32) -> f32 {
     // NaN-propagating `log_2`/`exp2_checked` instead of this cheap
     // shortcut). (y == 0 is overridden separately below regardless of
     // any of this.)
-    let is_safe = ax > 0.0 && ax.is_finite();
+    // Bit-trick form instead of `ax > 0.0 && ax.is_finite()` (2026-07-09):
+    // that compound condition compiled to a fully scalar per-lane
+    // sequence (extract each lane, run several scalar int test/cmp/set
+    // instructions, then hand-assemble an AVX-512 mask bit-by-bit via
+    // kmovd/kshiftlb/kshiftrb/korb/kandb) instead of a single vectorized
+    // compare -- found while investigating a similar pattern for a
+    // rejected rsqrt idea (see IDEAS.md's idea #90 entry). `ax` is
+    // already non-negative (`x.abs()`), so its raw bits directly encode
+    // magnitude: nonzero and below the all-ones exponent field (which
+    // marks inf/nan) is exactly "strictly positive and finite."
+    let axb = ax.to_bits();
+    let is_safe = axb != 0 && axb < EXPONENT_MASK;
     let mag_precise = exp2_checked_df(log2_df(ax) * y);
     // (ax == 0) == (y > 0) picks out exactly the two "goes to zero" cases
     // (ax==0,y>0 and ax==+inf,y<0) vs. the two "goes to infinity" cases --
