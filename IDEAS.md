@@ -764,10 +764,6 @@ cousin.
 42. **tanh via exp_pos_neg ratio**: (ep-en)/(ep+en) + a small-|x| Taylor
     branch (x - x³/3 + 2x⁵/15 - 17x⁷/315), replacing the expm1 route and
     its 2·x clamp interplay. Division is idle; may beat expm1's max 6.
-44. **sigmoid: branch on sign for conditioning** — for x≫0, 1/(1+e^-x)
-    is well-conditioned; for x≪0 compute e^x/(1+e^x) instead (both
-    branchless-selected). Survey whether current accuracy actually needs
-    it first.
 46. **atanh via single log1p on |x| + mulsign (tried 2026-07-09, rejected)**:
     implemented exactly as described — this time it does *not* die
     catastrophically (max ulp only 3→4, not 3→31303 like the earlier
