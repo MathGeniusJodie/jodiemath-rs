@@ -1082,10 +1082,60 @@ cousin.
     are the real, unrelated fp division in cbrt_normal's own seed/Newton
     reciprocal (already known cheap on this CPU, see the divider-idle
     finding elsewhere in this file). Nothing to fix.
-56. **cbrt_accurate via Halley from a cheaper seed**: cubic convergence
-    might let a cbrt_fast-grade (~5 ulp) seed reach 0.5 ulp in one Df32
-    Halley step, deleting cbrt_normal's poly from the accurate tier.
-    Paper-screen the error budget first.
+56. **cbrt_accurate via Halley from a cheaper seed (tried 2026-07-09,
+    rejected -- but reached exact accuracy parity along the way)**:
+    implemented as described -- `cbrt_fast` seed + a Halley step
+    (`y_new = y - y*e/(2y^3+x)`, `e=y^3-x`, derived from the standard
+    `y_{n+1}=y_n-2ff'/(2f'^2-ff'')` form) via `Df32`, instead of
+    `cbrt_normal`'s own polynomial-refined seed + a Newton step. First
+    correction to the idea's own premise: `cbrt_fast` measured (not
+    assumed) at avg 57.3/max 554 ulp on its own positive-normal domain,
+    not the "~5 ulp" the idea guessed -- an order of magnitude rougher.
+    Continuous math still comfortably supported Halley closing that gap
+    in one step (57 ulp relative error cubed is still ~1e9x tighter than
+    f32 needs), so implemented and measured anyway rather than rejecting
+    on the wrong number alone. Two real bugs found and fixed while
+    getting there, both instances of the same "Df32 upgrade creates a
+    new overflow path a plain fma never would" lesson `remainder_wide`
+    already established this session: (1) the naive `2*y^3+x`
+    denominator, computed at full magnitude, can itself approach/exceed
+    f32::MAX for ordinary large x (not just extreme values) -- reformed
+    to `3*x+2*e` (algebraically exact), which helped but didn't fully
+    fix it; (2) the real culprit was forming `y*e` as an intermediate
+    *before* dividing by the denominator -- for large x with a rough
+    seed, `y*e` alone can overflow f32 even though the final ratio
+    `e/den` is a small, ordinary, bounded correction (e.g. x=1e37:
+    y~2.15e12, e~1.67e32, y*e~3.6e44 > f32::MAX, while e/den~5.6e-6 is
+    unremarkable) -- fixed by computing `e/den` first, multiplying by
+    `y` after. With both fixed, a third, narrower issue remained:
+    ~0.18% of a random sweep (all concentrated in the top ~2 bits of the
+    exponent range, x approaching f32::MAX) still showed real error (up
+    to max ulp 422) -- traced to `cbrt_accurate`'s own large-magnitude
+    rescale threshold (`2^127`) being tuned for the original Newton
+    formulation, not this one; the `e` residual for this rougher seed
+    needs more headroom before it starts losing relative precision.
+    Lowering the "big" rescale trigger from `2^127` to `2^100` (generous
+    margin past where errors actually started) fixed it completely:
+    exhaustive-adjacent fuzz sweep came back avg ulp 0.0000, max ulp 1 --
+    bit-for-bit matching `cbrt_accurate`'s own existing precision, plus
+    every special value (0, -0, +-inf, NaN, +-f32::MAX,
+    +-f32::MIN_POSITIVE) verified matching exactly. So the idea's core
+    premise -- a much cheaper seed really can reach `cbrt_accurate`'s own
+    precision in one Halley step -- is *true*, fully validated. But the
+    implied payoff ("deleting cbrt_normal's poly... " suggesting a
+    speedup) did not materialize: mca showed a real, substantial
+    *regression*, not a win -- latency 59.06->75.16 cyc (+27.3%),
+    throughput 3.129->3.165 cyc/elem (+1.2%, essentially a wash). The
+    extra division and sign-reconstruction bit trick this formulation
+    needs cost more than `cbrt_normal`'s own polynomial refinement step
+    ever did. Reverted, bit-identical to prior HEAD (no code changes
+    kept). *A "might let X reach Y" premise can turn out completely
+    correct on the accuracy axis (worth confirming, not dismissing on a
+    wrong assumed ulp count) while still failing on the axis that
+    motivated trying it in the first place -- accuracy and cost are
+    genuinely separate questions, and cubic convergence closing an error
+    budget says nothing about whether the arithmetic needed to get there
+    is actually cheaper than what it replaces.*
 58. **powf: root-cause the log2_df/exp2_checked_df ~150 max ulp (fixed
     2026-07-09)**: traced a concrete worst case against a Decimal-
     precision Python reference at every intermediate step -- neither
