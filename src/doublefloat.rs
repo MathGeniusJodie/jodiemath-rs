@@ -207,18 +207,6 @@ impl Sub<Df32> for f32 {
 
 // ── Multiplication ───────────────────────────────────────────────────
 
-impl Mul for Df32 {
-    type Output = Self;
-    #[inline(always)]
-    fn mul(self, rhs: Self) -> Self {
-        let p = self.0 * rhs.0;
-        let e = fma(self.0, rhs.0, -p);
-        let lo = fma(self.1, rhs.0, e) + fma(self.0, rhs.1, rhs.1 * self.1);
-        //let lo = fma(self.1, rhs.0, fma(self.0, rhs.1, e));
-        Self(p, lo)
-    }
-}
-
 impl Mul<f32> for Df32 {
     type Output = Self;
     #[inline(always)]
