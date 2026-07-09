@@ -1716,6 +1716,35 @@ pub fn softplus(x: f32) -> f32 {
     if x.is_nan() { f32::NAN } else { normal }
 }
 
+/// logaddexp(a,b) = ln(e^a+e^b), the numerically stable "log of a sum of
+/// exponentials" ML/statistics primitive (softmax/log-sum-exp's binary
+/// building block -- in fact `softplus(x) == logaddexp(x, 0.0)`).
+/// `max(a,b) + log1p(exp(-|a-b|))`, same derivation shape as `softplus`
+/// (factor out `e^max(a,b)`, same algebra). Reuses `softplus`'s own two
+/// fixes directly: the correction-term cutoff at `87.0` (here on
+/// `|a-b|`, not `|x|`) instead of a clamped `exp` argument, and an
+/// explicit trailing NaN guard (`a.max(b)` alone would silently discard
+/// a NaN `a`/`b` the same way `softplus`'s own `x.max(0.0)` did).
+///
+/// Unlike `softplus`, `m` and `corr` here can be comparable-magnitude,
+/// opposite-signed-ish values that partially cancel (e.g. near
+/// `logaddexp(-7e-5, -9.57)`, where `m~-7e-5` and `corr~+7e-5`) --
+/// max ulp seen in fuzzing is in the thousands there (avg stays a
+/// healthy ~0.15), a real but narrow precision cost from the plain
+/// `m + corr` addition amplifying whatever rounding either operand
+/// already carries. Not further chased: comparable in kind (real
+/// cancellation, not a bug) to other composite functions in this crate
+/// with an accepted, undominant max-ulp outlier (e.g. `erfc`).
+#[inline(always)]
+pub fn logaddexp(a: f32, b: f32) -> f32 {
+    let m = a.max(b);
+    let d = (a - b).abs();
+    let e = exp(-d.min(87.0));
+    let corr = if d > 87.0 { 0.0 } else { log1p(e) };
+    let normal = m + corr;
+    if a.is_nan() || b.is_nan() { f32::NAN } else { normal }
+}
+
 /// asinh(x) = ln(x + sqrt(x^2+1)), fixed for two bugs in the straight-ported
 /// form (the doc comment used to describe only the first; the exhaustive
 /// sweep that found it also turned up the second, worse one):

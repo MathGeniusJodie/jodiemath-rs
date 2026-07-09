@@ -116,6 +116,7 @@ fn main() {
     bench!("std tanh", |x: f32| x.tanh());
     bench!("sigmoid", sigmoid);
     bench!("softplus", softplus);
+    bench!("logaddexp", |x: f32| logaddexp(x, 0.0));
     bench!("asinh", asinh);
     bench!("std asinh", |x: f32| x.asinh());
     bench!("acosh", acosh);

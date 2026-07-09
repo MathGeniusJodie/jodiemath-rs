@@ -297,6 +297,17 @@ fn main() {
     check("softplus(-f32::MAX)", softplus(-f32::MAX), 0.0);
     check("softplus(nan)", softplus(f32::NAN), f32::NAN);
 
+    // logaddexp(a,b) = ln(e^a+e^b); softplus(x) == logaddexp(x,0.0).
+    check("logaddexp(0,0)", logaddexp(0.0, 0.0), std::f32::consts::LN_2);
+    check("logaddexp(x,0)==softplus(x)", logaddexp(3.0, 0.0), softplus(3.0));
+    check("logaddexp(100,1)", logaddexp(100.0, 1.0), 100.0);
+    check("logaddexp(inf,5)", logaddexp(f32::INFINITY, 5.0), f32::INFINITY);
+    check("logaddexp(inf,-inf)", logaddexp(f32::INFINITY, f32::NEG_INFINITY), f32::INFINITY);
+    check("logaddexp(-inf,-inf)", logaddexp(f32::NEG_INFINITY, f32::NEG_INFINITY), f32::NEG_INFINITY);
+    check("logaddexp(inf,inf)", logaddexp(f32::INFINITY, f32::INFINITY), f32::INFINITY);
+    check("logaddexp(nan,1)", logaddexp(f32::NAN, 1.0), f32::NAN);
+    check("logaddexp(1,nan)", logaddexp(1.0, f32::NAN), f32::NAN);
+
     check("asinh(0)", asinh(0.0), 0.0);
     // small-x cancellation (see asinh's doc comment) is fixed: asinh(x) ~ x
     // for tiny x, no longer collapses to exactly 0.

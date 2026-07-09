@@ -751,6 +751,19 @@ fn main() {
         let s = measure!(softplus_domain, softplus, softplus_ref);
         report("softplus (|x|<80)", &s, t0);
     }
+    if run("logaddexp") {
+        // Same |x|<80 reasoning as softplus (its own doc comment) --
+        // logaddexp shares the identical correction-term cutoff shape,
+        // just on |a-b| instead of |x|.
+        let logaddexp_domain = |a: f32, b: f32| a.abs() < 80.0 && b.abs() < 80.0;
+        let logaddexp_ref = |a: F64xN, b: F64xN| {
+            let m = a.simd_max(b);
+            let d = (a - b).abs();
+            m + log1p_u10(exp_u10(-d))
+        };
+        let s = fuzz2(TWOARG_SAMPLES, logaddexp_domain, logaddexp, logaddexp_ref);
+        report("logaddexp (|a|,|b|<80)", &s, t0);
+    }
     if run("asinh") {
         let s = measure!(everywhere, asinh, asinh_u10);
         report("asinh", &s, t0);

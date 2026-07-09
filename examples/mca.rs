@@ -143,6 +143,7 @@ fn main() {
         "tanh",
         "sigmoid",
         "softplus",
+        "logaddexp",
         "asinh",
         "acosh",
         "atanh",
