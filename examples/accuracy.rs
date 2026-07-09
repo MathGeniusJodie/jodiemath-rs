@@ -97,10 +97,15 @@ fn sinpi_ref(v: F64xN) -> F64xN {
 }
 fn cospi_ref(v: F64xN) -> F64xN {
     trig_safe(v, |x: F64xN| {
-        let q = (x - F64xN::splat(0.5)).round() + F64xN::splat(0.5);
-        let r = x - q;
+        // Never forms `k+0.5` as a single f64 (loses precision once `x`
+        // exceeds f64's own ~2^53 exact-integer range, the same bug
+        // class the real cospi's own fix avoids for f32's ~2^24 -- see
+        // its doc comment) -- k, r=(x-k)-0.5, and parity(k) stay
+        // separate the whole way through instead.
+        let k = (x - F64xN::splat(0.5)).round();
+        let r = (x - k) - F64xN::splat(0.5);
         let s = sin_u35(r * F64xN::splat(std::f64::consts::PI));
-        let sign = F64xN::splat(2.0) * parity_f64(q - F64xN::splat(0.5)) - F64xN::splat(1.0);
+        let sign = F64xN::splat(2.0) * parity_f64(k) - F64xN::splat(1.0);
         s * sign
     })
 }
@@ -575,22 +580,26 @@ fn main() {
         report("std cos (all f32)", &s, t0);
     }
     if run("sinpi") {
-        // sinpi/cospi's own reduction (q=round(x), r=x-q, both exact in
-        // f32) is valid over the *entire* f32 range -- but this test's
-        // reference (x*pi computed directly in f64, then a standard
-        // sin/cos) reintroduces exactly the argument-reduction precision
-        // problem sinpi/cospi exist to avoid, once x is large enough that
-        // even f64 can't represent x*pi to within a fraction of a half-
-        // turn. Restricting to |x|<1e6 keeps the reference itself
-        // trustworthy (f64 has 29 more mantissa bits than f32, plenty of
-        // headroom at this scale); edgecheck.rs separately verifies the
-        // large-x "exactly 0, never inf/nan" tail behavior without
-        // relying on a precise reference there.
-        let sinpi_domain = |x: f32| x.abs() < 1e6;
-        let s = measure!(sinpi_domain, sinpi, sinpi_ref);
-        report("sinpi (|x|<1e6)", &s, t0);
-        let s = measure!(sinpi_domain, cospi, cospi_ref);
-        report("cospi (|x|<1e6)", &s, t0);
+        // sinpi_ref/cospi_ref (above) already mirror sinpi/cospi's own
+        // exact reduction in f64 rather than computing x*pi directly, so
+        // the reference stays trustworthy over the *entire* f32 range
+        // (f64's 2^53 exact-integer limit is far beyond f32's own 2^24,
+        // and past that every f32 is already even by representability,
+        // so no extra reference precision is even needed there) -- no
+        // domain restriction needed. This full-range sweep is exactly
+        // what caught a real bug (2026-07-09): the previous |x|<1e6
+        // restriction happened to sit entirely below 2^22, silently
+        // missing that the old magic-constant-based reduction (valid
+        // only for |x|<=2^22, since it applied the trick directly to
+        // unbounded raw x, unlike every other magic-round use in this
+        // crate) was wrong for 2^22 < |x| < 2^24 despite the doc
+        // comment's "exact out to f32::MAX" claim. Fixed with `x.round()`
+        // (see sinpi's own doc comment); this sweep is what would have
+        // caught it originally.
+        let s = measure!(everywhere, sinpi, sinpi_ref);
+        report("sinpi (all f32)", &s, t0);
+        let s = measure!(everywhere, cospi, cospi_ref);
+        report("cospi (all f32)", &s, t0);
     }
     if run("sind") {
         // sind/cosd's own exact-reduction range is ~4.7e7 (see their doc

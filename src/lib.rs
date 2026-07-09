@@ -372,34 +372,70 @@ pub fn cos(x: f32) -> f32 {
 /// exactly in `[-pi/2, pi/2]`, `sinf_poly`'s own fitted domain, so this
 /// reuses that poly directly with no new fit needed. No accuracy cliff
 /// anywhere in f32 (unlike `sin`'s ~1.3e7 or even `sin_checked`'s
-/// ~1e13): past `|x| ~ 2^23`, every representable f32 is already an
-/// exact integer, so `r` becomes exactly 0 and the result is exactly 0
-/// everywhere out to `f32::MAX` (correct, since `sin(pi*integer) == 0`)
-/// -- parity may not track a meaningful odd/even distinction that far
-/// out (individual integers aren't even distinguishable by adjacent
-/// floats anymore), so the *sign* of that 0 isn't guaranteed, but the
-/// magnitude is exact.
+/// ~1e13): past `|x| ~ 2^24`, every representable f32 is already an
+/// *even* integer (ulp >= 2 there, so odd integers aren't even
+/// representable), so `r` becomes exactly 0 and the result is exactly
+/// `+0.0` everywhere out to `f32::MAX` (correct, since `sin(pi*integer)
+/// == 0`, and parity is deterministically even, not just "untracked").
+///
+/// Uses `x.round()` (native, full-range-correct), not the magic-constant
+/// `x + 1.5*2^23` trick used elsewhere in this crate (e.g. `exp`'s own
+/// `k` rounding): that trick is only exact for `|x| <= 2^22` by
+/// construction (adding `x` to a constant of comparable magnitude loses
+/// precision once `x` itself approaches that magnitude) -- and `sinpi`/
+/// `cospi` take the *raw*, unbounded input `x` directly, unlike every
+/// other magic-round use in this crate, which only ever rounds an
+/// already-reduced, small intermediate value. A real, previously-
+/// undetected bug lived here for exactly that reason: the doc comment's
+/// "no accuracy cliff, exact out to f32::MAX" claim was false for
+/// `2^22 < |x| < 2^24` (found by a targeted probe past the accuracy.rs
+/// sweep's own `|x| < 1e6` domain cutoff -- the exact range where the
+/// bug lives was never exercised; see backlog idea #30's "confirm these
+/// are in accuracy.rs's sweep" concern, which was right to worry).
+/// Confirmed via `--emit=asm` that `.round()` still lowers to `vroundps`
+/// (no scalar fallback, so vectorization is unaffected) -- the fix costs
+/// real latency (`vroundps` is measurably slower than the magic-constant
+/// fma+sub pair on this CPU, a tradeoff already documented for `exp`'s
+/// own 2026-07-08 magic-round adoption, here taken in the opposite
+/// direction because correctness across the *documented* domain isn't
+/// optional), not just a wash.
 #[inline(always)]
 pub fn sinpi(x: f32) -> f32 {
-    let qb = x + ROUND_MAGIC;
-    let q = qb - ROUND_MAGIC;
+    let q = x.round();
     let r = x - q;
-    let s = sinf_poly(std::f32::consts::PI * r);
-    let parity = qb.to_bits() << 31;
-    f32::from_bits(s.to_bits() ^ parity)
+    // At x=-0.0: q=(-0.0).round()=-0.0 too (round preserves zero's sign),
+    // so r=x-q=(-0.0)-(-0.0), which IEEE754 always resolves to +0.0
+    // regardless of the operands' own sign -- the same "opposite-signed-
+    // zero subtraction erases sign" mechanism as sinf_poly's own -0.0
+    // fix and atan2(-0.0,+0.0)'s bug, just one level further out (r's
+    // lost sign means sinf_poly's internal copysign has nothing left to
+    // copy). Guarded the same way log1p/log_2 handle their own x==0.0
+    // sign case: compute the normal path unconditionally first, select
+    // x itself only at the singular zero point.
+    let normal = sinf_poly(std::f32::consts::PI * r) * fma(-2.0, parity(q), 1.0);
+    if x == 0.0 { x } else { normal }
 }
 
 /// cos(pi*x), argument in half-turns -- see `sinpi`'s doc comment for why
 /// this reduction is exact and shares `sinf_poly` directly, same
-/// full-range-accurate (no cliff) guarantee.
+/// full-range-accurate (no cliff) guarantee, and the same magic-round
+/// range-limit bug this version fixes.
+///
+/// Uses the identity `cos(pi*x) = sin(pi*(x+0.5))` without ever forming
+/// `x+0.5` as a single value (lossy for large `x`, reintroducing the
+/// exact bug being fixed): `k = round(x-0.5)` gives `round(x+0.5) =
+/// k+1` for free (rounding commutes with an exact integer shift), and
+/// `k+1`'s parity is just `1 - parity(k)` -- so neither `x+0.5` nor
+/// `k+1` themselves ever need to exist as floats, only `k`, `parity(k)`,
+/// and `r = (x-k)-0.5` (computed in that order so `x-k` stays a small,
+/// Sterbenz-exact value before the final `-0.5`).
 #[inline(always)]
 pub fn cospi(x: f32) -> f32 {
-    let kb = (x - 0.5) + ROUND_MAGIC;
-    let q = (kb - ROUND_MAGIC) + 0.5;
-    let r = x - q;
+    let k = (x - 0.5).round();
+    let r = (x - k) - 0.5;
     let s = sinf_poly(std::f32::consts::PI * r);
-    let parity = !kb.to_bits() << 31;
-    f32::from_bits(s.to_bits() ^ parity)
+    let sign = fma(2.0, parity(k), -1.0); // -(1 - 2*(1-parity(k))) = 2*parity(k)-1
+    s * sign
 }
 
 // 1/180: precomputed reciprocal for the magic-round trick, same idiom as

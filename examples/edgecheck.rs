@@ -135,6 +135,7 @@ fn main() {
     check("sinpi(0)", sinpi(0.0), 0.0);
     check("sinpi(-0)", sinpi(-0.0), -0.0);
     check("cospi(0)", cospi(0.0), 1.0);
+    check("cospi(-0)", cospi(-0.0), 1.0);
     check("sinpi(0.5)", sinpi(0.5), 1.0);
     check("sinpi(1)", sinpi(1.0), -0.0);
     check("cospi(1)", cospi(1.0), -1.0);
@@ -144,10 +145,22 @@ fn main() {
     check("sinpi(inf)", sinpi(f32::INFINITY), f32::NAN);
     check("sinpi(-inf)", sinpi(f32::NEG_INFINITY), f32::NAN);
     check("cospi(inf)", cospi(f32::INFINITY), f32::NAN);
-    check_finite("sinpi(f32::MAX)", sinpi(f32::MAX));
-    check_finite("cospi(f32::MAX)", cospi(f32::MAX));
-    check_finite("sinpi(1e20)", sinpi(1e20));
-    check_finite("cospi(1e20)", cospi(1e20));
+    // Regression guard for a real bug (2026-07-09): the magic-round-
+    // constant reduction (valid only for |x|<=2^22, since it was applied
+    // directly to unbounded raw x, unlike every other magic-round use in
+    // this crate) silently gave *wrong*, not just imprecise, results for
+    // 2^22 < |x| < 2^24 -- e.g. cospi(2^22+1) came out ~-0.0033 instead
+    // of the correct -1.0. `check_finite` alone (the old form of these
+    // checks) could never have caught this, since the wrong values were
+    // still finite. Fixed with `x.round()` (see sinpi's own doc comment).
+    check("sinpi(2^22+1)", sinpi(4_194_305.0), -0.0);
+    check("cospi(2^22+1)", cospi(4_194_305.0), -1.0);
+    check("sinpi(2^23)", sinpi(8_388_608.0), 0.0);
+    check("cospi(2^23)", cospi(8_388_608.0), 1.0);
+    check("sinpi(f32::MAX)", sinpi(f32::MAX), 0.0);
+    check("cospi(f32::MAX)", cospi(f32::MAX), 1.0);
+    check("sinpi(1e20)", sinpi(1e20), 0.0);
+    check("cospi(1e20)", cospi(1e20), 1.0);
 
     // sind/cosd: argument in degrees. Exact reduction only up to ~4.7e7
     // (180.0's own trailing-zero-bit limit, see sind's doc comment) --
