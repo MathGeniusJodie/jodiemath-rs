@@ -880,9 +880,6 @@ cousin.
 
 ### New API surface / tiers
 
-65. **exp2m1 / log2p1** (C23): exp2m1 falls out of the expm1 technique on
-    exp2's machinery (and unblocks idea #50); log2p1 = log1p·LOG2_E with
-    the usual Cody-Waite care.
 66. **exp_m1_over_x(x) = expm1(x)/x**: the well-conditioned primitive
     behind financial/ODE kernels; expm1's Pade branch is literally already
     this shape internally (numer/denom both have the x factored).
