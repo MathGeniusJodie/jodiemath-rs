@@ -2928,7 +2928,29 @@ pub fn powf(x: f32, y: f32) -> f32 {
     let y_int = y == y.trunc();
     let y_odd = y_int && parity(y) != 0.0;
     let neg_signed = if y_odd { -mag } else { mag };
-    let neg_result = if y_int { neg_signed } else { f32::NAN };
+    // `x == -0.0` and `x == -inf` are C99-exempt from the "non-integer y
+    // -> NaN" rule above (found 2026-07-09 building a systematic
+    // special-case matrix against std, backlog idea #85's fourth wave):
+    // unlike a genuinely negative *finite* real number (where a
+    // non-integer power really is undefined), `-0` and `-inf` are signed
+    // *boundary* values whose magnitude-only result (`mag`, already
+    // correctly computed above via the full checked `log_2`/
+    // `exp2_checked` pipeline) is always well-defined -- only the
+    // *sign convention* depends on `y` being an odd integer specifically,
+    // for *any* `y`, integer or not (e.g. `(-0.0).powf(0.5) == 0.0`, not
+    // `NaN`, since only an odd-integer exponent would have kept `-0`'s
+    // sign). `x == 0.0` catches `x == -0.0` here since this whole branch
+    // only runs when `x.is_sign_negative()` is already true.
+    let neg_result = if y_int || x == 0.0 || x.is_infinite() { neg_signed } else { f32::NAN };
+    // `y` infinite is a third, independent special case: C99 defines
+    // `pow(x, +-inf)` purely by `|x|` relative to `1` (`mag` already is
+    // exactly that), never sign-flipped by `x`'s own sign regardless of
+    // integer-ness -- a negative base raised to an infinite power has no
+    // well-defined *sign* in the limit, only a magnitude. Overrides the
+    // selection above (not folded into its own condition) since it must
+    // win even when the `y_int`/`x==0`/`x.is_infinite()` check above
+    // would have produced a sign-flipped answer.
+    let neg_result = if y.is_infinite() { mag } else { neg_result };
     // `x.is_sign_negative()` (bit-based), not `x < 0.0` (value-based): the
     // latter disagrees with the former exactly at x = -0.0 (same class of
     // bug as acos's earlier `-0.0` fix this session), which would silently
@@ -3136,10 +3158,18 @@ pub fn powf_checked(x: f32, y: f32) -> f32 {
     // non-finite needs a fallback, but *not* a second full
     // log_2+exp2_checked computation -- that would roughly double this
     // function's cost just to cover a few degenerate inputs. The only
-    // three possible magnitudes there are cheap direct selects: ax == 0
+    // four possible magnitudes there are cheap direct selects: ax == 0
     // -> 0 (y > 0) or +inf (y < 0); ax == +inf -> +inf (y > 0) or 0
-    // (y < 0); ax == NaN (from x == NaN) -> NaN. (y == 0 is overridden
-    // separately below regardless of any of this.)
+    // (y < 0); ax == NaN (from x == NaN) -> NaN; y == NaN -> NaN (found
+    // 2026-07-09 building a systematic C99 special-case matrix against
+    // std, backlog idea #85's own third wave: `zero_or_inf`'s own `y >
+    // 0.0` comparison is simply false for NaN, same as any comparison,
+    // so a NaN `y` silently fell through to a *finite* 0/inf answer
+    // instead of propagating -- `powf`/`powf_unchecked` don't have this
+    // gap since they route ax==0/inf/nan through the real, always-
+    // NaN-propagating `log_2`/`exp2_checked` instead of this cheap
+    // shortcut). (y == 0 is overridden separately below regardless of
+    // any of this.)
     let is_safe = ax > 0.0 && ax.is_finite();
     let mag_precise = exp2_checked_df(log2_df(ax) * y);
     // (ax == 0) == (y > 0) picks out exactly the two "goes to zero" cases
@@ -3147,14 +3177,18 @@ pub fn powf_checked(x: f32, y: f32) -> f32 {
     // cheaper than a 4-way branch and avoids inf/inf-is-NaN traps a
     // division-based shortcut would hit for the ax==+inf,y<0 case.
     let zero_or_inf = if (ax == 0.0) == (y > 0.0) { 0.0 } else { f32::INFINITY };
-    let edge_mag = if ax.is_nan() { f32::NAN } else { zero_or_inf };
+    let edge_mag = if ax.is_nan() || y.is_nan() { f32::NAN } else { zero_or_inf };
     let mag = if is_safe { mag_precise } else { edge_mag };
     // Same negative-x/y-parity/y==0 handling as powf -- see its own doc
     // comment for the reasoning.
     let y_int = y == y.trunc();
     let y_odd = y_int && parity(y) != 0.0;
     let neg_signed = if y_odd { -mag } else { mag };
-    let neg_result = if y_int { neg_signed } else { f32::NAN };
+    // `x == -0.0`/`x == -inf` exemption and the `y` infinite override:
+    // same fourth-wave C99 special cases as `powf`'s own doc comment
+    // describes -- see there for the full reasoning.
+    let neg_result = if y_int || x == 0.0 || x.is_infinite() { neg_signed } else { f32::NAN };
+    let neg_result = if y.is_infinite() { mag } else { neg_result };
     let r = if x.is_sign_negative() { neg_result } else { mag };
     // pow(1,y)=1 for any y and pow(-1,+-inf)=1: same two C99 special cases
     // powf's own doc comment describes, needed here too (log2_df(1) is
