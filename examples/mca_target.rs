@@ -180,6 +180,9 @@ throughput_fn!(thr_log2p1, "log2p1_throughput", log2p1);
 latency_fn!(lat_exp, "exp_latency", exp);
 throughput_fn!(thr_exp, "exp_throughput", exp);
 
+latency_fn!(lat_exp_checked, "exp_checked_latency", exp_checked);
+throughput_fn!(thr_exp_checked, "exp_checked_throughput", exp_checked);
+
 latency_fn!(lat_expm1, "expm1_latency", expm1);
 throughput_fn!(thr_expm1, "expm1_throughput", expm1);
 
@@ -438,6 +441,7 @@ fn main() {
         lat_log1p, thr_log1p;
         lat_log2p1, thr_log2p1;
         lat_exp, thr_exp;
+        lat_exp_checked, thr_exp_checked;
         lat_expm1, thr_expm1;
         lat_exp_m1_over_x, thr_exp_m1_over_x;
         lat_exp2m1, thr_exp2m1;

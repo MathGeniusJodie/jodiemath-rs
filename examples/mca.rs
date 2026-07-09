@@ -137,6 +137,7 @@ fn main() {
         "log1p",
         "log2p1",
         "exp",
+        "exp_checked",
         "expm1",
         "exp_m1_over_x",
         "exp2m1",

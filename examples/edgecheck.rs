@@ -262,6 +262,18 @@ fn main() {
     // pinned here so it can't silently come back.
     check_finite("exp(88.37628)", exp(88.37628));
 
+    // exp_checked: full range (backlog idea #18) -- x clamped before the
+    // reduction so k never leaves the k1/k2 split's own safe [-151,128)
+    // range, matching exp2_checked/exp10_checked's own saturation
+    // guarantees.
+    check("exp_checked(0)", exp_checked(0.0), 1.0);
+    check_finite("exp_checked(88.37628)", exp_checked(88.37628));
+    check("exp_checked(1000)", exp_checked(1000.0), f32::INFINITY);
+    check("exp_checked(-1000)", exp_checked(-1000.0), 0.0);
+    check("exp_checked(inf)", exp_checked(f32::INFINITY), f32::INFINITY);
+    check("exp_checked(-inf)", exp_checked(f32::NEG_INFINITY), 0.0);
+    check("exp_checked(nan)", exp_checked(f32::NAN), f32::NAN);
+
     check("exp10(0)", exp10(0.0), 1.0);
     check("exp10(1)", exp10(1.0), 10.0);
     check("exp10(2)", exp10(2.0), 100.0);

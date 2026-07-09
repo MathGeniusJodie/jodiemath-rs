@@ -702,6 +702,13 @@ fn main() {
         let s = measure!(exp_domain, |x: f32| x.exp_m1(), expm1_u10);
         report("std expm1", &s, t0);
     }
+    if run("exp_checked") {
+        // Full range (backlog idea #18): properly saturates to 0/inf, so
+        // unlike exp's own exp_domain restriction above, this gets the
+        // whole f32 domain.
+        let s = measure!(everywhere, exp_checked, exp_u10);
+        report("exp_checked", &s, t0);
+    }
     if run("exp_m1_over_x") {
         // Same inherited unchecked-exp2 domain as expm1 itself (see its
         // own doc comment).

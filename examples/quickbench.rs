@@ -106,6 +106,7 @@ fn main() {
     bench!("log2p1", log2p1);
     bench!("exp", exp);
     bench!("std exp", |x: f32| x.exp());
+    bench!("exp_checked", exp_checked);
     bench!("expm1", expm1);
     bench!("std expm1", |x: f32| x.exp_m1());
     bench!("exp_m1_over_x", exp_m1_over_x);

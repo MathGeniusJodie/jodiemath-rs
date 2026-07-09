@@ -1386,6 +1386,44 @@ pub fn exp(x: f32) -> f32 {
     p * t1 * t2
 }
 
+/// Full-range sibling of [`exp`] -- backlog idea #18: `exp` already uses
+/// the k1/k2 split (needed regardless, see its own doc comment), so the
+/// only change is clamping `x` *before* the reduction starts so `k`
+/// itself never leaves the split's own safe `[-151,128)` range, matching
+/// `exp2_checked`'s own early-clamp pattern (clamp the input, not the
+/// derived `k`, so the reduction's `r` and the split's `k` always stay
+/// mutually consistent -- clamping `k` after the fact would desync it
+/// from an `r` computed against the *unclamped* value, the same class of
+/// bug `sigmoid`'s own negative-tail fix found and fixed this session).
+/// Clamp bounds (`128/log2(e)`, `-151/log2(e)`) are `exp2_checked`'s own
+/// `k` boundary converted into `x`'s units, not guessed -- the same
+/// derivation `sigmoid`'s own fix used. Callers like `sigmoid`/`tanh`
+/// that currently hand-roll their own ad-hoc clamp before a duplicated
+/// copy of `exp`'s reduction could route through this instead, but
+/// aren't changed here (out of scope for this entry; each has its own
+/// established, already-verified clamp bound and doc comment).
+#[inline(always)]
+pub fn exp_checked(x: f32) -> f32 {
+    let x = x.clamp(-104.66522426455174, 88.72283911167308);
+    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+    let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
+    let r = fma(-k, LN2_HI, x);
+    let r = fma(-k, LN2_LO, r);
+    let c: [f32; 4] = [4.9999300e-1, 1.6667245e-1, 4.1883811e-2, 8.3009899e-3];
+    let r2 = r * r;
+    let r4 = r2 * r2;
+    let l0 = r + 1.0;
+    let l1 = fma(c[1], r, c[0]);
+    let l2 = fma(c[3], r, c[2]);
+    let r0 = fma(l1, r2, l0);
+    let p = fma(l2, r4, r0);
+    let k1b = fma(k, 0.5, ROUND_MAGIC) - (ROUND_MAGIC - 383.0);
+    let k2b = (k + 766.0) - k1b;
+    let t1 = f32::from_bits((k1b.to_bits() << 8) & EXPONENT_MASK);
+    let t2 = f32::from_bits((k2b.to_bits() << 8) & EXPONENT_MASK);
+    p * t1 * t2
+}
+
 /// A Pade approximant near 0 (where exp(x)-1 loses precision to
 /// cancellation), exp(x)-1 directly elsewhere. See exp's doc comment for
 /// the inherited unchecked-exp2 domain limit. The 5 coefficients (an
