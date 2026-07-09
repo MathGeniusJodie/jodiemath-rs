@@ -25,8 +25,8 @@ cbrt_accurate_unchecked (+) | 0.000 |     1     | (bit-identical to cbrt_accurat
  cos_checked (|x|<=1e6) |    0.081   |     3     |  0.000  |    1
         sinpi (all f32) |    0.197   |     2     | (no std sinpi)
         cospi (all f32) |    0.281   | 8.7e8 (near a zero of cospi -- tiny absolute error, huge ulp) | (no std cospi)
-          sind (|x|<1e6)|    0.119   |     2     | (no std sind)
-          cosd (|x|<1e6)|    0.067   |     2     | (no std cosd)
+        sind (|x|<4.7e7)|    0.124   |     2     | (no std sind)
+        cosd (|x|<4.7e7)|    0.073   |     2     | (no std cosd)
 ```
 
 ```

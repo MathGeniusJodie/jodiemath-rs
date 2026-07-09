@@ -604,14 +604,21 @@ fn main() {
     if run("sind") {
         // sind/cosd's own exact-reduction range is ~4.7e7 (see their doc
         // comments, limited by 180.0's trailing zero bits, unlike
-        // sinpi/cospi's full-f32-range exactness) -- |x|<1e6 is
-        // comfortably inside that and keeps this test's own f64-based
-        // reference trustworthy too.
-        let sind_domain = |x: f32| x.abs() < 1e6;
+        // sinpi/cospi's full-f32-range exactness) -- widened to match
+        // that documented boundary exactly (was |x|<1e6, leaving the
+        // 1e6-4.7e7 "documented accurate but never actually tested" gap
+        // unexercised -- the same shape of coverage hole that hid a real
+        // bug in sinpi/cospi; checked directly with a throwaway scratch
+        // harness using a proper reduction-based reference before
+        // trusting this domain change, and confirmed clean: max ulp 2
+        // throughout, no bug here, just closing the gap). This test's own
+        // f64-based reference (`sind_ref`/`cosd_ref` above) stays
+        // trustworthy well past this boundary too.
+        let sind_domain = |x: f32| x.abs() < 4.7e7;
         let s = measure!(sind_domain, sind, sind_ref);
-        report("sind (|x|<1e6)", &s, t0);
+        report("sind (|x|<4.7e7)", &s, t0);
         let s = measure!(sind_domain, cosd, cosd_ref);
-        report("cosd (|x|<1e6)", &s, t0);
+        report("cosd (|x|<4.7e7)", &s, t0);
     }
 
     if run("ln") {
