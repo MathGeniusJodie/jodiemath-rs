@@ -162,6 +162,19 @@ fn main() {
     check("sinpi(1e20)", sinpi(1e20), 0.0);
     check("cospi(1e20)", cospi(1e20), 1.0);
 
+    // sinc(x) = sin(pi*x)/(pi*x), removable singularity at x=0.
+    check("sinc(0)", sinc(0.0), 1.0);
+    check("sinc(-0)", sinc(-0.0), 1.0);
+    check("sinc(1)", sinc(1.0), -0.0);
+    check("sinc(-1)", sinc(-1.0), 0.0);
+    check("sinc(2)", sinc(2.0), 0.0);
+    check("sinc(0.5)", sinc(0.5), std::f32::consts::FRAC_2_PI);
+    check("sinc(-0.5)", sinc(-0.5), std::f32::consts::FRAC_2_PI);
+    check("sinc(nan)", sinc(f32::NAN), f32::NAN);
+    check("sinc(inf)", sinc(f32::INFINITY), f32::NAN);
+    check("sinc(-inf)", sinc(f32::NEG_INFINITY), f32::NAN);
+    check_finite("sinc(f32::MAX)", sinc(f32::MAX));
+
     // sind/cosd: argument in degrees. Exact reduction only up to ~4.7e7
     // (180.0's own trailing-zero-bit limit, see sind's doc comment) --
     // unlike sinpi/cospi, not the entire f32 range -- but still

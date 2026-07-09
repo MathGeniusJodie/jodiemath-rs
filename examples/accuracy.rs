@@ -45,6 +45,7 @@ use sleef::f64x::{
     log1p_u10, log2_u35, log_u35, pow_u10, remainder as remainder_ref, sin_u35, sinh_u35, tan_u35,
     tanh_u35,
 };
+use std::simd::cmp::SimdPartialEq;
 use std::simd::num::SimdFloat;
 use std::simd::{Select, Simd, StdFloat};
 use std::time::Instant;
@@ -107,6 +108,14 @@ fn cospi_ref(v: F64xN) -> F64xN {
         let s = sin_u35(r * F64xN::splat(std::f64::consts::PI));
         let sign = F64xN::splat(2.0) * parity_f64(k) - F64xN::splat(1.0);
         s * sign
+    })
+}
+fn sinc_ref(v: F64xN) -> F64xN {
+    trig_safe(v, |x: F64xN| {
+        let is_zero = x.simd_eq(F64xN::splat(0.0));
+        let safe_x = is_zero.select(F64xN::splat(1.0), x);
+        let normal = sinpi_ref(x) / (F64xN::splat(std::f64::consts::PI) * safe_x);
+        is_zero.select(F64xN::splat(1.0), normal)
     })
 }
 // sind/cosd's own point (see their doc comments): q=round(x/180),
@@ -600,6 +609,20 @@ fn main() {
         report("sinpi (all f32)", &s, t0);
         let s = measure!(everywhere, cospi, cospi_ref);
         report("cospi (all f32)", &s, t0);
+    }
+    if run("sinc") {
+        // sinc(x) = sin(pi*x)/(pi*x) via sinpi, so sinc_ref reuses
+        // sinpi_ref directly rather than a naive sin(pi*x)/(pi*x) (which
+        // would reintroduce sinpi's own large-x imprecision into the
+        // reference -- the same trap already hit once with sind_ref).
+        // Restricted to |x|<1e6: well past that, sinc(x)'s true value is
+        // already indistinguishable from 0 at f32 precision (|sinc(x)|
+        // <= 1/(pi*|x|)), so ulp comparisons there measure noise near a
+        // genuine zero, not real accuracy (same class of artifact as
+        // cospi's own near-zero-crossing ulp blowup).
+        let sinc_domain = |x: f32| x.abs() < 1e6;
+        let s = measure!(sinc_domain, sinc, sinc_ref);
+        report("sinc (|x|<1e6)", &s, t0);
     }
     if run("sind") {
         // sind/cosd's own exact-reduction range is ~4.7e7 (see their doc

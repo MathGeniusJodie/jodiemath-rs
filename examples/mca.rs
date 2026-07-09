@@ -126,6 +126,7 @@ fn main() {
         "cos_checked",
         "sinpi",
         "cospi",
+        "sinc",
         "sind",
         "cosd",
         "ln",

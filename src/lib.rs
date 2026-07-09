@@ -442,6 +442,25 @@ pub fn cospi(x: f32) -> f32 {
     s * sign
 }
 
+/// The normalized sinc function, `sin(pi*x)/(pi*x)` (DSP convention),
+/// with the removable singularity at `x=0` handled directly (`sinc(0) =
+/// 1`, the limiting value everywhere else already converges to). Built
+/// directly on `sinpi`'s own exact, full-range reduction (see its doc
+/// comment), so this is accurate across sinpi's *entire* domain -- not
+/// just near zero, which is the part DSP users hand-rolling this
+/// (`sin(pi*x)/(pi*x)` plus a manual near-zero branch) typically get
+/// right, if anything. No cancellation risk in the division: for small
+/// `x`, `sinpi(x)` is already close to `pi*x` (`sin(t) ~ t` near 0), so
+/// the ratio stays well-conditioned throughout, including right up to
+/// `x=0` itself. `sinc` is even (`sin(-pi*x)/(-pi*x) = sin(pi*x)/(pi*x)`
+/// algebraically), which falls out for free here with no extra sign
+/// handling needed.
+#[inline(always)]
+pub fn sinc(x: f32) -> f32 {
+    let normal = sinpi(x) / (std::f32::consts::PI * x);
+    if x == 0.0 { 1.0 } else { normal }
+}
+
 // 1/180: precomputed reciprocal for the magic-round trick, same idiom as
 // sin's own FRAC_1_PI.
 const INV_180: f32 = 1.0 / 180.0;
