@@ -1280,7 +1280,37 @@ pub fn exp(x: f32) -> f32 {
 #[inline(always)]
 pub fn expm1(x: f32) -> f32 {
     let a = x * fma(-1.9999927, x * x, -120.0) / fma(x, fma(x, x - 12.000030, 59.999996), -120.0);
-    let b = exp(x) - 1.0;
+    // Deliberately a standalone copy of exp's reduction/poly (not routed
+    // through the public `exp` fn) ending in fma(p*t1, t2, -1.0) instead of
+    // exp(x)-1.0 -- fuses the trailing subtract into the last multiply,
+    // one rounding fewer than rounding p*t1*t2 fully and then subtracting
+    // 1.0 separately. This is the branch that carries expm1's actual
+    // worst-case ulp (the Pade branch above is the one with headroom, not
+    // this one -- confirmed by the exhaustive sweep's worst-x always
+    // landing at |x|>=0.5, contradicting a stale claim in exp's own doc
+    // comment). Factoring this through a shared `exp`-returning-parts
+    // helper was tried first and measured a real, reproducible mca latency
+    // regression on `sinh_throughput` (+32%, unrelated caller, apparently
+    // a scheduling side effect of the new function boundary) even though
+    // `exp` itself was bit-identical -- duplicating the ~10 lines here
+    // avoids touching `exp`'s own codegen at all.
+    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+    let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
+    let r = fma(-k, LN2_HI, x);
+    let r = fma(-k, LN2_LO, r);
+    let c: [f32; 4] = [4.9999300e-1, 1.6667245e-1, 4.1883811e-2, 8.3009899e-3];
+    let r2 = r * r;
+    let r4 = r2 * r2;
+    let l0 = r + 1.0;
+    let l1 = fma(c[1], r, c[0]);
+    let l2 = fma(c[3], r, c[2]);
+    let r0 = fma(l1, r2, l0);
+    let p = fma(l2, r4, r0);
+    let k1b = fma(k, 0.5, ROUND_MAGIC) - (ROUND_MAGIC - 383.0);
+    let k2b = (k + 766.0) - k1b;
+    let t1 = f32::from_bits((k1b.to_bits() << 8) & EXPONENT_MASK);
+    let t2 = f32::from_bits((k2b.to_bits() << 8) & EXPONENT_MASK);
+    let b = fma(p * t1, t2, -1.0);
     if x.abs() < 0.5 { a } else { b }
 }
 
