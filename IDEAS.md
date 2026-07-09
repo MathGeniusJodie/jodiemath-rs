@@ -349,6 +349,50 @@ brainstorm backlog lives at the bottom of this file.
   the tail formula for xa in [0.28,10]. Max ulp unchanged (4→4), avg ulp
   moved <0.3%, stable across a 10x denser grid. Not applied.
 
+- **erf_poly, ulp-weighted Chebyshev LP refit with a max-ulp cap
+  (2026-07-09), implemented and adopted — small but real win, applying
+  this session's two earlier lessons (the `exp` win, and the `sinf_poly`
+  regression) to a new poly.** Same LP technique as both entries above,
+  but with the max-cap fix from the `sinf_poly` postmortem baked in from
+  the start (minimize the weighted-L1/avg-ish objective subject to the
+  max weighted error never exceeding the shipped coefficients' own
+  bound — the `acos_poly` fix-7 pattern) rather than repeating the
+  plain-minimax mistake. Also checked the `sinf_poly` failure mode's
+  premise up front: `erf_poly` has exactly one caller (`erf` itself,
+  always evaluated the same way over its whole `[0.28,10]` clamped
+  domain), not two callers stressing opposite domain regions the way
+  `sin_checked`/`cos_checked` do — so the domain-uniform grid risk that
+  sank `sinf_poly` doesn't apply here. Target: `erf_poly(xa) ≈
+  log2(erfc(xa))` (scipy's float64 `erfc`/`erf`, accurate over this
+  whole range without needing arbitrary precision — `erfc(10)~1.5e-44`
+  is nowhere near f64's own underflow floor), weighted by
+  `erfc(xa)*ln2/ulp(erf(xa))` (the downstream sensitivity of `erf`'s
+  final `1 - exp2_checked(erf_poly(xa))` combine to a poly error).
+  The isolated fit looked like a big win (avg weighted error
+  0.072→0.047, ~35%, max held at parity) — but per this session's other
+  two entries, the isolated metric doesn't reliably predict the real
+  crate's measured ulp change, so it was verified end-to-end anyway
+  before trusting it: implemented in `src/lib.rs`, `git stash`-paired,
+  **exhaustive**: `erf` avg/max ulp 0.3194/5 → 0.3166/5 (avg improved
+  ~0.9%, smaller than the isolated metric suggested but a real,
+  reproducible win, not noise — confirmed exhaustive, not just fuzz);
+  `erfc` (doesn't call this poly) bit-for-bit unchanged, exactly as
+  expected. `edgecheck.rs` passes. mca: `erf` 85.97/2.788 cyc
+  lat/throughput, identical before and after (confirmed by measuring the
+  *current* shipped code directly rather than trusting `readme.md`'s
+  stale 91.74/2.871 row — that number predates some later, unrelated
+  change and was never updated; left as-is here since fixing it isn't
+  this idea's scope). Adopted; `readme.md`'s erf avg-ulp figure updated.
+  **General lesson: the isolated-fit "ulp-weighted error" metric this
+  session's LP script computes is consistently a *directionally* useful
+  signal (every one of the three LP attempts so far correctly predicted
+  whether the real change would be a regression, an improvement, or nil)
+  but not a reliable *magnitude* predictor (exp: predicted ~18%, got
+  ~18%, accurate that time; erf: predicted ~35%, got ~0.9%, off by 30x+)
+  — trust it to decide which candidates are worth building and testing
+  for real, never trust its predicted size as the actual expected
+  result.**
+
 - **acos_poly refit against joint acos+asin objective, unconstrained variant
   (2026-07-07)**: an unconstrained joint metric (`max(acos ulp, asin ulp)`)
   improved the joint score but let acos's own exhaustive max ulp regress

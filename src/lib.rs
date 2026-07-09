@@ -1967,15 +1967,25 @@ pub fn tan(x: f32) -> f32 {
 // poly, not assumed either way. mca: 102.74->91.74 cyc latency (-10.7%),
 // 3.163->2.871 cyc/elem throughput (-9.2%) -- both axes improved
 // together here, unlike acos_poly's case (small throughput cost there).
+// Coefficients refit again (2026-07-09) via the same ulp-weighted
+// Chebyshev LP technique used for exp's degree-5 poly, this time with an
+// explicit max-ulp cap (minimize the L1/avg-ish weighted error subject to
+// the max weighted error never exceeding the shipped coefficients' own
+// bound, same "constrained search" shape as acos_poly's own successful
+// fix 7) -- single caller (erf itself, no dual-region sharing like
+// sinf_poly's sin/cos split), so this avoided that pitfall. Small real
+// win, exhaustive: avg ulp 0.3194->0.3166, max ulp unchanged at 5; erfc
+// (doesn't call this poly) bit-for-bit unaffected. Zero perf cost, same
+// instructions (mca unchanged both before and after this refit).
 #[inline(always)]
 fn erf_poly(x: f32, x2: f32) -> f32 {
-    let a6 = 3.118769e-4f32;
-    let a5 = -4.67225e-3f32;
-    let a4 = 3.3162573e-2f32;
-    let a3 = -1.5214339e-1f32;
-    let a2 = -9.1684705e-1f32;
-    let a1 = -1.6282598f32;
-    let a0 = 3.1332566e-5f32;
+    let a6 = 3.104778879787773e-4f32;
+    let a5 = -4.664447158575058e-3f32;
+    let a4 = 3.3150311559438705e-2f32;
+    let a3 = -1.521437019109726e-1f32;
+    let a2 = -9.168320298194885e-1f32;
+    let a1 = -1.6282707452774048f32;
+    let a0 = 3.355956505401991e-5f32;
     let x4 = x2 * x2;
     let b0 = fma(a1, x, a0);
     let b1 = fma(a3, x, a2);
