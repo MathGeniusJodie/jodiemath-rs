@@ -42,6 +42,7 @@ cbrt_accurate_unchecked (+) | 0.000 |     1     | (bit-identical to cbrt_accurat
                 log2p1  |    0.102   |     3     | (no std log2p1)
         exp (in-domain) |    0.075   |     3     |  0.000  |    1
       expm1 (in-domain) |    0.130   |     6     |  0.000  |    0
+exp_m1_over_x (in-domain)| 0.073   |     6     | (no std exp_m1_over_x)
                 exp2m1  |    0.077   |     4     | (no std exp2m1)
        sinh (in-domain) |    0.081   |     5     |  0.000  |    1
        cosh (in-domain) |    0.071   |     5     |  0.000  |    0
@@ -103,6 +104,7 @@ log10_unchecked|  8.8 ns |     -   |  -
        log2p1 | 12.8 ns |     -   |  -
           exp |  9.9 ns |  9.5 ns | 1.0x
         expm1 | 11.3 ns | 13.7 ns | 1.2x
+exp_m1_over_x | 12.8 ns |     -   |  -
        exp2m1 | 11.5 ns |     -   |  -
          sinh | 14.0 ns | 14.0 ns | 1.0x
          cosh | 13.8 ns | 14.0 ns | 1.0x
@@ -185,6 +187,7 @@ log10_unchecked| 0.26 ns  |     -    |  -
        log2p1 | 0.54 ns  |     -    |  -
           exp | 0.31 ns  | 2.47 ns | 8.0x
         expm1 | 0.46 ns  | 5.56 ns | 12.1x
+exp_m1_over_x | 0.44 ns  |     -    |  -
        exp2m1 | 0.49 ns  |     -    |  -
          sinh | 0.58 ns  | 5.62 ns | 9.7x
          cosh | 0.50 ns  | 5.55 ns | 11.2x
@@ -265,6 +268,7 @@ log1p               |          61.16 |             2.276
 log2p1              |          52.19 |             2.328
 exp                 |          42.00 |             1.327
 expm1               |          71.00 |             1.695
+exp_m1_over_x       |          83.00 |             1.798
 exp2m1              |          76.06 |             1.844
 sinh                |          56.00 |             2.089
 cosh                |          55.00 |             1.754
