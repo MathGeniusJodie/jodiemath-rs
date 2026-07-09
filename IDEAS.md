@@ -671,12 +671,23 @@ cousin.
     own LP fit over its own domain weighting, acos keeps its protected
     values, zero runtime cost (same instruction count, different
     constants).
-35. **atan: correct the 1/a fold's division rounding** — e = fma(y, a,
-    -1.0) gives the reciprocal's residual; Δatan ≈ -e·y/(1+y²), and
-    atan_poly already computes a denominator ≈(1+y²)-shaped value. Two-ish
-    extra ops aimed exactly at the "worst case lives in the division /
-    reciprocal-fold boundary" conclusion from the 2026-07-09 numerator
-    refit.
+35. **atan: correct the 1/a fold's division rounding (tried 2026-07-09,
+    rejected)** — implemented `e = fma(recip, a, -1.0)`, `corr = -e·y/(1+y²)`
+    folded into the existing `FRAC_PI_2 - y` else-branch (needed an
+    `is_finite` guard on `corr` first: `e` is a `0*inf` NaN at `a=inf`,
+    which broke `atan2`'s extreme-ratio inputs badly before the guard was
+    added — caught by accuracy.rs's own u64-wraparound garbage output,
+    not reasoned about in advance). Once correctness was fixed: **zero
+    accuracy benefit** — exhaustive sweep showed atan's avg ulp exactly
+    unchanged (0.0675) and max ulp *regressed* 3→4 (right at the a=1 fold
+    boundary, x≈1.022), confirming the worst case doesn't actually live
+    where the backlog guessed. Also a severe mca cost: atan throughput
+    1.491→**4.196** cyc/elem (+181%), atan2 1.532→2.411 (+57%) — the extra
+    division landed far worse than "two-ish ops" suggested. Reverted,
+    bit-identical to prior HEAD. *A root-caused "worst case lives here"
+    conclusion from an unrelated refit (the numerator-only LP attempt)
+    doesn't mean a *targeted* fix at that location will actually move the
+    number — measure, don't just aim.*
 36. **acos_accurate opt-in tier**: Df32 π/2 constant + two_prod'd
     sqrt(1-a)·poly product. Distinct from the rejected Df32 leading-term
     split — that changed the *shared default* and broke asin; a separate
