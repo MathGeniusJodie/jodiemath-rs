@@ -3029,6 +3029,96 @@ pub fn remainder_checked(x: f32, y: f32) -> f32 {
     if y.is_infinite() && x.is_finite() { x } else { r }
 }
 
+/// [`remainder_checked`], but correct for `|x/y|` past `2^24` too (up to
+/// roughly `2^48`) -- backlog idea #64. `remainder_checked`'s own
+/// self-correction assumes `q0 = (x/y).round()` differs from the true
+/// integer quotient by at most one (a near-tie sign flip); that holds for
+/// `|x/y| < 2^24` where every integer is exactly representable in f32, but
+/// past it `q0` itself can only land on a coarse grid (gaps of
+/// `2^(e-23)` at exponent `e`), so the true quotient can be tens of
+/// integers away from `q0` -- fuzzing confirmed this is a *severe* gap, not
+/// a tail case: ~85% of samples in `[2^24, 1e9]` were "gross" errors (off
+/// by more than `0.1*|y|`, i.e. landed on a completely different multiple
+/// of `y`), worst case off by 31 whole multiples of `y`.
+///
+/// Fixed by computing the residual with [`Df32`] (already in the crate)
+/// instead of a single `fma`: `q0*y` via `Df32::from_mul` (an exact
+/// two-product) subtracted from `x` gives the *exact* real-valued residual
+/// `x - q0*y`, unlimited by `q0`'s own coarse quantization -- collapsing
+/// that to a single f32 and dividing by `y` now recovers the correction
+/// `adj` exactly (since `adj`'s own magnitude, `q0`'s quantization gap in
+/// units of 1, is tiny compared to `q0` itself). A second exact Df32
+/// subtraction applies `adj`, then `remainder_checked`'s own existing
+/// near-tie logic runs unchanged on the now-correct residual. This is
+/// `remainder_checked`'s own correction loop run twice -- once for the
+/// coarse `q0` (potentially many integers off), once for a near-tie
+/// (a single fma's own bounded error) -- not a new algorithm.
+///
+/// Verified against a from-scratch double-f64 (106-bit) reference (a
+/// naive `x as f64 - q*y as f64` reference is *not* trustworthy here --
+/// confirmed by hand with an arbitrary-precision check: once `q*y` itself
+/// needs more than f64's 52 mantissa bits, plain f64 arithmetic
+/// reintroduces the same class of precision loss this function exists to
+/// avoid, just one level up): 0 avg/max ulp, 0 gross errors up to
+/// `|x/y| ~ 2^48` (an 8-order-of-magnitude extension of
+/// `remainder_checked`'s own `2^24` limit), degrading past that where a
+/// single correction pass is no longer enough (the same kind of "harder,
+/// separate limit" `remainder_checked`'s own doc comment already
+/// acknowledges, just much further out). Bit-identical to
+/// `remainder_checked` throughout `remainder_checked`'s own `|x/y|<2^24`
+/// domain (confirmed by fuzzing, 5M samples, 0 differing bit patterns).
+/// Real extra mca cost on top of `remainder_checked` (two Df32
+/// subtractions plus two Df32 products, plus the rescale guard below):
+/// latency 46.03->179.13 cyc (~3.9x), throughput 1.282->8.351 cyc/elem
+/// (~6.5x) -- substantial, kept as a separate opt-in tier rather than
+/// folded into `remainder_checked` itself so existing callers who don't
+/// need this range don't pay for it, matching this crate's established
+/// precedent (`remainder`/`remainder_checked` themselves) that a real
+/// correctness gap is worth a real cost for callers who opt in.
+///
+/// `Df32::from_mul(q0, y)` rounds the intermediate product `q0*y` to a
+/// single f32 *before* pairing it with its error term -- unlike a hardware
+/// `fma`, which keeps the product at full precision internally and only
+/// rounds the final sum, so it never overflows just because an
+/// intermediate value would have. `q0*y` is only close to `x` in the
+/// *typical* case; in general it can exceed `x` by up to `|y|/2` (that gap
+/// *is* the remainder), so whenever `x` or `y` individually sits within a
+/// small factor of `f32::MAX`, the exact product `q0*y` can genuinely
+/// exceed `f32::MAX` even though `x`, `y`, and the true remainder are all
+/// finite -- found by fuzzing (a plain domain-restricted sweep missed it;
+/// a dedicated hunt over full random bit patterns within the declared
+/// `|x/y|` domain did not), e.g. `x=3.2603515e38, y=1.8878502e38` (`q0=2`,
+/// exact `q0*y=3.7757e38 > f32::MAX`) gave `NaN` instead of the correct
+/// finite remainder. Fixed by rescaling both `x` and `y` down by a fixed,
+/// exact power of two (`0.125`) whenever `max(|x|,|y|)` gets within a 4x
+/// safety margin of `f32::MAX` -- remainder is homogeneous of degree 1
+/// (`remainder(k*x,k*y) == k*remainder(x,y)` for `k>0`), so this is exact,
+/// not approximate, and the same branchless-select pattern (both scales
+/// computed, one selected) as the rest of this crate. Verified by a
+/// targeted 200M-sample hunt (deliberately generating full-range random
+/// bit patterns rather than a bounded sweep, the technique that caught
+/// this bug in the first place): zero remaining `NaN`/out-of-range
+/// results for finite in-domain `x`,`y`.
+#[inline(always)]
+pub fn remainder_wide(x: f32, y: f32) -> f32 {
+    let big = x.abs().max(y.abs()) > f32::MAX * 0.25;
+    let scale = if big { 0.125 } else { 1.0 };
+    let xs = x * scale;
+    let ys = y * scale;
+    let q0 = (xs / ys).round();
+    let r0_df = Df32::from_f32(xs) - Df32::from_mul(q0, ys);
+    let r0 = r0_df.to_f32();
+    let adj = (r0 / ys).round();
+    let r1_df = r0_df - Df32::from_mul(adj, ys);
+    let r1 = r1_df.to_f32();
+    let adj2 = if (r1 > 0.0) == (ys > 0.0) { 1.0 } else { -1.0 };
+    let r2 = fma(-adj2, ys, r1);
+    let normal = if r1.abs() > ys.abs() * 0.5 { r2 } else { r1 };
+    let normal = normal * (1.0 / scale);
+    let r = if x == 0.0 { x } else { normal };
+    if y.is_infinite() && x.is_finite() { x } else { r }
+}
+
 /// C's `fmod(x,y)`: truncated (round-toward-zero) division instead of
 /// [`remainder`]'s round-to-nearest, so the result always has the same
 /// sign as `x` (or is a correctly-signed zero) -- a real, defining

@@ -179,6 +179,7 @@ fn main() {
     bench!("remainder_unchecked", move |x: f32| remainder_unchecked(x, remainder_y));
     bench!("remainder_checked", move |x: f32| remainder_checked(x, remainder_y));
     bench!("remainder_ieee", move |x: f32| remainder_ieee(x, remainder_y));
+    bench!("remainder_wide", move |x: f32| remainder_wide(x, remainder_y));
     bench!("fmod", move |x: f32| fmod(x, remainder_y));
     bench!("fmod_unchecked", move |x: f32| fmod_unchecked(x, remainder_y));
 }

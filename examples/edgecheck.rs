@@ -697,6 +697,53 @@ fn main() {
     // whenever the "away" and "even" neighbors happen to coincide).
     check("remainder_ieee(3,2)", remainder_ieee(3.0, 2.0), -1.0);
 
+    // remainder_wide: remainder_checked's own special-case handling and
+    // near-tie behavior, still holding in its own already-correct domain.
+    check("remainder_wide(5,3)", remainder_wide(5.0, 3.0), -1.0);
+    check("remainder_wide(4,2)", remainder_wide(4.0, 2.0), 0.0);
+    check("remainder_wide(-0,3)", remainder_wide(-0.0, 3.0), -0.0);
+    check("remainder_wide(0,3)", remainder_wide(0.0, 3.0), 0.0);
+    check("remainder_wide(3,inf)", remainder_wide(3.0, f32::INFINITY), 3.0);
+    check("remainder_wide(-3,inf)", remainder_wide(-3.0, f32::INFINITY), -3.0);
+    check("remainder_wide(inf,3)", remainder_wide(f32::INFINITY, 3.0), f32::NAN);
+    check(
+        "remainder_wide(1e7,3) matches remainder_checked",
+        remainder_wide(1.0e7, 3.0),
+        remainder_checked(1.0e7, 3.0),
+    );
+    // the actual point of remainder_wide: |x/y| well past remainder_checked's
+    // own 2^24 cliff (see its doc comment) -- q0's own quantization gap at
+    // this magnitude is dozens of integers, not the single-integer nudge
+    // remainder_checked's own correction can fix.
+    check(
+        "remainder_wide(1e10,3) past remainder_checked's 2^24 cliff",
+        remainder_wide(1.0e10, 3.0),
+        remainder_ref_exact(1.0e10, 3.0),
+    );
+    check(
+        "remainder_wide(1e13,7) further past the cliff",
+        remainder_wide(1.0e13, 7.0),
+        remainder_ref_exact(1.0e13, 7.0),
+    );
+    // Regression pin for the internal-overflow bug found while implementing
+    // this function (see its own doc comment): q0*y computed as a single
+    // f32 product can exceed f32::MAX even though x, y, and the true
+    // remainder are all finite, whenever x or y individually sits close to
+    // f32::MAX -- this used to return NaN instead of a finite remainder.
+    // q0=2 here, small enough that an f64 reference stays exact.
+    check(
+        "remainder_wide near f32::MAX (overflow regression)",
+        remainder_wide(3.2603515e38, 1.8878502e38),
+        remainder_ref_exact(3.2603515e38, 1.8878502e38),
+    );
+    check(
+        "remainder_wide near -f32::MAX (overflow regression, negative)",
+        remainder_wide(-3.2603515e38, 1.8878502e38),
+        remainder_ref_exact(-3.2603515e38, 1.8878502e38),
+    );
+    check("remainder_wide(f32::MAX,f32::MAX)", remainder_wide(f32::MAX, f32::MAX), 0.0);
+    check("remainder_wide(nan,3)", remainder_wide(f32::NAN, 3.0), f32::NAN);
+
     // fmod: C fmod semantics (truncated division, sign always matches x)
     // -- verified directly against Rust's own `%` operator, which already
     // implements this convention.

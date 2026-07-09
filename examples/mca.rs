@@ -169,6 +169,7 @@ fn main() {
         "remainder_unchecked",
         "remainder_checked",
         "remainder_ieee",
+        "remainder_wide",
         "fmod",
         "fmod_unchecked",
     ];
