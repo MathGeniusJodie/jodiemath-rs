@@ -868,13 +868,22 @@ cousin.
     might let a cbrt_fast-grade (~5 ulp) seed reach 0.5 ulp in one Df32
     Halley step, deleting cbrt_normal's poly from the accurate tier.
     Paper-screen the error budget first.
-58. **powf: root-cause the log2_df/exp2_checked_df ~150 max ulp** (the
-    2026-07-08 entry stopped short): candidate mechanisms — exp2's
-    double rounding into denormals via the t2 multiply, or Df32 mul's
-    dropped lo·lo term. Instrument before fixing.
-59. **exp2_checked_df: second-order lo correction** — exp2(lo) ≈ 1 +
-    lo·ln2 + (lo·ln2)²/2; one fma. Only matters if #58 says the
-    first-order truncation is the binding term.
+58. **powf: root-cause the log2_df/exp2_checked_df ~150 max ulp (fixed
+    2026-07-09)**: traced a concrete worst case against a Decimal-
+    precision Python reference at every intermediate step -- neither
+    candidate mechanism was it. The real cause: `log2_df`'s own
+    `Df32::from_add(k, p*s)` combines `k` with an *already-rounded*
+    single-multiply `p*s`, so `p*s`'s own rounding error never enters
+    either Df32 word -- harmless when `k` dominates, but for `x` near 1
+    (`k=0`) the whole double-float result was silently no more accurate
+    than a plain f32 multiply. Fixed with a real two-product
+    (`Df32::from_mul(p,s)`). See `log2_df`'s own doc comment for the full
+    numbers (avg ulp -13%, max ulp -19%, >100ulp count -55%, real mca
+    cost accepted under the opt-in-tier precedent). Commit `994d1ff`.
+59. **exp2_checked_df: second-order lo correction (moot, per #58's
+    finding)**: the binding term was never exp2_checked_df's first-order
+    lo truncation -- it was log2_df's own dropped p*s rounding, now
+    fixed. No longer applicable as originally framed.
 60. **powf special-exponent select tier (screened 2026-07-09, rejected)**:
     implemented just the `y==2.0 -> x*x` case as a single-select probe
     (matching "screen with mca first"). Real accuracy win where it hits:
