@@ -652,9 +652,6 @@ cousin.
     sibling with a differently-derived poly — check whether the "+1" (or
     equivalent identity term) was already free before assuming the weave
     saves anything.*
-18. **exp_checked tier**: exp currently has no full-range sibling (exp10
-    does). Clamp + the existing k1/k2 split — trivial, closes an API gap,
-    and callers like sigmoid/tanh could then drop their own ad-hoc clamps.
 19. **exp10 third Cody-Waite word**: LOG10_2 reduction is 2-word; a third
     word is one fma off the critical path. Survey exp10's actual max ulp
     first to see if there's anything to collect.
