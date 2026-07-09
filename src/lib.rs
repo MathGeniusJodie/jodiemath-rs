@@ -754,7 +754,22 @@ pub fn cos_checked(x: f32) -> f32 {
 /// seed itself -- swapping to a cheaper bit-trick -- is a separate,
 /// bigger question, see IDEAS.md): avg ulp 0.3265 -> 0.3112 (~4.7%), max
 /// ulp unchanged at 3, zero perf cost (same instructions, only the 4
-/// literal constants differ).
+/// literal constants differ). Refit again (2026-07-09) via an
+/// ulp-weighted Chebyshev LP with a max-ulp cap (this session's exp/erf
+/// technique) against the true target `P(r) = ((1+r)^(-1/3)-1)/r` over
+/// one representative octave (a in [1,8), matching this poly's own
+/// established octave-periodicity, unlike the unrelated cbrt_throughput
+/// seed where a single-octave grid was later found misleading -- see
+/// IDEAS.md): avg ulp 0.3112 -> 0.2813 (~9.6%, exhaustive), max ulp
+/// unchanged at 3, zero perf cost. This is the same poly a prior session
+/// already ran an *unconstrained* minimax LP against (see IDEAS.md's
+/// "Exhaustive/rlibm-style" entry) and got max 3->2 at the cost of a
+/// real avg regression (0.3125->0.4487) -- the max-cap fix (matching
+/// acos_poly's own successful constrained-search pattern) recovers a
+/// real avg win instead, at the cost of not chasing the max-ulp cut this
+/// time. cbrt_accurate (which reuses this as a Newton seed) is
+/// unaffected either way -- 0.000 avg / 1 max ulp before and after,
+/// exhaustive.
 #[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
 pub fn cbrt_normal(x: f32) -> f32 {
@@ -765,10 +780,10 @@ pub fn cbrt_normal(x: f32) -> f32 {
     let s2 = s * s;
     let d = fma(s2, s, -a);
     let r = d * rcp;
-    let c1 = -0.33333147f32;
-    let c2 = 0.22220612f32;
-    let c3 = -0.17394388f32;
-    let c4 = 0.14823665f32;
+    let c1 = -0.3333314061164856f32;
+    let c2 = 0.22221335768699646f32;
+    let c3 = -0.1739402711391449f32;
+    let c4 = 0.14720453321933746f32;
     let r2 = r * r;
     let a1 = fma(c2, r, c1);
     let b1 = fma(c4, r, c3);

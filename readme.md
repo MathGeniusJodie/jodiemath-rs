@@ -9,8 +9,8 @@ All functions auto-vectorize, it's a hard requirement
 ```
                         | jodie avg  | jodie max | std avg | std max
 ------------------------|------------|-----------|---------|--------
-                   cbrt |    0.326   |     3     |    0    |    0
-     cbrt_unchecked (+) |    0.312   |     3     | (bit-identical to cbrt on its domain)
+                   cbrt |    0.281   |     3     |    0    |    0
+     cbrt_unchecked (+) |    0.282   |     3     | (bit-identical to cbrt on its domain)
           cbrt_accurate |    0.000   |     1     |    0    |    0
 cbrt_accurate_unchecked (+) | 0.000 |     1     | (bit-identical to cbrt_accurate on its domain)
                    exp2 |    0.030   |     1     |  0.000  |    1

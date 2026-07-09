@@ -1726,6 +1726,33 @@ legitimate direction here, unlike on most targets.
   worst-case bound ever becomes the binding constraint there instead of
   avg ulp -- but don't expect a free lunch on avg ulp from this technique.
 
+- **Revisiting cbrt_normal's correction poly with a max-capped LP instead
+  of the plain-minimax one above (2026-07-09), implemented and adopted —
+  recovers a real avg win by fixing exactly the failure mode the entry
+  above hit.** Same poly, same `((1+r)^(-1/3)-1)/r` target and
+  `ss*r*dP` downstream-sensitivity weighting as the rejected attempt
+  above, but this time constrained (minimize the weighted-L1 objective
+  subject to the max weighted error never exceeding the *shipped*
+  coefficients' own bound, the `acos_poly`-fix-7/`erf_poly` pattern from
+  earlier this session) instead of plain Chebyshev minimax. Sampled one
+  representative octave (`a` in `[1,8)`), matching this poly's own
+  established octave-periodicity (explicitly *not* assumed to transfer
+  from the unrelated `cbrt_throughput` seed, where that assumption was
+  separately found to break down — see that entry elsewhere in this
+  file). Verified end-to-end, `git stash`-paired, exhaustive: `cbrt` avg
+  ulp 0.3112 -> 0.2813 (~9.6%, a real win this time, not the isolated
+  metric's ~12% prediction but in the same ballpark, unlike `erf_poly`'s
+  30x-off case), max ulp unchanged at 3; `cbrt_unchecked` moved the same
+  way (0.3125->0.2824); `cbrt_accurate`/`cbrt_accurate_unchecked` (reuse
+  this as a Newton seed) completely unaffected, 0.000 avg / 1 max ulp
+  both before and after — expected, Newton's quadratic convergence
+  swamps a seed-poly change this small. `cbrt_throughput`/`cbrt_fast`
+  (different seed/poly entirely) untouched. `edgecheck.rs` passes. mca
+  confirmed bit-identical (cbrt 35.06/1.629 cyc, `cbrt_accurate`
+  59.06/3.129, matching this crate's own established baseline exactly).
+  Adopted; `readme.md`'s cbrt/cbrt_unchecked rows updated. Commit
+  `<pending>`.
+
 - **Batch/slice API tier (`exp2_slice(&[f32], &mut [f32])` etc.)**: the
   crate's whole perf story assumes the *caller's* loop auto-vectorizes;
   fixed-chunk slice entry points make that the crate's job instead
