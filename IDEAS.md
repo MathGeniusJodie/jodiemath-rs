@@ -629,10 +629,13 @@ cousin.
     mantissa of a denormal isn't normalized, so this needs the multiply
     anyway for the mantissa bits. Probably dead on arrival; kill it on
     paper in 5 minutes.
-26. **koff-free unchecked-log fast path audit**: log_2_unchecked passes
-    koff=0.0 through an add that's provably dead (k + 0.0 exact) — check
-    LLVM actually deletes it (the round_x_over_pi dead-add precedent says
-    removal can even *help* scheduling... or hurt; asm check only).
+26. **koff-free unchecked-log fast path audit (checked 2026-07-09, no-op)**:
+    `--emit=asm` on `log2_unchecked_throughput`'s region confirms LLVM
+    already inlines `koff=0.0` through and feeds the converted exponent
+    directly into the final `fma(p,s,k)` -- no separate `vaddps` for the
+    dead add anywhere in the region. Duplicate of the already-logged
+    "Integer koff fold (2026-07-08)" finding (same conclusion, different
+    entry point into the same question). No code changed.
 
 ### sin / cos / tan (radians, half-turns, degrees)
 
