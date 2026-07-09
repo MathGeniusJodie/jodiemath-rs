@@ -378,32 +378,36 @@ pub fn cos(x: f32) -> f32 {
 /// `+0.0` everywhere out to `f32::MAX` (correct, since `sin(pi*integer)
 /// == 0`, and parity is deterministically even, not just "untracked").
 ///
-/// Uses `x.round()` (native, full-range-correct), not the magic-constant
-/// `x + 1.5*2^23` trick used elsewhere in this crate (e.g. `exp`'s own
-/// `k` rounding): that trick is only exact for `|x| <= 2^22` by
-/// construction (adding `x` to a constant of comparable magnitude loses
-/// precision once `x` itself approaches that magnitude) -- and `sinpi`/
-/// `cospi` take the *raw*, unbounded input `x` directly, unlike every
-/// other magic-round use in this crate, which only ever rounds an
-/// already-reduced, small intermediate value. A real, previously-
-/// undetected bug lived here for exactly that reason: the doc comment's
-/// "no accuracy cliff, exact out to f32::MAX" claim was false for
-/// `2^22 < |x| < 2^24` (found by a targeted probe past the accuracy.rs
-/// sweep's own `|x| < 1e6` domain cutoff -- the exact range where the
-/// bug lives was never exercised; see backlog idea #30's "confirm these
-/// are in accuracy.rs's sweep" concern, which was right to worry).
-/// Confirmed via `--emit=asm` that `.round()` still lowers to `vroundps`
-/// (no scalar fallback, so vectorization is unaffected) -- the fix costs
-/// real latency (`vroundps` is measurably slower than the magic-constant
-/// fma+sub pair on this CPU, a tradeoff already documented for `exp`'s
-/// own 2026-07-08 magic-round adoption, here taken in the opposite
-/// direction because correctness across the *documented* domain isn't
-/// optional), not just a wash.
+/// Uses `x.round_ties_even()` (native, full-range-correct), not the
+/// magic-constant `x + 1.5*2^23` trick used elsewhere in this crate
+/// (e.g. `exp`'s own `k` rounding): that trick is only exact for
+/// `|x| <= 2^22` by construction (adding `x` to a constant of comparable
+/// magnitude loses precision once `x` itself approaches that magnitude)
+/// -- and `sinpi`/`cospi` take the *raw*, unbounded input `x` directly,
+/// unlike every other magic-round use in this crate, which only ever
+/// rounds an already-reduced, small intermediate value. A real,
+/// previously-undetected bug lived here for exactly that reason: the doc
+/// comment's "no accuracy cliff, exact out to f32::MAX" claim was false
+/// for `2^22 < |x| < 2^24` (found by a targeted probe past the
+/// accuracy.rs sweep's own `|x| < 1e6` domain cutoff -- the exact range
+/// where the bug lives was never exercised; see backlog idea #30's
+/// "confirm these are in accuracy.rs's sweep" concern, which was right
+/// to worry). `round_ties_even` instead of plain `.round()` (both
+/// initially tried) since `q`'s specific tie-breaking rule doesn't affect
+/// correctness here (`parity(q)`'s own sign correction self-compensates
+/// for whichever nearby integer `q` lands on, verified by hand: e.g.
+/// `sinpi(2.5)` gives the same final `1.0` whether `q` resolves to 2 or
+/// 3) -- and `round_ties_even` lowers to a single native `vroundps`
+/// immediate, while `.round()`'s ties-away isn't a hardware-native mode
+/// and needs extra instructions (mca: 48.02/1.338 -> 43.02/1.149
+/// cyc/elem, a real ~10-14% win, not just a wash), the same finding
+/// `remainder_ieee` made independently for its own `q`.
 #[inline(always)]
 pub fn sinpi(x: f32) -> f32 {
-    let q = x.round();
+    let q = x.round_ties_even();
     let r = x - q;
-    // At x=-0.0: q=(-0.0).round()=-0.0 too (round preserves zero's sign),
+    // At x=-0.0: q=(-0.0).round_ties_even()=-0.0 too (rounding preserves
+    // zero's sign, regardless of tie-breaking convention),
     // so r=x-q=(-0.0)-(-0.0), which IEEE754 always resolves to +0.0
     // regardless of the operands' own sign -- the same "opposite-signed-
     // zero subtraction erases sign" mechanism as sinf_poly's own -0.0
@@ -431,7 +435,7 @@ pub fn sinpi(x: f32) -> f32 {
 /// Sterbenz-exact value before the final `-0.5`).
 #[inline(always)]
 pub fn cospi(x: f32) -> f32 {
-    let k = (x - 0.5).round();
+    let k = (x - 0.5).round_ties_even();
     let r = (x - k) - 0.5;
     let s = sinf_poly(std::f32::consts::PI * r);
     let sign = fma(2.0, parity(k), -1.0); // -(1 - 2*(1-parity(k))) = 2*parity(k)-1
