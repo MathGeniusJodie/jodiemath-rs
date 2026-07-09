@@ -1257,10 +1257,27 @@ cousin.
 
 ### Codegen / build / measurement
 
-71. **Blend lowering audit under AVX-512VL**: check whether f32 selects
-    lower to vblendvps or mask registers (vmovaps{k}) with target-cpu=
-    native, and whether mask ops relieve port 5 pressure in the hottest
-    loops.
+71. **Blend lowering audit under AVX-512VL (resolved 2026-07-09)**: grepped
+    the entire compiled `mca_target` assembly -- **zero** `vblendvps`
+    instructions anywhere, vs. 6915 AVX-512 mask-register-predicated
+    instructions (`{%k0}`-style). With `target-cpu=native` on this
+    machine (which supports AVX-512VL), LLVM exclusively lowers every
+    f32 select/blend in this crate to mask-register form, never the
+    older AVX2 `vblendvps`. Whether this *relieves port 5 pressure*
+    can't be answered by static analysis alone (would need real
+    perf-counter profiling, not `llvm-mca`'s own scheduler model) -- but
+    the sheer volume of mask usage isn't uniformly "free": this
+    session's own `is_finite()`/`is_nan()` sweep (idea #90's follow-up)
+    already found a real subset of that mask usage is the *expensive*
+    kind (per-lane scalar extraction + int comparisons + manual
+    `kshiftlb`/`korb` mask reassembly, not a single vectorized compare
+    producing a mask directly), fixed in `powf_checked` and confirmed
+    absent elsewhere via the same audit. No further action from this
+    entry specifically -- the "which lowering form" question is answered
+    (mask registers, universally), and the "is it all cheap" question is
+    already covered by the more targeted `vextractps`/`kshiftlb`-signature
+    audit from idea #90's own follow-up, not by counting mask
+    instructions in the aggregate.
 72. **`-C llvm-args=-force-vector-interleave=N` sweep (tried 2026-07-09,
     rejected -- real but genuinely mixed, not adoptable as a global
     default)**: swept N=2/4/8 via `RUSTFLAGS` over the *entire* mca
