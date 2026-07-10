@@ -2893,6 +2893,50 @@ cousin.
     confirm via an actual mca before/after, not just instruction-count
     grepping) before spending effort "fixing" a guard that was already
     vectorizing fine.*
+
+    **`rhypot` follow-up (2026-07-10, tried, rejected -- the tradeoff
+    calculus was different after all, in the wrong direction: a real
+    accuracy *regression*, not just a smaller version of `rsqrt`'s
+    modest-cost polish)**: implemented the identical Newton correction
+    (`e = fma(r, r*h2, -1.0)`, `r_new = fma(-0.5*r, e, r)`, `r*h2` before
+    `r*r` to avoid the same overflow-ordering hazard `rsqrt`'s own fix
+    needed) on `rhypot`'s `h2 = fma(x,x,y*y)`. Checked accuracy first
+    (fuzz before mca, this loop's own stated priority) with a standalone
+    probe using the exact domain restriction `accuracy.rs`'s own
+    `rhypot` sweep already applies (`v==0.0 || (1e-15<|v|<1e18)` for both
+    `x`/`y`, avoiding the accepted `x*x+y*y` overflow/underflow tradeoff
+    region) -- caught a real self-inflicted false alarm first: an initial
+    pass with *no* domain restriction at all gave nonsense numbers (avg
+    ulp in the hundreds of millions) purely from unrestricted fuzzing
+    hitting `rhypot`'s own documented, accepted overflow tradeoff region,
+    the same "verify against the real domain, not a naive unrestricted
+    probe" lesson this file has hit before. With the correct domain
+    restriction, the naive baseline reproduced readme.md's documented
+    number exactly (avg 0.065, max 2, confirming the probe itself was
+    now trustworthy) -- but the Newton-corrected version came out
+    *worse*: avg 0.175 (2.7x worse), max unchanged at 2. Root cause, on
+    reflection: `rsqrt`'s Newton correction refines `r` against an
+    *exact* input (`x` is whatever f32 the caller passed, not itself the
+    result of a prior rounding) -- but `rhypot`'s `h2` is **not** exact,
+    it's already a singly-rounded `fma(x,x,y*y)` approximation of the
+    true `x²+y²`. Polishing `r` to more precisely satisfy `r² = 1/h2`
+    only makes `r` a better reciprocal-sqrt of an *already-wrong* target
+    -- it has no way to know about, let alone correct for, `h2`'s own
+    rounding error relative to the true sum of squares, and in doing so
+    it evidently destroys some incidental cancellation the naive
+    single-division form got for free between `h2`'s rounding and the
+    reciprocal-sqrt's own rounding. Reverted (probe only, never touched
+    `src/lib.rs`); no mca run needed since the accuracy check alone
+    already failed the loop's bar. *The Newton-residual composite
+    technique (idea #90) implicitly assumes its target value is exact or
+    is the true mathematical quantity being refined against -- it
+    transfers cleanly to `rsqrt` (input `x` is exact) but not
+    automatically to a sibling built on an already-rounded intermediate
+    (`rhypot`'s `h2`), where "refining more precisely against the wrong
+    target" can make the end-to-end answer worse, not better. Don't
+    assume a correction technique that measurably helped one composed-hw-op
+    function transfers to a structurally-similar sibling without checking
+    whether the thing being refined is actually exact there too.*
 91. **Exhaustive-verified minimax over *reduced* domains** (true rlibm):
     for polys whose reduced input takes ≤2^26-ish distinct values (exp2's
     f after quantization? log's s per exponent?), solve the actual integer
