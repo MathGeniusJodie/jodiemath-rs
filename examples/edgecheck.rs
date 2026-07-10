@@ -493,6 +493,14 @@ fn main() {
     // odd, so this must equal -asinh(1e10) exactly.
     check("asinh(-1e10) == -asinh(1e10)", asinh(-1e10), -asinh(1e10));
     check("asinh(-f32::MAX)", asinh(-f32::MAX), -asinh(f32::MAX));
+    // The above only check the +/- relationship stays consistent, not that
+    // the *absolute* value is actually correct (a bug affecting both signs
+    // identically would slip through unnoticed). Added 2026-07-10: direct
+    // pins against asinh(x)~ln(2x) for large x, values confirmed by direct
+    // computation first (relative error ~1e-8, matching f32's own budget).
+    check("asinh(1e10)", asinh(1e10), 2.3718998e1);
+    check("asinh(1e20)", asinh(1e20), 4.674485e1);
+    check("asinh(f32::MAX)", asinh(f32::MAX), 8.9415985e1);
     check("acosh(1)", acosh(1.0), 0.0);
     check("acosh(0.5)", acosh(0.5), f32::NAN);
     // acosh's sign-losing domain bug (see its doc comment) is fixed with an
