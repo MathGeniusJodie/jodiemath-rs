@@ -1316,10 +1316,73 @@ cousin.
     iteration's quadratic convergence on the seed error, a genuinely
     different mechanism), collapsing a double-float log doesn't transfer
     that same win. Reverted, no lib.rs changes survived.
-15. **Integer fixed-point poly evaluation** for mantissa-only reductions
+15. ~~**Integer fixed-point poly evaluation**~~ for mantissa-only reductions
     (log's s): i32 mul-high chains free up FMA ports. Precedent warning:
     parity()'s integer version lost to FP ports — but that was 3 ops, not
     a whole poly; port-pressure math differs at scale.
+
+    **Screened via llvm-mca's own resource-pressure model on this crate's
+    actual target (2026-07-10, rejected before writing a single line of
+    the real fixed-point poly)**: rather than build a whole fixed-point
+    log_2 mantissa-poly evaluator (a real, multi-hour numerical-fitting
+    effort -- picking a Q-format, re-deriving/rescaling all 10
+    coefficients, handling the f32-mantissa-to-fixed-point and
+    fixed-point-back-to-f32 conversions at both ends) only to maybe learn
+    the premise doesn't pay off, checked the idea's *entire* claim --
+    "i32 mul-high chains free up FMA ports" -- directly against
+    `llvm-mca -mcpu=native --resource-pressure` first, the same
+    "screen with mca before any fitting" discipline idea #2's gather-LUT
+    probe already validated as the right order of operations. Built a
+    minimal hand-written `.s` file (no Rust, no crate code at all) with
+    isolated `# LLVM-MCA-BEGIN/END` regions for the actual instructions
+    involved, run through the exact `llvm-mca` binary/CPU target
+    (`tigerlake`, confirmed via `llvm-mca -mcpu=native --version`) this
+    crate's own `examples/mca.rs` already uses.
+
+    The premise is false on this CPU, decisively: `vfmadd213ps` (ymm) --
+    this crate's actual poly-evaluation instruction -- is 1 uOp,
+    RThroughput 0.50, scheduled on `ICXPort0`/`ICXPort1` (alternating,
+    i.e. 2 FMAs/cycle combined across both ports). `vpmulld` (ymm, plain
+    32x32->32 truncated multiply, the most obvious "integer multiply"
+    choice) is *worse*, not better: 2 uOps, RThroughput 1.00, latency 10
+    (vs FMA's 4) -- and both of its uOps land on `ICXPort0`+`ICXPort1`
+    *simultaneously* per instruction, i.e. double the port pressure of a
+    single FMA for one multiply, before any addition/combine step is even
+    considered. The idea's own more-precise reading (real fixed-point
+    poly evaluation needs a *widening* mul-high, not a truncated `vpmulld`)
+    fares better in isolation -- `vpmuldq` (32x32->64 signed widening) is
+    1 uOp/RThroughput 0.50, matching FMA's own port cost exactly -- but a
+    real mul-high *term* still needs a shift to extract the high half
+    (`vpsrlq`, 1 uOp/0.50 RThroughput) and an add to fold in the next
+    coefficient (`vpaddd`, 1 uOp/0.33 RThroughput) to replicate what a
+    single `fma(c,s,acc)` does atomically in one op. Measured the full
+    3-instruction chain back-to-back against two `vfmadd213ps`s directly
+    in the same probe: the mul-high chain totals 3 uOps/~1.33 combined
+    RThroughput per term vs FMA's 1 uOp/0.50 -- **~2.6x more port
+    pressure per equivalent poly term, not less**, and every one of those
+    extra uOps (`vpmuldq`, `vpsrlq`, `vpaddd`) is scheduled on the *exact
+    same* `ICXPort0`/`ICXPort1` (plus `ICXPort5` for the add) that FMA
+    already uses -- Tiger Lake's vector int and vector fp domains share
+    execution ports here, they aren't separate resources the way the
+    idea's "frees up FMA ports" framing assumes. This also doesn't yet
+    count the real, additional cost a full implementation would still
+    need on top: extracting `s` into fixed-point form from the f32
+    mantissa bits, and converting the final fixed-point accumulator back
+    into a normal f32 result -- both non-free steps this probe didn't
+    even have to model to already lose. Consistent with, and now
+    concretely quantified beyond, this file's older `parity()`
+    integer-bit-ops precedent ("FP-port ops beat integer ops once
+    scheduled") and idea #98's Karatsuba audit (assumed infrastructure
+    cost that turned out not to apply where hoped) -- a third instance of
+    "the port/instruction-count story sounds right until you check the
+    actual scheduling model for *this* CPU." No lib.rs change was ever
+    made (nothing to revert); the standalone `.s` probe isn't part of the
+    crate. *A cross-cutting perf idea phrased at the instruction-class
+    level ("integer ops free up FP ports") is itself falsifiable with
+    `llvm-mca --resource-pressure` alone, with zero Rust code -- always
+    check whether the target CPU's actual port model agrees before
+    spending real implementation effort on a coefficient refit or
+    numerical-format redesign the premise doesn't survive.*
 
 ### exp family
 
