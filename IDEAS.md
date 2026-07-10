@@ -1490,6 +1490,53 @@ cousin.
      `exp_r_c`/`exp_r_pair_c`) the same way before assuming this backlog
      item is exhausted, though `log_2`'s clean result shows it won't
      always pay off.*
+
+   **`cbrt_normal` checked next (2026-07-10) -- streak broken: a real
+   grid-level max-ulp win that looked good on a 12-octave spot-check,
+   but turned out to be a net regression on the real, full `cbrt`.**
+   Fixed another stale `tune.rs` seed first (`cbrt_normal`'s own init
+   array predated the 2026-07-09 Chebyshev-LP refit its doc comment
+   already documents, commit `11eb65a`) -- same staleness class as
+   `exp_pos_neg`/`erf_tail_c`/`acos_poly`. With the seed fixed, coordinate
+   descent found a real move: `cbrt_normal`'s own doc comment already
+   records that a *prior* session tried an unconstrained minimax LP here
+   and got the same *shape* of tradeoff (max 3->2) but rejected it for a
+   43.6%-worse average (0.3125->0.4487) -- this new, local-search-from-
+   the-current-optimum candidate looked meaningfully different: bit-
+   identical against the real compiled `cbrt_normal` (0 mismatches,
+   confirming fidelity), then checked against 12 representative octaves
+   spread across the whole normal-magnitude range (matching this poly's
+   own documented octave-periodicity, covering all three exponent-mod-3
+   residue classes) -- max ulp 3->2, avg ulp only 0.375->0.382 (+1.75%),
+   a *much* gentler cost than the previously-rejected LP's 43.6%, and
+   comfortably inside budget on its own. Looked adoptable. **Then ran the
+   crate's own real exhaustive `accuracy.rs` sweep on the *whole* `cbrt`
+   (not just `cbrt_normal` in isolation) before trusting it, and the
+   picture flipped**: `cbrt`'s true worst point sits at `x=1.3057394e-38`
+   -- right at the tiny/denormal-vs-normal boundary where `cbrt`'s own
+   wrapper rescales the input by `2^24` before calling `cbrt_normal`, a
+   region *none* of the 12 sampled octaves (`-120` to `80`) came anywhere
+   near (the boundary itself sits around exponent `-126`, outside that
+   list entirely). Real numbers: max ulp stayed at **3** (not the hoped
+   2 -- the tiny-rescale wrapper's own interaction with `cbrt_normal`
+   produces a worse point than any tested in isolation), and avg ulp
+   came out *worse* than shipped in the bargain (`0.303` vs. the
+   documented `0.281`, a genuine ~7.8% regression) -- a strictly worse
+   result on both axes once the real full function was checked, not the
+   clean win the spot-check suggested. Reverted immediately
+   (`git diff src/lib.rs` empty after reverting, confirmed bit-identical
+   to prior HEAD); scratch probe not committed. *A representative-octave
+   spot-check is not a substitute for testing the real, complete function
+   -- `cbrt_normal`'s own correction poly looked improved in isolation
+   across a dozen ordinary octaves, but `cbrt` (the function anyone
+   actually calls) wraps it with a tiny-input rescale path whose own
+   interaction with the poly creates a worse worst-case than either piece
+   shows alone. When a function has a special-cased wrapper around a
+   core poly (rescaling, sign-handling, clamping), any coefficient
+   search on the poly needs to be verified against the *wrapped* function
+   over its *whole* domain (including the wrapper's own boundary), not
+   just the core poly's typical operating range, no matter how many
+   octaves that range spans.*
 4. **Per-function transformed-variable fit search**: fit in u=s/(s+2),
    u=s·(s+a), etc., searching over the transform family. Distinct from
    centered-variable refits (rejected — that only moved the origin);
