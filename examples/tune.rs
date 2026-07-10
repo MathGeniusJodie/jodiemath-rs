@@ -1286,15 +1286,12 @@ fn main() {
             grid.push(f32::from_bits(b));
             b += 4000;
         }
-        let seed = [
-            1.31372110e-03,
-            -7.66449216e-03,
-            2.20032403e-02,
-            -4.53301432e-02,
-            8.74553484e-02,
-            -2.14342581e-01,
-            1.57077849e+00,
-        ];
+        // Exact current shipped coefficients (2026-07-10 -- the previous
+        // seed here was a slightly-imprecise transcription, off by a few
+        // ULP in c[0]; not a real bug like this session's other stale
+        // seeds, but coordinate descent was spending its first move just
+        // recovering the true value instead of starting there).
+        let seed = [1.3137129e-3, -7.664533e-3, 2.2003133e-2, -4.5330178e-2, 8.745548e-2, -2.1434246e-1, 1.5707785];
         tune("asin_poly", &asin_poly_c, &|x| x.asin(), &grid, &seed);
     }
     if which.contains("asinacos") {
