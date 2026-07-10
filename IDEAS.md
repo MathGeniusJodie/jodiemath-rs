@@ -1345,9 +1345,45 @@ cousin.
     of the suite improves, unless the crate is prepared to accept that
     tradeoff explicitly (e.g. via an opt-in build profile, not the
     default).*
-73. **PGO (+ BOLT) probe on the bench binaries**: mostly affects branchy
-    code, which this crate avoids — cheap to try once, likely a null
-    result, worth knowing.
+73. **PGO (+ BOLT) probe on the bench binaries (tried 2026-07-09,
+    inconclusive with the tools/environment available -- matches the
+    idea's own predicted-null framing, but for a different reason than
+    expected)**: ran a real, full PGO pipeline on `quickbench` (build
+    with `-C profile-generate`, execute to collect `.profraw`, merge
+    with `llvm-profdata`, rebuild with `-C profile-use`) rather than just
+    reasoning about it. Two real obstacles surfaced, both worth knowing
+    for future PGO attempts here: (1) wall-clock (`quickbench`) is too
+    thermally noisy on this machine to trust a PGO-vs-baseline
+    comparison at all -- the *same* PGO binary run twice back-to-back
+    showed `powf_checked` throughput swing from 6.183 to 11.935 ns/op
+    (a ~2x difference between two runs of identical code), already
+    documented elsewhere in this readme as this CPU's own known
+    thermal-throttling behavior (~2.5x mid-session), which completely
+    swamps whatever real PGO effect might exist. (2) This crate's
+    primary, trusted measurement tool (`mca.rs`'s `llvm-mca` static
+    analysis) can't evaluate PGO at all even in principle -- PGO's real
+    lever is profile-guided *inlining and branch/block layout decisions
+    across the whole compiled program*, not the isolated single-function
+    assembly region `mca.rs` extracts and feeds to `llvm-mca`
+    one region at a time. Disassembling the whole PGO vs. non-PGO
+    `quickbench` binary did show a real, deterministic difference (PGO
+    binary ~5.6% fewer total disassembled lines, consistent with
+    different inlining choices across the many monomorphized bench
+    closures), confirming PGO *did* change something -- just not
+    something either of this crate's own tools can currently attribute
+    to specific functions or trust as a genuine speed verdict. Cleaned
+    up all scratch PGO artifacts (`.profraw`/`.profdata`/temp binaries),
+    no code or config changes kept. *The idea's own "likely a null
+    result" prediction held up, but the actual reason is more interesting
+    than "branchless code has nothing for PGO to grab" -- it's that this
+    crate's own toolchain (a static single-region analyzer plus a
+    thermally-noisy wall-clock harness) genuinely can't produce a
+    trustworthy verdict on a whole-program optimization technique like
+    PGO at all, regardless of whether PGO itself would help. A future
+    attempt would need either a quieter benchmark environment (fixed
+    CPU frequency, isolated core) or a different measurement approach
+    entirely (e.g. `perf stat` cycle counts averaged over many runs)
+    before PGO could be fairly judged here.*
 74. **codegen-units=1 + lto sweep for the bench profile (resolved
     2026-07-09, no artifact-boundary issue)**: rebuilt the entire mca
     suite (~70 functions) with `CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1`
