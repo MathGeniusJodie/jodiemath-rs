@@ -4568,6 +4568,51 @@ cousin.
     vs-real lesson) can still contain the exact bug those lessons were
     meant to prevent -- the fidelity check itself, not just having a
     checklist of past lessons in mind, is what actually caught it here.*
+
+    **Third application, `sigmoid` (2026-07-10) -- also fit-dominated per
+    idea #7, but the predicted gain was an order of magnitude smaller
+    than `exp_pos_neg`'s and evaporated to noise for real, not just a
+    smaller version of the same win.** `sigmoid` reuses `exp`'s poly
+    (same literal copy as `tanh`) but its own combine (`1/(1+e)`) differs
+    from `exp`'s direct `p*exp2int` return -- unlike `exp_pos_neg`, this
+    isn't a *joint* multi-output need forcing a shared fit, just a
+    same-poly-different-consumer situation, so refit the poly
+    specifically weighted for `sigmoid`'s own combine sensitivity
+    (linearized `d(sigmoid)/dp = -exp2int/(1+e)^2` around the current
+    operating point, since `1/(1+e)` itself is nonlinear in the poly
+    value, unlike `exp_pos_neg`'s directly-linear combine). The LP's own
+    idealized metric already signaled this was a much weaker candidate
+    than `exp_pos_neg`'s (max weighted residual `1.536->1.325`, ~13.7%
+    tighter; avg `0.298->0.295`, a mere ~0.75% -- an order of magnitude
+    below `exp_pos_neg`'s ~29%/across-the-board figures). Verified anyway
+    given the cheap remaining setup cost: caught a real bug in the
+    verification probe itself first (an f64 reference computed over
+    `sigmoid`'s *entire* domain, including far beyond its own `-87`
+    clamp, underflows to values that round to `0` in f32 terms via a
+    *different* path than exactly-zero, which the probe's naive
+    `want==0.0` special case didn't catch -- gave nonsense `max
+    u64::MAX`/`avg inf` until fixed to check `want as f32 == 0.0`
+    instead of `want == 0.0` in f64; separately had to restrict to
+    `sigmoid`'s own documented domain, matching `accuracy.rs`'s existing
+    `sigmoid_domain`, to avoid an already-accepted, already-documented
+    denormal-discontinuity artifact just past the clamp boundary that
+    would otherwise swamp the comparison for both coefficient sets
+    identically). With both fixed: `max 4` (unchanged) `avg
+    0.11482->0.11465` -- a ~0.15% move, indistinguishable from noise.
+    Not adopted; no `src/lib.rs` change; scratch probe not committed.
+    *Idea #7's fit-vs-rounding-dominance classification predicts whether
+    an LP gain *can* survive real rounding, but doesn't say how *big* a
+    real gain to expect -- check the LP's own idealized-metric magnitude
+    before investing in full verification; `exp_pos_neg`'s ~29% and
+    `sigmoid`'s ~0.75% are both "fit-dominated," but only one was ever
+    going to be worth the round-trip. A second, unrelated probe-fidelity
+    bug (the far-domain f64-underflow-vs-f32-zero mismatch) surfaced here
+    too -- the fourth distinct kind of "probe doesn't actually match the
+    real function/domain" mistake this session has now caught (Horner-
+    vs-Estrin, wrong sub-function copied, missing domain restriction,
+    and now inconsistent zero-handling across precisions), reinforcing
+    that fidelity checks earn their cost every time, not just
+    occasionally.*
 92. **Domain-specific fast-math contract tiers**: a `finite-math-only`
     cargo feature gating away every inf/nan select in checked functions
     (complements the FTZ/DAZ backlog entry, which only covers denormals).
