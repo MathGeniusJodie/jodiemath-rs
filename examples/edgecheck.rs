@@ -84,7 +84,7 @@ fn main() {
     check("exp2_checked(0)", exp2_checked(0.0), 1.0);
     // cbrt
     for f in [cbrt as fn(f32) -> f32, cbrt_accurate as fn(f32) -> f32] {
-        let n = if f == cbrt as fn(f32) -> f32 { "cbrt" } else { "cbrt_acc" };
+        let n = if std::ptr::fn_addr_eq(f, cbrt as fn(f32) -> f32) { "cbrt" } else { "cbrt_acc" };
         check(&format!("{n}(0)"), f(0.0), 0.0);
         check(&format!("{n}(-0)"), f(-0.0), -0.0);
         check(&format!("{n}(inf)"), f(f32::INFINITY), f32::INFINITY);
@@ -175,7 +175,7 @@ fn main() {
     // to `2.6e21` -- `check_finite` alone never caught that, since `2.6e21`
     // is finite; `check_bounded` closes that gap for good).
     for f in [sin_checked as fn(f32) -> f32, cos_checked as fn(f32) -> f32] {
-        let n = if f == sin_checked as fn(f32) -> f32 { "sin_checked" } else { "cos_checked" };
+        let n = if std::ptr::fn_addr_eq(f, sin_checked as fn(f32) -> f32) { "sin_checked" } else { "cos_checked" };
         check(&format!("{n}(nan)"), f(f32::NAN), f32::NAN);
         check(&format!("{n}(inf)"), f(f32::INFINITY), f32::NAN);
         check(&format!("{n}(-inf)"), f(f32::NEG_INFINITY), f32::NAN);

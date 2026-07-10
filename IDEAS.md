@@ -612,7 +612,44 @@ git history / readme.md, not here. Untested backlog is at the bottom.
   falsifiable, re-checkable claim -- when the numbers sitting in the
   same repo's own readme.md visibly disagree with it, that's worth
   chasing down to the actual assembly rather than assuming the
-  discrepancy is noise or staleness.*
+  discrepancy is noise or staleness.* Spot-checked two nearby
+  "confirmed via mca"-style before/after citations for the same class of
+  error while in there (`sinpi`'s own round-fix numbers, 43.02/1.149 vs.
+  today's 42.02/1.133; `remainder_checked`'s "+42%/+60%" vs. today's
+  ratios) -- both explained by a later, separately-documented fix
+  changing the function *after* that citation was written (ordinary
+  multi-step-history residue, not a wrong mechanism), so left alone.
+
+- **Build-warning sweep (2026-07-10, real, previously-ignored warnings
+  found and fixed, zero behavior change)**: every single build this
+  entire session had printed `warning: Cargo.toml: unused manifest key:
+  bench.0.opt-level` -- never addressed. `opt-level` isn't a valid field
+  under `[[bench]]` (that section defines benchmark *targets*: name,
+  path, harness; per-profile settings like `opt-level` belong in a
+  separate `[profile.bench]` section) -- so the key was being silently
+  ignored the entire time. Cargo's own `bench` profile already defaults
+  to `opt-level = 3` (same as `release`) with no override needed, so the
+  correct fix is deleting the stray key entirely, not moving it to
+  `[profile.bench]` (which would just restate the existing default).
+  Verified: `cargo build --release --all-targets` and `cargo bench
+  --no-run` both still succeed, benches still compile and link under the
+  full-optimization `bench` profile as before, zero warnings now. While
+  sweeping for other pre-existing warnings, also fixed two unrelated
+  ones found by the same `--all-targets` build: `edgecheck.rs`'s
+  `cbrt`/`cbrt_accurate` and `sin_checked`/`cos_checked` display-label
+  selectors used `f == some_fn as fn(f32) -> f32` (Rust's own
+  `unpredictable_function_pointer_comparisons` lint -- function pointer
+  equality isn't guaranteed stable across codegen units/merging),
+  switched to the compiler-suggested `std::ptr::fn_addr_eq(f, ...)`
+  (verified: all 601 edgecheck pins still pass with correct labels
+  after the change); and `tune.rs`'s unused `use jodiemath_rs::*;`
+  (the file is fully self-contained, redefining its own `fma` and
+  `*_c` coefficient functions rather than calling the real crate). Full
+  workspace now builds with zero warnings on `--all-targets`. *A
+  warning that prints on literally every build for an entire session is
+  easy to tune out as background noise -- worth actually reading and
+  fixing once in a while, since "unused manifest key" and "unpredictable
+  comparison" are both real, fixable issues, not cosmetic noise.*
 
 ## sin_checked / cos_checked internals
 

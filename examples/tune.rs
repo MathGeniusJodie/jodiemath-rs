@@ -1,5 +1,4 @@
 // Coordinate-descent ULP tuner for polynomial coefficients.
-use jodiemath_rs::*;
 // Scalar (non-SIMD, no portable_simd/nightly needed) 1.0-ulp reference,
 // same crate accuracy.rs uses for its vectorized ground truth.
 use sleef::f64::erf_u10 as erf_ref;
