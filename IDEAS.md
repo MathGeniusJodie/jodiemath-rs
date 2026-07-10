@@ -941,9 +941,53 @@ cousin.
 9. **Structured-error probes**: plot per-function error vs mantissa and vs
    exponent separately; periodic structure invites a cheap structural
    correction (one select or exponent-derived fma) instead of a refit.
-10. **Monotonicity/oddness harness metrics**: flag outputs non-monotonic
-    where the true function is monotone, and f(-x)≠-f(x) for odd
-    functions — localizes bug classes that avg/max ulp only aggregates.
+10. ~~**Monotonicity/oddness harness metrics**~~ (tried 2026-07-10,
+    resolved -- two real deviations found, both explained by already-
+    accepted tradeoffs/noise, no new actionable fix): built a standalone
+    sweep checking ~15 monotone functions for monotonicity violations and
+    ~17 odd functions for exact `f(-x)==-f(x)` across large samples.
+    Mostly clean (`log_2`/`ln`/`log10`/`exp2`/`exp2_checked`/`exp_checked`/
+    `atan`/`sigmoid`/`erf`/`asin`/`cbrt`/`log1p`/`asinh`/`acosh` all
+    monotonic; `sin`/`sin_checked`/`atan`/`asin`/`sinh`/`sinh_checked`/
+    `erf`/`asinh`/`atanh`/`cbrt`/`rcbrt` all exactly odd). Four flagged
+    deviations, all already explained:
+    - `sinpi`/`sind`/`tanpi`/`tand` "oddness violations" at `x=0` are
+      exactly the already-known, already-decided-not-to-fix sign-of-zero
+      non-issue (confirmed: the reported "diff" is bit-for-bit `0.0`,
+      i.e. a `+0.0`/`-0.0` bit-pattern mismatch with no value difference
+      -- see this file's earlier sinpi/cospi/sind/cosd/tanpi/tand
+      special-case-matrix entry).
+    - `tan`'s oddness mismatch (9997/20M samples, max abs diff ~9.3e-10)
+      and `tanh`'s (5.57M/20M samples -- ~28%!, max abs diff ~2.4e-7,
+      ~2 ulp) both trace to the same structural cause: neither is built
+      from a directly-negated-argument construction the way `sin`'s own
+      `x - x^3*p(x^2)` form is (`tan=sin/cos` as an independent ratio;
+      `tanh` computes `expm1(2x)`, itself *not* an odd function, and only
+      becomes odd through the nonlinear `e/(e+2)` combine) -- so there's
+      no natural bit-exact symmetry to preserve, and small (already
+      budgeted, ~1-2 ulp) rounding noise in each independently-computed
+      branch shows up as an oddness mismatch at this granularity. Fixing
+      this for `tanh` specifically would need the same abs-then-mulsign
+      restructuring (`mulsign(tanh_of_abs(x), x)`) this crate's own doc
+      comment says was *already tried* (for a different reason, an
+      overflow/domain-hole fix) and rejected on a mixed latency/throughput/
+      avg-ulp tradeoff -- re-litigating that same rejected tradeoff for
+      oddness alone isn't a new argument.
+    - `tanh`'s reported monotonicity violation (~x=8.66, y drops by
+      exactly 1 ulp) is a genuine oscillation between `1.0` and one ulp
+      below it as `x` approaches saturation -- traced directly (a dense
+      per-ulp scan from `x=8` to `9`): the *true* `tanh(x)` in this range
+      sits so close to `1.0` that whether the correctly-rounded f32 result
+      lands on `1.0` or one ulp below is genuinely sensitive to sub-ulp
+      variation in the true value, and the function's own existing,
+      already-accepted ~1-2 ulp noise floor is enough to flip which side
+      of that boundary the *computed* result lands on for adjacent `x`
+      values -- a natural consequence of existing budgeted noise meeting a
+      saturation boundary, not a new, larger defect (`tanh`'s own max ulp
+      budget is already 6-8, far exceeding the single-ulp oscillation
+      here). No code changes; the harness itself (not committed, a
+      standalone probe) is cheap to reconstruct if a future session wants
+      to re-run it after some other change.
 11. **Differential testing vs sleef/core-math/rlibm** built locally, not
     just f64-rounded references — also catches double-rounding artifacts in
     accuracy.rs's own reference path.
