@@ -1311,11 +1311,43 @@ cousin.
     identical modulo constants (and log2_df quadruplicates it). A macro or
     generic-const core removes 3 hand-synced copies — hygiene, zero perf
     claim, reduces refit-application errors.
-25. **log_2 denormal path: fold the ×2^24 rescale into the wrapping_sub
-    magic** — the exponent extract could absorb a constant offset, but the
-    mantissa of a denormal isn't normalized, so this needs the multiply
-    anyway for the mantissa bits. Probably dead on arrival; kill it on
-    paper in 5 minutes.
+25. ~~**log_2 denormal path: fold the ×2^24 rescale into the wrapping_sub
+    magic**~~ (killed on paper 2026-07-10, confirmed dead on arrival as
+    suspected -- not just "probably", provably so): the idea's own hope
+    was that `log_2_normal`'s exponent-extraction bit trick
+    (`(x.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23`) could absorb
+    the needed ×2^24 denormal rescale as a *constant* adjustment folded
+    into that same subtraction, avoiding the real `x * 16777216.0`
+    multiply `log_2`'s caller currently does before calling in. This
+    can't work for a structural reason, not just a fiddly implementation
+    one: the bit trick relies on every input being an IEEE754 *normal*
+    number, where the stored mantissa bits mean `1.mantissa × 2^(e-127)`
+    (an implicit leading 1) -- a fixed, uniform relationship between bit
+    pattern and value that a constant integer offset can shift correctly.
+    Denormals have no implicit leading 1: the stored mantissa bits mean
+    `0.mantissa × 2^-126`, so recovering a normalized `(e, m)` pair
+    requires knowing *where the mantissa's own leading 1 bit sits* --
+    and that position is different for every denormal. Concretely:
+    `f32::MIN_POSITIVE/2 = 2^-127` (mantissa `0.1000...0`, leading bit at
+    position 22) needs a 1-bit renormalizing shift, while the smallest
+    denormal `2^-149` (mantissa `0.0...01`, leading bit at position 0)
+    needs a 23-bit shift -- two denormals, two completely different
+    required corrections, not a shared constant. A single `wrapping_sub`
+    offset can only ever apply one fixed correction to every input alike,
+    so it's fundamentally the wrong tool regardless of which constant is
+    chosen. The real `x * 16777216.0` multiply isn't a convenience
+    method for adding 24 to an exponent -- it's doing genuine,
+    data-dependent renormalization work (IEEE754 multiply hardware
+    correctly shifts each denormal's mantissa by exactly however much
+    *that* value needs, then produces a valid implicit-leading-1
+    representation), which is exactly the class of computation a fixed
+    bit-level offset cannot replicate. The only bit-level alternative
+    (counting each lane's mantissa leading-zeros and shifting by a
+    *variable*, data-dependent amount) is its own real op, likely no
+    cheaper than the single multiply it would replace, and this crate
+    has no existing lzcnt-style idiom to build on. No code changed --
+    this was a pure paper analysis, no benchmarking needed since the
+    premise fails on a representation argument, not a performance one.
 26. **koff-free unchecked-log fast path audit (checked 2026-07-09, no-op)**:
     `--emit=asm` on `log2_unchecked_throughput`'s region confirms LLVM
     already inlines `koff=0.0` through and feeds the converted exponent
