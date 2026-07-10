@@ -2039,10 +2039,106 @@ cousin.
     alongside the existing two; all 71 regions still pass. Zero-risk,
     zero perf/accuracy effect (test-tooling only) -- closes the gap this
     backlog entry asked for.
-76. **Continue the AVX-512 probe** (examples/scratch_avx512_probe.rs is
-    sitting untracked): decide whether explicit `core::simd` f32x16 tiers
-    beat the auto-vectorized ymm baseline enough to justify a feature
-    flag, then delete or commit the scratch file.
+76. ~~**Continue the AVX-512 probe**~~ (resolved 2026-07-10 -- real,
+    large, near-universal win found, but not adoptable as a blanket
+    default): `examples/scratch_avx512_probe.rs` (the untracked scratch
+    file this idea pointed at) didn't actually test anything -- no
+    timing, no comparison, just confirmed a `#[target_feature(enable =
+    "avx512f")]` wrapper around plain `exp2` compiles and runs. Deleted
+    it in favor of a real measurement, and pursued a more fundamental
+    question than the idea's own literal ask (explicit `core::simd`
+    f32x16 tiers): **is the existing auto-vectorizer already using the
+    widest vector width this hardware supports?** `lscpu`/`rustc --print
+    target-features` confirm this machine (an 11th Gen Intel Core
+    i5-1145G7, "Tiger Lake") fully supports `avx512f`/`avx512dq`/
+    `avx512cd`/`avx512bw`/`avx512vl`, and `.cargo/config.toml` already
+    builds everything with `-C target-cpu=native`. But grepping the
+    compiled `mca_target.s` showed every `*_throughput` region uses only
+    256-bit `ymm` registers (e.g. `exp2_throughput`: 92 `ymm`, 0 `zmm`)
+    -- LLVM's x86 backend defaults to a `prefer-256-bit` target feature
+    on this CPU (a real, if `rustc`-flagged-unstable, target feature;
+    confirmed via `rustc --print target-features`), overriding the
+    hardware's own 512-bit capability. This is a genuinely different
+    knob from idea #72's already-rejected `-force-vector-interleave`
+    sweep -- that one tested unroll factor at a *fixed* vector width,
+    this tests the width itself.
+
+    Rebuilt the whole mca suite with
+    `RUSTFLAGS="-C target-cpu=native -C target-feature=-prefer-256-bit"`
+    -- confirmed via grep this actually flips codegen to `zmm` throughout
+    (7015 `zmm` register uses in the full `.s` file, up from 0), and
+    diffed every throughput number against the default build. Result:
+    a **dramatic, near-universal win** -- of 70 measurable throughput
+    rows, 60 improved by more than 1% (median -19.4%, mean -15.2%,
+    several past -30%: `powf_checked_unchecked` -42.3%, `powf` -38.0%,
+    `exp10_checked` -35.7%, `remainder_wide` -35.2%, `powf_checked`
+    -33.8%, `cos_checked`/`logaddexp`/`softplus` all past -32%), 5 were
+    flat (within +-1%: `rhypot`, `fmod_unchecked`, `rsqrt`, `expm1`,
+    and one borderline), and only 2 regressed meaningfully:
+    `remainder_unchecked` (+5.9%) and `asin` (+6.0%) are minor, but
+    `exp_checked` (1.729->3.255 cyc/elem, **+88.3%**) and `pown`
+    (3.805->7.022, **+84.5%**) are severe. (Latency numbers are
+    completely unaffected either way, as expected -- `mca`'s latency
+    chain measures the scalar `*_normal` core, never vectorized.)
+
+    Root-caused the two severe regressions with `llvm-mca
+    -resource-pressure` on the isolated regions rather than guessing:
+    under the default (`ymm`) build, `exp_checked_throughput`'s
+    FMA/mul/add work splits evenly across two ports (`ICXPort0` 21.17,
+    `ICXPort1` 21.17 pressure/iteration -- `llvm-mca`'s scheduling model
+    reuses Ice Lake's "ICX" resource names for Tiger Lake, its nearest
+    documented relative). Under the `zmm` build, the *same* arithmetic
+    collapses almost entirely onto `ICXPort0` alone (19.05, vs. `ICXPort1`
+    at just 4.92) -- confirming this CPU has two independent 256-bit FMA
+    units (one per port) but only *one* of them widens to handle a full
+    512-bit FMA; the other sits nearly idle once every op is 512-bit
+    wide. So going 256-bit->512-bit does *not* double this CPU's peak FMA
+    throughput the way it might on hardware with two genuine 512-bit FMA
+    units -- it only removes overhead (fewer, denser instructions: AVX-512's
+    embedded per-element broadcast, e.g. `vfmadd231ps
+    .LCPI23_4(%rip){1to16}, %zmm2, %zmm0`, folds what used to be a
+    separate `vbroadcastss` into the arithmetic op itself, and the whole
+    16-element array is now one pass instead of two manually-unrolled
+    8-wide copies). Functions dominated by *overhead* (broadcasts, extra
+    movs, loop duplication) net-win big from that reduction; functions
+    whose bottleneck was already raw FMA-port throughput itself (`pown`'s
+    long compile-time-unrolled integer-power multiply ladder;
+    `exp_checked`'s unusually dense poly+range-reduction chain) lose the
+    second port for zero compensating benefit and net-regress hard.
+    Confirms and fully explains (not just observes) idea #72's own
+    finding that `pown` is uniquely vulnerable to vector-width/layout
+    changes on this hardware -- same function, same underlying
+    single-512-bit-FMA-port constraint, different trigger.
+
+    **Not adopted.** Even though this is a *far* stronger case than idea
+    #72's own mixed 60/40 split (here: 60 real wins, only 2 severe
+    losses, both now understood), the same practical blocker applies:
+    `-C target-feature` is a whole-crate `RUSTFLAGS` setting with no
+    per-function scoping on stable Cargo, and this crate's own precedent
+    (idea #72) already established that a single catastrophic per-function
+    outlier vetoes adopting a build-wide flag as the default, since
+    `pown`'s (or here, also `exp_checked`'s) users would eat an 85-88%
+    regression with no opt-out. Additionally: `llvm-mca`'s static cycle
+    model has no way to represent Tiger Lake's real, separate AVX-512
+    frequency/license downclocking behavior under *sustained* wide-vector
+    load (a genuinely different, additional risk from the port-contention
+    story above, which the model *does* capture correctly) -- so even the
+    60 modeled wins could be smaller in practice than shown here, the
+    same category of unverifiable-with-this-crate's-tools caveat idea
+    #73's PGO probe already flagged for a different technique. No
+    `.cargo/config.toml` or `src/lib.rs` change made; all scratch
+    RUSTFLAGS-built binaries/assembly cleaned up. Left open as a concrete,
+    well-quantified opportunity for whoever wants to build the
+    infrastructure this would actually need: either a real opt-in Cargo
+    build profile/feature (accepting `pown`/`exp_checked` regress for
+    users who don't call them), or waiting for a stable per-function
+    scoping mechanism finer than whole-crate `RUSTFLAGS`. *A whole-crate
+    codegen-flag experiment needs the same "one bad outlier vetoes the
+    default" discipline as any other crate-wide change, no matter how
+    lopsided the win/loss ratio looks in aggregate -- but a decisive
+    majority-win result is still worth fully root-causing (not just
+    measuring) when the mechanism might explain a previously-mysterious
+    related finding, as it did here for idea #72's own `pown` outlier.*
 77. **mca/wall-clock disagreement detector**: script that runs both on
     every candidate and flags direction disagreements automatically
     (sincos_checked precedent) instead of relying on remembering to
