@@ -455,6 +455,30 @@ git history / readme.md, not here. Untested backlog is at the bottom.
   deliberately avoids it (likely downclocking avoidance) — no rustc knob
   to force it independent of target-cpu tuning. Not forced; inconclusive.
 
+- **Dead-code + coefficient-convergence housekeeping sweep (2026-07-10,
+  resolved -- crate is clean)**: three checks, all clean. (1) Every
+  private `fn` and module-level `const` in `src/lib.rs` has >=1 real call
+  site beyond its own definition -- no repeat of idea #98's dead
+  `Df32*Df32` multiply find. (2) `cargo clippy` reports zero dead-code/
+  unused warnings. (3) Ran every `examples/tune.rs` filter
+  (`acos8`/`asinacos`/`asinpoly`/`atan`/`cbrtthroughput`/`erf`/`expm1`/
+  `exp_r`/`lnlog10`/`log1pjoint`/`log2atanh`/`sinf`/`exp2lut`, ~20 tuning
+  targets total) checking "start" (shipped coefficients) vs "tuned"
+  (coordinate descent's own local optimum): every polynomial currently
+  shipped is already at (or within noise of) its own coordinate-descent
+  optimum on tune.rs's grid -- no free accuracy sitting unclaimed in any
+  existing fit. The handful of runs that *did* show a big apparent swing
+  (`acos_poly_bh`'s basin-hop: max 3->2 but avg 0.95->1.89; `cbrt_throughput`'s
+  own tuner: max 68->43 but avg 6.8->22.7, converging on an absurd
+  `-3.88e12`-scale coefficient) are the exact "max-first tuple-ordering
+  lets avg blow up" / grid-overfitting traps this file's own
+  `tune_basin_hop` doc comment already warns about, not real headroom --
+  and `asin_mid`'s own "improvement" is tuning a branch removed from the
+  shipped `asin` entirely (fix 6, 2026-07-07), irrelevant to current code.
+  `log1p_joint`'s own result exactly reproduces idea #22's already-known
+  numbers (0.29664->0.29179), already established not to survive real
+  verification. No code changes.
+
 ## sin_checked / cos_checked internals
 
 - **round_x_over_pi: remove dead pre_offset=0.0 add (2026-07-07)**:
