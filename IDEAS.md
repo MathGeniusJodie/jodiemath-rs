@@ -1130,18 +1130,44 @@ cousin.
 
    All of this concentrates in the region where `y*log2(x)` approaches
    the domain's own upper edge (128) rather than being uniformly spread
-   across the whole valid range -- consistent with, and a harder
-   quantitative confirmation of, this file's own older "residual lives in
-   the log2_df/exp2_checked_df double-float chain; not root-caused
-   further" finding (see the "Other spots" section) -- just with concrete
-   numbers now (207-312, not just "worse than expected") and a
-   characterized danger zone (`y*log2(x)` near the upper domain boundary)
-   instead of an unlocalized shrug. Not root-caused further at the
-   double-float-arithmetic level this round either (would need tracing
-   `log2_df`'s own per-term error through `exp2_checked_df`'s k1/k2 split
-   at the specific bit patterns involved, real additional work). Updated
-   readme.md's `powf`/`powf_unchecked` max ulp from `127`/`135` to
-   `>=312` (avg ulp columns left alone -- these bad points are sparse
+   across the whole valid range.
+
+   **Root-caused properly in a follow-up pass, correcting an initial
+   misattribution**: first guessed this was "a harder quantitative
+   confirmation of" this file's older "residual lives in the
+   log2_df/exp2_checked_df double-float chain" finding (see "Other
+   spots") -- wrong. Checked `powf`'s actual source: it computes
+   `exp2_checked(log_2(ax) * y)`, a single f32 `log_2` call and a single
+   f32 multiply -- it never touches `log2_df`/`exp2_checked_df` at all;
+   that Df32 machinery is `powf_checked`-only. Tested the real mechanism
+   directly instead of assuming: computed `log_2(ax) * y` two ways at
+   each of the three found worst points -- once as the plain single
+   multiply `powf` actually does, once as a Dekker/fma-style compensated
+   two-product (`p = l*y`, `e = l.mul_add(y, -p)`, giving `p+e` as the
+   multiply's own correctly-rounded result). The two-product form's
+   *residual* error (after fully compensating the multiply itself)
+   matched `(log_2(ax)'s own rounding error) * y` almost to the digit at
+   all three points (ratio 1.000 in all three cases, computed
+   independently). **The multiply contributes essentially nothing --
+   100% of the error traces to `log_2(ax)` itself only ever being
+   accurate to a single f32's ~24 bits, and that fixed absolute error
+   getting scaled up by whatever `y` happens to be before `exp2_checked`
+   exponentially amplifies it.** This means there's no cheap compensated-
+   multiply fix available (confirmed by testing one: manually applying
+   the two-product correction through `exp2_checked`'s own `fma(result,
+   e*LN_2, result)` trick recovered only ~13% of the error, e.g. -312 ->
+   -270 ulp at the first point -- consistent with the multiply being a
+   minor contributor). The *only* real fix is a higher-precision `log2`
+   in the first place -- exactly what `log2_df` (routed through
+   `exp2_checked_df`) already provides, at the real extra cost
+   `powf_checked` already pays for exactly this reason. So this doesn't
+   open a new, cheap lever after all: it's a complete, decisive
+   confirmation that `powf`'s fast/accurate split is already drawn in the
+   only sensible place, just with the *actual* size of the accuracy gap
+   now measured for the first time (>=312 ulp, not the previously-assumed
+   127) rather than a vague "residual lives somewhere in there" shrug.
+   Updated readme.md's `powf`/`powf_unchecked` max ulp from `127`/`135`
+   to `>=312` (avg ulp columns left alone -- these bad points are sparse
    enough that 10M-sample fuzzing's *average* almost certainly isn't
    materially affected, only its claimed *max* was wrong). *A "worse than
    documented" find via structured search doesn't need a fix to be worth
