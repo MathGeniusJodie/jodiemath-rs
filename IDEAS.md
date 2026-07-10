@@ -2131,6 +2131,30 @@ cousin.
     below for a real, substantial worse-case find. `remainder` also
     checked (2026-07-10, see idea #8's own entry) -- confirms existing
     documented behavior rather than finding anything new.
+
+    **`hypot_checked` checked too (2026-07-10, clean -- no hidden worse
+    case, unlike `powf_checked`'s own surprise)**: plain `hypot` was
+    checked above, but `hypot_checked`'s own anti-overflow rescale
+    (`es = 2*(e>>1)`, rounding the scale exponent down to *even*) gives it
+    a genuinely different, more complex implementation -- worth its own
+    independent check rather than assuming it inherits `hypot`'s "already
+    tight" conclusion, especially since `powf_checked` just showed a
+    clean-looking number can hide a real structured worst case. Two
+    passes: first an exponent-parity bucket sweep (idea #9's own
+    technique, since `es`'s round-to-even naturally splits inputs into two
+    classes by the dominant argument's exponent parity) -- 60M samples,
+    both parity classes came back identical (avg 0.015/max 1 each), no
+    asymmetry. Second, a targeted structured sweep specifically
+    stress-testing the doc comment's own claim ("if the smaller term
+    underflows to exactly 0 after rescaling, its true contribution was
+    already negligible... this loses nothing real") -- swept the dominant
+    argument across the full safe exponent range and the other argument
+    from equal magnitude down through 300 halvings (well past the
+    underflow-after-rescale boundary), both argument orders: max ulp 1 in
+    every case, matching the documented number exactly. A clean, decisive
+    confirmation this time, not a hidden find -- `hypot_checked`'s
+    rescale really is as tight as it looks, unlike `powf_checked`. No
+    `src/lib.rs` change; two scratch probes used, neither committed.
 40. **atan_latency: fold FRAC_PI_2-p select into sign trickery (adopted
     2026-07-09)**: implemented as described -- apply `mulsign` to `p` and
     `FRAC_PI_2` individually first (`mulsign(a,x) - mulsign(b,x) ==
