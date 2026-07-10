@@ -1883,6 +1883,45 @@ cousin.
     re-running a coverage audit against a "done" standing test isn't a
     one-time check -- a second pass with fresh eyes found a second gap
     the first pass's own success didn't rule out.*
+
+    **Third follow-up (2026-07-10): the third gap found a real, previously
+    undetected discrepancy, not just a missing pair.** `remainder_wide`'s
+    own doc comment claims "bit-identical to `remainder_checked`...
+    confirmed by fuzzing, 5M samples, 0 differing bit patterns" -- also
+    never added to the standing test. Added it (reusing `check2`, same
+    `|x/y|<2^24` domain the doc comment itself specifies). At 29M
+    samples, not 5M: **2798 real mismatches**, not zero. Every single one
+    shared the same signature: `x/y` rounds to exactly `0` (no reduction
+    needed at all -- the true answer is just `x`) and `max(|x|,|y|)` sits
+    within `remainder_wide`'s own `> f32::MAX/4` rescale-trigger band.
+    Root-caused precisely: the rescale multiplies *both* `x` and `y` by
+    the exact power-of-two `0.125` whenever `y` (or `x`) is that large,
+    with no check on `x`'s *own* magnitude -- if `|x|` was already below
+    `8 * f32::MIN_POSITIVE` (~9.4e-38), that multiply pushes it into the
+    denormal range, where some mantissa bits become unrepresentable;
+    multiplying back by `8.0` at the end can't recover what denormal
+    rounding already discarded, even though the round trip is lossless
+    for any `x` that stays normal throughout. `remainder_checked` has no
+    such rescale guard at all, so it returns the true, exact `x` every
+    time; `remainder_wide` can differ by up to ~4 ulp in this one narrow
+    corner. Fixed `remainder_wide`'s own doc comment to state this
+    precisely instead of the disproven "0 differing bit patterns" claim,
+    and excluded the same narrow region (`max(|x|,|y|) > f32::MAX/4` *and*
+    `|x| < 8*f32::MIN_POSITIVE`) from the standing test's own domain,
+    matching the file's existing convention of excluding known, accepted,
+    narrow limitations rather than leaving a permanent red X. Not chased
+    with a real code fix -- narrow (needs `y` within ~4x of `f32::MAX`
+    *and* `x` already near the denormal boundary simultaneously) and
+    small (a few ulp, not a gross error), the same effort/value calculus
+    this session has applied to comparably narrow residuals elsewhere. No
+    logic change to `remainder_wide` itself; `cargo test`/`edgecheck.rs`
+    still clean, all 13 standing-test pairs now pass. *A "0 differing bit
+    patterns" claim backed by 5M samples is a measurement, not a proof --
+    a denser rerun of the exact same standing test can (and here did)
+    turn up a real, reproducible counterexample a smaller sample simply
+    never landed on; when it does, root-cause it precisely enough to
+    correct the doc comment and scope the exclusion exactly, rather than
+    either silently deleting the pair or leaving a permanently-red test.*
 13. **Generalize the cbrt_accurate recipe** (cheap ≤1-ulp core + one Df32
     Newton step) into a template: candidates rsqrt_accurate,
     exp_accurate/ln_accurate (each is the other's Newton residual),

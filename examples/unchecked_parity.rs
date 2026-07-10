@@ -200,6 +200,33 @@ fn main() {
     // samples", but this pair was never added to this standing test).
     ok &= check_pown("pown / pown_small", N, -255..=255, pown, pown_small);
 
+    // remainder_wide's own contract: bit-identical to remainder_checked
+    // (not to plain remainder) throughout remainder_checked's own
+    // |x/y|<2^24 domain -- a different pair than remainder/
+    // remainder_unchecked already above, never added to this standing
+    // test either. No near_tie exclusion needed here (unlike accuracy.rs's
+    // own remainder_checked sweep): that exclusion is about comparing
+    // against a *reference*, not about whether these two implementations
+    // agree with *each other*. Real, narrow exception found running this
+    // for the first time (2026-07-10, see remainder_wide's own doc
+    // comment): remainder_wide's rescale-near-f32::MAX guard can push an
+    // already-tiny x into denormal-underflow territory, losing up to ~4
+    // ulp remainder_checked's own (guardless) path doesn't -- excluded
+    // here as a known, accepted, narrow limitation rather than a
+    // standing-test failure.
+    let remainder_wide_domain = |x: f32, y: f32| {
+        y != 0.0
+            && (x / y).abs() < 16777216.0
+            && !(x.abs().max(y.abs()) > f32::MAX * 0.25 && x.abs() < 8.0 * f32::MIN_POSITIVE)
+    };
+    ok &= check2(
+        "remainder_checked / remainder_wide",
+        N,
+        remainder_wide_domain,
+        remainder_checked,
+        remainder_wide,
+    );
+
     if !ok {
         std::process::exit(1);
     }

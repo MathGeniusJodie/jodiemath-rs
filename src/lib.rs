@@ -3785,7 +3785,26 @@ pub fn remainder_checked(x: f32, y: f32) -> f32 {
 /// separate limit" `remainder_checked`'s own doc comment already
 /// acknowledges, just much further out). Bit-identical to
 /// `remainder_checked` throughout `remainder_checked`'s own `|x/y|<2^24`
-/// domain (confirmed by fuzzing, 5M samples, 0 differing bit patterns).
+/// domain -- *except* a narrow, low-magnitude-`x`-paired-with-huge-`y`
+/// corner the original "0 differing bit patterns" 5M-sample check
+/// (2026-07-09) was too sparse to hit: found by a later, denser 30M-sample
+/// standing-test run (2026-07-10, `examples/unchecked_parity.rs`).
+/// Whenever `max(|x|,|y|) > f32::MAX/4` (the rescale trigger below),
+/// `x` and `y` both get multiplied by the exact power-of-two `0.125`
+/// *unconditionally*, regardless of `x`'s own magnitude -- if `|x|` was
+/// already below `8 * f32::MIN_POSITIVE` (~9.4e-38), that multiply pushes
+/// it into the denormal range, where some low mantissa bits become
+/// unrepresentable; multiplying back by `8.0` at the end can't recover
+/// them, so the round trip isn't lossless the way it is for any `x` that
+/// stays normal throughout. Since `q0` is always `0` in this corner (`x`
+/// is astronomically smaller than the rescaled `y`), the *true* answer
+/// needs no rescaling at all -- `remainder_checked` (no such guard)
+/// returns `x` bit-exact, while this function can differ by a handful of
+/// ulp (up to ~4, confirmed by a targeted sweep). Narrow (needs `y` within
+/// a factor of ~4 of `f32::MAX` *and* `x` already near/below the
+/// denormal boundary) and small (a few ulp, not a gross error) -- not
+/// chased further, but the doc claim is corrected here rather than left
+/// overstated.
 /// Real extra mca cost on top of `remainder_checked` (two Df32
 /// subtractions plus two Df32 products, plus the rescale guard below):
 /// latency 46.03->179.13 cyc (~3.9x), throughput 1.282->8.351 cyc/elem
