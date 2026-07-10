@@ -3568,6 +3568,39 @@ cousin.
     likely lower for functions whose worst case was already found via
     direct error-mechanism analysis than for functions only ever checked
     by random fuzzing.*
+
+    **Extended to inline `src/lib.rs` doc-comment claims, not just
+    readme.md's table (2026-07-10, found and fixed two real cases)**:
+    idea #79's own staleness checks so far only covered readme.md's
+    tables against git history/mca output; a different kind of staleness
+    lives in individual functions' own doc comments, which sometimes quote
+    a bespoke, hand-rolled fuzz (not the crate's standing `accuracy.rs`
+    sweep) run once when the function was written. Grepped for
+    `"Verified (fuzz"` and similar standalone `avg ulp X, max ulp Y`
+    claims, then re-ran each against the real exhaustive sweep. Two were
+    genuinely wrong, both by the same mechanism (a modest ~20M-sample
+    ad hoc fuzz simply never landing on a rare true worst point, not a
+    domain mismatch -- both worst points sit well inside the originally-
+    claimed test range): `log2p1` claimed avg 0.005/max 2, true exhaustive
+    is avg 0.102/max 3 at `x=0.018272582` (matches readme.md's own table,
+    which was already correct); `exp2m1` claimed avg 0.06/max 3, true
+    exhaustive is avg 0.077/max 4 at `x=0.5842032` (also already correct in
+    readme.md). Also found and fixed a smaller, unrelated staleness: a
+    comment on `atan_latency` comparing itself to "atan's own 0.068/3"
+    predated `atan_poly`'s 2026-07-09 numerator refit, which left `atan`'s
+    real max ulp at 4 (readme.md and `atan_poly`'s own doc comment both
+    already correct; only this one cross-reference comment lagged).
+    Fixed all three doc comments to state the exhaustive numbers directly
+    rather than the stale ad hoc ones. No `src/lib.rs` *behavior* change,
+    doc-only. *readme.md isn't the only place a documented accuracy number
+    can go stale -- a function's own inline doc comment can quote a
+    smaller, earlier, never-updated verification pass that undersells the
+    true worst case, even while readme.md's own table (built from the
+    standing `accuracy.rs` harness) already has the right number sitting
+    right next to it. Worth periodically grepping for standalone `avg ulp
+    .../max ulp ...` claims in doc comments and diffing them against
+    readme.md/a fresh exhaustive run, the same way idea #79 already does
+    for readme.md's own tables.*
 80. **exp2 poly evaluated as 1+f·Q vs direct P(f)=2^f with c0=1 pinned
     (paper-screened 2026-07-09, not implemented -- real modest op savings
     identified, but needs a fresh fit, not a mechanical rewrite)**: traced
