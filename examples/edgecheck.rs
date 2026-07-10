@@ -18,6 +18,23 @@ fn check_finite(name: &str, got: f32) {
     println!("{} {:30} got {:e} (0x{:08x}) (finite)", if got.is_finite() { "ok  " } else { "FAIL" }, name, got, got.to_bits());
 }
 
+/// Stronger than `check_finite`: also asserts `|got| <= bound`. Added
+/// after finding `sin_checked`/`cos_checked` could silently return values
+/// up to `2.6e21` for legitimate extreme finite input (fixed with a
+/// `.clamp(-1.0,1.0)`, see their own doc comments) -- that bug's own
+/// symptom was *finite*, so `check_finite` alone would never have caught
+/// it; this closes that gap as a permanent regression guard.
+fn check_bounded(name: &str, got: f32, bound: f32) {
+    let ok = got.is_finite() && got.abs() <= bound;
+    println!(
+        "{} {:30} got {:e} (0x{:08x}) (bounded by {bound})",
+        if ok { "ok  " } else { "FAIL" },
+        name,
+        got,
+        got.to_bits()
+    );
+}
+
 fn main() {
     // log_2
     check("log_2(0)", log_2(0.0), f32::NEG_INFINITY);
@@ -119,17 +136,23 @@ fn main() {
     check("tan(-0)", tan(-0.0), -0.0);
     // sin_checked/cos_checked: nan/+-inf must still come out nan, and every
     // other finite x (including ones far past the sub-ulp-accurate range)
-    // must come out finite, never inf -- see sin_checked's doc comment for
-    // why (the residual clamp added 2026-07-06 that guarantees this).
+    // must come out finite *and* bounded to `[-1,1]` -- see sin_checked's
+    // doc comment for why (the residual clamp added 2026-07-06, plus the
+    // final `.clamp(-1.0,1.0)` added 2026-07-10 after finding
+    // round_x_over_pi's double-float q silently loses precision past
+    // `|x|~8.85e14`, which used to let these same inputs return values up
+    // to `2.6e21` -- `check_finite` alone never caught that, since `2.6e21`
+    // is finite; `check_bounded` closes that gap for good).
     for f in [sin_checked as fn(f32) -> f32, cos_checked as fn(f32) -> f32] {
         let n = if f == sin_checked as fn(f32) -> f32 { "sin_checked" } else { "cos_checked" };
         check(&format!("{n}(nan)"), f(f32::NAN), f32::NAN);
         check(&format!("{n}(inf)"), f(f32::INFINITY), f32::NAN);
         check(&format!("{n}(-inf)"), f(f32::NEG_INFINITY), f32::NAN);
-        check_finite(&format!("{n}(max)"), f(f32::MAX));
-        check_finite(&format!("{n}(-max)"), f(f32::MIN));
-        check_finite(&format!("{n}(1e20)"), f(1e20));
-        check_finite(&format!("{n}(1e10)"), f(1e10));
+        check_bounded(&format!("{n}(max)"), f(f32::MAX), 1.0);
+        check_bounded(&format!("{n}(-max)"), f(f32::MIN), 1.0);
+        check_bounded(&format!("{n}(1e20)"), f(1e20), 1.0);
+        check_bounded(&format!("{n}(1e16)"), f(1e16), 1.0);
+        check_bounded(&format!("{n}(1e10)"), f(1e10), 1.0);
     }
     // sin_checked(-0.0) used to lose its sign too, via a *different*
     // mechanism than sinf_poly's own bug above: reduce_pi's multi-term
