@@ -294,6 +294,24 @@ git history / readme.md, not here. Untested backlog is at the bottom.
   instructions), but too coarse for the correction poly to compensate —
   max ulp 33, ~16x over budget.
 
+- **Range-invariant audit: cbrt_accurate's Df32 Newton step + powf_checked's
+  Df32 machinery (2026-07-10, resolved -- both clean)**: continued the
+  same technique that found the sin_checked/cos_checked bug, applied to
+  the crate's other Df32-based functions. `cbrt_accurate(x)^3 ~= x`
+  checked across its entire documented safe range (`2^-56` to `2^127`,
+  35.7M in-domain samples) plus explicit edge probes right at `2^-56`,
+  `2^100` (the rescale threshold idea #56 tuned), and `2^127`/`f32::MAX`:
+  zero violations, every relative error within `~2e-7` of true (matching
+  its own near-perfectly-rounded budget). `powf_checked`/
+  `powf_checked_unchecked`'s own `x>0 => result>0` invariant (using the
+  same `log2_df`/`exp2_checked_df` Df32 pair idea #58 fixed a real bug in
+  previously) checked across 50M/24.8M samples: zero violations. Neither
+  function shares the specific mechanism that broke `sin_checked`/
+  `cos_checked` (a *reduction* whose integer quotient silently loses
+  precision at extreme magnitude) -- `cbrt_accurate`'s Newton step and
+  `powf_checked`'s log2/exp2 combine don't have an analogous "coarse
+  integer count" step to lose precision in. No code changes.
+
 ## log_2 / ln / log10
 
 - **log_2/ln/log10/log1p/log2p1 special-case matrix (2026-07-10,
