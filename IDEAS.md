@@ -1345,6 +1345,51 @@ cousin.
    independent round-off-budget audit's conclusion from a completely
    different angle -- two different techniques agreeing that a poly is
    already tight is much stronger evidence than either one alone.*
+
+   **Applied to `erf_poly` (2026-07-10, no real headroom, but caught a
+   real methodology bug along the way: `tune.rs`'s own `erf_tail_c` uses
+   the wrong evaluation order)**: `erf_poly` looked like a good next
+   target -- max ulp 5 (erf's own documented ceiling), refit twice already
+   (fma reassociation + a 2026-07-09 Chebyshev LP), but never basin-hopped
+   from its *current* coefficients (`tune.rs`'s own `erf_tail` dispatch
+   still seeds from a stale pre-2026-07-09 init array, so its own reported
+   "improvement" wasn't testing the real shipped starting point). Built a
+   standalone probe starting from the actual current coefficients,
+   coordinate-descended against a bit-uniform grid over the real domain
+   `[0.28,10]`, and got a promising-looking real move: grid max 4 (from
+   5), and it *survived* a real dense verification pass too (max 5->4 on
+   both the tail branch alone and the whole `erf` function, avg ulp
+   barely moving, 0.3216->0.3218) -- looked like a clean, adoptable win.
+   **Then re-read `src/lib.rs`'s actual `erf_poly` before writing anything
+   to `lib.rs`, and found the probe had been silently testing the wrong
+   function the whole time**: the shipped `erf_poly` evaluates via Estrin
+   (3 independent fma pairs on `x`, combined through `x2`/`x4`), but the
+   probe's `erf_poly_c` (copied from `tune.rs`'s own `erf_tail_c`) uses a
+   plain 6-deep Horner chain -- same coefficients, same math, but a
+   *different rounding structure* (each intermediate rounds at a different
+   point). Rewrote the probe to match the real Estrin structure exactly,
+   re-ran the identical coordinate descent and verification from scratch:
+   the "improvement" evaporated completely -- grid max stays 5 (not 4),
+   dense-domain max stays 5 for both shipped and tuned, whole-`erf`
+   avg barely moves (0.32161->0.32183, noise-level, not a real change).
+   `erf_poly` really is already at a local optimum for its actual shipped
+   form, matching `exp_pos_neg`'s own finding just above -- the earlier
+   "win" was purely an artifact of coordinate-descending a Horner-chain
+   stand-in whose different rounding happened to admit a nearby
+   improvement that the real Estrin form doesn't have. Not adopted; no
+   `src/lib.rs` change; scratch probe used, not committed. *A second,
+   distinct kind of `tune.rs`-fidelity gotcha, alongside last iteration's
+   `erfc_c` `.exp2()`-vs-`exp2_checked` approximation gap: `tune.rs`'s own
+   probe functions can also diverge from the shipped code in *evaluation
+   order* (Horner vs Estrin), not just in which primitive they call --
+   and this is enough to manufacture a fake, verification-surviving-
+   looking improvement on its own, since the fake structure's rounding
+   genuinely does differ from the real one. Always diff a `tune.rs` probe
+   function's actual operations against the real `src/lib.rs` body it
+   claims to model, not just its coefficient list, before trusting a
+   coordinate-descent result -- even one that passed a real dense-domain
+   verification pass, if that verification itself reused the same wrong
+   structure.*
 4. **Per-function transformed-variable fit search**: fit in u=s/(s+2),
    u=s·(s+a), etc., searching over the transform family. Distinct from
    centered-variable refits (rejected — that only moved the origin);
