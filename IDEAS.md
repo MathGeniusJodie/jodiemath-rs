@@ -1588,9 +1588,43 @@ cousin.
     intuition from "it's just one extra call" suggests; always mca a
     cross-function reformulation like this before trusting the "probably"
     in a backlog note.*
-39. **atan2 octant-symmetric exhaustive harness**: sweep all x at a few
-    thousand fixed y/x ratios (and vice versa) — turns the binary-input
-    problem into affordable near-exhaustive slices.
+39. ~~**atan2 octant-symmetric exhaustive harness**~~ (resolved 2026-07-10,
+    no worse case found than the existing fuzz-mode max): built exactly
+    as described -- a standalone scratch probe (`examples/
+    atan2_worstcase_probe.rs`, not committed) sweeping 1294 fixed y/x
+    ratio classes (log-spaced from `1e-30` to `1e30` in both signs, plus
+    the 8 octant-boundary angles `tan(k*pi/8)` and close neighbors) times
+    601 log-spaced magnitudes in both signs, both "fix the ratio, vary x"
+    and "fix the ratio, vary y" directions -- 3,105,968 total `(y,x)`
+    pairs, dwarfing the *combination coverage* atan2's own 10M-sample
+    uniform-random fuzz gets structurally (random pairs rarely land
+    exactly on an octant boundary or an extreme ratio; this sweep targets
+    exactly those). Result: max ulp 3, identical to readme.md's
+    documented fuzz-mode number -- the structured sweep didn't uncover
+    anything the random fuzz was missing.
+
+    Caught a real bug in the *probe itself* before trusting this result:
+    the first pass computed the f64 reference from the un-rounded sweep
+    value (e.g. `y.atan2(x)` from the original f64 `x`), while
+    `atan2(yf, xf)` received the *rounded* `f32` inputs -- for ratios
+    near the sweep's extreme end, casting the f64 magnitude to f32
+    silently overflows to `+-inf` even though the original f64 value was
+    finite, so the two sides were being compared against genuinely
+    different inputs. This produced a spurious "3 billion ulp" max before
+    the fix (comparing `atan2(finite, inf)` against a reference computed
+    from `atan2(finite, finite-but-huge)`). Fixed by computing the
+    reference from `yf as f64`/`xf as f64` -- the actual post-rounding
+    f32 inputs, not the pre-cast sweep values -- after which the result
+    dropped to the real, unremarkable max ulp 3. *When ulp-testing against
+    a higher-precision reference, the reference must be computed from the
+    exact value the function under test actually receives, not from
+    whatever higher-precision value was used to construct it -- a cast
+    that overflows/rounds differently than expected will silently compare
+    against the wrong input otherwise.* Not yet applied to
+    hypot/powf/remainder (see idea #8) -- hypot's own max ulp is already
+    1 (bounded) domain-wide, leaving little room for this technique to
+    find anything; powf/remainder remain open if someone wants to extend
+    this same harness to them.
 40. **atan_latency: fold FRAC_PI_2-p select into sign trickery (adopted
     2026-07-09)**: implemented as described -- apply `mulsign` to `p` and
     `FRAC_PI_2` individually first (`mulsign(a,x) - mulsign(b,x) ==
