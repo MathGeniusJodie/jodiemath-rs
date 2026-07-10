@@ -1141,6 +1141,53 @@ cousin.
    critical path with a bound, attack the largest term. This is exactly how
    exp's Cody-Waite fix was found; do it systematically for the remaining
    >2-max-ulp functions (asin 9, expm1 6, tanh 6, sinh/cosh 5, erf 5).
+
+   **sinh/cosh audited (2026-07-10, no actionable lever -- unlike exp, the
+   dominant term isn't a rounding step at all)**: took the real
+   accuracy.rs-reported worst points (`sinh` x=29.63464, `cosh`
+   x=1.2163262, both from a proper domain-restricted 52M-sample fuzz, not
+   a guessed value) and traced every step of the shared `exp_pos_neg`
+   construction in f64 alongside the crate's actual f32 arithmetic, same
+   technique as asin's own successful audit. At `sinh`'s worst point: the
+   Cody-Waite reduction's own rounding (`r_f32` vs a "true" `r` computed
+   from `x - round(x*log2e)*ln2` at full f64 precision) is a relative
+   error of ~4.3e-8 in `r` itself (well under 1 ulp of `r`), and propagating
+   that error alone through the poly changes the poly's own output by only
+   a relative ~1.25e-9 -- three orders of magnitude below the poly's *own*
+   fit error against the true `e^r`/`e^-r` targets (~1.3e-7/1.1e-7
+   relative, measured by evaluating the poly at the *ideal*, unrounded `r`
+   and comparing against `r.exp()` directly). Same shape at `cosh`'s worst
+   point (fit error ~1.3e-7/1.1e-7, reduction-rounding contribution
+   ~6.4e-10/2.2e-10) -- not a coincidence of one point, the poly's fit
+   error dominates by two to three orders of magnitude at both examined
+   worst cases. A ~1.3e-7 relative fit error is itself already close to
+   f32's own ~1.19e-7 (2^-23) relative precision floor, i.e. the retuned
+   even/odd poly (4 coefficients, degree-7 total) is already about as
+   tight as a single-precision output can meaningfully resolve --
+   consistent with `exp_pos_neg`'s own doc comment noting this exact poly
+   was already retuned once and only reached max ulp 3 *on the tuning
+   grid* (not verified against the real fuzz, which shows the true max is
+   5, the same "coarse grid understates the real worst case" pattern idea
+   #22 already found elsewhere for log1p). Unlike `exp` (where Cody-Waite's
+   single-word reduction genuinely was the dominant, fixable term) or
+   `asin` (one more Taylor term was a real, if throughput-costly, lever),
+   there's no single rounding step to attack here: the ceiling is the
+   poly's own approximation order, and idea #17 (weaving exp's own poly
+   shape in) and idea #99 (Horner instead of Estrin) already independently
+   established that changing a sibling function's poly structure/degree in
+   this crate reliably trades a real accuracy gain for a real mca cost,
+   never both for free. Closes this entry's own sinh/cosh line alongside
+   `expm1`'s prior "rounding and truncation split roughly evenly, no
+   single cheap lever" finding -- `asin`/`expm1`/`sinh`/`cosh` are now all
+   audited (only `tanh`'s crossover, not a full round-off budget trace,
+   was separately checked above; `erf`'s own extensive rational/Pade work
+   elsewhere in this file already serves the same role). One standalone
+   scratch probe used, not committed; no `src/lib.rs` change. *The
+   round-off-budget-audit technique doesn't always find a rounding step to
+   attack -- sometimes tracing every step through in f64 reveals the
+   dominant term is the polynomial's own inherent fit residual instead,
+   which is a fundamentally different (and typically more expensive to
+   fix) problem than a single fma reassociation.*
 8. **Binary-function worst-case mining**: unary functions get exhaustive
    sweeps; powf/atan2/hypot/remainder only get fuzz. Guided search
    (branch-and-bound over exponent-pair classes, or fixed y/x ratio
