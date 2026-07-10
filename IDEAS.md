@@ -941,6 +941,20 @@ cousin.
 9. **Structured-error probes**: plot per-function error vs mantissa and vs
    exponent separately; periodic structure invites a cheap structural
    correction (one select or exponent-derived fma) instead of a refit.
+   Tried once (2026-07-10) on `erfc` (the crate's own worst-behaved
+   function, max ulp ~109) via a 50M-sample error-by-exponent-bucket
+   sweep (`x`'s own `floor(log2(|x|))`, libm's `erfc` as a structural
+   reference): found smooth, monotonic growth from `avg ulp ~0.6` at
+   small `|x|` up to `avg ulp ~8.2`/`max ulp 109` right at the `x=10`
+   clamp boundary, plus a much smaller secondary bump around `|x|` in
+   `[0.03,0.25]` (avg ulp ~3.3-4.5, max ulp only up to 10, not the
+   dominant contributor). No genuinely new *periodic* structure found --
+   the dominant large-`x` growth is exactly the mechanism idea #53
+   already root-caused (`erfc(x)` itself shrinks toward 0 as `x` grows,
+   so the same absolute error reads as ever-larger ulp), not a missed
+   correction term. Still open for a function this technique hasn't been
+   tried on yet, or for chasing the smaller `[0.03,0.25]` bump
+   specifically if someone wants the average-only, modest payoff.
 10. ~~**Monotonicity/oddness harness metrics**~~ (tried 2026-07-10,
     resolved -- two real deviations found, both explained by already-
     accepted tradeoffs/noise, no new actionable fix): built a standalone
