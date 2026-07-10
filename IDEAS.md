@@ -1450,6 +1450,46 @@ cousin.
    function needs its own sanity check (a wildly bad starting score is a
    free, immediate signal that the fix itself has a bug) before trusting
    whatever comes out the other end of coordinate descent.*
+
+   **`log_2` checked clean (confirming, no headroom); `acos_poly` checked
+   and found a second real, adopted win (2026-07-10).** Spot-checked two
+   more of the "confirmed structurally faithful" probes from the same
+   audit, now that the methodology (fix fidelity first, verify grid
+   results against the real function and a real dense/exhaustive domain)
+   has paid off once already:
+   - `log_2` (via `log2_c`, independently re-verified structurally
+     faithful by hand): coordinate descent from the current shipped
+     coefficients found **zero movement** (`start max 2 avg 0.00610` ->
+     `tuned` identical) -- a clean, quick confirming result, the same
+     shape as `exp_pos_neg`'s own already-tight finding.
+   - `acos_poly` (via `acos_poly_c`): found a real, if small, grid-level
+     move -- but first caught that `tune.rs`'s own "acos" seed still held
+     the *stale pre-idea-#36* leading constant (`1.5707963`, not the
+     corrected `1.5707964`) in all three of its init arrays (fixed,
+     commit `f6863d8`). With that fixed, re-ran coordinate descent on the
+     other 6 coefficients: confirmed bit-identical against the real
+     compiled `acos` first (0 mismatches, 57.5M spot-checked points), then
+     verified on a real ~1.07-billion-point dense sweep of the whole
+     `[-1,1]` domain (scored as the *whole* `acos` formula, not the bare
+     poly): **max ulp 6->5, avg ulp 0.437->0.432 -- both axes improved
+     together**, not a tradeoff. Confirmed on the real crate's own
+     exhaustive sweep: `0.068/6` -> `0.065/5`. `mca` bit-identical
+     (`37.11/0.820`), zero perf cost. Adopted (commit `7b360ef`). Also
+     independently confirmed, by reading `asin`'s current body directly,
+     that `acos_poly_c`'s own comment ("also reused by asin's near-1
+     branch") and the `tune.rs` "asinacos" joint-scoring dispatch are
+     *themselves* stale -- `asin` was decoupled onto its own independent
+     `asin_poly` in an earlier fix (fix 8), so this refit only affects
+     `acos`, confirmed by spot-checking `asin`'s own accuracy unchanged.
+     Left the joint dispatch as historical/superseded infra rather than
+     rewriting it (not worth the effort for a premise nothing currently
+     relies on). *Two for two so far on functions actually checked this
+     way after fixing their probe's fidelity first (`exp2`, `acos`) --
+     worth continuing to spot-check the remaining "confirmed faithful"
+     probes (`cbrt_normal_c`, `sinf_poly_c`, `expm1_near0_c`,
+     `exp_r_c`/`exp_r_pair_c`) the same way before assuming this backlog
+     item is exhausted, though `log_2`'s clean result shows it won't
+     always pay off.*
 4. **Per-function transformed-variable fit search**: fit in u=s/(s+2),
    u=s·(s+a), etc., searching over the transform family. Distinct from
    centered-variable refits (rejected — that only moved the origin);
