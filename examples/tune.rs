@@ -30,14 +30,26 @@ const EXPONENT_MASK: u32 = 0x7f800000;
 
 #[inline(always)]
 fn exp2_c(x: f32, c: &[f32]) -> f32 {
+    // Must mirror src/lib.rs's real exp2/exp2_checked exactly: 3 balanced
+    // Estrin-in-f2 pairs (g0/g1/g2), not the older "two degree-2 Horner
+    // halves times exp2int*f^4/exp2int*f" A/B split this function used to
+    // compute (same target polynomial in exact arithmetic, but a
+    // different fma grouping -- and so different real f32 rounding).
+    // Found and fixed 2026-07-10 after the same class of bug (Horner vs
+    // Estrin) was caught in erf_tail_c; see IDEAS.md.
     let k = x.floor();
     let f = x - k;
     let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
-    fma(
-        fma(fma(c[0], f, c[1]), f, c[2]),
-        exp2int * (f * f) * (f * f),
-        fma(fma(fma(c[3], f, c[4]), f, c[5]), exp2int * f, exp2int),
-    )
+    // c indices match the crate's own established convention (see
+    // exp2_direct_c's doc comment): c[0..2) is g2 (f^4,f^5 coefficients),
+    // c[2..4) is g1 (f^2,f^3), c[4..6) is g0 (f^0,f^1).
+    let f2 = f * f;
+    let g2 = fma(c[0], f, c[1]);
+    let g1 = fma(c[2], f, c[3]);
+    let g0 = fma(c[4], f, c[5]);
+    let h = fma(g2, f2, g1);
+    let q = fma(h, f2, g0);
+    fma(q, exp2int * f, exp2int)
 }
 
 // idea #80 (2026-07-10): direct P(f)=2^f fit, same 3-balanced-pair
@@ -654,7 +666,15 @@ fn erfc_c(x: f32, c: &[f32]) -> f32 {
     let d = fma(d, xa, c[6]);
     let d = fma(d, xa, c[7]);
     let d = fma(d, xa, 1.0);
-    let y = (-(xa * xa) * std::f32::consts::LOG2_E).exp2() * n / d;
+    // n/d must round as its own standalone value first (matching real
+    // erfc_rational's return value), *then* multiply by the exponential --
+    // `exp2term * n / d` (found 2026-07-10) parses as `(exp2term*n)/d`, a
+    // different rounding order than the shipped `exp2_checked(...) *
+    // erfc_rational(xa)`. (The `.exp2()` vs `exp2_checked()` gap itself is
+    // a separate, already-documented, accepted limitation of this
+    // standalone probe -- see IDEAS.md.)
+    let rat = n / d;
+    let y = (-(xa * xa) * std::f32::consts::LOG2_E).exp2() * rat;
     fma(y, z, w)
 }
 
@@ -675,7 +695,15 @@ fn erfc_lo_c(x: f32, c: &[f32]) -> f32 {
     let d = fma(d, xa, c[6]);
     let d = fma(d, xa, c[7]);
     let d = fma(d, xa, 1.0);
-    let y = (-(xa * xa) * std::f32::consts::LOG2_E).exp2() * n / d;
+    // n/d must round as its own standalone value first (matching real
+    // erfc_rational's return value), *then* multiply by the exponential --
+    // `exp2term * n / d` (found 2026-07-10) parses as `(exp2term*n)/d`, a
+    // different rounding order than the shipped `exp2_checked(...) *
+    // erfc_rational(xa)`. (The `.exp2()` vs `exp2_checked()` gap itself is
+    // a separate, already-documented, accepted limitation of this
+    // standalone probe -- see IDEAS.md.)
+    let rat = n / d;
+    let y = (-(xa * xa) * std::f32::consts::LOG2_E).exp2() * rat;
     fma(y, z, w)
 }
 
@@ -693,7 +721,15 @@ fn erfc_hi_c(x: f32, c: &[f32]) -> f32 {
     let d = fma(d, xa, c[6]);
     let d = fma(d, xa, c[7]);
     let d = fma(d, xa, 1.0);
-    let y = (-(xa * xa) * std::f32::consts::LOG2_E).exp2() * n / d;
+    // n/d must round as its own standalone value first (matching real
+    // erfc_rational's return value), *then* multiply by the exponential --
+    // `exp2term * n / d` (found 2026-07-10) parses as `(exp2term*n)/d`, a
+    // different rounding order than the shipped `exp2_checked(...) *
+    // erfc_rational(xa)`. (The `.exp2()` vs `exp2_checked()` gap itself is
+    // a separate, already-documented, accepted limitation of this
+    // standalone probe -- see IDEAS.md.)
+    let rat = n / d;
+    let y = (-(xa * xa) * std::f32::consts::LOG2_E).exp2() * rat;
     fma(y, z, w)
 }
 
