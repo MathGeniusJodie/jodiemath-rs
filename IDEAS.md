@@ -1694,10 +1694,42 @@ cousin.
     first every time -- here it revealed the assumed dependency doesn't
     exist at all, redirecting the useful outcome from "cheapen a hot
     multiply" to "delete an unreachable one."*
-99. **Precision-tapered polys**: evaluate the high-order (small-magnitude)
-    poly tail in a *cheaper* form (fewer fmas, plain Horner) and only the
-    dominant terms carefully — the tail terms' own rounding is provably
-    below the result ulp. Candidate: log family's l3/l4 tier.
+99. **Precision-tapered polys (tried 2026-07-09 for log_2's full poly,
+    rejected -- real accuracy win, dramatic perf cost)**: tested the
+    simplest version of this idea first -- replace `log_2_normal`'s
+    entire degree-9 Estrin-balanced tree (2 muls + 9 fma's) with a plain
+    Horner chain (9 fma's, no `s2`/`s4` precompute at all), rather than
+    the idea's own narrower "only the l3/l4 tail" scoping. Accuracy was a
+    genuine, if modest, surprise win: avg ulp 0.0031->0.0019, max ulp
+    3->2 (both improved, not a tradeoff) -- fewer total operations
+    apparently gives the rounding fewer chances to compound, at least for
+    this specific polynomial. But mca killed it decisively: latency
+    34.23->53.05 cyc (+55.0%), throughput 1.584->2.249 cyc/elem (+42.0%)
+    -- a dramatic regression on *both* axes despite genuinely fewer total
+    ops (9 fma's vs. 11 ops). The fully serial 9-deep dependency chain
+    (each fma must wait for the previous) costs far more than the 2 extra
+    multiplies the balanced Estrin tree pays for its shorter critical
+    path -- true even in throughput/vectorized mode, where a single
+    call's own serial depth might be expected to matter less (many
+    independent lanes should be able to fill the pipeline) but evidently
+    still doesn't fully hide a 9-deep chain here. Reverted, bit-identical
+    to prior HEAD. Didn't test the idea's own narrower proposal (Horner
+    only for the small-magnitude l3/l4 tail, keeping Estrin for the
+    dominant l0/l1 terms) -- given the *full* Horner chain (a much larger
+    serial run) already regressed this badly, a *shorter* serial tail
+    (just 3-4 fma's) would carry a proportionally smaller version of the
+    same penalty, but whether that smaller penalty still outweighs
+    removing 1-2 multiplies from just the tail remains genuinely open;
+    left for a session that wants to test the narrower, literal variant
+    specifically rather than the blunter full-replacement proxy tried
+    here. *Total operation count is not a reliable proxy for vectorized
+    throughput when the operations being removed also happen to shorten
+    the critical dependency path -- a "fewer ops" restructuring that
+    lengthens the serial chain can lose badly even in a throughput-
+    oriented loop with many independent lanes, echoing this crate's own
+    repeated finding elsewhere (asin's branch-count changes, the
+    Newton/Halley correction-step rejections) that op-count alone rarely
+    predicts mca's actual verdict.*
 100. **A cost model for "add a division"**: the divider-idle finding keeps
     paying off (cbrt rcp, sinh_throughput, log1p) — write down the actual
     reciprocal-throughput arithmetic (divider ports vs FMA ports per
