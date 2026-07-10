@@ -2560,6 +2560,47 @@ cousin.
     fixed-sign range (as `mix()` does here), the branch with the real
     cost can go completely unmeasured in latency mode while still
     showing up correctly in throughput mode's real mixed-sign array.**
+
+    **Round-off audit follow-up (2026-07-10): found and diagnosed erfcx's
+    real max-ulp source, tried the fix, real improvement but doesn't
+    clear this family's own established bar.** Idea #7's round-off-budget
+    technique, applied to `erfcx` for the first time (max ulp 121-125,
+    among the crate's higher-error functions, never audited this way).
+    Worst point sits at `x=-9.382334` (the `x<0` branch, `2*exp(x^2) -
+    erfc_rational(|x|)`) -- traced every step in f64: the `erfc_rational`
+    correction term's own error contributes a genuinely negligible
+    fraction of the total (measured ratio ~5e-43, i.e. irrelevant), while
+    `x*x*LOG2_E` being computed at single f32 precision before
+    `exp2_checked` accounts for essentially all of it (~99.9999999%) --
+    the exact "single-rounding input amplified exponentially" mechanism
+    `log2_df`/`exp2_checked_df` already exist to fix for `powf_checked`.
+    Tried the same fix here: `Df32::from_mul(x,x) * LOG2_E` fed through
+    `exp2_checked_df` instead of plain `exp2_checked(x*x*LOG2_E)`. Real,
+    substantial improvement, verified both at the specific worst point
+    (121->20 ulp) and across the full `|x|<=10` domain (avg 0.20->0.15,
+    ~25% better; max 122->20, ~84% reduction) -- and a real, modest mca
+    cost (throughput 2.278->2.689 cyc/elem, +18.0%; latency
+    unchanged/untrustworthy here, same `mix()` sign-blind-spot caveat
+    `erfcx`'s own doc comment already flags for its `x<0` branch). Despite
+    being a large, genuine improvement, **not adopted**: this crate's own
+    already-established bar for this exact function family (`erfc`'s own
+    "domain split" idea, rejected because "bar was 109->single digits"
+    and it only reached 106->105) requires landing in single digits, not
+    just "much better" -- 20 is real progress but still double digits, so
+    by the same standard already applied to `erfc`'s own analogous
+    near-boundary error, this doesn't clear the bar either, even though
+    unlike that erfc case this fix genuinely moves the needle a lot (6x
+    reduction, not a rounding error). Reverted cleanly (confirmed via
+    `git diff --numstat`: all changes were pure additions to
+    `src/lib.rs`/`mca_target.rs`/`mca.rs`, `git checkout` restored
+    everything, `grep -c erfcx_wide_probe` returns 0 everywhere,
+    `cargo test` clean). *A large relative improvement (6x) and a large
+    absolute one (100+ ulp shaved off) still isn't automatically "enough"
+    once a function family has an explicit, already-established numeric
+    bar from a prior investigation -- apply the same bar consistently
+    rather than re-deciding case by case just because this particular fix
+    happens to look more impressive than the last one that got rejected
+    at the same threshold.*
 52. **erf_poly's a0 ≈ 3.4e-5 (screened 2026-07-09, naive substitution
     fails hard; full refit not attempted)**: the cheap first check --
     naively zero `a0` without refitting anything else -- confirms it's
