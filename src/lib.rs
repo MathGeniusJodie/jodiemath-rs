@@ -1447,9 +1447,12 @@ pub fn log1p(x: f32) -> f32 {
 /// trailing `x == 0.0` select for the opposite-signed-zero-addition trap
 /// (`log_2(1.0)` is `+0.0`, `corr` carries x's sign, and IEEE754 always
 /// resolves `+0.0 + -0.0` to `+0.0`) -- both copied from `log1p` verbatim.
-/// Verified (fuzz, 20M samples over `-1<x<1e6` plus a 20M-sample pass
-/// concentrated on `|x|<1e-6` to stress the correction term): avg ulp
-/// 0.005, max ulp 2 (near 0), max ulp 1 elsewhere.
+/// Originally verified only by a fuzz (20M samples over `-1<x<1e6` plus a
+/// 20M-sample pass concentrated on `|x|<1e-6`), which reported avg ulp
+/// 0.005, max ulp 2 -- undersold by a rare worst case that fuzz sampling
+/// simply didn't land on. The real exhaustive sweep (every f32 bit
+/// pattern, matching readme.md's own table) gives avg ulp 0.102, max ulp 3
+/// at `x=0.018272582` (2026-07-10).
 #[inline(always)]
 pub fn log2p1(x: f32) -> f32 {
     let u = 1.0 + x;
@@ -1734,10 +1737,14 @@ pub fn exp_m1_over_x(x: f32) -> f32 {
 /// through the public `exp2_checked`, same reasoning as `expm1`'s own
 /// standalone copy of `exp`'s reduction) and fuses the trailing `-1` into
 /// the last multiply (`fma(p, t2, -1.0)`, one rounding instead of two).
-/// Verified (fuzz, 20M samples over |x|<100 plus a separate 20M-sample
-/// pass concentrated on |x|<1 to stress the branch seam): avg ulp 0.06,
-/// max ulp 3 -- comparable to `expm1`'s own max ulp 3-4, no seam
-/// discontinuity at the `|x|<0.5` threshold. Inherits `exp2_checked`'s
+/// Originally verified only by a fuzz (20M samples over |x|<100 plus a
+/// separate 20M-sample pass concentrated on |x|<1 to stress the branch
+/// seam), which reported avg ulp 0.06, max ulp 3 -- undersold by a rare
+/// worst case (`x=0.5842032`, comfortably inside both fuzz ranges) that
+/// sampling simply didn't land on. The real exhaustive sweep (every f32
+/// bit pattern, matching readme.md's own table) gives avg ulp 0.077, max
+/// ulp 4 (2026-07-10) -- still comparable to `expm1`'s own max ulp 3-4, no
+/// seam discontinuity at the `|x|<0.5` threshold. Inherits `exp2_checked`'s
 /// full `[-151, 128)` clamp, so is total (never NaN/inf-producing outside
 /// its own true asymptotes): `exp2m1(-inf) = -1`, `exp2m1(inf) = inf`.
 ///
@@ -2742,10 +2749,13 @@ pub fn atan(x: f32) -> f32 {
 /// replacement (same shape as `sinh_throughput`/`cosh_throughput`, just
 /// favoring the other axis): mca latency 61.09→59.09 cyc (-3.3%),
 /// throughput 1.491→1.611 cyc/elem (+8.1% worse). Accuracy is not a
-/// tradeoff here (fuzz: avg/max ulp 0.052/3 vs atan's own 0.068/3, a
+/// tradeoff here (fuzz: avg/max ulp 0.052/3 vs atan's own 0.067/4, a
 /// slight improvement, not a cost) -- use this over `atan` only for a
 /// value on its own or a serial dependency chain where per-call latency
-/// matters more than array-loop throughput.
+/// matters more than array-loop throughput. (`atan`'s own comparison
+/// figure here predates `atan_poly`'s 2026-07-09 numerator refit; see
+/// `atan_poly`'s own doc comment for the current exhaustive-verified
+/// max ulp of 4.)
 ///
 /// Backlog idea #40 (2026-07-09): fold the `a<1.0` select and the final
 /// `mulsign` into "one xor+select" by applying `mulsign` to `p` and
