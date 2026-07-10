@@ -1971,7 +1971,20 @@ cousin.
     much denser one-off pass, then settling back to a fast default once
     its findings are captured, can be worth doing more than once on the
     same target.*
-13. **Generalize the cbrt_accurate recipe** (cheap ≤1-ulp core + one Df32
+
+    **Closing check (same day): exhaustive final grep across the entire
+    codebase (not just `src/lib.rs`) for every "bit-identical to X"
+    phrasing confirms this thread is now complete** -- every genuine
+    claim found (`atan2_unchecked`/`atan2`, `hypot_unchecked`/`hypot`,
+    `pown_small`/`pown`, `remainder_wide`/`remainder_checked`) now has a
+    standing-test pair; the remaining hits are either coefficient-literal
+    comments (`std::f32::consts::LOG2_E`/`LOG10_E`, unrelated to any
+    function pair), `tune.rs`'s own "the search starts from a value
+    bit-identical to the shipped form" seed-initialization comments
+    (about a coefficient array's own starting point, not a runtime
+    function-pair claim), or "reverted, bit-identical to prior HEAD"
+    entries (describing a revert's own git-diff cleanliness, not an
+    ongoing pairwise contract). No further gaps to add.
     Newton step) into a template: candidates rsqrt_accurate,
     exp_accurate/ln_accurate (each is the other's Newton residual),
     sin_accurate near zeros. Paper-screen the residual budget first.
