@@ -3069,7 +3069,27 @@ cousin.
   alone, especially when (as here) the exhaustive check is nearly free
   to run.*
 
-### Longer shots / research-flavored
+- **`exp_m1_over_x`'s advantage over naive `expm1(x)/x`, quantified with
+  real numbers (2026-07-10, confirmed, no bug)**: the function's own doc
+  comment frames the naive `expm1(x)/x` a caller might write as
+  dangerous ("hope `x` never lands exactly on the removable singularity
+  at 0"), but never quantifies *how much* the dedicated function actually
+  helps away from that one point. Measured directly: at `x=0` exactly,
+  `exp_m1_over_x(0)=1.0` (the correct limit) vs. the naive form's
+  `expm1(0)/0 = NaN` -- confirming the singularity is real and exactly
+  where the doc comment says. Across a dense 4M-sample sweep of
+  `x in (-0.1,0.1)` against an f64 reference, the naive form turned out
+  *not* to be catastrophically bad nearby (no other NaNs, avg ulp 0.45,
+  max 3) -- the dedicated function is a real but modest improvement in
+  that neighborhood (avg 0.26, max 2, roughly ~1.7x tighter on average),
+  not an order-of-magnitude fix. So the function's actual, precise value
+  is what the doc comment already implies but doesn't spell out in
+  numbers: it eliminates one genuine singularity at a single point,
+  plus a modest, real accuracy polish nearby -- not rescuing a
+  wide region of otherwise-catastrophic cancellation the way, say,
+  `log1p`'s or `asinh`'s own fixes did for their respective naive forms.
+  No code change; confirms the existing design is exactly as
+  well-motivated as claimed, now with real numbers behind it.
 
 89. **Bit-sliced two-for-one**: evaluate sin and cos polynomials sharing
     y=r² registers across the *same* vector when the caller wants both —
