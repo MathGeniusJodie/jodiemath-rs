@@ -1228,11 +1228,42 @@ cousin.
     over the fast tier's 4-fma Cody-Waite, well short of checked's full
     double-float q — a third point on the speed/domain curve if any user
     workload actually sits there. Only on demand.
-33. **sin fast tier: drop PI_D for a fitted 3.5-word split** — distinct
-    from the rejected 4→3 chain cut (that reused the same constants and
-    died near zeros); a re-*fitted* 3-word split with the third word chosen
-    to minimize worst-case residual near zeros might survive. Screen in
-    Python against the zeros of sin specifically before touching Rust.
+33. ~~**sin fast tier: drop PI_D for a fitted 3.5-word split**~~ (tried
+    2026-07-10, rejected -- also fails near zeros, just less catastrophically
+    than the naive 4→3 cut): no Python/sollya available, so screened
+    numerically in Rust instead. First pass looked genuinely promising: a
+    freshly-derived third word (`PI_C_NEW = round_to_f32(pi - PI_A - PI_B)`
+    computed at f64 precision, *not* a reuse of the existing `PI_C`, which
+    carries trailing zero bits chosen for the old 4-word chain's own needs)
+    measured *better* raw reduction accuracy than the shipped 4-word
+    version across a 40M-sample random fuzz of the raw residual alone (max
+    abs error 1.04e-7 vs 1.19e-7). But wiring it into the *real* sin/cos
+    construction (full poly + parity combine, not just the bare residual)
+    and comparing against the actual 100M-sample everywhere-domain fuzz
+    told a completely different story: sin avg ulp 0.0645->0.1399 (worse),
+    max 412->**1,824,546**; cos avg 0.2917->0.3320 (worse), max
+    2780->**386,929**. Root-caused the worst point (`x=-7.5558225e6`,
+    `q=-2405093`): this is a genuine near-a-zero-of-sin case (the true
+    reduced residual is `~2.37e-7`, tiny), and while the shipped 4-word
+    reduction still resolves it to within `~2.4e-8` absolute error, the
+    3-word version's absolute error there is enough to be off by *~11%
+    relative* to the (already tiny) true residual -- the same "huge
+    relative/ulp error at a true zero, small in absolute terms" shape this
+    crate has repeatedly documented elsewhere (cospi's own artifact), but
+    quantitatively far worse here (both avg *and* max ulp regress, not just
+    an already-tolerated near-zero spike). Confirms the earlier "4→3
+    rejected" finding's premise was right even with a properly re-fit
+    (not just truncated) third word: an entire word's worth of pi's own
+    precision genuinely can't be recovered by any single replacement word
+    across sin's whole documented domain. Reverted, no lib.rs changes.
+    *A narrow probe (bare reduction-residual error, uniformly sampled) can
+    look like a clean win while completely missing a context-dependent
+    failure mode (relative-error blowup specifically near the target
+    function's own zeros) that only shows up once wired into the real
+    end-to-end construction and measured against the real, full-domain
+    fuzz -- exactly the discipline this crate's own accuracy.rs was built
+    to enforce, and exactly what a quick standalone probe skips by
+    default.*
 
 ### asin / acos / atan / atan2
 
@@ -1827,10 +1858,13 @@ cousin.
     iteration -- the effort (a full fresh fit) vs. payoff (one multiply)
     ratio is comparable to idea #52's own "not pursued" call. Left open
     for a session that wants to invest in the fresh fit specifically.
-81. **sinf_poly's copysign(x)**: now that flip-before-poly is used in
-    checked tiers, verify the copysign is still load-bearing for every
-    remaining caller (it was added for the x=±0 case; sinpi/cospi/sind/
-    cosd route sign differently).
+81. ~~**sinf_poly's copysign(x)**~~ (resolved 2026-07-10 -- see the
+    "sinf_poly copysign audit" entry in the "sin_checked / cos_checked
+    internals" section near the top of this file for the full writeup,
+    including the much bigger bug this audit's own real-scale
+    verification surfaced as a side effect): `sin_checked`/`sinpi` are
+    provably redundant with it (split into `sinf_poly_raw`); `sin`/`sind`/
+    `cospi`/`cosd` still genuinely need it.
 82. **log1p at x=+1.0 boundary (resolved 2026-07-09, no bug)**: checked --
     `log1p(1.0)` is bit-exact (`c` is exact at `u=2.0`, right at Sterbenz's
     inclusive boundary), and a dense sweep either side of `x=1.0` shows
