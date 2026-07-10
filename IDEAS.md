@@ -693,10 +693,38 @@ cousin.
 
 ### log family
 
-22. **log1p output-side correction refit**: the rejected small-|x| branch
-    added a whole poly (+48% mca). Instead refit *ln's own* coefficients
-    jointly with log1p's c/u correction term as part of the objective —
-    zero new ops, may shave log1p's max 4.
+22. **log1p output-side correction refit (tried 2026-07-09, rejected --
+    coarse-grid win didn't survive real-sweep verification)**: built the
+    requested joint objective in `examples/tune.rs` (new
+    `tune_joint_fixed0` + `log1p_via_ln_c`, matching `log1p`'s exact
+    shipped construction, `ln(u)+c/u` routed through `ln_poly_c` so a
+    shared coefficient set affects both) -- minimize log1p's error
+    subject to ln's own max never regressing past its shipped baseline,
+    same "constrained search" shape as acos_poly's own joint asin refit
+    (fix 7). The coarse grid (~613-step walk over log1p's own bit
+    patterns) reported a modest, real-looking win: log1p's own max ulp
+    unchanged (4), avg improved ~1.6% (0.29664->0.29179), and `ln`'s own
+    max even improved as a bonus (3->2). But wiring the resulting
+    coefficients into `src/lib.rs`'s actual `ln_normal` and checking
+    against the *real* 100M-sample `accuracy.rs` fuzz (not tune.rs's own
+    coarse grid) showed a genuine regression instead: log1p avg ulp
+    0.0966->0.1085 (worse) and max ulp 4->7 (worse) -- the coarse grid's
+    ~613-step spacing apparently doesn't sample densely enough near
+    whatever region the real random-fuzz's own worst case actually lives
+    in. Reverted the coefficient change in `src/lib.rs`, bit-identical to
+    prior HEAD; kept the tuning infrastructure itself in `tune.rs` (the
+    *technique* -- constrained joint refit sharing one coefficient set
+    across two call sites -- is reusable for a future attempt with a
+    denser or differently-distributed grid, even though this specific
+    run's result didn't survive verification). Commit `9b420a6`
+    (tune.rs only, no src/lib.rs change kept). *This is exactly the
+    "always verify a tune.rs coarse-grid result against the real
+    100M-sample fuzz before trusting it" lesson this file's own
+    `tune_basin_hop` doc comment already documents for acos_poly, now
+    confirmed a second time for a completely different function pair --
+    a coarse grid reporting "no regression, modest improvement" is not
+    sufficient evidence on its own, regardless of how principled the
+    constrained-search setup looks.*
 23. **log10 exact-decade check (resolved 2026-07-09, no bug)**: checked --
     `log10(10^n)` is exact (bit-for-bit `== n as f32`) for every
     `n in [-38,38]`.
