@@ -1856,6 +1856,57 @@ cousin.
    actual accuracy numbers never make it into the one place a user would
    look for them -- periodically check the documented table itself for
    gaps, not just whether the underlying investigation was thorough.*
+
+   **`hypot`/`hypot_checked` (checked 2026-07-10, confirms existing
+   documented behavior, nothing worse found)**: the last binary function
+   this idea's own original text named (`powf`/`atan2`/`hypot`/`remainder`)
+   that had never actually gotten the structured-search treatment --
+   `atan2` and `remainder` were closed above, `powf` found a real gap, so
+   `hypot` was the one remaining gap in idea #8 itself. Unlike `powf`
+   (exponential amplification of a single f32-precision `log_2` call) or
+   `remainder` (unbounded `round(x/y)*y` magnitude blowup), `hypot`'s
+   mechanism is just two independently-correctly-rounded hardware ops
+   composed (`fma(x,x,y*y)` -- one rounding -- then `.sqrt()` -- another
+   rounding), already about as tight as a two-op composition can be
+   without extra precision. Built a standalone probe with an f64 reference
+   (`(x as f64).powi(2) + (y as f64).powi(2)).sqrt()`, ample precision
+   headroom for verifying f32-level accuracy, same reasoning `rsqrt`'s own
+   accuracy sweep already uses) and three search strategies, all within
+   `accuracy.rs`'s own `hypot_domain` restriction (`v==0.0 ||
+   1e-15<|v|<1e18`, avoiding the documented overflow/underflow tradeoff):
+   (1) a full exponent-pair grid (every exponent from roughly -49 to 60 for
+   both `x` and `y`, 64 mantissa fractions each, ~5.6M evaluations) to
+   catch binade-boundary interactions between the fma's rounding and the
+   sqrt's own output-ulp-doubling at power-of-two crossings; (2) explicit
+   probing right at the domain's own `1e-15`/`1e18` edges; (3) `x` near
+   integer values with small `y` offsets, targeting sums close to a
+   perfect square (`n^2`), the shape most likely to expose a sqrt
+   double-rounding artifact. A 30M-sample random-fuzz baseline (run first,
+   same domain) found max ulp ~1.19 (this probe's own continuous ulp
+   metric, not the crate's integer-rounded one -- close enough to the
+   documented "max 1" to trust the methodology). None of the three
+   structured strategies found anything worse than that baseline (structured
+   grid: 0.824; domain-edge/near-square: 0.963) -- the random fuzz alone
+   already samples this space adequately, unlike `powf`'s case where
+   structured targeting was essential. Also confirmed (by deriving it, then
+   checking numerically) that `hypot_checked`'s exponent-based rescaling is
+   mathematically a no-op whenever no overflow/underflow tradeoff is in
+   play -- scaling by an exact power of two before squaring and descaling by
+   its exact reciprocal afterward doesn't change any rounding decision, so
+   `hypot`/`hypot_checked` are bit-identical throughout this entire search
+   domain (confirmed empirically: identical avg/max at every single probed
+   point, not just in aggregate) -- `hypot_checked`'s real accuracy benefit
+   only shows up outside this domain, in the tiny/is_zero edge cases this
+   probe deliberately excludes. This closes idea #8's original four-function
+   list completely (`atan2`/`powf`/`remainder` above, `hypot` here). No
+   `src/lib.rs` change; scratch probe used, not committed. *Unlike `powf`
+   (a genuinely new worse-case bound) or `remainder` (a re-derivation of an
+   already-documented limit), `hypot`'s structured search simply corroborates
+   the existing number -- a function built from two already-correctly-rounded
+   hardware primitives composed directly has much less room for a hidden
+   structural worst case than one built from a fitted polynomial or an
+   exponentially-amplifying reduction, and it's worth knowing which kind of
+   function you're auditing before expecting a `powf`-sized surprise.*
 9. **Structured-error probes**: plot per-function error vs mantissa and vs
    exponent separately; periodic structure invites a cheap structural
    correction (one select or exponent-derived fma) instead of a refit.
