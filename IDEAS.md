@@ -1265,6 +1265,46 @@ cousin.
    dominant term is the polynomial's own inherent fit residual instead,
    which is a fundamentally different (and typically more expensive to
    fix) problem than a single fma reassociation.*
+
+   **`acos` audited too (2026-07-10, no actionable lever -- a third
+   distinct shape of "no single dominant term")**: not on this idea's own
+   original list (only `asin` was named, despite sharing `acos_poly`'s
+   exact shape) -- worth checking directly since `acos`'s own documented
+   avg ulp (0.068) is noticeably higher than `asin`'s (0.025). `acos` has
+   no branch at all (`mulsign((1-a).sqrt() * acos_poly(a), x+0.0) + (pi
+   if x<0)`), so unlike `sinh`/`tanh`/`expm1` there's no crossover to
+   check -- just three candidate rounding sites: the hardware `sqrt`, the
+   poly's own 6-fma Horner chain, and the final multiply combining them.
+   Traced all three in f64 at the real accuracy.rs-reported worst point
+   (x=0.9981218, from a 100M-sample fuzz): `sqrt`'s own rounding
+   (`(1-a).sqrt()` in f32 vs the same expression in f64) is a relative
+   error of ~1.23e-8; the poly's own fma-chain rounding (evaluating the
+   *identical* f32 coefficients through f32-rounded fmas vs full f64
+   arithmetic, isolating rounding from any fit-error question) is
+   ~1.28e-8, essentially the same size; the final multiply's own rounding
+   alone contributes ~0.71e-8. All three are within about 2x of each
+   other -- no single term is an order of magnitude bigger than the
+   others, unlike `exp`'s Cody-Waite case (one dominant, fixable term) and
+   distinct in shape from `sinh`/`cosh`'s finding just above (there, one
+   term -- the poly's fit error -- dominated by 2-3 orders of magnitude
+   over everything else). Here it's three genuinely comparable single-
+   rounding contributions from composing "sqrt, poly, multiply" in the
+   most direct branchless way, each already at its own correctly-rounded
+   or near-correctly-rounded best -- nothing to attack without removing
+   one of the three operations entirely (a bigger redesign, not a
+   round-off fix). A third confirmation, after `expm1`'s "split evenly,
+   no lever" and `sinh`/`cosh`'s "poly fit error dominates," that this
+   technique doesn't always converge on the same *kind* of answer even
+   when the conclusion ("nothing cheap to fix") rhymes. No `src/lib.rs`
+   change; one standalone scratch probe used, not committed. *Not every
+   multi-max-ulp function's round-off budget audit finds the same shape
+   of bottleneck -- sometimes it's one dominant rounding step (`exp`),
+   sometimes a single dominant fit-error term (`sinh`/`cosh`), and
+   sometimes several genuinely comparable single-rounding contributions
+   with no standout (`acos`) -- the technique is still worth running even
+   when the answer turns out to be "no lever," since knowing *which* shape
+   of "no lever" it is tells you whether a fresh poly fit, a different
+   reduction, or nothing at all is the right next thing to try.*
 8. **Binary-function worst-case mining**: unary functions get exhaustive
    sweeps; powf/atan2/hypot/remainder only get fuzz. Guided search
    (branch-and-bound over exponent-pair classes, or fixed y/x ratio
