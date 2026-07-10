@@ -1578,6 +1578,36 @@ cousin.
    dominant poly-fit-error, and `acos`'s three comparable terms: "the
    whole thing is just as good as its shared dependency's own floor."
    No code change; one scratch probe used, not committed.
+
+   **`acosh` audited too (2026-07-10) -- despite looking like `asinh`'s
+   twin (same `log1p`-based construction, same near-`x=1` boundary
+   sensitivity), it lands on a *different* shape entirely: the dominant
+   term is upstream, not `log1p`'s floor.** Worst point from the earlier
+   exhaustive sweep, `x=1.0306563` (max ulp 4). Traced the same way:
+   `s = sqrt(x*x-1)`'s own single-fma rounding differs from the true
+   value by `~6.93e-8`; `d = (x-1)+s` inherits essentially the same
+   `~6.93e-8` (the `x-1` term is Sterbenz-exact, contributing nothing
+   extra); the *final*, total error is `~9.76e-8`. But `log1p`'s own
+   *isolated* contribution (fed the ideal, unrounded `d`) is only
+   `~8.18e-9` -- more than **10x smaller** than the total, the opposite
+   ratio from `asinh`'s own finding (where `log1p`'s isolated
+   contribution matched the total almost exactly). So for `acosh`, the
+   dominant term really is generated locally: `sqrt(x*x-1)`'s own single
+   rounding, right at the `x≈1` boundary where the crate's own doc
+   comment already acknowledges `x*x-1.0` is "a catastrophic-cancellation
+   subtraction" that the single-fma form only partially tames (down from
+   1522 to 4 max ulp, not to zero). No actionable *new* lever -- the
+   `sqrt` step already uses the crate's own established single-rounding
+   mitigation, and squeezing further would need double-float precision
+   through the sqrt itself, a bigger, likely-not-worth-it change for
+   shaving a few ulp off an already-in-budget function. *Two functions
+   that look like the same recipe applied twice (`log1p`-based, same
+   boundary hazard, same fix shape) can still have their own real error
+   dominated by genuinely different steps -- don't assume a sibling's
+   round-off-audit conclusion transfers just because the construction
+   looks the same; the isolated-`log1p`-contribution check is cheap
+   enough to re-run per function rather than assumed from a lookalike.*
+   No code change; one scratch probe used, not committed.
 8. **Binary-function worst-case mining**: unary functions get exhaustive
    sweeps; powf/atan2/hypot/remainder only get fuzz. Guided search
    (branch-and-bound over exponent-pair classes, or fixed y/x ratio
