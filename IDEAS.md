@@ -3242,6 +3242,36 @@ cousin.
     *different* table shouldn't assume the same kind of gap exists --
     checking thoroughly and finding genuine cleanliness is itself a
     useful, confidence-building result, not a wasted effort.*
+
+    **`acos`/`acosh` exhaustive verification (2026-07-10, clean, no hidden
+    worse case)**: both were deeply investigated this session via
+    round-off audits (`acos`'s three-comparable-terms finding, `asinh`'s
+    "inherited from `log1p`'s own floor" finding for its sibling), but
+    always against a `quick` (100M-sample, ~2.3% of the full `2^32`
+    domain) fuzz-reported worst point -- never confirmed exhaustively,
+    unlike `powf`'s own structured search finding a true max nearly 3x
+    its documented (fuzz-only) number. Ran the real `thorough` (every
+    `f32` bit pattern) sweep -- `acos` (`0.0676`/max `6`) and, for free
+    (`"acos"` is a substring of `"acosh"`, so the same filter run covers
+    both), `acosh` (`0.0597`/max `4`) -- both matched their already-
+    documented quick-mode numbers to the decimal, confirming these were
+    already the true exhaustive worst cases, not underestimates. Took
+    ~19.5 minutes for these two alone (`4,294,967,296` patterns each,
+    twice, since `std`'s own reference is measured in the same sweep) --
+    a real time cost for a confirming, not new, result. *Unlike `powf`
+    (fuzz genuinely missed a structured worst case reachable only by
+    deliberately targeting the domain edge), `acos`/`acosh`'s own
+    round-off-audit worst points already came from analyzing the
+    function's real error mechanism directly, not blind random sampling
+    -- exhaustive verification here mostly reconfirms a finding arrived
+    at a different way, at a much higher time cost than the techniques
+    that already investigated these two. Worth knowing before spending
+    another ~20 minutes exhaustively verifying the session's other
+    round-off-audited functions (`sinh`/`cosh`, `erfcx`, `expm1`,
+    `tanh`) -- the marginal value of thorough-mode verification is
+    likely lower for functions whose worst case was already found via
+    direct error-mechanism analysis than for functions only ever checked
+    by random fuzzing.*
 80. **exp2 poly evaluated as 1+f·Q vs direct P(f)=2^f with c0=1 pinned
     (paper-screened 2026-07-09, not implemented -- real modest op savings
     identified, but needs a fresh fit, not a mechanical rewrite)**: traced
