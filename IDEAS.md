@@ -347,6 +347,30 @@ git history / readme.md, not here. Untested backlog is at the bottom.
   measurable accuracy improvement (already near correctly-rounded) but real
   cost: latency +109%, throughput +87%. Reverted before edgecheck.
 
+- **Range-invariant audit: hypot family + remainder_wide (2026-07-10,
+  resolved -- both already-documented, no new bug)**: applied the same
+  "check a fundamental invariant at extreme inputs" technique that found
+  the sin_checked/cos_checked range bug to two more double-float/extended-
+  range functions. `hypot`/`hypot_unchecked` return exactly `0` for paired
+  denormal inputs (violating `hypot(x,y) >= max(|x|,|y|)`) -- but `hypot`'s
+  own doc comment already explicitly says "naive sqrt(x^2+y^2), no
+  anti-overflow rescaling... trades the overflow/underflow edge cases for
+  vectorizability," an already-accepted tradeoff (confirmed `hypot_checked`
+  itself has zero such violations, matching idea #83's own prior
+  "denormal-pair path, no bug" finding for that specific tier).
+  `remainder_wide` showed dramatic-looking violations of `|remainder|<=|y|/2`
+  (e.g. `remainder_wide(1e37,1e10)=-1.33e14`) at first -- but every single
+  test case had `|x/y|` far beyond its own documented `~2^48` limit
+  (its own doc comment: "degrading past that where a single correction
+  pass is no longer enough... the same kind of 'harder, separate limit'...
+  just much further out", i.e. already anticipated, not new). Re-tested
+  strictly within the documented `|x/y| <= 2^48` domain (50M random
+  samples, 33.2M in-domain): zero violations. Both functions behave exactly
+  as already documented; no code changes. *Same technique, same session,
+  a useful negative result this time -- confirms the sin_checked/
+  cos_checked bug wasn't symptomatic of a wider pattern in this crate's
+  other double-float/extended-range functions.*
+
 ## asin / acos / atan / atan2
 
 - **acos_poly Horner→Estrin (2026-07-07)**: real latency win, but fma
