@@ -1954,9 +1954,60 @@ cousin.
       here). No code changes; the harness itself (not committed, a
       standalone probe) is cheap to reconstruct if a future session wants
       to re-run it after some other change.
-11. **Differential testing vs sleef/core-math/rlibm** built locally, not
+11. ~~**Differential testing vs sleef/core-math/rlibm** built locally, not
     just f64-rounded references — also catches double-rounding artifacts in
-    accuracy.rs's own reference path.
+    accuracy.rs's own reference path.~~ (checked 2026-07-10, **already done**
+    -- this idea's first half was fully implemented before it was ever
+    written down, just never reconciled against IDEAS.md): grepped
+    `accuracy.rs`'s own `sleef::f64x` import list (line 42-47) and every
+    `measure!`/`sweep`/`fuzz2` call site -- every single reference used
+    anywhere in the file is sleef-derived (either a bare `*_u35`/`*_u10`/
+    `*_u15` function, or a small closure composed from one, e.g.
+    `log2p1_ref = log1p_u10(v)/LN_2`, `sinc_ref` built from `sinpi_ref`),
+    not one raw scalar-`f64`-via-std reference left anywhere. Root-caused
+    via `git log`: this was commit `25d7888` ("accuracy.rs: nice+half-core,
+    sleef-vectorized f64 reference (needs nightly)", 2026-07-07) -- three
+    days before this idea's own text was added to this file, and for a
+    *different* stated reason (vectorizing the reference computation so it
+    stops dominating sweep wall-time, per that commit's own message and the
+    file's own top-of-file comment), not explicitly to satisfy this idea's
+    differential-testing ask. So the first half of this idea is a real
+    "already solved, just not cross-referenced" case, the same shape as
+    idea #79's readme.md doc-sync misses, just between a design decision and
+    this backlog file instead of between two tables.
+
+    This idea's *second* half -- "catches double-rounding artifacts" --
+    is real in principle but checked out to be negligible in practice, not
+    just assumed away: the file's own comment already argues "3.5 ULP of
+    *f64* error is ~1e8x tighter than f32 ever needs," and that number
+    holds up under a direct check. Half an ulp of f32 is `2^-24` relative;
+    sleef's coarsest bucket used here (u35 = 3.5 ulp of f64) is `3.5*2^-52`
+    relative -- a ratio of `~7.7e7`, matching the file's own "~1e8x" claim
+    to within a factor of ~1.3. For a double-rounding flip to actually
+    happen, `f(x)`'s *true* real value has to land within that `~7.7e7`-times-
+    smaller window around an f32 rounding boundary purely as a fact of
+    where `x`'s own quantized value happens to put it -- back-of-envelope,
+    that's roughly `2^32 (exhaustive patterns) * 2*3.5*2^-52/2^-23 ~= 56`
+    *candidate* at-risk inputs across the *entire* f32 domain for a single
+    function's single reference, out of 4.3 billion -- and being an
+    at-risk input only means the reference *might* be wrong by 1 ulp for
+    that one specific value, not that it necessarily is, nor that our
+    function's own output happens to be the one bit pattern away that
+    would turn a real 0-ulp match into a false 1-ulp report. Finding one
+    for real would need arbitrary-precision (MPFR-class) ground truth to
+    even detect, which isn't available in this environment (same "no
+    scipy/sollya/lolremez" limitation already noted elsewhere in this
+    file) -- so this stays a real, quantified, structurally-unavoidable
+    limitation of using *any* finite-precision reference, not a specific
+    bug to chase down. No code change (this is accuracy.rs's existing,
+    already-correct design, now with the reasoning double-checked rather
+    than taken on faith); nothing to commit to `src/lib.rs`. *A backlog
+    idea can already be substantially satisfied by an unrelated earlier
+    commit made for a completely different reason -- worth grepping the
+    actual current state of the harness before assuming an old "someday"
+    idea is still open, the same lesson idea #79's doc-sync audit already
+    taught for readme.md tables, just applying it to this file's own
+    backlog instead.*
 12. ~~**Standing test: every `_unchecked` bit-matches its checked sibling on
     the documented domain**~~ (implemented 2026-07-10, `examples/
     unchecked_parity.rs`): fuzzed all 10 checked/unchecked pairs
