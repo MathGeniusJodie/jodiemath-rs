@@ -1925,6 +1925,54 @@ cousin.
    tried on yet, or for chasing the smaller `[0.03,0.25]` bump
    specifically if someone wants the average-only, modest payoff.
 
+   **Chased the `[0.03,0.25]` bump specifically (2026-07-10, root-caused,
+   refit attempted and rejected -- a real, if modest, coordinate-descent
+   "improvement" that reverses on the real domain)**: exhaustive sweep
+   over every f32 in `(0.03,0.25)` confirmed the bump directly (avg 4.31,
+   max 9.8 at `x=0.049048327`). Root-caused the worst point by tracing
+   every step in f64 alongside the crate's real f32 arithmetic (same
+   technique as this file's round-off-budget audits, idea #7): `exp2_checked`'s
+   own rounding contributes `6.46e-8` relative error, `erfc_rational`'s
+   f32-arithmetic rounding (isolated from its fit quality by evaluating
+   the *same* f32-rounded coefficients in f64) contributes `1.28e-7`, the
+   full product's combined rounding is `2.22e-7` -- but the rational's own
+   **fit truncation error** (the coefficients' inherent approximation
+   quality, evaluated with ideal-precision arithmetic against the true
+   `erfc(x)/exp(-x^2)` target) is `3.96e-7`, *larger* than the combined
+   rounding total. So unlike the large-`x` growth (idea #53's already-
+   understood "shrinks toward 0, same absolute error reads as bigger
+   ulp"), this bump really is fit-quality-dominated, the same shape idea
+   #7 found for `sinh`/`cosh` -- suggesting a refit, not a rounding fix,
+   was the right lever to actually try (not just infer from the trace).
+   Built a standalone coordinate-descent refit of `erfc_rational`'s 8
+   coefficients, scored against a grid deliberately dense in `[0.02,0.30]`
+   (to target the bump) plus a sparser sweep over the rest of `[0,10]`
+   (so a fix couldn't silently regress everywhere else, unlike the
+   already-rejected 2026-07-08 "centered-variable"/domain-split attempts).
+   Found real movement immediately (`max 80->79`, `avg 1.212->1.109` on
+   that grid) -- small coefficient nudges (a handful of ULPs each, e.g.
+   `0x35c42f59->0x35c42f12`), not a no-op. But per this file's own
+   hard-won `tune_basin_hop`/acos_poly lesson ("a coarse-grid win must
+   survive the real fuzz before it means anything"), verified against a
+   real dense sweep of the *entire* `[-10,10]` domain using the exact
+   shipped formula (`exp2_checked`, not tune.rs's `.exp2()` approximation)
+   at step-4 resolution (~546M points, effectively exhaustive) -- and the
+   "improvement" **reversed**: shipped `max 109 avg 0.321` vs. tuned
+   `max 111 avg 0.342`, worse on both axes over the real domain, not
+   better. The grid's deliberate bias toward `[0.02,0.30]` bought a real
+   local gain there at a net cost everywhere else the biased grid
+   under-weighted -- the same "coarse-grid win evaporates or reverses on
+   the real distribution" failure this file has already hit for
+   `acos_poly`'s own basin-hop attempt, now confirmed again for a
+   deliberately-biased-not-just-coarse grid. Not adopted; no
+   `src/lib.rs` change; scratch probe used, not committed. *A polynomial
+   fit's own coefficients already represent a global tradeoff across its
+   whole domain -- targeting a grid at one weak sub-range and finding a
+   real, verified-on-that-grid improvement doesn't mean the fit had slack
+   to give up there for free; it can just as easily be borrowing accuracy
+   from everywhere else the biased grid under-samples, only visible once
+   checked against the real, unbiased evaluation distribution.*
+
    **Applied to `rcbrt` (2026-07-10, real periodic structure found, but
    root-caused to an already-understood, already-optimized mechanism --
    not a missed correction term either)**: picked `rcbrt` (`1.0/cbrt(x)`)
