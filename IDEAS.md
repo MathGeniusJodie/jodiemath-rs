@@ -3184,6 +3184,37 @@ cousin.
   cause ("dominated by k") that implies a specific, checkable
   concentration pattern.*
 
+- **`log1p` vs. naive `ln(1.0+x)`, quantified -- the capstone case
+  closing this session's small naive-vs-dedicated survey (2026-07-10,
+  confirmed exactly, no bug)**: `log1p` is the canonical case every
+  other function in this mini-survey (`atanh`, `softplus`, and `ln`'s
+  own `log_2*LN_2` case) explicitly cites ("the same cancellation
+  `log1p` exists to avoid") -- fitting to close the loop by quantifying
+  the original case itself. `log1p`'s own doc comment gives a precise
+  *threshold* (naive form "rounds to exactly 1.0, hence exactly 0, for
+  `|x|` below ~6e-8, half of `f32`'s `ulp(1.0)`") but no growth curve.
+  Measured both: the naive form's ulp error climbs steadily as `x`
+  shrinks -- 3 ulp at `x=0.1`, 401 at `x=1e-3`, 2281 at `x=1e-4`, ~14,932
+  at `x=1e-5`, hundreds of thousands by `x=1e-6`, then collapses to
+  *exactly* `0.0` (total information loss, `log1p` itself staying
+  bit-exact, `0` ulp, at every one of these points) starting at
+  `x=5.960462e-8` -- which is `2^-24` *exactly*, confirming the doc
+  comment's own "~6e-8, half of `ulp(1.0)`" claim isn't just
+  approximately right, it's the precise value to the bit. Completes the
+  session's small survey of this doc-comment family with real numbers
+  behind every member: `exp_m1_over_x` (modest, single removable point),
+  `atanh` (severe, wide, still-finite garbage), `softplus` (severe, wide,
+  total collapse), `ln` (real but far milder than worded, wrong
+  concentration location), and now `log1p` itself (severe, wide,
+  total collapse, exactly at the claimed threshold) -- the prototype case
+  turns out to share `softplus`'s shape (not surprising, since
+  `softplus`'s own naive-form problem *is* this same `log1p` cancellation
+  one level up). No code change. *Closing a small investigative arc by
+  checking the ancestor case last, once every derived case is already
+  quantified, both confirms the family resemblance directly and gives a
+  natural stopping point -- there's no fifth sibling left to check once
+  the common cause itself has been measured.*
+
 89. **Bit-sliced two-for-one**: evaluate sin and cos polynomials sharing
     y=r² registers across the *same* vector when the caller wants both —
     a sincos slice API (not scalar API, which already failed) where lane
