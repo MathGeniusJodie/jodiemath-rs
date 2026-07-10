@@ -669,8 +669,19 @@ fn main() {
     // f32::MAX,f32::MAX overflows the naive x*x+y*y (already inf before
     // sqrt even runs); hypot_checked's whole point is getting this right.
     check("hypot_checked(MAX,MAX)", hypot_checked(f32::MAX, f32::MAX), f32::INFINITY);
-    check_finite("hypot_checked(MAX/2,MAX/2)", hypot_checked(f32::MAX / 2.0, f32::MAX / 2.0));
-    check_finite("hypot_checked(min_denorm,min_denorm)", hypot_checked(f32::from_bits(1), f32::from_bits(1)));
+    // hypot(x,y) >= max(|x|,|y|) for any finite x,y (a provable
+    // mathematical fact) -- checked directly (2026-07-10): holds for
+    // hypot_checked at both these points (unlike plain hypot/
+    // hypot_unchecked, which trade this away for paired denormal inputs,
+    // an already-documented tradeoff -- see hypot's own doc comment).
+    // check_range locks this in rather than only checking finiteness.
+    check_range("hypot_checked(MAX/2,MAX/2)", hypot_checked(f32::MAX / 2.0, f32::MAX / 2.0), f32::MAX / 2.0, f32::MAX);
+    check_range(
+        "hypot_checked(min_denorm,min_denorm)",
+        hypot_checked(f32::from_bits(1), f32::from_bits(1)),
+        f32::from_bits(1),
+        f32::MAX,
+    );
 
     // rhypot(x,y) = 1/hypot(x,y). Every special case here falls out of the
     // naive fma(x,x,y*y).sqrt() composition purely from IEEE754 semantics
