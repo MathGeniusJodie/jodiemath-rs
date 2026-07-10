@@ -4175,6 +4175,43 @@ cousin.
     that need both, amortizing the shared prefix that scalar fusion
     attempts kept failing on (the win the failed sincos sought lives at
     the API level, not inside one scalar call).
+
+    **Checked the premise directly before building anything (2026-07-10):
+    two of the three named pairs don't actually share a computation at
+    all, only a coincidental resemblance.** `sigmoid`/`tanh`: confirmed by
+    reading both bodies side by side, they *do* share the exact same
+    retuned 4-coefficient poly (already independently established, see
+    idea #7's `sigmoid` round-off audit), but each reduces a *different*
+    argument first -- `tanh` computes `exp(2x)` (`y = 2*x`, clamped
+    `[-87,88]`), `sigmoid` computes `exp(-x)` (`y = -x`, clamped
+    `[-87,88.722839111673]`). `2x` and `-x` are unrelated values for a
+    general `x` (equal only at `x=0`), so there is no shared `exp`
+    evaluation to amortize between a real call to both -- a combined
+    `sigmoid_tanh(x)` would still need two independent reductions and two
+    independent `exp2int`/poly evaluations, just sharing the *literal
+    coefficients* in the source (a code-dedup nicety, not a runtime
+    saving). `erf`/`erfc`: also checked directly -- `erf`'s tail branch
+    feeds `exp2_checked` a full degree-6 polynomial (`erf_poly(xa)`,
+    already fitted to approximate `log2(erfc(xa))` as a single unit),
+    while `erfc` feeds it the bare, unfitted `-xa²·log2(e)` and applies a
+    *separate* multiplicative rational correction (`erfc_rational(xa)`)
+    afterward -- two structurally different decompositions of the same
+    target function, not a shared intermediate either. Only the third
+    pair this idea names, `sin`/`cos` of the *same* angle, actually shares
+    real work (the same reduction, same `r`/`r2`/`r4`), and that one still
+    needs the slice-level API this idea's own text already flags as the
+    prerequisite. Not pursued further for `sigmoid`/`tanh` or `erf`/`erfc`
+    specifically -- there's no CSE to build there, so a paired API for
+    either would just be two independent calls behind one name. No
+    `src/lib.rs` change; this is a scoping correction so a future session
+    doesn't spend effort implementing a paired entry point for a premise
+    that doesn't hold. *"These two functions look similar" (shared
+    coefficients, shared general shape, shared name-adjacency in a
+    backlog bullet) is not the same claim as "these two functions compute
+    a shared intermediate value" -- check the actual arguments each
+    passes to its own hot inner call before assuming a CSE opportunity
+    exists, the same discipline idea #7's `acosh`/`asinh` lookalike-but-
+    different finding already established for round-off shape.*
 95. **Stochastic rounding harness mode**: run accuracy sweeps with the
     final fma's rounding perturbed ±1 ulp to measure how close each
     function sits to a rounding boundary — identifies which maxes are
