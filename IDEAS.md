@@ -761,6 +761,44 @@ git history / readme.md, not here. Untested backlog is at the bottom.
   benefit, fighting the codebase's own established, consistent voice --
   not done. No code change; noted here so a future session doesn't
   rediscover the same 182-line diff and wonder whether to run it blind.
+
+- **`cargo doc` (2026-07-10, real gaps found and fixed)**: a genuinely
+  fresh hygiene dimension -- `cargo doc --no-deps` failed *completely*
+  (hit `src/lib.rs`'s own hardware-FMA `compile_error!` guard) even
+  though a plain `cargo build`/`test` in the same shell works fine.
+  Root cause: `.cargo/config.toml`'s `[build] rustflags` setting
+  (needed for FMA codegen) does *not* apply to `cargo doc` at all --
+  `rustdoc` reads a separate `rustdocflags` key, a genuine Cargo/rustdoc
+  quirk, not a "RUSTFLAGS got overridden" situation the crate's own
+  compile-error message already warns about. Confirmed directly:
+  `RUSTFLAGS="-C target-cpu=native" cargo doc` *still* failed;
+  `RUSTDOCFLAGS="-C target-cpu=native" cargo doc` worked. Added a
+  matching `rustdocflags` line to `.cargo/config.toml` so `cargo doc`
+  works out of the box, same as every other subcommand. Once it could
+  actually run, found 9 real warnings: 6 "public documentation links to
+  private item" (`` [`exp_pos_neg_checked_half`] ``, `` [`log2_df`] ``,
+  `` [`exp2_checked_df`] ``, `` [`Df32`] `` referenced from *public*
+  function docs via markdown link syntax, but all four are private --
+  rustdoc can't resolve a link to them, so readers of the rendered HTML
+  docs would see a broken/non-clickable reference) and 3 "unresolved
+  link" false positives (`[0,pi]`, `[0,1]`, `[0,10]` -- literal
+  mathematical intervals rustdoc's CommonMark parser mistook for
+  markdown reference links, apparently because they start with a bare
+  digit rather than `-`, unlike neighboring `[-1,1]`-style intervals in
+  the same sentences that were never flagged). Fixed both classes the
+  same way already established elsewhere in the file for exactly this
+  situation (e.g. `exp_pos_neg` is already referenced with plain
+  backticks, not brackets, right next to the now-fixed
+  `` [`exp_pos_neg_checked_half`] ``): switched from `` [`item`] ``
+  markdown-link syntax to plain `` `item` `` backtick code-formatting,
+  which renders identically (monospace) without attempting to link
+  anywhere. `cargo doc --no-deps` now completes with zero warnings;
+  `cargo test`/`edgecheck.rs`/`cargo clippy --all-targets` (0 hard
+  errors) all still clean. *`cargo doc` is a genuinely different check
+  from `build`/`test`/`clippy`/`fmt` -- it exercises rustdoc's own
+  separate flag-reading and link-resolution machinery, so a crate that
+  builds, tests, and lints cleanly can still fail `cargo doc` outright
+  for a reason none of those other checks would ever surface.*
 ## sin_checked / cos_checked internals
 
 - **round_x_over_pi: remove dead pre_offset=0.0 add (2026-07-07)**:

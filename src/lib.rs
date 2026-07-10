@@ -1966,7 +1966,7 @@ fn exp_pos_neg_checked_half(x: f32) -> (f32, f32) {
 }
 
 /// Full-range sibling of [`sinh`] -- same construction, just built on
-/// [`exp_pos_neg_checked_half`] instead of the unchecked `exp_pos_neg`
+/// `exp_pos_neg_checked_half` instead of the unchecked `exp_pos_neg`
 /// (which already returns the `0.5*exp(+-x)` halves, so no separate
 /// `0.5*` multiply here, unlike `sinh`). See that function's own doc
 /// comment for the correctness gaps this closes (`sinh`'s own
@@ -1981,8 +1981,8 @@ pub fn sinh_checked(x: f32) -> f32 {
 }
 
 /// Full-range sibling of [`cosh`] -- same construction, just built on
-/// [`exp_pos_neg_checked_half`] instead of the unchecked `exp_pos_neg`.
-/// See [`exp_pos_neg_checked_half`]'s own doc comment for the
+/// `exp_pos_neg_checked_half` instead of the unchecked `exp_pos_neg`.
+/// See `exp_pos_neg_checked_half`'s own doc comment for the
 /// correctness gaps this closes.
 #[inline(always)]
 pub fn cosh_checked(x: f32) -> f32 {
@@ -2451,7 +2451,7 @@ fn asin_poly(x: f32) -> f32 {
     fma(u, x, 1.5707785)
 }
 
-/// acos(x), domain x in [-1,1] (result always in [0,pi], never negative --
+/// acos(x), domain x in [-1,1] (result always in `[0,pi]`, never negative --
 /// unlike sin/asinh/etc., acos isn't an odd function, so x=-0.0 has no
 /// legitimate negative result the way it does for those). `mulsign`
 /// (bit-based sign) and `x < 0.0` (value-based comparison) disagree on
@@ -2733,7 +2733,7 @@ pub fn atan(x: f32) -> f32 {
 }
 
 /// Latency-tier atan: a division-free odd degree-17 poly (fit directly
-/// against atan(r) over r in [0,1], not derived from atan_poly's own
+/// against atan(r) over r in `[0,1]`, not derived from atan_poly's own
 /// rational) instead of atan_poly's 3/3 Pade form. Removes the division
 /// atan_poly's own critical path pays (a division can't start until its
 /// numerator/denominator resolve, unlike cbrt's early-starting `rcp`),
@@ -2960,7 +2960,7 @@ fn erfc_rational(xa: f32) -> f32 {
 /// past -126, so the result was unreliable garbage for that whole tail
 /// instead of a clean 0. Fixed by calling `exp2_checked` directly on the
 /// same exponent instead of going through `exp` -- its wider [-151, 128)
-/// domain comfortably covers the full clamped range (xa in [0,10] means
+/// domain comfortably covers the full clamped range (xa in `[0,10]` means
 /// the exponent never goes below -100*log2(e) =~ -144.3, still inside
 /// exp2_checked's bound), and it's already the crate's existing
 /// correctly-rounded full-range primitive, no new code needed.
@@ -3523,7 +3523,7 @@ pub fn pown_const<const N: i32>(x: f32) -> f32 {
 /// multiplication would otherwise be able to use. Fixed by keeping
 /// `log2(x)` as a double-float (Df32) through the multiply by `y` and the
 /// exp2 reconstruction, only collapsing to a single f32 at the very end
-/// (see [`log2_df`]/[`exp2_checked_df`]). Confirmed by fuzzing (25M
+/// (see `log2_df`/`exp2_checked_df`). Confirmed by fuzzing (25M
 /// samples, apples-to-apples against the plain formula on the same
 /// inputs): avg ulp 0.36 -> 0.05 (-87%), max ulp 170 -> 154 -- both
 /// improve. Real mca cost though (double-float bookkeeping plus the poly
@@ -3760,7 +3760,7 @@ pub fn remainder_checked(x: f32, y: f32) -> f32 {
 /// by more than `0.1*|y|`, i.e. landed on a completely different multiple
 /// of `y`), worst case off by 31 whole multiples of `y`.
 ///
-/// Fixed by computing the residual with [`Df32`] (already in the crate)
+/// Fixed by computing the residual with `Df32` (already in the crate)
 /// instead of a single `fma`: `q0*y` via `Df32::from_mul` (an exact
 /// two-product) subtracted from `x` gives the *exact* real-valued residual
 /// `x - q0*y`, unlimited by `q0`'s own coarse quantization -- collapsing

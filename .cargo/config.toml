@@ -2,3 +2,10 @@
 # mul_add compiles to a libm call (~2x slower) without hardware fma;
 # benchmarks are only meaningful with this enabled
 rustflags = ["-C", "target-cpu=native"]
+# `cargo doc` invokes rustdoc, which does NOT read `rustflags` above --
+# rustdoc has its own separate flag mechanism, and without this, `cargo
+# doc` hits src/lib.rs's own compile_error! FMA guard even though a plain
+# `cargo build` in the same shell works fine. This isn't a RUSTFLAGS-
+# override situation (see that guard's own error message) -- it's that
+# `cargo doc` was never reading `rustflags` in the first place.
+rustdocflags = ["-C", "target-cpu=native"]
