@@ -1579,6 +1579,36 @@ cousin.
      staleness (found again here, a fifth instance this session:
      `exp_pos_neg`, `erf_tail_c`, `acos_poly`, `cbrt_normal`, `exp_r_c`)
      more than finding new shipped wins.*
+
+   **`asin_poly` checked too (2026-07-10) -- also clean, and a near-miss
+   worth flagging: `tune.rs`'s own seed was *slightly* imprecise (a few
+   ULP off in `c[0]` from a transcription rounding, not a real bug like
+   the others), which briefly looked like real headroom (`start max 6
+   avg 1.236` -> `tuned max 5 avg 0.840`) until decoding the seed's exact
+   bits and comparing against the real shipped literals showed coordinate
+   descent was just recovering the true value, not finding anything new.**
+   Rebuilt the check from the exact shipped bits directly (decoded via a
+   throwaway script rather than trusting eyeballed `%e`-formatted
+   comparisons, which don't show a few-ULP difference): confirmed
+   bit-identical against the real compiled `asin` first (0 mismatches),
+   then coordinate descent from the true starting point moved only 3 ULP
+   in `c[0]` and the real dense verification (whole `[-1,1]` domain,
+   ~1.07 billion points, scored through the *whole* `asin` -- both
+   branches, real selection -- per the `cbrt_normal` lesson) came back
+   **bit-for-bit identical** between shipped and "tuned" (`max 9 avg
+   0.05681`, both). `asin_poly` is already at a genuine local optimum.
+   Tightened `tune.rs`'s own seed to the exact bits anyway (commit
+   `7fc7c2d`) so a future session doesn't have to re-derive this. *A
+   coefficient-search "improvement" doesn't need a large, obviously-wrong
+   seed to be misleading -- even a seed that's only a handful of ULP off
+   from the true shipped value can manufacture an illusory multi-percent
+   "win" that's really just coordinate descent walking back to where the
+   crate already is; decode and compare exact bits, not `%e`-formatted
+   strings, before trusting a "start vs. tuned" gap.* This closes out
+   every `tune.rs` probe on this iteration's checklist
+   (`cbrt_normal`/`sinf_poly`/`expm1_near0`/`exp_r_c`/`asin_poly`) --
+   `exp2` and `acos_poly` remain the only two real, adopted wins found
+   this way.
 4. **Per-function transformed-variable fit search**: fit in u=s/(s+2),
    u=s·(s+a), etc., searching over the transform family. Distinct from
    centered-variable refits (rejected — that only moved the origin);
