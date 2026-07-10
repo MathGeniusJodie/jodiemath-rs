@@ -3469,6 +3469,51 @@ cousin.
     iteration -- the effort (a full fresh fit) vs. payoff (one multiply)
     ratio is comparable to idea #52's own "not pursued" call. Left open
     for a session that wants to invest in the fresh fit specifically.
+
+    **Actually run, 2026-07-10 (rejected -- the paper screening's caution
+    was right, and by a much wider margin than "risks a regression"
+    suggested)**: `tune.rs` already had exactly the pinning infrastructure
+    this needed (`tune_fixed0`, built earlier for `log_2`/`log2_atanh`'s own
+    mathematically-required leading terms), so there was no reason to leave
+    this as a paper exercise. Added `exp2_direct_c` -- same 3-balanced-pair
+    Estrin-in-`f2` shape as the shipped `exp2_c`/`exp2` (`f2*f*f` chain, `g0`/
+    `g1`/`g2` pairs, `h`/`p` combine), but with `c[0]` pinned to exactly
+    `1.0` and the final combine reduced to a single `p*exp2int` multiply.
+    Confirmed by hand (expanding both constructions symbolically) that this
+    really is one fewer op than shipped (7 vs 8: `f2`+`p*exp2int` = 2 muls
+    plus 5 fmas, vs. shipped's `f2`+`exp2int*f` = 2 muls plus 6 fmas... the
+    real saving is the *combine*'s own multiply, not the poly) -- but also
+    confirmed the degree-of-freedom loss the screening predicted: this
+    construction's `P(f)` expands to a genuine degree-5 polynomial (`1 +
+    c1 f + ... + c5 f^5`, 5 free coefficients after pinning `c[0]`), one
+    fewer free parameter than the shipped `Q(f)` fit's effective degree-6
+    `P(f)=1+f*Q(f)` (6 free coefficients, `c[0]`'s pin coming for free from
+    the `+f*` structure rather than costing a degree of freedom the way
+    this direct form's pin does). Seeded from `2^f`'s own Taylor series
+    (`c[k]=ln(2)^k/k!`) and tuned with `tune_fixed0` against the same
+    `(-126,128)` grid `exp2` itself uses: shipped `exp2_c` on this grid
+    (unchanged, re-run for a same-session baseline) is max ulp `2`/avg
+    `0.203`. `exp2_direct_c` started at max `1433`/avg `494` from the Taylor
+    seed and, after full coordinate-descent convergence, only reached max
+    `463`/avg `232` -- **not a modest regression, three full orders of
+    magnitude worse on average, nowhere close to clearing exp2's own
+    essentially-zero headroom.** One missing degree of freedom turned out
+    to be nowhere near "one fitted constant's worth" of capacity for this
+    domain -- `f` spans the *entire* `[0,1)` (not a small sub-octave the way
+    e.g. `cbrt_normal`'s per-octave fits get to assume), so a degree-5
+    minimax fit of `2^f` over the full unit interval is fundamentally far
+    looser than a degree-6 one, not just slightly looser. No `src/lib.rs`
+    change (never came close to being a candidate); `exp2_direct_c` and its
+    `tune()` call kept in `tune.rs` as reference infra, matching this file's
+    own established convention for documented-and-rejected probes (`exp2_
+    round_c`, `exp2_lut8_c`). *A "real, if modest, saving of one multiply"
+    can hide a much bigger hidden cost than "one fitted coefficient's worth
+    of accuracy" -- the actual size of the gap (three orders of magnitude,
+    not "modestly worse") only showed up once the fit was actually run, not
+    from counting degrees of freedom on paper; the tooling (`tune_fixed0`)
+    already existed specifically to make this check cheap, so there was no
+    good reason to leave it as a screening estimate once that tooling was
+    noticed.*
 81. ~~**sinf_poly's copysign(x)**~~ (resolved 2026-07-10 -- see the
     "sinf_poly copysign audit" entry in the "sin_checked / cos_checked
     internals" section near the top of this file for the full writeup,

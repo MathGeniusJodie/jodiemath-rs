@@ -40,6 +40,35 @@ fn exp2_c(x: f32, c: &[f32]) -> f32 {
     )
 }
 
+// idea #80 (2026-07-10): direct P(f)=2^f fit, same 3-balanced-pair
+// Estrin-in-f2 shape and same 6 stored coefficients as the shipped Q(f)=
+// (2^f-1)/f form above, but c[0] pinned to exactly 1.0 (P(0)=2^0=1) so the
+// final combine is a single `p*exp2int` multiply instead of exp2_c's own
+// `exp2int*f` (extra multiply) + final fma. This is genuinely NOT the same
+// fit as exp2_c algebraically re-expressed: exp2_c's Q(f) is a free degree-5
+// fit (6 free coefficients), and P(f)=1+f*Q(f) inherits degree 6 with all 6
+// of Q's coefficients still free -- but this direct P(f) construction is
+// only degree 5 with c[0] forced, leaving just 5 free coefficients (c[1]
+// through c[5]), one fewer degree of freedom than exp2_c's own implicit
+// degree-6 fit. Tuned with tune_fixed0 (never perturbs c[0]) to check
+// whether that one fewer degree of freedom still clears exp2's own
+// essentially-zero headroom (already max ulp 1, avg ~0.03) -- see the
+// tune("exp2_direct", ...) call in main() and IDEAS.md's own writeup of
+// the result.
+#[inline(always)]
+fn exp2_direct_c(x: f32, c: &[f32]) -> f32 {
+    let k = x.floor();
+    let f = x - k;
+    let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
+    let f2 = f * f;
+    let g0 = fma(c[1], f, c[0]); // c[0] pinned to 1.0 exactly
+    let g1 = fma(c[3], f, c[2]);
+    let g2 = fma(c[5], f, c[4]);
+    let h = fma(g2, f2, g1);
+    let p = fma(h, f2, g0);
+    p * exp2int
+}
+
 // IDEAS.md backlog round 3 #1, tried 2026-07-09/10 and rejected on every
 // one of the 6 functions sharing this poly (see IDEAS.md's "exp2 / exp /
 // sin / cos / tan" section for the full writeup): k=round(x) (f in
@@ -932,6 +961,28 @@ fn main() {
         // for headroom from where the crate actually is now.
         let init = [2.1702237e-4, 1.2439679e-3, 9.678826e-3, 5.548333e-2, 2.4022985e-1, 6.93147e-1];
         tune("exp2", &exp2_c, &|x| x.exp2(), &grid, &init);
+    }
+    if which.contains("exp2direct") {
+        // same domain/grid as "exp2" above.
+        let mut grid = vec![];
+        let mut b = 1e-6f32.to_bits();
+        while b <= 126.0f32.to_bits() {
+            grid.push(f32::from_bits(b));
+            grid.push(-f32::from_bits(b));
+            b += 997;
+        }
+        // Taylor seed for P(f)=2^f=e^(f ln2), c[0]=1.0 exact (pinned, never
+        // perturbed by tune_fixed0), c[1..6) = ln2^k/k! for k=1..5.
+        let l = std::f64::consts::LN_2;
+        let init = [
+            1.0,
+            l as f32,
+            (l * l / 2.0) as f32,
+            (l * l * l / 6.0) as f32,
+            (l * l * l * l / 24.0) as f32,
+            (l * l * l * l * l / 120.0) as f32,
+        ];
+        tune_fixed0("exp2_direct", &exp2_direct_c, &|x| x.exp2(), &grid, &init);
     }
     if which.contains("exp2round") {
         // same domain/grid as "exp2" above, just k=round(x) internally.
