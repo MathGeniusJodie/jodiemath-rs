@@ -79,6 +79,8 @@ hypot_unchecked (bounded, +) | 0.034 |     1     | (bit-identical to hypot on it
          pown (|n|<=64) |    0.209   |    90     | (no std pown)
         powf (in-domain)|    0.181   |  >=312    |  0.000  |    1
     powf_unchecked (+)  |    0.363   |  >=312    | (bit-identical to powf on its domain)
+        powf_checked (in-domain)|  0.046   |  >=203    | (no std comparison needed, no domain restriction)
+powf_checked_unchecked (+)|    0.046   |  >=203    | (bit-identical to powf_checked on its domain)
 ```
 
 # benchmarks

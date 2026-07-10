@@ -1392,6 +1392,50 @@ cousin.
    one is itself the deliverable, same as this session's several mca/
    accuracy staleness fixes elsewhere.*
 
+   **powf_checked (checked 2026-07-10, real find: never had a documented
+   accuracy number at all, and its true max ulp is at least ~2.4x worse
+   than the only numbers ever spot-checked against it)**: the original
+   `powf` investigation only ever spot-checked `powf_checked` *at powf's
+   own* three worst points (192/82/107 ulp) -- never independently
+   searched for `powf_checked`'s own distinct worst case, and
+   `readme.md`'s accuracy table has never had a `powf_checked` row at
+   all (only its mca/benchmark timing rows exist). A 100M-sample random
+   fuzz first, to get a real baseline: avg 0.046, max 114 (already higher
+   than any of the three old spot-check numbers on its own). Applying the
+   same structured search technique as plain `powf` (biasing `y` so
+   `y*log2(x)` approaches the domain's own edges, `128` from below and
+   `-126` from above, then iteratively refining around the current best)
+   found a real, progressively-worsening sequence -- 197 -> 201 -> 202 ->
+   203 ulp, converging slowly the same way plain `powf`'s own search did
+   (207->229->260->277->312) -- landing at x=1.1406517, y=674.14056.
+   Verified two independent ways before trusting it: `(x as
+   f64).powf(y as f64)` and `(y*x.ln()).exp()` agree to 10+ significant
+   digits, and `powf_checked`'s real compiled output at that point
+   differs from the reference by exactly 203 ulp (`3.3820983e38` vs
+   `3.3821395e38`), not a probe artifact. Also checked
+   `powf_checked_unchecked` with the same technique (own search,
+   independently converging to max 139 at a different point,
+   x=1.0003514/y=252495.08) -- confirmed bit-identical to `powf_checked`
+   at both discovered points (as its own doc comment already promises),
+   so this is the same underlying computation's worst case showing up
+   from two different search runs, not a second, distinct bug. As with
+   plain `powf`, **203 is a confirmed real lower bound, not a proven
+   supremum** -- the sequence was still climbing when the search was
+   stopped. Added `powf_checked`/`powf_checked_unchecked` to readme.md's
+   accuracy table for the first time (avg 0.046, max `>=203`) rather than
+   leaving a shipped function with zero documented accuracy indefinitely.
+   No `src/lib.rs` change -- this is a doc-completeness and doc-correction
+   commit, same "correcting/adding a documented bound is itself the
+   deliverable" reasoning as plain `powf`'s own entry just above. All
+   scratch probes used, none committed. *An "opt-in accurate tier"
+   existing specifically to fix a worse-than-plain accuracy problem
+   doesn't exempt it from needing its own accuracy sweep -- `powf_checked`
+   was created to fix `powf`'s large-`|y|` blowup, but nobody had ever run
+   the same structured search against `powf_checked` itself to check how
+   much of that problem actually got fixed vs. just made statistically
+   rarer, and the answer (still >=203 ulp, just at a different point)
+   was informative precisely because it had never been asked before.*
+
    **remainder (checked 2026-07-10, confirms existing documented behavior,
    nothing new found)**: extended the same structured-search technique to
    the last binary function idea #39 left open. Targeted `q = round(x/y)`
