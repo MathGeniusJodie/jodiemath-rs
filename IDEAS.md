@@ -1867,6 +1867,22 @@ cousin.
     renamed) after it was written -- periodically re-run the same
     coverage-audit technique against the test's own pair list, not just
     against the crate's source once at creation time.*
+
+    **Second follow-up (2026-07-10): re-ran the same audit and found a
+    second gap.** `pown_small`'s own doc comment makes the identical
+    "bit-identical to `pown`... confirmed over 50M generated samples"
+    claim `hypot_unchecked` made -- but `pown`/`pown_small` was also
+    never added to this standing test (its `(f32, i32)` signature
+    doesn't fit the existing `check1`/`check2` helpers, likely why it was
+    skipped originally). Added a small `check_pown` helper matching the
+    same structure, generating `n` within the pair's own `|n|<=255`
+    contract instead of from a raw bit pattern (an arbitrary `i32` would
+    almost never land in range). Ran it: ~50M in-domain samples,
+    bit-identical, confirming this claim too. All 12 pairs now pass;
+    `cargo test` clean. *The same lesson as the `hypot` find, generalized:
+    re-running a coverage audit against a "done" standing test isn't a
+    one-time check -- a second pass with fresh eyes found a second gap
+    the first pass's own success didn't rule out.*
 13. **Generalize the cbrt_accurate recipe** (cheap ≤1-ulp core + one Df32
     Newton step) into a template: candidates rsqrt_accurate,
     exp_accurate/ln_accurate (each is the other's Newton residual),
