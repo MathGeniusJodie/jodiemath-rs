@@ -1473,6 +1473,33 @@ cousin.
    own doc comment for an existing, already-quantified acknowledgment --
    `powf`'s worse-than-documented number was genuinely new because no
    such acknowledgment existed; `remainder`'s wasn't, because it did.*
+
+   **Doc-completeness follow-up (2026-07-10): the entire remainder/fmod
+   family had zero accuracy rows in readme.md, despite being one of this
+   session's most heavily audited function families.** Noticed while
+   looking for a fresh binary-function target for idea #8 -- readme.md's
+   precision table had rows for every other function family but none for
+   `remainder`/`remainder_unchecked`/`remainder_checked`/`remainder_wide`/
+   `remainder_ieee`/`fmod`/`fmod_unchecked` (only their mca/benchmark
+   timing rows existed). Ran each through its own already-defined
+   `accuracy.rs` sweep (each function's own domain restriction, matching
+   its own doc comment: `remainder`/`remainder_ieee`/`fmod` at
+   `|x/y|<1000`, `remainder_checked` at `|x/y|<1e7`, `remainder_wide` at
+   `|x/y|<2e14`, all excluding the separately-documented near-tie/
+   near-int boundary cases). Result: every one of them is bit-exact (avg
+   0.000/max 0) within its own documented domain except `remainder_wide`
+   (avg 0.0003/max 4, its own worst case landing on a denormal input) --
+   a genuinely clean result, not a surprise given `remainder_checked`'s
+   own claim was already independently verified with a 2.814-billion-pair
+   sweep just above, but never previously transcribed into readme.md.
+   Added all 7 rows. No `src/lib.rs` change -- pure doc-completeness, same
+   "a missing/wrong documented number is itself worth fixing" reasoning as
+   `powf_checked`'s entry just above. *A function family can be
+   extensively, repeatedly investigated (special-case matrices, structured
+   worst-case mining, a multi-billion-pair verification sweep) while its
+   actual accuracy numbers never make it into the one place a user would
+   look for them -- periodically check the documented table itself for
+   gaps, not just whether the underlying investigation was thorough.*
 9. **Structured-error probes**: plot per-function error vs mantissa and vs
    exponent separately; periodic structure invites a cheap structural
    correction (one select or exponent-derived fma) instead of a refit.

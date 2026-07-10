@@ -79,8 +79,15 @@ hypot_unchecked (bounded, +) | 0.034 |     1     | (bit-identical to hypot on it
          pown (|n|<=64) |    0.209   |    90     | (no std pown)
         powf (in-domain)|    0.181   |  >=312    |  0.000  |    1
     powf_unchecked (+)  |    0.363   |  >=312    | (bit-identical to powf on its domain)
-        powf_checked (in-domain)|  0.046   |  >=203    | (no std comparison needed, no domain restriction)
+        powf_checked (in-domain)|  0.046   |  >=203    | (no std comparison needed, same domain as powf)
 powf_checked_unchecked (+)|    0.046   |  >=203    | (bit-identical to powf_checked on its domain)
+        remainder (|x/y|<1000, near-tie excluded) | 0.000 | 0 | (no std comparison needed)
+remainder_unchecked (+) |    0.000   |     0     | (bit-identical to remainder on its domain)
+    remainder_checked (|x/y|<1e7, near-tie excluded) | 0.000 | 0 | (no std comparison needed)
+       remainder_wide (|x/y|<2e14, near-tie excluded) | 0.0003 | 4 | (no std comparison needed)
+      remainder_ieee (|x/y|<1000, near-tie excluded) | 0.000 | 0 | (no std comparison needed)
+                   fmod (|x/y|<1000, near-int excluded) | 0.000 | 0 | (matches Rust's `%`)
+        fmod_unchecked (+) |    0.000   |     0     | (bit-identical to fmod on its domain)
 ```
 
 # benchmarks
