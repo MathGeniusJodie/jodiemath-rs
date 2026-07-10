@@ -722,6 +722,31 @@ git history / readme.md, not here. Untested backlog is at the bottom.
   comparison semantics) are worth reading individually even inside a
   pile of otherwise-cosmetic noise.*
 
+  **Closing pass (same day): triaged every remaining warning across the
+  rest of the workspace rather than stopping at the lib.** `cbrt_constant`
+  (the one remaining lib warning, `let_and_return`) lives in the same
+  already-established "deliberately rough exploratory, kept for
+  `*_approx_plot`, not real API" family this file's own `accuracy.rs`
+  coverage audit already excluded from scrutiny -- left alone.
+  `examples/unchecked_parity.rs` (`manual Range::contains`) and
+  `examples/quickbench.rs` (`needless_range_loop`) are both pure style
+  preferences with zero behavior difference either way -- left alone.
+  `benches/benches.rs`'s 13 `manual_memcpy` warnings turned out to sit
+  inside a deliberate "overhead" baseline benchmark (copying `N=1`
+  elements specifically to measure the copy loop's own cost as a
+  subtraction point for the real function benchmarks below it, the same
+  "compare against a trivial baseline" philosophy this crate's own
+  `nop`/quickbench overhead rows already use) -- rewriting to a real
+  `copy_from_slice` risks changing what that specific baseline actually
+  measures, so left alone rather than applying a suggestion that could
+  quietly invalidate the very thing being measured. Every clippy warning
+  across the entire workspace has now been individually read and
+  triaged, not just counted -- nothing else found requiring a fix.
+  *When a suggested "cleaner" rewrite targets code whose entire purpose
+  is to measure the cost of a specific pattern, the rewrite itself is a
+  live risk to the measurement, not a free style win -- read what the
+  flagged code is actually *for* before applying a mechanical fix.*
+
 ## sin_checked / cos_checked internals
 
 - **round_x_over_pi: remove dead pre_offset=0.0 add (2026-07-07)**:
