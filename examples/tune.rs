@@ -1679,8 +1679,10 @@ fn main() {
             grid.push(-f32::from_bits(b));
             b += 42000;
         }
-        let init =
-            [0.49998869147306002, 0.1666632564456679, 0.041917526482916918, 0.0083811120373467017];
+        // Current shipped exp coefficients (2026-07-10 -- this init array
+        // previously held the pre-2026-07-09-LP-refit coordinate-descent
+        // values exp's own doc comment says were superseded).
+        let init = [4.9999300e-1, 1.6667245e-1, 4.1883811e-2, 8.3009899e-3];
         tune("exp_r (c0=c1=1 forced)", &exp_r_c, &|x| x.exp(), &grid, &init);
         // current shipped exp_pos_neg coefficients (src/lib.rs), not the
         // pre-retuning starting point above -- check for headroom from
