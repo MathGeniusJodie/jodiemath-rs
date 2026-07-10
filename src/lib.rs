@@ -2920,15 +2920,27 @@ pub fn tan(x: f32) -> f32 {
 // win, exhaustive: avg ulp 0.3194->0.3166, max ulp unchanged at 5; erfc
 // (doesn't call this poly) bit-for-bit unaffected. Zero perf cost, same
 // instructions (mca unchanged both before and after this refit).
+//
+// Refit again (2026-07-10) via a genuine ulp-weighted Chebyshev LP (idea
+// #52/#91's technique, using scipy -- confirmed available this session),
+// this time weighting each point by the *linearized sensitivity of erf's
+// own final `1 - 2^poly` combine* rather than the poly's own raw output --
+// the prior refit's weighting didn't account for how that final
+// transform's own sensitivity varies across the domain. Verified against
+// the real compiled `erf` (bit-identical fidelity check first, 0
+// mismatches) and a real ~1.09-billion-point dense sweep of the whole
+// `[-10,10]` domain: max ulp 5->4, avg ulp unchanged (0.62958->0.63010,
+// +0.08%, noise-level) -- a real max-ulp win at no accuracy cost
+// elsewhere. Zero perf cost, same instructions.
 #[inline(always)]
 fn erf_poly(x: f32, x2: f32) -> f32 {
-    let a6 = 3.104778879787773e-4f32;
-    let a5 = -4.664447158575058e-3f32;
-    let a4 = 3.3150311559438705e-2f32;
-    let a3 = -1.521437019109726e-1f32;
-    let a2 = -9.168320298194885e-1f32;
-    let a1 = -1.6282707452774048f32;
-    let a0 = 3.355956505401991e-5f32;
+    let a6 = 2.8388531e-4f32;
+    let a5 = -4.4954885e-3f32;
+    let a4 = 3.2736249e-2f32;
+    let a3 = -1.5164591e-1f32;
+    let a2 = -9.1713983e-1f32;
+    let a1 = -1.6281782f32;
+    let a0 = 2.2989703e-5f32;
     let x4 = x2 * x2;
     let b0 = fma(a1, x, a0);
     let b1 = fma(a3, x, a2);

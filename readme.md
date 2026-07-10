@@ -65,7 +65,7 @@ logaddexp (|a|,|b|<80)|    0.156   |  ~1e4 (real, narrow cancellation -- see its
                    atan |    0.067   |     4     |  0.000  |    0
            atan_latency |    0.052   |     3     |  0.000  |    0
         tan (in-domain) |    0.331   |  2967     |  0.000  |    0
-                   erf  |    0.317   |     5     | (no std erf)
+                   erf  |    0.318   |     4     | (no std erf)
          erfc (|x|<=10) |    0.311   |   109     | (no std erfc)
         erfcx (|x|<=10) |    0.377   |   125     | (no std erfcx)
                   atan2 |    0.069   |     3     |  0.000  |    0
