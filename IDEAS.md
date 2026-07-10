@@ -1608,6 +1608,31 @@ cousin.
    looks the same; the isolated-`log1p`-contribution check is cheap
    enough to re-run per function rather than assumed from a lookalike.*
    No code change; one scratch probe used, not committed.
+
+   **`tanh` audited too (2026-07-10), completing this idea's own original
+   list (`asin`/`expm1`/`tanh`/`sinh`/`cosh`/`erf`) -- and this time the
+   lookalike-sibling conclusion *does* transfer.** `tanh` is a
+   "standalone copy of `expm1`" per its own doc comment, sharing the same
+   exponent-field construction and retuned poly; `expm1`'s own audit
+   already found "rounding and truncation split roughly evenly, no
+   single cheap lever." Traced `tanh`'s own worst point (`x=0.25402844`,
+   right at the branch threshold idea #6 already confirmed is
+   well-placed, `max ulp 6`): the reduction's own rounding is negligible
+   (`r` differs from ideal by a relative `~1.9e-9`, propagating into a
+   utterly tiny poly-input effect), but the poly's own fit error against
+   the true `e^r` (`~8.3e-8` relative) and the final `fma(p,exp2int,-1.0)`
+   combine's own additional rounding (bringing the total to `~1.83e-7`,
+   roughly `2.2x` the poly-alone figure) are comparable in magnitude to
+   each other -- no single dominant term, matching `expm1`'s own "split
+   roughly evenly" shape almost exactly, not a surprise this time. A
+   useful contrast to the `acosh`/`asinh` pair just above: sometimes a
+   lookalike construction's round-off shape *does* carry over to its
+   sibling (`tanh`/`expm1`), and sometimes it doesn't (`acosh`/`asinh`) --
+   the only way to know which is to actually trace both, not to guess
+   from how similar the code looks. No actionable new lever (matches
+   `expm1`'s own already-accepted conclusion); no code change; one
+   scratch probe used, not committed. This closes out every function
+   idea #7's own original text named.
 8. **Binary-function worst-case mining**: unary functions get exhaustive
    sweeps; powf/atan2/hypot/remainder only get fuzz. Guided search
    (branch-and-bound over exponent-pair classes, or fixed y/x ratio
