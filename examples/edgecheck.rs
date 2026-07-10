@@ -500,6 +500,14 @@ fn main() {
     check("acosh(-1e20)", acosh(-1e20), f32::NAN);
     check("acosh(-4096.0)", acosh(-4096.0), f32::NAN);
     check("acosh(-f32::MAX)", acosh(-f32::MAX), f32::NAN);
+    // Large *positive* x had no coverage at all here (only the negative/
+    // out-of-domain side was pinned) -- added 2026-07-10. acosh(x) for
+    // x>=1 is always finite and non-negative, growing like ln(2x); values
+    // below confirmed by direct computation before pinning.
+    check("acosh(1e10)", acosh(1e10), 2.3718998e1);
+    check("acosh(1e20)", acosh(1e20), 4.674485e1);
+    check("acosh(f32::MAX)", acosh(f32::MAX), 8.9415985e1);
+    check("acosh(inf)", acosh(f32::INFINITY), f32::INFINITY);
     check("atanh(0)", atanh(0.0), 0.0);
     check("atanh(1)", atanh(1.0), f32::INFINITY);
     check("atanh(-1)", atanh(-1.0), f32::NEG_INFINITY);
