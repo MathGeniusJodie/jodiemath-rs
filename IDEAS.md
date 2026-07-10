@@ -584,6 +584,36 @@ git history / readme.md, not here. Untested backlog is at the bottom.
   numbers (0.29664->0.29179), already established not to survive real
   verification. No code changes.
 
+- **`remainder_ieee`'s own doc comment made a real, incorrect codegen
+  claim (found and fixed 2026-07-10)**: it said `.round_ties_even()`
+  "lowers to the same `vroundps` family instruction as `.round()`, just
+  a different rounding-mode immediate, so this is expected to cost the
+  same as `remainder` itself -- confirmed via mca." But readme.md's own
+  current numbers show a real, consistent ~15% latency gap (`remainder`
+  34.11 cyc, `remainder_ieee` 29.11 cyc) -- caught while re-checking a
+  different doc comment's cost-parity claim against the real mca table
+  sitting right next to it. Extracted and diffed both functions'
+  compiled `_latency` regions directly rather than guessing: `remainder`
+  (`.round()`, ties-away-from-zero) needs 4 extra instructions
+  (`vpbroadcastd` x2, `vpternlogd`, `vaddss`) building a sign-matched
+  `0.5` bias *before* a truncating `vroundss`, because x86's hardware
+  `roundss` has no native round-half-away-from-zero mode -- only
+  nearest-even, down, up, and truncate. `remainder_ieee`
+  (`.round_ties_even()`) lowers directly to a single `vroundss` in
+  nearest-even mode, no preamble at all. So the claim wasn't almost
+  right and just missing a caveat -- it was backwards: `remainder_ieee`
+  is the *cheaper* one, not equally expensive, and the mechanism ("just
+  a different immediate") was simply wrong about what `.round()`
+  actually compiles to. Fixed the doc comment in `src/lib.rs` to
+  describe the real mechanism and cite the actual numbers; `cargo test`
+  and `edgecheck.rs` (0 failures) both still clean, this was a pure
+  doc-comment correction, no logic changed. *A doc comment claiming "X
+  and Y compile to the same thing, confirmed via mca" is a specific,
+  falsifiable, re-checkable claim -- when the numbers sitting in the
+  same repo's own readme.md visibly disagree with it, that's worth
+  chasing down to the actual assembly rather than assuming the
+  discrepancy is noise or staleness.*
+
 ## sin_checked / cos_checked internals
 
 - **round_x_over_pi: remove dead pre_offset=0.0 add (2026-07-07)**:

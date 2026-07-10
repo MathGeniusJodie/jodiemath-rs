@@ -3651,10 +3651,25 @@ pub fn remainder(x: f32, y: f32) -> f32 {
 /// two conventions differ only when `x/y` lands on an exact half-integer
 /// tie -- `remainder`'s own doc comment documents this crate's ties-away
 /// choice as a deliberate divergence, not an oversight; this variant is
-/// for callers who need the standard instead). `f32::round_ties_even`
-/// lowers to the same `vroundps` family instruction as `.round()`, just
-/// a different rounding-mode immediate, so this is expected to cost the
-/// same as `remainder` itself -- confirmed via mca before trusting that.
+/// for callers who need the standard instead).
+///
+/// This is genuinely *cheaper* than `remainder`, not the same cost (a
+/// prior version of this comment claimed "the same `vroundps` family
+/// instruction, just a different rounding-mode immediate" -- checked
+/// directly against the compiled assembly 2026-07-10 and found false):
+/// x86's `vroundss`/`roundss` only has *hardware* support for
+/// round-to-nearest-even, round-down, round-up, and truncate -- there is
+/// no native "round half away from zero" mode. `.round_ties_even()`
+/// (ties-to-even, this function) lowers directly to one `vroundss`
+/// instruction; `.round()` (ties-away-from-zero, `remainder`'s own
+/// choice) needs LLVM to emulate the away-from-zero tie-break in
+/// software first (`vpbroadcastd` x2 loading a sign/magnitude constant
+/// pair, `vpternlogd` combining them with the value, `vaddss` adding a
+/// sign-matched 0.5, *then* `vroundss` in truncate mode) -- 4 extra
+/// serial instructions `remainder_ieee` never pays. This fully accounts
+/// for the real mca latency gap (see readme.md: `remainder` 34.11 cyc,
+/// `remainder_ieee` 29.11 cyc, a genuine ~15% difference, not noise or
+/// staleness).
 #[inline(always)]
 pub fn remainder_ieee(x: f32, y: f32) -> f32 {
     let q = (x / y).round_ties_even();
