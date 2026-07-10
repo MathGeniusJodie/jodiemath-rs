@@ -96,6 +96,33 @@ git history / readme.md, not here. Untested backlog is at the bottom.
   function's actual max ulp (6) lives in expm1's other branch (`exp(x)-1`),
   untouched. Cost real throughput (+7%). Reverted.
 
+- **expm1 direct branch round-off budget audit (idea #7, 2026-07-10,
+  screened -- no actionable single term found)**: root-caused the direct
+  branch's own max-ulp-6 worst point (`x=0.9652361`) the same way as
+  asin_small above -- computed the identical formula in f64 to split
+  rounding from truncation/coefficient error. Unlike asin (7:1 truncation-
+  dominated), this one is roughly balanced: rounding 2.946 ulp, truncation/
+  coefficient error 2.579 ulp, neither wildly dominant. Drilled into the
+  rounding half specifically (per-step f32-vs-f64 comparison): `k`/`r`
+  (the Cody-Waite reduction) are already near-exact (0.000/-0.016 ulp);
+  essentially all 2.946 ulp of rounding traces to the polynomial
+  evaluation of `p` itself (1.473 ulp in `p`'s own scale, doubled to 2.946
+  in the final result purely because this worst point's `t2=2` exponent
+  scaling amplifies it 2x -- not a separate error source). This is
+  compounding rounding across a fixed, already-minimal-length fma chain
+  (3 fma's + 2 multiplies + 1 add) evaluating a degree-8-ish poly in f32,
+  not a single avoidable extra rounding step the way `exp`'s own
+  Cody-Waite fix (this technique's proof point) removed a genuinely
+  redundant single-word reduction -- no restructuring found that would
+  reduce this without either adding ops (failing "no perf penalty", same
+  shape as asin_small's own rejection just above) or fundamentally more
+  precision (a Df32-style accurate tier, out of scope for a "no perf
+  penalty" fix to the default function). Not implemented; no code
+  changes. *The round-off budget technique doesn't always find a clean
+  single dominant term to attack -- sometimes the honest answer is
+  "many small roundings, roughly tied with truncation, nothing cheap to
+  cut."*
+
 - **tanh direct rational P(x²)/Q(x²) over [0,~9] (2026-07-08)**: needs 13
   free coefficients to converge over the full domain — far more than any
   poly in the crate. A 2-domain split needs 14 total, likely more work than
