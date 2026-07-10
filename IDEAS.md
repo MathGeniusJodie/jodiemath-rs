@@ -3801,6 +3801,32 @@ cousin.
     LP over rounding intervals instead of a continuous fit. Check the
     input-multiplicity math per function first — most reductions don't
     quantize enough.
+
+    **Did the cheap screening step itself (2026-07-10): computed the
+    exact input-multiplicity for this idea's own two named examples**,
+    rather than continuing to treat the whole idea as blocked purely on
+    missing LP-solver tooling (no scipy/sollya/lolremez available
+    locally, an already-established limitation this session hit
+    repeatedly). `log_2`'s own reduced `s = m - 1` (`m` in
+    `[sqrt(2)/2, sqrt(2))`) spans exactly `2^23` (`8,388,608`) distinct
+    `f32` values -- comfortably *under* this idea's own `≤2^26-ish`
+    threshold, i.e. genuinely tractable for a true exhaustive rounding-
+    interval LP *if* appropriate solver tooling were available.
+    `exp2`'s own reduced `f` (`x - floor(x)`, spanning the *entire*
+    `[0,1)` range, not confined to one exponent's mantissa bits the way
+    `log_2`'s `s` is) spans `2^29` (over a billion) distinct values --
+    confirming the idea's own predicted caution ("most reductions don't
+    quantize enough") for this specific example. So the idea's own two
+    named candidates split cleanly: `log_2` is tooling-blocked but
+    otherwise a real candidate; `exp2` is infeasible regardless of
+    tooling. No LP was actually run (still no solver available locally),
+    but this narrows *which* function would be worth revisiting first if
+    one becomes available in a future session, rather than leaving the
+    whole idea as an undifferentiated "blocked." *A "check the math
+    first" screening step doesn't require the full infrastructure the
+    idea's own main proposal needs -- the input-multiplicity arithmetic
+    alone is a five-line Python check, decisive on its own, and worth
+    doing even when the actual proposed technique stays out of reach.*
 92. **Domain-specific fast-math contract tiers**: a `finite-math-only`
     cargo feature gating away every inf/nan select in checked functions
     (complements the FTZ/DAZ backlog entry, which only covers denormals).
