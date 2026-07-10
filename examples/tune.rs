@@ -1577,7 +1577,11 @@ fn main() {
             grid.push(-f32::from_bits(b));
             b += 5;
         }
-        let init = [-0.33333147, 0.22220612, -0.17394388, 0.14823665];
+        // Current shipped coefficients (2026-07-10 -- this init array
+        // previously held a stale pre-2026-07-09-refit value, the same
+        // class of staleness already found for exp_pos_neg/erf_tail_c/
+        // acos_poly's own seeds).
+        let init = [-0.3333314061164856, 0.22221335768699646, -0.1739402711391449, 0.14720453321933746];
         tune("cbrt_normal", &cbrt_normal_c, &|x| x.cbrt(), &grid, &init);
 
         // seed offset (c[0], bits used directly) jointly with the same
