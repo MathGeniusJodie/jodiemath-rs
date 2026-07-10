@@ -35,6 +35,52 @@ fn exp2_c(x: f32, c: &[f32]) -> f32 {
     )
 }
 
+// IDEAS.md backlog round 3 #1, tried 2026-07-09/10 and rejected on every
+// one of the 6 functions sharing this poly (see IDEAS.md's "exp2 / exp /
+// sin / cos / tan" section for the full writeup): k=round(x) (f in
+// [-0.5,0.5]) instead of k=floor(x) (f in [0,1)) -- same 3-balanced-pair
+// Estrin-in-f2 structure and degree (6 coefficients, degree 5) as the
+// shipped exp2_c, just a centered/halved domain. This coarse grid genuinely
+// did show a real improvement (max ulp 2->1, avg 0.20307->0.04845, see
+// below) -- the *rejection* came from real verification downstream (real
+// fuzz, mca, edgecheck all disagreeing with this grid in different ways
+// for different functions), not from this tuning step itself being wrong.
+// Kept as reference infra, not wired into src/lib.rs. c indices match
+// exp2_c's own g0/g1/g2 pairing: c[0..2) is g2 (f^4,f^5), c[2..4) is g1
+// (f^2,f^3), c[4..6) is g0 (f^0,f^1).
+const ROUND_MAGIC_TUNE: f32 = 12582912.0; // 1.5 * 2^23
+#[inline(always)]
+fn exp2_round_c(x: f32, c: &[f32]) -> f32 {
+    let k = (x + ROUND_MAGIC_TUNE) - ROUND_MAGIC_TUNE;
+    let f = x - k;
+    let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
+    let f2 = f * f;
+    let g0 = fma(c[4], f, c[5]);
+    let g1 = fma(c[2], f, c[3]);
+    let g2 = fma(c[0], f, c[1]);
+    let h = fma(g2, f2, g1);
+    let q = fma(h, f2, g0);
+    fma(q, exp2int * f, exp2int)
+}
+
+// Same idea, but degree 4 (5 coefficients: f^0..f^4) -- tests the
+// backlog's "halving the interval may allow degree 5->4" claim directly.
+// Grouping: g0 = c[3]+c[4]*f (f^0,f^1), g1 = c[1]+c[2]*f (f^2,f^3), plus a
+// lone f^4 term c[0] (odd coefficient count, no partner) folded in via
+// Horner-in-f2: q = g0 + f2*(g1 + f2*c[0]).
+#[inline(always)]
+fn exp2_round4_c(x: f32, c: &[f32]) -> f32 {
+    let k = (x + ROUND_MAGIC_TUNE) - ROUND_MAGIC_TUNE;
+    let f = x - k;
+    let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
+    let f2 = f * f;
+    let g0 = fma(c[4], f, c[3]);
+    let g1 = fma(c[2], f, c[1]);
+    let h = fma(f2, c[0], g1);
+    let q = fma(h, f2, g0);
+    fma(q, exp2int * f, exp2int)
+}
+
 // IDEAS.md's "Select-tree LUT for exp2" idea, tried and rejected
 // (2026-07-08): f=x-floor(x) in [0,1) split into an 8-way quantized
 // f_hi (a 3-level blend over 2^(i/8), i=0..7, exact f32 constants) plus
@@ -881,6 +927,29 @@ fn main() {
         // for headroom from where the crate actually is now.
         let init = [2.1702237e-4, 1.2439679e-3, 9.678826e-3, 5.548333e-2, 2.4022985e-1, 6.93147e-1];
         tune("exp2", &exp2_c, &|x| x.exp2(), &grid, &init);
+    }
+    if which.contains("exp2round") {
+        // same domain/grid as "exp2" above, just k=round(x) internally.
+        let mut grid = vec![];
+        let mut b = 1e-6f32.to_bits();
+        while b <= 126.0f32.to_bits() {
+            grid.push(f32::from_bits(b));
+            grid.push(-f32::from_bits(b));
+            b += 997;
+        }
+        // Taylor-series seed for Q(f)=(2^f-1)/f = sum_{k>=1} f^(k-1)*ln2^k/k!
+        // (exact regardless of domain -- coordinate descent refines it into
+        // a minimax fit for the centered [-0.5,0.5] domain specifically).
+        let q0 = std::f64::consts::LN_2;
+        let q1 = q0 * q0 / 2.0;
+        let q2 = q0 * q0 * q0 / 6.0;
+        let q3 = q2 * q0 / 4.0;
+        let q4 = q3 * q0 / 5.0;
+        let q5 = q4 * q0 / 6.0;
+        let init5 = [q5 as f32, q4 as f32, q3 as f32, q2 as f32, q1 as f32, q0 as f32];
+        tune("exp2_round (degree 5)", &exp2_round_c, &|x| x.exp2(), &grid, &init5);
+        let init4 = [q4 as f32, q2 as f32, q3 as f32, q0 as f32, q1 as f32];
+        tune("exp2_round4 (degree 4)", &exp2_round4_c, &|x| x.exp2(), &grid, &init4);
     }
     if which.contains("exp2lut") {
         let mut grid = vec![];
