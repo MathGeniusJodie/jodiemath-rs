@@ -2789,6 +2789,49 @@ cousin.
     or removed. When auditing whether a specific number could be stale,
     search for any commit touching the function by name (or grep the
     commit log directly), not just the declaration line.*
+
+    **Full mca-table staleness re-audit (2026-07-10, clean -- readme.md's
+    mca table is fully current, no fix needed)**: idea #79 above already
+    covered the *accuracy* table's own staleness; ran the equivalent
+    check on the *mca* table this time, given several commits earlier
+    this session (`pown_wide`'s reverted `mca.rs` `order`-array edit,
+    the idea #15/exp_pos_neg/etc. investigations) touched harness files
+    without ever needing a `src/lib.rs` change, raising the question of
+    whether readme.md's mca numbers had drifted. Ran the real, unfiltered
+    `cargo run --release --example mca` (all ~75 regions) and diffed
+    against readme.md's table directly, normalizing whitespace: all 72
+    shared rows matched to the decimal, zero numeric drift anywhere.
+    Found two apparent discrepancies that turned out to be cosmetic, not
+    real: (1) `sinh_throughput_fn`/`cosh_throughput_fn` (the actual
+    `order`-array keys) print under readme's shortened
+    `sinh_throughput`/`cosh_throughput` labels -- same exact numbers
+    (62.00/1.943, 61.00/1.616), confirmed to be the identical measurement
+    just displayed without the `_fn` suffix, not a duplicate or missing
+    row; (2) `remainder`/`remainder_ieee`/`fmod`'s throughput shows a bare
+    `?` from the tool directly vs. readme's `? (*)` -- the asterisk is a
+    manually-added footnote marker (explained in the prose just below the
+    table), not something the tool itself ever prints, so no discrepancy
+    there either. The tool's raw output *does* include four rows readme.md
+    has never shown at all (`nop`, `cbrt_wrapped`, `cbrt_throughput_fn`,
+    `cbrt_fast`) -- checked each rather than assuming an oversight:
+    `nop` is the harness's own baseline/comparison row (the prose below
+    the table already explains its purpose without needing its own
+    listed row); `cbrt_throughput_fn`/`cbrt_fast` benchmark
+    `cbrt_throughput`/`cbrt_fast`, the same already-established
+    "deliberately rough experimental, ~5-50 avg ulp, not a candidate
+    shipped function" variants already excluded from the *accuracy* table
+    for identical reasons; `cbrt_wrapped` is a secondary latency-only
+    re-measurement of `cbrt` itself (calling it through a slightly
+    different harness shape), not a distinct function needing its own
+    row. So the mca table's *apparent* incompleteness is entirely by
+    design, matching the accuracy table's own established convention of
+    excluding non-shipped exploratory variants -- no readme.md edit
+    needed this time, unlike idea #79's own sigmoid fix. *After finding a
+    real doc-sync gap once (idea #79's sigmoid row, this session's
+    powf_checked/remainder-family/pown_small rows), the next audit of a
+    *different* table shouldn't assume the same kind of gap exists --
+    checking thoroughly and finding genuine cleanliness is itself a
+    useful, confidence-building result, not a wasted effort.*
 80. **exp2 poly evaluated as 1+f·Q vs direct P(f)=2^f with c0=1 pinned
     (paper-screened 2026-07-09, not implemented -- real modest op savings
     identified, but needs a fresh fit, not a mechanical rewrite)**: traced
