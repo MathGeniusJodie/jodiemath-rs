@@ -257,6 +257,26 @@ git history / readme.md, not here. Untested backlog is at the bottom.
 
 ## log_2 / ln / log10
 
+- **log_2/ln/log10/log1p/log2p1 special-case matrix (2026-07-10,
+  resolved -- clean)**: checked `{0,-0,±1,±2,±0.5,f32::MIN_POSITIVE and
+  its negation,±1e-40 (genuine denormal),±inf,NaN}` against expected
+  IEEE754/C99 behavior. All clean: `log(±0)=-inf`, `log(negative)=NaN`
+  (including tiny negative denormals), `log(inf)=inf`, `log(-inf)=NaN`,
+  `log(NaN)=NaN` (both NaN signs preserved), denormal inputs give
+  sensible large-negative finite results (not garbage) for all three of
+  `log_2`/`ln`/`log10`. `log1p`/`log2p1` likewise clean at their own
+  special points (`-1`→`-inf`, `<-1`→`NaN` via the `u<0` path, `-inf`→
+  `NaN`, `inf`→`inf`, and the already-documented `-0.0`→`-0.0` sign
+  preservation still holds). No bugs found, no code changes -- unlike the
+  newer sinpi/cospi/sind/cosd/tanpi/tand family (a real bug found here as
+  recently as idea #31, 2026-07-09), the log family has evidently already
+  had this class of edge case shaken out over this crate's longer
+  history. *Matches idea #85's own "diminishing returns" signal for this
+  technique -- two families in a row (this one and sinpi/cospi's own
+  matrix) have now come back clean; worth trying a genuinely different
+  angle on the next idea rather than matrix-auditing a third family
+  on the assumption this technique still has an easy hit somewhere.*
+
 - **Integer koff fold (2026-07-08)**: bit-exact, but mca showed zero
   measurable change — LLVM already performs this reordering. Reverted to
   avoid an f32→i32 public signature change for no benefit.
