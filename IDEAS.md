@@ -3091,6 +3091,36 @@ cousin.
   No code change; confirms the existing design is exactly as
   well-motivated as claimed, now with real numbers behind it.
 
+- **`atanh` vs. naive `0.5*ln((1+x)/(1-x))`, quantified with real numbers
+  (2026-07-10, confirmed, no bug -- the dramatic contrast case to
+  `exp_m1_over_x`'s modest one just above)**: `atanh`'s own doc comment
+  also describes its naive alternative's failure qualitatively ("rounds
+  to exactly 1.0 for tiny `|x|`... exactly 0 instead of the correct tiny
+  nonzero answer") without quantifying it. Unlike `exp_m1_over_x`'s
+  naive form (a real but modest, single-point issue), this one is
+  genuinely catastrophic across a *whole growing region*, not just one
+  point: measured the naive form's ulp error against an f64 reference as
+  `x` shrinks toward 0 -- already 5333 ulp at `x~9.7e-5`, climbing past
+  200,000 ulp by `x~2e-6`, past 8 million ulp by `x~3e-8`, and over 850
+  million ulp (effectively meaningless output) by `x~2.8e-8`, well before
+  reaching the true `x=0` singularity. Across a broader (-0.2,0.2) dense
+  sweep: dedicated `atanh` avg 0.41/max 3 (in budget) vs. the naive
+  form's avg 16.5/**max 5,033,165** -- confirming this is exactly the
+  "wide region of otherwise-catastrophic cancellation" category flagged
+  (but not measured) in the entry just above, not a removable-singularity
+  case like `exp_m1_over_x`'s. Root cause matches the doc comment's own
+  reasoning precisely: `(1+x)/(1-x)` for small `x` is `~1+2x`, landing
+  very close to `1.0` well before `x` itself gets anywhere near f32's
+  underflow floor -- exactly the "argument close to 1" cancellation
+  `log1p` exists to fix, and `atanh`'s own construction routes around it
+  by construction rather than computing the ratio at all. No code
+  change; a dramatic, well-quantified confirmation rather than a
+  surprise. *Two functions can each carry a qualitatively-worded "avoids
+  a naive-form problem" doc comment while describing genuinely different
+  magnitudes of problem -- one a single removable point, the other a
+  wide, rapidly-worsening region -- and only measuring both with real
+  numbers reveals which kind of claim you're actually looking at.*
+
 89. **Bit-sliced two-for-one**: evaluate sin and cos polynomials sharing
     y=r² registers across the *same* vector when the caller wants both —
     a sincos slice API (not scalar API, which already failed) where lane
