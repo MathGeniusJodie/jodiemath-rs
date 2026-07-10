@@ -1178,6 +1178,42 @@ cousin.
    measuring both branches independently through the boundary (this
    idea's own technique), not just eyeballing where the spike sits
    relative to the constant in the code.*
+
+   **`expm1`'s own `0.5` threshold checked directly too (2026-07-10, a
+   fifth confirmation -- closes the explicit "expm1... not independently
+   re-checked this way" gap this entry itself flagged earlier)**:
+   `expm1`'s own doc comment already states the Pade branch `a` "is the
+   one with headroom" and the direct branch `b` "carries expm1's actual
+   worst-case ulp" -- worth checking whether that known asymmetry means
+   the `0.5` cutoff itself has room to move (extend `a`'s cheap, very
+   accurate domain further and lean on it less on `b`). Measured both
+   branches independently across `[0.0625,2.0)` in half-width buckets:
+   `a` is excellent everywhere below the shipped threshold and never
+   exceeds max ulp 3 in any bucket through `[0.4375,0.5)` (avg 0.36-0.59);
+   `b` in that same sub-0.5 range is markedly worse (avg 1.27-7.37,
+   max 5-31, worst right near zero where its cancellation is least
+   controlled). The picture flips immediately past the shipped
+   threshold: `[0.5,0.625)` already shows `a` degrading sharply (avg
+   3.93, max 11) while `b` has become the better choice (avg 2.24, max
+   5). So despite the doc comment's own accurate observation that `a`
+   has more *absolute* headroom than `b` ever gets, that headroom doesn't
+   extend past `0.5` -- `a`'s own accuracy collapses right at the
+   existing cutoff, the same shape as `tanh`'s crossover, not a case
+   where the asymmetry translates into a movable threshold. `b`'s own
+   worst bucket among those actually selected (`x>=0.5`) is
+   `[0.875,1.0)` at max ulp 6, exactly matching the function's
+   documented overall max -- confirming this survey didn't miss a worse,
+   unselected case either. `sinh`/`asin`/`erf`/`tanh`/`expm1` are now all
+   confirmed with no threshold-placement headroom; only `atanh` remains
+   unchecked this way among idea #6's original list. One standalone
+   scratch probe used, not committed; no `src/lib.rs` change. *A branch
+   having more headroom than its sibling in an absolute sense (idea #7's
+   own round-off audits already established this for several functions)
+   doesn't imply the crossover should move to exploit it -- headroom
+   inside a branch's already-good region says nothing about how fast
+   that same branch degrades just past where it's currently switched
+   away from; check the actual curve past the boundary, not just its
+   quality on the near side.*
 7. **Round-off budget audit per function**: enumerate every rounding on the
    critical path with a bound, attack the largest term. This is exactly how
    exp's Cody-Waite fix was found; do it systematically for the remaining
