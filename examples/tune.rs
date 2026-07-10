@@ -1578,6 +1578,22 @@ fn main() {
         let init =
             [0.49998869147306002, 0.1666632564456679, 0.041917526482916918, 0.0083811120373467017];
         tune("exp_r (c0=c1=1 forced)", &exp_r_c, &|x| x.exp(), &grid, &init);
+        // current shipped exp_pos_neg coefficients (src/lib.rs), not the
+        // pre-retuning starting point above -- check for headroom from
+        // where the crate actually is now (idea #7's sinh/cosh round-off
+        // audit found the poly's own fit error dominates the real max-ulp-5
+        // ceiling, so worth checking whether coordinate descent can do
+        // better than what's shipped before assuming it's already optimal).
+        let shipped = [4.999897e-1, 1.6666329e-1, 4.1917525e-2, 8.3811125e-3];
         tune("exp_r_pair (even/odd split)", &exp_r_pair_c, &|x| x.exp(), &grid, &init);
+        tune("exp_r_pair (from shipped)", &exp_r_pair_c, &|x| x.exp(), &grid, &shipped);
+        tune_basin_hop(
+            "exp_r_pair (basin hop, from shipped)",
+            &exp_r_pair_c,
+            &|x| x.exp(),
+            &grid,
+            &shipped,
+            200,
+        );
     }
 }

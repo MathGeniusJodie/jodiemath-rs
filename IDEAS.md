@@ -1057,6 +1057,47 @@ cousin.
    solution, scored on the real crate — rlibm-lite. Catches the
    f32-quantization effects the LP's continuous model misses (the exact
    failure mode of the exp2 LP rejection).
+
+   **First real data point: `exp_pos_neg`'s even/odd poly (2026-07-10,
+   no headroom found -- corroborates idea #7's sinh/cosh round-off audit
+   independently)**: picked this poly specifically because idea #7's own
+   round-off-budget audit (just above, hyperbolics section) had already
+   traced sinh/cosh's max-ulp-5 ceiling to this poly's own fit error, not
+   a rounding step -- the natural next question being "can a
+   coefficient-space search (this idea's own technique, already
+   `tune.rs`'s existing `tune()`/`tune_basin_hop`, which already scores
+   `(max, sum)` tuples max-first, the same max-capped shape cbrt's own
+   successful LP refit used) find a tighter fit than what's shipped?"
+   `tune()`'s plain coordinate descent starting from the *actual* shipped
+   coefficients (not the older pre-retuning values `tune.rs`'s own `exp_r`
+   init array still held) found literally zero movement -- already an
+   exact local optimum on its own ~50k-point grid. `tune_basin_hop` (200
+   random 2-3-coefficient perturb-and-redescend restarts, the crate's own
+   established escape for coordinate descent's "diagonal valley" blind
+   spot) found a tiny, real move (avg 0.04784->0.04754 on the grid, max
+   unchanged at 3) -- but per idea #22's own hard-won lesson (a coarse-grid
+   win must survive the real fuzz before it means anything), wired both
+   coefficient sets into a standalone probe replicating `exp_pos_neg`/
+   `sinh`/`cosh` exactly and measured a real 31M-sample fuzz (domain-
+   restricted the same way accuracy.rs's own `sinh_domain` is) against an
+   f64 reference: shipped sinh avg 0.08063/max 5, basin-hopped sinh avg
+   0.08019/max 5 (0.5% better, same max); cosh 0.07139/max 5 vs.
+   0.07078/max 5 (0.9% better, same max) -- noise-level, not a real win,
+   and max ulp (the actual documented ceiling) didn't move at all either
+   way. Confirms idea #7's own conclusion from the opposite direction: the
+   shipped coefficients are already essentially optimal for this fit
+   shape, so the max-ulp-5 ceiling really is a fit-order limit, not an
+   undiscovered better coefficient tuple sitting nearby in ulp-space. Kept
+   the `tune.rs` diagnostic additions themselves (harmless, reusable
+   infrastructure, same "keep the technique even when the result isn't
+   adopted" precedent as idea #22's own joint-refit machinery); no
+   `src/lib.rs` change, the standalone verification probe wasn't
+   committed. *A basin-hop/coefficient-search technique finding "no
+   improvement" (or a noise-level one that evaporates on the real fuzz)
+   is itself a useful, confirming result when it corroborates an
+   independent round-off-budget audit's conclusion from a completely
+   different angle -- two different techniques agreeing that a poly is
+   already tight is much stronger evidence than either one alone.*
 4. **Per-function transformed-variable fit search**: fit in u=s/(s+2),
    u=s·(s+a), etc., searching over the transform family. Distinct from
    centered-variable refits (rejected — that only moved the origin);
