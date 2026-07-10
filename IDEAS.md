@@ -4467,6 +4467,66 @@ cousin.
     idea's own main proposal needs -- the input-multiplicity arithmetic
     alone is a five-line Python check, decisive on its own, and worth
     doing even when the actual proposed technique stays out of reach.*
+
+    **Correction (2026-07-10): scipy is actually available in this
+    environment** (`import scipy` succeeds, version 1.17.1, with a
+    working `scipy.optimize.linprog`/HiGHS solver -- verified directly
+    with a toy LP before trusting it). The "no scipy/sollya/lolremez
+    available locally" claim above (and repeated at least twice more
+    elsewhere in this file) was never itself re-checked this session --
+    it was inherited/assumed, not verified, and turned out to be wrong
+    for at least the scipy half of that claim (sollya/lolremez
+    availability untested, may still be genuinely absent). *Environment
+    capability claims repeated across multiple entries as settled fact
+    are still worth spot-checking directly (`python3 -c "import scipy"`
+    takes one command) before treating a whole class of ideas as
+    permanently blocked -- this one had been cited as a blocker at least
+    three times without anyone actually trying the import.*
+
+    **Ran a genuine ulp-weighted Chebyshev LP for `log_2`'s poly with
+    the now-confirmed scipy (2026-07-10, real headroom in the idealized
+    metric, but it evaporates through the real f32 Estrin chain --
+    not this idea's true exhaustive rounding-interval formulation, but a
+    continuous minimax LP over a dense (~205k-point) subsample of the
+    exact `s` domain, weighted by each point's true f32 output ulp).**
+    First attempt reported "infeasible" from HiGHS despite a manually-
+    verified feasible point (the shipped coefficients) existing --
+    root-caused to catastrophic constraint scaling, not a real
+    infeasibility: `ulp` values (~1e-8) mixed directly into the
+    constraint matrix alongside O(0.1) polynomial-coefficient terms
+    creates exactly the ill-conditioning that trips HiGHS's numerical
+    tolerances. Fixed by normalizing every constraint row by its own
+    `ulp` *before* handing the problem to `linprog` (so every row's own
+    scale is O(1)), which solved cleanly. Result looked dramatic in the
+    LP's own idealized (f64 polynomial value, no f32 rounding) metric:
+    max weighted residual `0.511->0.061` (8.4x tighter), avg
+    `0.114->0.034` (3.4x tighter) on the same grid. **Wired the exact
+    coefficients into a probe matching `log_2_normal`'s real Estrin
+    structure exactly (confirmed bit-identical against the compiled
+    `log_2_unchecked` first, 0 mismatches) and re-measured on a real
+    ~533M-point dense sweep: `max 3 avg 0.25128` (shipped) vs. `max 3 avg
+    0.25137` (LP) -- statistically identical, the LP result is actually
+    infinitesimally *worse*, not better.** Root cause: `log_2`'s real
+    accuracy is dominated by the f32 rounding accumulated through the
+    5-fma Estrin evaluation chain itself, not by the underlying
+    continuous polynomial's own fit quality against `log2(1+s)/s` --
+    `log_2`'s existing `lolremez`-derived fit is already tight enough
+    that a fresher, more precisely-targeted continuous minimax makes no
+    practical difference once real f32 rounding swamps it. Not adopted;
+    no `src/lib.rs` change; scratch probe not committed. *Confirms this
+    session's own repeated "isolated/idealized fit predictions overstate
+    real gains" lesson a new way -- this time with a genuinely proper LP
+    tool (not just coordinate descent's own local-search limitation),
+    the same gap still appears. For `log_2` specifically, the honest
+    next lever isn't a better continuous fit (this LP proves there's
+    real room there that the real f32 chain simply can't use) but either
+    reducing the Estrin chain's own rounding-step count, or (per this
+    idea's own original proposal) the true discrete rounding-interval LP
+    that reasons about f32 quantization directly instead of a continuous
+    approximation -- a meaningfully bigger undertaking than what was
+    tried here, left open for a session that wants to build the exact
+    per-point rounding-interval formulation rather than a continuous
+    stand-in for it.*
 92. **Domain-specific fast-math contract tiers**: a `finite-math-only`
     cargo feature gating away every inf/nan select in checked functions
     (complements the FTZ/DAZ backlog entry, which only covers denormals).
