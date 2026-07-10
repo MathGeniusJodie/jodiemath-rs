@@ -3045,6 +3045,30 @@ cousin.
     floor-adjust logic is correct at its own boundaries; no sinpi/cospi-
     style bug here.
 
+- **`softplus(x) == logaddexp(x, 0.0)` exhaustively verified (2026-07-10,
+  confirmed, no bug -- closes a claim that was only ever spot-checked
+  at one point)**: `logaddexp`'s own doc comment states this identity
+  as fact ("in fact `softplus(x) == logaddexp(x, 0.0)`"), and
+  `edgecheck.rs` already pins it at exactly one point (`x=3.0`) -- but
+  the claim itself, as a *blanket* statement over every possible f32
+  input, had never actually been checked beyond that single value.
+  Ran a genuine exhaustive sweep, all `2^32` f32 bit patterns (cheap
+  for a 1-argument comparison, unlike `accuracy.rs`'s own thorough
+  mode which needs to also evaluate a reference): **zero mismatches**
+  across all 4,294,967,296 patterns, including every NaN payload,
+  both zeros, and both infinities. The existing single-point
+  `edgecheck.rs` pin already serves as an adequate regression guard
+  (a future coefficient change to either function's shared branchless
+  construction would very likely also break `x=3.0`), so no new pins
+  added -- this entry exists to record that the *blanket* claim itself
+  is now fully proven, not just plausible from one spot-check. No
+  code change. *A doc comment stating an identity as established fact,
+  backed by only a single pinned example, is an assumption wearing the
+  clothes of a proof -- cheap 1-argument identities are worth
+  exhaustively checking outright rather than trusting the spot-check
+  alone, especially when (as here) the exhaustive check is nearly free
+  to run.*
+
 ### Longer shots / research-flavored
 
 89. **Bit-sliced two-for-one**: evaluate sin and cos polynomials sharing
