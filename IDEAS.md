@@ -696,6 +696,32 @@ git history / readme.md, not here. Untested backlog is at the bottom.
   fixes mean opposite things (this coefficient is deliberately not that
   constant, vs. this coefficient secretly always was that constant).*
 
+  **Follow-up (same day): categorized the lib's remaining warnings
+  rather than assuming they're all the same "excessive precision" noise
+  already judged not worth touching.** 54 of 89 really are that (harmless,
+  intentional style for fitted coefficients); 26 + 8 are doc-comment
+  markdown formatting nits (blockquote/list-indentation conventions,
+  cosmetic); but 3 were `clippy::neg_cmp_op_on_partial_ord` -- a lint
+  that's genuinely correctness-adjacent for floats (`!(a < b)` isn't
+  `a >= b` once NaN is possible, since NaN fails *every* comparison) --
+  worth checking individually rather than lumping in with the cosmetic
+  majority, given how many real NaN-handling bugs this session already
+  found elsewhere. All three turned out to be the *identical*, deliberate
+  idiom (`log_2`/`ln`/`log10`'s own shared `if !(x < f32::INFINITY) {
+  x*x } else { r }` tail), already explained in `log_2`'s own doc comment
+  ("+inf and nan: x*x is inf/nan respectively (false for -inf: -inf <
+  inf)") -- correct, intentional, and already understood, not a bug.
+  Added `#[allow(clippy::neg_cmp_op_on_partial_ord)]` to all three
+  (matching the crate's own established "allow with an explanation"
+  convention rather than clippy's suggested `partial_cmp` rewrite, which
+  would add an `Option`-unwrap for what's currently a single fcmp).
+  lib warnings 92->89, `cargo test`/`edgecheck.rs` still clean. *Not every
+  warning bucket deserves the same triage verdict -- "54 are the same
+  intentional thing I already decided to skip" doesn't mean the other 35
+  are too; the ones with a plausible correctness angle (here, float
+  comparison semantics) are worth reading individually even inside a
+  pile of otherwise-cosmetic noise.*
+
 ## sin_checked / cos_checked internals
 
 - **round_x_over_pi: remove dead pre_offset=0.0 add (2026-07-07)**:

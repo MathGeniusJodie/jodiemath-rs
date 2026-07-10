@@ -36,6 +36,10 @@ fn fma(a: f32, b: f32, c: f32) -> f32 {
 }
 
 #[inline(always)]
+#[allow(clippy::neg_cmp_op_on_partial_ord)] // deliberate: !(x < inf) exploits
+// NaN's always-false comparisons to catch both +inf and NaN in one check
+// (see the comment at the actual use site below); partial_cmp would need
+// an extra Option-unwrap for what's already a single cheap fcmp.
 pub fn log_2(x: f32) -> f32 {
     // edge handling is done with selects (no early returns) so loops over
     // arrays of log_2 calls can auto-vectorize: scale denormals up before
@@ -1257,6 +1261,9 @@ const LOG10_2_LO: f32 = 4.605039066518657e-6;
 /// nearly a full ulp of avoidable error. Same domain behavior as log_2 (its
 /// edge handling covers zero/negative/denormal/inf/nan).
 #[inline(always)]
+#[allow(clippy::neg_cmp_op_on_partial_ord)] // deliberate: !(x < inf) exploits
+// NaN's always-false comparisons to catch both +inf and NaN in one check,
+// same idiom as log_2's own doc comment explains.
 pub fn ln(x: f32) -> f32 {
     let tiny = x < f32::MIN_POSITIVE;
     let xs = if tiny { x * 16777216.0 } else { x };
@@ -1327,6 +1334,9 @@ pub fn ln_unchecked(x: f32) -> f32 {
 /// comment for why this avoids the naive `log_2(x) * LOG10_2`'s double
 /// rounding).
 #[inline(always)]
+#[allow(clippy::neg_cmp_op_on_partial_ord)] // deliberate: !(x < inf) exploits
+// NaN's always-false comparisons to catch both +inf and NaN in one check,
+// same idiom as log_2's own doc comment explains.
 pub fn log10(x: f32) -> f32 {
     let tiny = x < f32::MIN_POSITIVE;
     let xs = if tiny { x * 16777216.0 } else { x };
