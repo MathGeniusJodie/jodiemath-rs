@@ -1254,7 +1254,11 @@ fn main() {
             grid.push(f32::from_bits(b));
             b += 10000;
         }
-        let init = [2.2960256e-3, -1.1146317e-2, 2.6900213e-2, -4.8802543e-2, 8.8755615e-2, -2.1458544e-1, 1.5707963];
+        // c[6] = 1.5707964, matching FRAC_PI_2 exactly (idea #36's fix,
+        // 2026-07-10 -- this init array previously held the stale
+        // pre-fix 1.5707963, an 8-significant-digit transcription that
+        // rounds 1 ulp short of the true nearest f32).
+        let init = [2.2960256e-3, -1.1146317e-2, 2.6900213e-2, -4.8802543e-2, 8.8755615e-2, -2.1458544e-1, 1.5707964];
         tune("acos_poly", &acos_poly_c, &|x| x.acos(), &grid, &init);
         // Coarser grid (100x fewer points) specifically for the basin-hop
         // phase, so each of many restarts' full re-descent stays fast --
@@ -1310,7 +1314,11 @@ fn main() {
             grid.push(f32::from_bits(b));
             b += 10000;
         }
-        let init = [2.2960256e-3, -1.1146317e-2, 2.6900213e-2, -4.8802543e-2, 8.8755615e-2, -2.1458544e-1, 1.5707963];
+        // c[6] = 1.5707964, matching FRAC_PI_2 exactly (idea #36's fix,
+        // 2026-07-10 -- this init array previously held the stale
+        // pre-fix 1.5707963, an 8-significant-digit transcription that
+        // rounds 1 ulp short of the true nearest f32).
+        let init = [2.2960256e-3, -1.1146317e-2, 2.6900213e-2, -4.8802543e-2, 8.8755615e-2, -2.1458544e-1, 1.5707964];
         let joint_score = |c: &[f32]| -> (u64, u64) {
             let mut sum = 0u64;
             let mut max = 0u64;
@@ -1429,7 +1437,7 @@ fn main() {
             -4.8802543e-2,
             8.8755615e-2,
             -2.1458544e-1,
-            1.5707963,
+            1.5707964,
         ];
         let joint_score = |c: &[f32]| -> (u64, u64) {
             let mut sum = 0u64;
