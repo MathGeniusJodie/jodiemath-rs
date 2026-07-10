@@ -930,6 +930,21 @@ cousin.
    0.5, asin 0.25, erf 0.28, expm1 0.5, atanh if split): optimize crossover
    and both coefficient sets together, each branch max-capped. The erf
    boundary sweep that found "no headroom" held coefficients fixed.
+   `sinh`'s own `0.5` threshold checked directly (2026-07-10, no code
+   changes -- confirms no headroom): measured `sinh_small` (exact Taylor)
+   and the direct `exp_pos_neg`-based branch *independently* across
+   `[0,3)` in half-wide buckets. The small branch wins clearly through
+   `[0.25,0.5)` (avg 0.36 vs the direct branch's 1.44) and the direct
+   branch only just starts winning at `[0.5,0.75)` (avg 0.89 vs 1.05) --
+   the crossover is already almost exactly where the shipped threshold
+   sits, same conclusion this file already reached for `asin` (idea #37,
+   "0.25 already close enough") and `erf` (idea just above, "plateau...
+   no headroom"). `sinh`/`asin`/`erf` are now all confirmed with no
+   threshold-placement headroom; `expm1`/`atanh` not independently
+   re-checked this way but `expm1`'s own round-off budget audit (idea #7)
+   already found its dominant error split roughly evenly between
+   rounding and truncation with no single cheap lever, a related
+   (if not identical) conclusion.
 7. **Round-off budget audit per function**: enumerate every rounding on the
    critical path with a bound, attack the largest term. This is exactly how
    exp's Cody-Waite fix was found; do it systematically for the remaining
