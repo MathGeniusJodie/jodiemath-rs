@@ -1848,7 +1848,20 @@ fn exp_pos_neg(x: f32) -> (f32, f32) {
     // exp_r_pair_c/"exp_r_pair") -- the plain-Horner exp() coefficients
     // copied verbatim here left max ulp 4 on the tuning grid, retuning
     // c0/c1 recovered max ulp 3 (c2/c3 didn't move).
-    let c: [f32; 4] = [4.999897e-1, 1.6666329e-1, 4.1917525e-2, 8.3811125e-3];
+    //
+    // Refit again (2026-07-10) via a genuine ulp-weighted joint Chebyshev
+    // LP (idea #91's technique, using scipy -- confirmed available this
+    // session, see IDEAS.md), scoring both p_pos/e^r and p_neg/e^-r
+    // simultaneously over r in [-ln2/2,ln2/2]. Unlike the same LP applied
+    // to log_2 (idealized win that evaporated through real f32 rounding),
+    // this poly's error is fit-quality-dominated (idea #7's own round-off
+    // audit), so the idealized gain largely survived: verified against
+    // the real compiled sinh/cosh (bit-identical fidelity check first),
+    // then a real ~559M-point dense sweep: sinh avg ulp 0.08875->0.08121
+    // (~8.5% tighter), cosh avg ulp 0.08792->0.07638 (~13.1% tighter),
+    // max ulp unchanged at 5 for both. Zero perf cost, same instructions
+    // (same literal-swap shape as every other coefficient-only refit).
+    let c: [f32; 4] = [4.99993e-1, 1.6667245e-1, 4.188372e-2, 8.300987e-3];
     let r2 = r * r;
     let r4 = r2 * r2;
     let e = fma(c[2], r4, fma(c[0], r2, 1.0));
@@ -1971,7 +1984,7 @@ fn exp_pos_neg_checked_half(x: f32) -> (f32, f32) {
     let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
     let r = fma(-k, LN2_HI, x);
     let r = fma(-k, LN2_LO, r);
-    let c: [f32; 4] = [4.999897e-1, 1.6666329e-1, 4.1917525e-2, 8.3811125e-3];
+    let c: [f32; 4] = [4.99993e-1, 1.6667245e-1, 4.188372e-2, 8.300987e-3];
     let r2 = r * r;
     let r4 = r2 * r2;
     let e = fma(c[2], r4, fma(c[0], r2, 1.0));
