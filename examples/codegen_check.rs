@@ -87,6 +87,17 @@ fn main() {
         // scratch copy of hypot and confirming this check failed to catch
         // it before this fix, see IDEAS.md).
         let has_saturating_cast = body.iter().any(|l| l.contains("cvttsd2si") || l.contains("cvttss2si"));
+        // IDEAS.md idea #75's own explicit ask ("no vsqrtss/vdivss") isn't
+        // fully covered by has_packed_arith below, which only confirms *at
+        // least one* packed op is present -- a scalar sqrt/div could still
+        // hide alongside otherwise-packed code (a partial de-vectorization
+        // of just one sub-computation) without tripping that check at all.
+        // Checked directly: currently zero regions have this (verified
+        // 2026-07-10), but nothing was actually asserting it.
+        let has_scalar_sqrt_or_div = body.iter().any(|l| {
+            let t = l.trim_start();
+            t.starts_with("vsqrtss") || t.starts_with("vdivss") || t.starts_with("vsqrtsd") || t.starts_with("vdivsd")
+        });
         let has_packed_arith = body.iter().any(|l| {
             let t = l.trim_start();
             let is_arith = t.starts_with("vadd")
@@ -106,6 +117,9 @@ fn main() {
         }
         if has_saturating_cast {
             failures.push(format!("{name}: contains cvttsd2si/cvttss2si (saturating-cast de-vectorization, see jodiemath-workflow memory)"));
+        }
+        if has_scalar_sqrt_or_div {
+            failures.push(format!("{name}: contains a scalar vsqrtss/vdivss/vsqrtsd/vdivsd (partial de-vectorization -- should be the packed vXXXps/vXXXpd form)"));
         }
         // nop_throughput is the harness's own deliberately-trivial identity
         // baseline (`|x: f32| x`, see mca_target.rs) -- no arithmetic by

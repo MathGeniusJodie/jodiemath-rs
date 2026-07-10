@@ -1811,9 +1811,22 @@ cousin.
     in a way that costs real inlining/optimization -- this crate's
     existing mca numbers are already trustworthy as measured, no LTO
     needed to get an honest picture. No code/config change.
-75. **Asm-grep CI test**: assert zero scalar fallbacks (no `vsqrtss`/
-    `vdivss`/call instructions) in the vectorized loop bodies of every
-    public function — turns the "must autovectorize" rule into a test.
+75. ~~**Asm-grep CI test**~~ (mostly already existed; gap closed
+    2026-07-10): `examples/codegen_check.rs` already asserted zero `call`
+    instructions and zero `cvttsd2si`/`cvttss2si` (the saturating-cast
+    de-vectorization class), plus confirmed at least one packed op is
+    present per region -- but that last check only proves "some packed
+    arithmetic exists," not "no scalar sqrt/div coexists alongside it"
+    (a partial de-vectorization of just one sub-computation could hide
+    behind an otherwise-packed region and pass silently). Checked
+    directly: zero regions currently have this (verified via a manual
+    assembly scan scoped to genuine `_throughput`-suffixed regions only,
+    distinguishing them from same-named `_latency` regions where scalar
+    ops are expected and fine), but nothing was actually asserting it.
+    Added an explicit `vsqrtss`/`vdivss`/`vsqrtsd`/`vdivsd` check
+    alongside the existing two; all 71 regions still pass. Zero-risk,
+    zero perf/accuracy effect (test-tooling only) -- closes the gap this
+    backlog entry asked for.
 76. **Continue the AVX-512 probe** (examples/scratch_avx512_probe.rs is
     sitting untracked): decide whether explicit `core::simd` f32x16 tiers
     beat the auto-vectorized ymm baseline enough to justify a feature
