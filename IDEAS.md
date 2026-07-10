@@ -2914,3 +2914,53 @@ cousin.
     overflow bugs (too little range) -- know which class of problem
     you're looking at before reaching for double-float as the default
     hammer.*
+
+    **Follow-up same day: tried the "obviously correct" complementary fix
+    (exponent-tracking rescale, range extension instead of precision
+    extension) and it *also* fails, for a genuinely instructive reason.**
+    Prototyped decomposing `base`/`result` into `(mantissa in [1,2),
+    exponent: i64)` pairs (frexp/ldexp-style), renormalizing every
+    squaring/multiply step so the mantissa never leaves a safe range and
+    the exponent -- plain integer arithmetic -- absorbs all the
+    magnitude, only converting back to a single f32 (with a final
+    saturating check) at the very end. This is exactly `remainder_wide`'s
+    own rescue-scale idiom, generalized. Result: the specific traced case
+    (`pown(0.997296, -32767)`) *still* returns `inf`, and the broader
+    sweep got *worse* in one respect -- the existing documented `|n|<=64`
+    max ulp regressed from `90` to `4,194,272`. Traced why: renormalizing
+    the mantissa to stay in `[1,2)` doesn't reduce the *number of
+    rounding events* in the mantissa chain at all -- it's the exact same
+    32 iterations of f32 multiply/square, just re-expressed. The traced
+    case's own numbers make this concrete: the rescue computation lands
+    on `mantissa=1.0023601, exponent=128`, i.e. `~1.0024 * 2^128 ~=
+    3.4108e38` -- almost exactly the *same* ~0.3%-too-high value the
+    original algorithm computed (`3.4109e38`), just relabeled with an
+    exponent one higher than the true answer's real exponent (`127`, not
+    `128`) *because* that same ~0.3% of accumulated rounding error pushed
+    the renormalized mantissa just over `2.0`, incrementing the tracked
+    exponent by exactly the amount needed to reproduce the original
+    overflow at a different threshold (`e>127` in the new scheme instead
+    of `f32::MAX` in the old one). Same underlying number, same error,
+    same failure, new representation. **This means the bug has two
+    distinct, complementary failure ingredients -- insufficient range (
+    which exponent-tracking alone *would* fix, for an `x` extreme enough
+    that intermediate magnitudes need more exponent bits than f32 has,
+    regardless of rounding) and insufficient precision (which `Df32`
+    alone *would* fix, for compounding rounding error that stays within
+    range) -- and this specific found case is purely the second kind, so
+    neither fix alone touches it.** A real fix needs *both* combined: a
+    mantissa tracked with `Df32`-level precision *and* an exponent
+    tracked as a wide integer, in the same structure simultaneously --
+    genuinely more engineering than either attempt above, closer to
+    building a small custom extended-range double-float type than reusing
+    an existing crate primitive. Confirms this is correctly scoped as
+    real follow-up work, not something to force through this session --
+    and the `|n|<=64` regression is a useful warning of its own: a
+    plausible-looking rescale scheme can silently make an *already-good*
+    range measurably worse if the renormalization itself isn't verified
+    against the existing documented accuracy before considering it an
+    improvement. *A bug hunt sometimes needs to identify that it's
+    "solve problem A AND problem B simultaneously," not "A or B" -- two
+    fixes that each correctly solve half the problem can each
+    individually look like they "don't work at all" if judged only
+    against a symptom that happens to require both halves.*
