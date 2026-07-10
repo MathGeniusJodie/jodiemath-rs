@@ -122,6 +122,23 @@ fn ln_poly_c(x: f32, c: &[f32]) -> f32 {
     fma(p, s, k_hi) + k * LN2_LO
 }
 
+// backlog idea #22: log1p(x) = ln(u) + c/u (u=1+x, c=x-(u-1), the exact
+// Sterbenz-recovered rounding error), matching src/lib.rs's own log1p
+// exactly -- ln(u) routed through ln_poly_c so the SAME candidate
+// coefficients affect both ln's own accuracy and log1p's, letting a
+// joint objective refit ln's coefficients specifically for log1p's own
+// benefit without changing ln's own op count (log1p already reuses ln
+// unmodified in the shipped code, so any coefficient set that helps
+// here is a free win, zero new ops).
+#[inline(always)]
+fn log1p_via_ln_c(x: f32, c: &[f32]) -> f32 {
+    let u = 1.0 + x;
+    let corr_num = x - (u - 1.0);
+    let corr = corr_num / u;
+    let corr = if corr.is_finite() { corr } else { 0.0 };
+    ln_poly_c(u, c) + corr
+}
+
 #[inline(always)]
 fn log10_poly_c(x: f32, c: &[f32]) -> f32 {
     let e = (x.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23;
@@ -789,6 +806,65 @@ fn tune_fixed0(
     );
 }
 
+// backlog idea #22: minimize a secondary function's error (e.g. log1p)
+// via a shared coefficient set, subject to the primary function's own
+// (e.g. ln's) max ulp never regressing past its already-shipped
+// baseline -- same "constrained search" shape as acos_poly's own joint
+// asin refit (fix 7), just generalized to take two arbitrary (f,
+// reference, grid) triples instead of hardcoding acos/asin. Coefficient
+// index 0 is never perturbed (mathematically-required exact leading
+// term, same convention as tune_fixed0).
+#[allow(clippy::too_many_arguments)]
+fn tune_joint_fixed0(
+    name: &str,
+    primary_f: &dyn Fn(f32, &[f32]) -> f32,
+    primary_ref: &dyn Fn(f64) -> f64,
+    primary_grid: &[f32],
+    secondary_f: &dyn Fn(f32, &[f32]) -> f32,
+    secondary_ref: &dyn Fn(f64) -> f64,
+    secondary_grid: &[f32],
+    init: &[f32],
+) {
+    let mut c: Vec<f32> = init.to_vec();
+    let primary_cap = score(primary_f, primary_ref, primary_grid, &c).0;
+    let mut best = score(secondary_f, secondary_ref, secondary_grid, &c);
+    println!(
+        "{name}: start secondary max {} avg {:.5} (primary cap max {})",
+        best.0,
+        best.1 as f64 / secondary_grid.len() as f64,
+        primary_cap
+    );
+    let mut improved = true;
+    while improved {
+        improved = false;
+        for i in 1..c.len() {
+            for delta in [1i32, -1, 2, -2, 4, -4, 8, -8, 16, -16] {
+                let mut trial = c.clone();
+                trial[i] = f32::from_bits((trial[i].to_bits() as i32 + delta) as u32);
+                let primary_s = score(primary_f, primary_ref, primary_grid, &trial);
+                if primary_s.0 > primary_cap {
+                    continue; // would regress the primary function's own max
+                }
+                let s = score(secondary_f, secondary_ref, secondary_grid, &trial);
+                if s < best {
+                    best = s;
+                    c = trial;
+                    improved = true;
+                }
+            }
+        }
+    }
+    let final_primary = score(primary_f, primary_ref, primary_grid, &c);
+    println!(
+        "{name}: tuned secondary max {} avg {:.5}  primary max {} avg {:.5}  coeffs: {:?}",
+        best.0,
+        best.1 as f64 / secondary_grid.len() as f64,
+        final_primary.0,
+        final_primary.1 as f64 / primary_grid.len() as f64,
+        c.iter().map(|v| format!("{v:e}")).collect::<Vec<_>>()
+    );
+}
+
 fn main() {
     let which = std::env::args().nth(1).unwrap_or_default();
     if which.contains("exp2") || which.is_empty() {
@@ -871,6 +947,77 @@ fn main() {
             -0.05751561, 0.05604425, -0.03309811,
         ];
         tune_fixed0("log10", &log10_poly_c, &|x| x.log10(), &grid, &init);
+    }
+    if which.contains("log1pjoint") {
+        // backlog idea #22: found on 2026-07-09 that the coarse grid
+        // here reports a modest, real-looking win (secondary/log1p max
+        // ulp unchanged, avg -1.6%; primary/ln max even improves 3->2 as
+        // a bonus) -- but wiring the resulting coefficients into
+        // src/lib.rs's actual `ln_normal` and re-checking against the
+        // real 100M-sample `accuracy.rs` fuzz (not this file's own
+        // coarse grid) showed a genuine regression instead: log1p avg
+        // ulp 0.0966->0.1085 (worse) and max ulp 4->7 (worse). Same
+        // "always verify a tune.rs result against the real sweep before
+        // trusting it" lesson this file's own `tune_basin_hop` doc
+        // comment already documents for acos_poly -- the coarse grid
+        // here (built from a ~613-step walk over log1p's own bit
+        // patterns) apparently doesn't sample densely enough near
+        // whatever region the real 100M-sample fuzz's own worst case
+        // lives in. Reverted the coefficient change in src/lib.rs; kept
+        // this tuning infrastructure (`log1p_via_ln_c`,
+        // `tune_joint_fixed0`) since the *technique* (constrained joint
+        // refit sharing one coefficient set across two call sites) is
+        // reusable even though this specific run's result didn't survive
+        // real verification -- a denser/differently-distributed grid
+        // might do better for a future attempt.
+        //
+        // ln's own grid (the constraint: never let ln's own max regress
+        // past its shipped baseline), same as the "lnlog10" block above.
+        let mut ln_grid = vec![];
+        let mut b = 0x0080_0000u32;
+        while b < 0x7f80_0000 {
+            ln_grid.push(f32::from_bits(b));
+            b += 1499;
+        }
+        // log1p's own grid: x in (-1, large), built the same "iterate
+        // raw bits, coarse step" way but over log1p's actual domain
+        // (u=1+x staying positive) instead of ln's own x>0 domain --
+        // log1p's whole point is precision for x near 0, so this needs
+        // its own domain, not ln's.
+        let mut log1p_grid = vec![];
+        // x in (-1, -1e-4): bits just below 0xbf800000 (-1.0) up toward
+        // -0.0001, walked by decreasing magnitude (increasing raw bits
+        // of -x, since -x in (1e-4, 1) has the same bit-pattern-order
+        // property positive floats do).
+        let mut nb = (1e-4f32).to_bits();
+        while nb < 0x3f800000 {
+            // magnitude in (1e-4, 1.0)
+            log1p_grid.push(-f32::from_bits(nb));
+            nb += 613;
+        }
+        let mut b = (1e-4f32).to_bits();
+        while b < 0x4c000000 {
+            // x in (1e-4, 3.36e7)
+            log1p_grid.push(f32::from_bits(b));
+            b += 613;
+        }
+        // current shipped ln coefficients (src/lib.rs's log1p reuses
+        // `ln` unmodified) -- same seed as the "lnlog10" block's own ln
+        // init, since log1p_via_ln_c calls ln_poly_c directly.
+        let init = [
+            1.0, -0.49999988, 0.33333343, -0.25001621, 0.20002009, -0.16609012, 0.14181833,
+            -0.13243459, 0.12904665, -0.07621122,
+        ];
+        tune_joint_fixed0(
+            "log1p_joint",
+            &ln_poly_c,
+            &|x| x.ln(),
+            &ln_grid,
+            &log1p_via_ln_c,
+            &|x| x.ln_1p(),
+            &log1p_grid,
+            &init,
+        );
     }
     if which.contains("asin") {
         // asin's mid branch is only ever evaluated for a = |x| in
