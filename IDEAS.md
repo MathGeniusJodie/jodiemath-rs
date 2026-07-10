@@ -3527,3 +3527,36 @@ cousin.
     operations) before concluding it's unfixable — a precisely
     characterized dead end is still a valuable, reusable result, even
     unshipped.*
+
+    **Doc-completeness postscript (2026-07-10): `pown_small` (the
+    already-shipped, already-narrower `|n|<=255` tier this file's own
+    future-work option 3 above proposed as a fallback) had no accuracy
+    row in readme.md at all**, despite `accuracy.rs` already defining
+    three dedicated sweeps for it (`|n|<=8`, `<=64`, `<=255`) and its own
+    doc comment already claiming "bit-identical to `pown`... confirmed
+    over 50M generated samples." Ran the sweep fresh: `pown_small (|n|<=
+    255)` comes out at avg 0.216/max 304 -- a real, previously
+    undocumented data point (wider than `pown`'s own documented `|n|<=64`
+    row, and showing the same compounding-error growth pattern idea
+    #101's own investigation already established for larger `|n|`, just
+    not yet catastrophic at 255). Along the way, a 20M-sample independent
+    fuzz run of `pown` vs. `pown_small` at the *same* `|n|` ranges showed
+    slightly different max ulp between them (11 vs 12 at `|n|<=8`, 92 vs
+    90 at `|n|<=64`) -- looked like a possible violation of the
+    documented bit-identical claim (which, unlike the other 10 checked/
+    unchecked pairs, was never added to `examples/unchecked_parity.rs`'s
+    standing regression test, idea #12). Checked directly at both
+    functions' own reported worst points before treating this as a real
+    bug: bit-identical at all four, confirming the discrepancy was pure
+    sampling noise between two independent fuzz runs (each landing on a
+    different worst point within the same true error distribution), not
+    an actual invariant break. Added the `pown_small (|n|<=255)` row to
+    readme.md (`bit-identical to pown on its domain`, matching this
+    crate's existing convention for confirmed-identical siblings). No
+    `src/lib.rs` change; one scratch probe used, not committed. *A "bit-
+    identical" claim that isn't covered by the standing parity test is
+    still worth spot-verifying directly at the actual reported worst
+    points before trusting an apparent discrepancy between two
+    independently-fuzzed sweeps -- different random samples finding
+    different worst cases within the same distribution looks identical to
+    a real divergence until checked at a shared point.*

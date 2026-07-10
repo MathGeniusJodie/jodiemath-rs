@@ -77,6 +77,7 @@ hypot_unchecked (bounded, +) | 0.034 |     1     | (bit-identical to hypot on it
                   rsqrt |    0.260   |     1     | (no std rsqrt)
           pown (|n|<=8) |    0.158   |    11     | (no std pown)
          pown (|n|<=64) |    0.209   |    90     | (no std pown)
+   pown_small (|n|<=255)|    0.216   |   304     | (bit-identical to pown on its domain)
         powf (in-domain)|    0.181   |  >=312    |  0.000  |    1
     powf_unchecked (+)  |    0.363   |  >=312    | (bit-identical to powf on its domain)
         powf_checked (in-domain)|  0.046   |  >=203    | (no std comparison needed, same domain as powf)
