@@ -3121,6 +3121,33 @@ cousin.
   wide, rapidly-worsening region -- and only measuring both with real
   numbers reveals which kind of claim you're actually looking at.*
 
+- **`softplus` vs. naive `(1.0+exp(x)).ln()`, quantified with real numbers
+  (2026-07-10, confirmed, no bug -- a third data point, and the most
+  dramatic yet, in this trio)**: `softplus`'s own doc comment describes
+  its naive alternative's negative-`x` failure the same qualitative way
+  ("loses precision for very negative `x`... the same cancellation
+  `log1p` exists to avoid"), no numbers given. Measured directly across
+  `x` from `-1` to `-90`: real, growing ulp error starts around `x=-10`
+  (5170 ulp), already 1.8 million ulp by `x=-15` -- then, at `x~-16.6`,
+  the naive form doesn't just get worse, it collapses to **exactly
+  `0.0`** and stays there for the rest of the domain, discarding *all*
+  information about the true (still very much nonzero) answer. `softplus`
+  itself keeps returning the correct, shrinking-but-real value all the
+  way out to `x~-87` -- the function's own true asymptotic underflow
+  boundary, matching `f32`'s actual representable range -- meaning the
+  naive form's premature all-zero collapse spans roughly *70 units of
+  `x`* (`-16.6` to `-87`) where the dedicated construction still carries
+  real information the naive one has already thrown away completely.
+  This is the widest, most severe of the three naive-vs-dedicated cases
+  quantified this session (`exp_m1_over_x`: modest, single-point;
+  `atanh`: wide and catastrophic but at least nonzero garbage;
+  `softplus`: wide *and* total information loss, not just large error).
+  No code change. *Completes a small, informal survey (three functions,
+  three different severities) of how differently a doc comment's shared
+  phrase -- "the same cancellation `log1p` exists to avoid" -- can cash
+  out numerically: modest-and-local, severe-and-wide, or a total,
+  wide information blackout. The phrase alone doesn't tell you which.*
+
 89. **Bit-sliced two-for-one**: evaluate sin and cos polynomials sharing
     y=r² registers across the *same* vector when the caller wants both —
     a sincos slice API (not scalar API, which already failed) where lane
