@@ -897,11 +897,22 @@ cousin.
    transfer here: `exp`'s own magic-round is fused into a multiply the
    reduction needs anyway, while exp2/exp2_checked's would-be swap adds
    a bare, unfused add/sub pair with nothing to share it with.
-2. **Gather-based real LUTs (vgatherdps)**: 8/16-entry table indexed by top
-   mantissa bits — log family (per-interval rcp + log pair, shorter poly),
-   exp2 (2^(i/16) exact). Distinct from the rejected select-tree "LUT"
-   (blend emulation); a hardware gather is a different cost model. Screen
-   with mca before any fitting.
+2. ~~**Gather-based real LUTs (vgatherdps)**~~ (screened 2026-07-10,
+   rejected before any fitting -- see the "Codegen / build / measurement"
+   section near the top of this file for the full mca writeup). A
+   standalone `vgatherdps`-based 16-entry LUT probe, given a generously
+   *shorter* residual poly (degree 2, 2 coefficients) than the shipped
+   direct fit (degree 5, 6 coefficients) to make the comparison as
+   favorable as possible to the gather approach, still cost ~41% more
+   throughput overall (0.647->0.913 cyc/elem) than the direct polynomial.
+   Root cause: `vgatherdps` itself measures at 5 uOps / 22 cyc latency /
+   4.00 cyc RThroughput per 8-wide gather on this CPU -- as expensive as
+   roughly 8 FMAs. Two gathers per 16-wide throughput iteration (8.0 cyc)
+   alone very nearly matches the *entire* direct-poly baseline's whole
+   10.35 cyc/iteration budget. "A hardware gather is a different cost
+   model" turned out to be right, just not in the hoped-for direction --
+   confirms the backlog's own "screen with mca before any fitting" caution
+   was exactly the right call here.
 3. **Coefficient ulp-neighborhood exhaustive search**: for each shipped
    poly, enumerate all coefficient tuples within ±k ulp (k~2-4) of the LP
    solution, scored on the real crate — rlibm-lite. Catches the
