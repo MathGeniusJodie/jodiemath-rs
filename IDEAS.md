@@ -123,6 +123,45 @@ git history / readme.md, not here. Untested backlog is at the bottom.
   "many small roundings, roughly tied with truncation, nothing cheap to
   cut."*
 
+- **sinh round-off budget audit (idea #7, 2026-07-10, screened -- no
+  actionable single term found)**: same technique, applied to sinh's own
+  max-ulp-5 worst point (`x=-1.8935952`, direct `exp_pos_neg`-based
+  branch). Rounding dominates over truncation here (3.055 ulp vs 1.670
+  ulp) -- but drilling in found the rounding isn't concentrated in one
+  avoidable step either: `p_neg` (the `exp(-x)` polynomial combine)
+  carries a modest 0.643 ulp of its own rounding error, which then gets
+  amplified ~8x by the necessary exponent-field reconstruction
+  (`t1n*t2n=2^3` at this `x`) purely because that's how relative error in
+  a value multiplied by a large power-of-two scale factor translates to
+  absolute-ulp terms at the *final* result's (much smaller) magnitude --
+  not a separate, fixable error source, just inherent amplification
+  through the reconstruction every `exp_pos_neg` caller already relies on.
+  No single step stood out as cheaply improvable. Not implemented; no code
+  changes. *A second confirmation (after expm1) that this technique
+  doesn't always surface a clean target -- when the dominant contributor
+  turns out to be "a normal amount of poly rounding, amplified by an
+  unavoidable exponent scale," there's nothing left to cut without adding
+  real precision (cost) somewhere.*
+
+- **Range-invariant sweep for every function with a known mathematical
+  output bound (2026-07-10, resolved -- confirms the sin_checked/
+  cos_checked fix above was isolated, not a wider pattern)**: generalized
+  that fix's own discovery method -- checked `tanh` (`[-1,1]`), `sigmoid`
+  (`[0,1]`), `erf` (`[-1,1]`), `atan`/`asin` (`[-pi/2,pi/2]`), `acos`
+  (`[0,pi]`), `atan2` (`[-pi,pi]`), `hypot` (`>=0`), plus `sinpi`/`cospi`/
+  `sind`/`cosd`/`sin_checked`/`cos_checked` themselves, all at
+  `{0,-0,+-1,+-1e6,...,+-1e37,+-f32::MAX,+-inf}`. Every one of them stayed
+  correctly bounded except the already-known/already-fixed cases: plain
+  `sin`/`cos` (unchecked, expected garbage outside their documented
+  domain) and `sind`/`cosd` (whose own doc comment already explicitly
+  disclaims correctness -- only finiteness -- past their `~4.7e7` limit,
+  and `2.6e21` is technically still finite). No new bugs found; confirms
+  the double-float-reduction class of bug is specific to `sin_checked`/
+  `cos_checked`'s own `two_prod`/`two_sum`-based reduction (grep confirms
+  no other function in the crate uses `two_prod`/`two_sum` at all, and no
+  other function uses `POLY_SAFE_BOUND`), not a pattern requiring a
+  broader sweep of the rest of the crate.
+
 - **tanh direct rational P(x²)/Q(x²) over [0,~9] (2026-07-08)**: needs 13
   free coefficients to converge over the full domain — far more than any
   poly in the crate. A 2-domain split needs 14 total, likely more work than
