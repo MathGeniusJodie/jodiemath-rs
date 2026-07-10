@@ -651,6 +651,51 @@ git history / readme.md, not here. Untested backlog is at the bottom.
   fixing once in a while, since "unused manifest key" and "unpredictable
   comparison" are both real, fixable issues, not cosmetic noise.*
 
+- **`cargo clippy` follow-up (2026-07-10): the crate had never actually
+  been able to run clippy to completion at all.** `cargo clippy
+  --all-targets` hard-*errored* (not just warned) on the lib, the lib's
+  own test build, and two examples (`tune`, `accuracy`) -- `deny`-level
+  `clippy::approx_constant` firing on fitted polynomial coefficients that
+  happen to land numerically close to a named `std::f32::consts` value.
+  Two of these (`exp2`, an unnamed earlier one) already had the crate's
+  own established `#[allow(clippy::approx_constant)]` treatment with an
+  explanatory comment ("fitted minimax coefficient near ln(2), not ln(2)
+  itself") -- but three *more* functions sharing the identical `g0`
+  poly shape (`exp10`, `exp10_checked`, `exp2m1`) never got the same
+  treatment, so clippy still hard-failed on them. Fixed all three the
+  same way. Also found a genuinely different case hiding under the same
+  lint: `log10_normal`'s own leading coefficient (`0.4342945`) -- checked
+  bit-identity directly rather than assuming -- turned out to be exactly
+  `LOG10_E`, not a nearby-but-different fitted value (matching `log_2`'s
+  own already-established "leading coefficient IS the real constant, not
+  a coincidence" precedent), so replaced the literal with the named
+  constant instead of adding an `allow` (verified: `log10`'s own fuzz
+  accuracy unchanged, avg 0.1270/max 3, matching its documented row
+  exactly). Two more genuine errors in `examples/`, unrelated to any
+  shipped-function coefficient: a `doublefloat.rs` test used `3.14` as
+  an arbitrary tuple-access test value (pure coincidence, unrelated to
+  the crate's own trig code) -- changed to `2.5`; `accuracy.rs` used a
+  literal `0.785398_f32` as a readable `pi/4` domain-boundary label in
+  four sin/cos sweep entries -- since it's just a convenient sweep
+  cutoff with no accuracy sensitivity at all, replaced with the exact
+  named `FRAC_PI_4` constant directly (strictly better, zero downside).
+  `examples/tune.rs` got a single file-level `#![allow(...)]` instead of
+  6 per-site ones, since that whole file exists to copy and perturb
+  fitted coefficients from `src/lib.rs` -- landing near a named constant
+  there is expected background noise, not something worth documenting
+  at every site the way the shipped library does. `cargo clippy
+  --all-targets` now completes everywhere with warnings only, zero hard
+  errors; `cargo test`, `edgecheck.rs` (0 failures), and
+  `unchecked_parity.rs` (all 11 pairs, including the newly-added
+  `hypot`) all still clean. *A `deny`-level lint that's never been
+  triggered to completion can hide multiple real, similar-shaped issues
+  behind the first one encountered -- clippy stops per-target on the
+  first hard error, so "fix one, rerun, find the next" is the only way
+  to discover how many are actually there; checking bit-identity before
+  choosing "allow" vs. "use the real constant" matters, since the two
+  fixes mean opposite things (this coefficient is deliberately not that
+  constant, vs. this coefficient secretly always was that constant).*
+
 ## sin_checked / cos_checked internals
 
 - **round_x_over_pi: remove dead pre_offset=0.0 add (2026-07-07)**:

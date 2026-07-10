@@ -274,8 +274,8 @@ mod tests {
 
     #[test]
     fn test_tuple_access() {
-        let x = Df32(3.14, 1e-10);
-        assert_eq!(x.0, 3.14);
+        let x = Df32(2.5, 1e-10);
+        assert_eq!(x.0, 2.5);
         assert_eq!(x.1, 1e-10);
     }
 

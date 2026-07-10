@@ -1,6 +1,12 @@
 // Coordinate-descent ULP tuner for polynomial coefficients.
 // Scalar (non-SIMD, no portable_simd/nightly needed) 1.0-ulp reference,
 // same crate accuracy.rs uses for its vectorized ground truth.
+//
+// This file copies fitted polynomial coefficients from src/lib.rs (and
+// perturbs/tunes them), so some literals are expected to land close to
+// well-known constants without actually being them -- not worth per-site
+// `#[allow]`s the way the shipped library documents each one individually.
+#![allow(clippy::approx_constant)]
 use sleef::f64::erf_u10 as erf_ref;
 use sleef::f64::erfc_u15 as erfc_ref;
 

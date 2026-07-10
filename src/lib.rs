@@ -266,6 +266,8 @@ pub fn exp2_checked(x: f32) -> f32 {
 /// (here, `x=inf`) are not redundant with fuzzing; run both before
 /// trusting a reduction-scheme change.*
 #[inline(always)]
+#[allow(clippy::approx_constant)] // g0's constant term is a fitted minimax
+// coefficient near ln(2), not ln(2) itself (bit pattern deliberately differs)
 pub fn exp10_checked(x: f32) -> f32 {
     // Clamped before the reduction starts (matching exp2_checked's own
     // early-clamp pattern) so +-inf can't poison `d = x - kr*LOG10_2`
@@ -316,6 +318,8 @@ pub fn exp10_checked(x: f32) -> f32 {
 /// of a correct finite value. Kept the floor-adjust; see `exp2`'s own doc
 /// comment for the full story (same root cause, same fix).
 #[inline(always)]
+#[allow(clippy::approx_constant)] // g0's constant term is a fitted minimax
+// coefficient near ln(2), not ln(2) itself (bit pattern deliberately differs)
 pub fn exp10(x: f32) -> f32 {
     const ROUND_MAGIC: f32 = 12582912.0;
     let kb = fma(x, std::f32::consts::LOG2_10, ROUND_MAGIC);
@@ -1347,7 +1351,7 @@ pub fn log10_normal(x: f32, koff: f32) -> f32 {
     let k = e as f32 + koff;
     let s = m - 1.0;
     let c: [f32; 10] = [
-        0.4342945,
+        std::f32::consts::LOG10_E, // bit-identical to this literal; not a coincidence
         -0.2171472,
         0.14476489,
         -0.10858066,
@@ -1736,6 +1740,8 @@ pub fn exp_m1_over_x(x: f32) -> f32 {
 /// edgecheck since the fuzz/mca result alone already killed it). Reverted,
 /// bit-identical to prior HEAD.
 #[inline(always)]
+#[allow(clippy::approx_constant)] // g0's constant term is a fitted minimax
+// coefficient near ln(2), not ln(2) itself (bit pattern deliberately differs)
 pub fn exp2m1(x: f32) -> f32 {
     let y = x * LN_2;
     let a = y * fma(-1.9999927, y * y, -120.0) / fma(y, fma(y, y - 12.000030, 59.999996), -120.0);
@@ -3227,6 +3233,8 @@ fn log2_df(x: f32) -> Df32 {
 /// it, the lo component would just be silently dropped and this would be
 /// no more accurate than the plain `exp2_checked(v.to_f32())`.
 #[inline(always)]
+#[allow(clippy::approx_constant)] // g0's constant term is a fitted minimax
+// coefficient near ln(2), not ln(2) itself (bit pattern deliberately differs)
 fn exp2_checked_df(v: Df32) -> f32 {
     // clamp *before* floor/subtract (matching exp2_checked exactly): if v.0
     // itself is already +-inf (y large enough that y*log2(x) overflows in

@@ -525,7 +525,7 @@ fn main() {
         // comparison apples-to-apples, same as exp2/exp2_checked above.
         let sin_domain = |x: f32| x.abs() < (1u32 << 22) as f32 * std::f32::consts::PI;
         for (name, hi) in [
-            ("sin |x|<=pi/4", 0.785398_f32),
+            ("sin |x|<=pi/4", std::f32::consts::FRAC_PI_4),
             ("sin |x|<=10", 10.0),
             ("sin |x|<=1000", 1000.0),
             ("sin |x|<=1e6", 1e6),
@@ -539,7 +539,7 @@ fn main() {
         let s = measure!(sin_domain, |x: f32| x.sin(), sin_ref);
         report("std sin (in-domain)", &s, t0);
         for (name, hi) in [
-            ("sin_checked |x|<=pi/4", 0.785398_f32),
+            ("sin_checked |x|<=pi/4", std::f32::consts::FRAC_PI_4),
             ("sin_checked |x|<=10", 10.0),
             ("sin_checked |x|<=1000", 1000.0),
             ("sin_checked |x|<=1e6", 1e6),
@@ -569,7 +569,7 @@ fn main() {
     if run("cos") {
         let cos_domain = |x: f32| x.abs() < (1u32 << 22) as f32 * std::f32::consts::PI;
         for (name, hi) in [
-            ("cos |x|<=pi/4", 0.785398_f32),
+            ("cos |x|<=pi/4", std::f32::consts::FRAC_PI_4),
             ("cos |x|<=10", 10.0),
             ("cos |x|<=1000", 1000.0),
             ("cos |x|<=1e6", 1e6),
@@ -583,7 +583,7 @@ fn main() {
         let s = measure!(cos_domain, |x: f32| x.cos(), cos_ref);
         report("std cos (in-domain)", &s, t0);
         for (name, hi) in [
-            ("cos_checked |x|<=pi/4", 0.785398_f32),
+            ("cos_checked |x|<=pi/4", std::f32::consts::FRAC_PI_4),
             ("cos_checked |x|<=10", 10.0),
             ("cos_checked |x|<=1000", 1000.0),
             ("cos_checked |x|<=1e6", 1e6),
