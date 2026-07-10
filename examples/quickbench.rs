@@ -28,6 +28,35 @@ fn bench_latency(name: &str, f: impl Fn(f32) -> f32) {
     println!("{:22} latency    {:6.2} ns/op (min of {REPS}, incl chain overhead)", name, best);
 }
 
+// idea #78: N independent serial dependency chains interleaved in the
+// same loop, instead of bench_latency's single chain. A single chain's
+// own measured latency can be masked or exaggerated by how much
+// cross-call ILP the CPU's out-of-order engine can extract when there's
+// only one outstanding dependency chain to fill scheduling gaps with --
+// 4 independent chains approximates a caller that has some real
+// concurrent work available, closer to how throughput callers (many
+// independent elements) sit between this and the single-chain extreme.
+const N_STREAMS: usize = 4;
+fn bench_latency_n(name: &str, f: impl Fn(f32) -> f32) {
+    let mut best = f64::INFINITY;
+    for _ in 0..REPS {
+        let mut xs = [1.234_f32, 1.876, 1.456, 1.987];
+        let start = Instant::now();
+        for _ in 0..(LAT_ITERS / N_STREAMS as u64) {
+            for x in xs.iter_mut() {
+                *x = mix(f(*x));
+            }
+        }
+        black_box(xs);
+        let ns = start.elapsed().as_nanos() as f64 / (LAT_ITERS / N_STREAMS as u64 * N_STREAMS as u64) as f64;
+        best = best.min(ns);
+    }
+    println!(
+        "{:22} latency(x{N_STREAMS}) {:6.2} ns/op (min of {REPS}, incl chain overhead)",
+        name, best
+    );
+}
+
 fn bench_throughput(name: &str, f: impl Fn(f32) -> f32) {
     // fixed-size arrays: no bounds checks, so the loop can auto-vectorize
     let mut input = [0f32; TP_ARR];
@@ -54,6 +83,21 @@ fn bench_throughput(name: &str, f: impl Fn(f32) -> f32) {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(|s| s.as_str()) == Some("latencyn") {
+        // idea #78 spot-check: single-chain vs 4-independent-chain latency
+        // for a spread of functions with different codegen shapes (pown's
+        // fully-unrolled branchy loop, exp2's short balanced-Estrin chain,
+        // sinh's branch-selected two-branch combine, acos's plain Horner).
+        bench_latency("pown", |x: f32| pown(x, black_box(5)));
+        bench_latency_n("pown", |x: f32| pown(x, black_box(5)));
+        bench_latency("exp2", exp2);
+        bench_latency_n("exp2", exp2);
+        bench_latency("sinh", sinh);
+        bench_latency_n("sinh", sinh);
+        bench_latency("acos", acos);
+        bench_latency_n("acos", acos);
+        return;
+    }
     let filter = args.get(1).map(|s| s.as_str()).unwrap_or("");
     let run = |n: &str| filter.is_empty() || n.contains(filter);
 
