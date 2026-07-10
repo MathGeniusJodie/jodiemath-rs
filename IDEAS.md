@@ -1633,6 +1633,34 @@ cousin.
    `expm1`'s own already-accepted conclusion); no code change; one
    scratch probe used, not committed. This closes out every function
    idea #7's own original text named.
+
+   **`sigmoid` too (2026-07-10), going beyond idea #7's own original
+   list -- same poly and reduction as `tanh`, but a different shape
+   because the final combine step differs.** `sigmoid` uses the
+   *identical* retuned poly coefficients as `tanh` (confirmed by
+   comparing the literal arrays in `src/lib.rs`) and the same
+   exponent-field reduction, so a shared conclusion looked likely.
+   Traced its own worst point (`x=-1.9529414`, `max ulp 4`): reduction
+   rounding is tiny (`~5.7e-9` relative), the poly's own fit error
+   against the true `e^r` is `~8.25e-8` -- and critically, that error
+   propagates essentially *unchanged* through the exact `exp2int`
+   multiply (`~8.17e-8`, matching the poly figure closely) and the
+   *final* `1/(1+e)` division (`~7.15e-8`, still the same order, not
+   amplified or damped further). Feeding the division the *ideal*,
+   unrounded `e` reproduces the reference exactly (`0` relative diff),
+   confirming the division itself adds nothing extra. So `sigmoid`
+   lands on `sinh`/`cosh`'s own "poly fit error alone dominates" shape,
+   *not* `tanh`'s "poly and final combine both matter" shape -- despite
+   sharing `tanh`'s exact poly and reduction, the *final* step is what
+   differs (a division here vs. `tanh`'s own `fma(p,exp2int,-1.0)`
+   subtract-and-fuse tail), and that's enough to change which round-off
+   shape the whole function lands in. No actionable new lever (the
+   poly's own fit quality is the ceiling, same conclusion as `sinh`/
+   `cosh`); no code change; one scratch probe used, not committed.
+   *Sharing a poly and reduction with a sibling doesn't mean sharing its
+   round-off shape -- the final combine step is part of the mechanism
+   too, and this pair shows it can be the part that actually
+   differs.*
 8. **Binary-function worst-case mining**: unary functions get exhaustive
    sweeps; powf/atan2/hypot/remainder only get fuzz. Guided search
    (branch-and-bound over exponent-pair classes, or fixed y/x ratio
