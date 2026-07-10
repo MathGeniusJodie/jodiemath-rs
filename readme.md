@@ -61,7 +61,7 @@ logaddexp (|a|,|b|<80)|    0.156   |  ~1e4 (real, narrow cancellation -- see its
                   acosh |    0.063   |     4     |  0.000  |    1
                   atanh |    0.032   |     3     | 
                    asin |    0.025   |     9     |  0.000  |    0
-                   acos |    0.068   |     6     |  0.000  |    0
+                   acos |    0.065   |     5     |  0.000  |    0
                    atan |    0.067   |     4     |  0.000  |    0
            atan_latency |    0.052   |     3     |  0.000  |    0
         tan (in-domain) |    0.331   |  2967     |  0.000  |    0

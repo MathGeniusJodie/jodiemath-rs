@@ -2432,14 +2432,26 @@ pub fn atanh(x: f32) -> f32 {
 // smaller worst point elsewhere in the domain), a minor tradeoff against
 // the large average improvement. Zero perf cost (same instructions, one
 // literal constant differs).
+//
+// Remaining 6 coefficients retuned (2026-07-10) via coordinate descent
+// from the shipped values (idea #3 in IDEAS.md), after fixing a stale
+// constant (1.5707963, the pre-idea-#36 value) in tune.rs's own "acos"
+// coordinate-descent seed. Verified against a real ~1.07-billion-point
+// dense sweep of the whole [-1,1] domain, scored as the *whole* acos
+// formula (matching how it's actually used, not the bare poly):
+// max ulp 6->5, avg ulp 0.43739->0.43206 (both axes improved together,
+// not a tradeoff). Zero perf cost, same instructions. (`asin` is
+// unaffected -- it was decoupled onto its own independent `asin_poly`
+// in fix 8 below, confirmed structurally: this poly and `asin_poly`
+// no longer share a single literal.)
 #[inline(always)]
 fn acos_poly(x: f32) -> f32 {
-    let u = 2.2960256e-3f32;
-    let u = fma(u, x, -1.1146317e-2);
-    let u = fma(u, x, 2.6900213e-2);
-    let u = fma(u, x, -4.8802543e-2);
-    let u = fma(u, x, 8.8755615e-2);
-    let u = fma(u, x, -2.1458544e-1);
+    let u = 2.2960447e-3f32;
+    let u = fma(u, x, -1.1146237e-2);
+    let u = fma(u, x, 2.690034e-2);
+    let u = fma(u, x, -4.8802484e-2);
+    let u = fma(u, x, 8.875553e-2);
+    let u = fma(u, x, -2.1458574e-1);
     fma(u, x, 1.5707964)
 }
 
