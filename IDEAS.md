@@ -647,11 +647,57 @@ bottleneck, so "add a division to remove fmas" is a legitimate direction.
   inside asin_small's own domain regardless of threshold placement. 0.25
   already close enough; no change.
 
-- **asin_small: one more Taylor term (2026-07-08)**: real 16% avg
-  improvement, but max ulp just relocated to a tied co-bottleneck in the
-  acos_poly branch, unchanged overall, plus a real perf cost. Not adopted.
-  *When two branches tie at the same max-ulp value, fixing one just exposes
-  the other.*
+- **asin_small: one more Taylor term (2026-07-08, re-tested 2026-07-10 as
+  part of a round-off budget audit -- this entry's own original claim was
+  stale, corrected below)**: original 2026-07-08 note said this "relocated
+  to a tied co-bottleneck in the acos_poly branch, unchanged overall" --
+  re-verified fresh on today's code (fix 8, 2026-07-09, decoupled
+  `asin_poly` from `acos_poly` the day *after* this entry was written,
+  which this entry's own claim never accounted for) per this crate's own
+  "verify a stale prior finding before trusting it" discipline. First,
+  root-caused via a hand round-off-budget trace at the crate's own
+  documented worst point (x=0.24595731): computed the exact same formula
+  in f64 to isolate rounding from truncation. Result: truncation error
+  dominates completely (7.03 of the 8.50 total ulp; the f32-vs-f64-same-
+  formula rounding gap is only 1.47 ulp) -- the degree-7 Taylor series
+  itself, not any rounding step, is the real budget-eater right at
+  `asin_small`'s own domain edge (0.25). This means idea #7's "attack the
+  largest rounding term" framing doesn't actually apply here (there's no
+  single dominant rounding step to fix); this is a truncation problem, and
+  the obvious fix (this entry's own proposal, one more Taylor term) is the
+  right lever after all. Implemented and measured fresh: exhaustive sweep
+  now shows a **real, non-tied improvement**, not the stuck result the
+  stale note described -- max ulp 9->7, avg 0.0251->0.0202 (~20% better),
+  new worst point exactly `x=0.25010535` (confirmed independently via a
+  dedicated exhaustive scan of the `big` branch's own `[0.25,1.0)` domain,
+  giving max 7 there in isolation, matching -- this is `asin`'s own
+  pre-existing, independent worst point in the *other* branch, now
+  unmasked rather than "relocated"). So fix 8's `asin_poly` decoupling
+  really did break the tie this entry originally found -- the situation
+  changed, and last time's negative result no longer holds.
+  **Still not adopted**, but now for a cleaner, better-quantified reason:
+  a real, unavoidable throughput cost. Tried two evaluation orders: plain
+  Horner extension (`fma` chain now 4 deep instead of 3) measured
+  latency 59.03->63.03 cyc (+6.8%), throughput 0.968->1.044 cyc/elem
+  (+7.9%); an Estrin-style regroup (matching `exp2`'s own "3 balanced
+  pairs" pattern, trading one extra multiply for a shorter critical path)
+  measured latency 59.03->60.02 (+1.7%, much better) but throughput
+  0.968->1.087 (+12.3%, *worse* than plain Horner) -- confirming this
+  crate's own repeated finding that fewer/shorter critical path wins on
+  latency can lose on throughput once the extra op competes for port
+  bandwidth across many independent vectorized lanes, and that throughput
+  (this crate's stated priority metric) is the one that matters more.
+  Since this is a branchless design (`asin_small` is unconditionally
+  evaluated on every call regardless of which branch's result is
+  selected), there's no way to pay for the extra precision only where it's
+  needed -- the cost is unavoidable if the term is added at all. A real
+  accuracy gain with a real throughput cost on both tries; doesn't clear
+  this loop's bar. Reverted both variants, bit-identical to prior HEAD
+  (confirmed via `git diff`). *When re-testing a prior "no effect" finding
+  after an intervening change to a function it depends on (here,
+  `asin_poly`'s decoupling), don't just trust the old conclusion --
+  re-verify on the current code, since the entire premise (a tied
+  co-bottleneck) can silently stop being true.*
 
 ## Backlog round 3 (2026-07-09) — kitchen-sink brainstorm, all UNTESTED
 
