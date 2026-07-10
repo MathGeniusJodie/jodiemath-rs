@@ -1715,14 +1715,24 @@ cousin.
     still doesn't fully hide a 9-deep chain here. Reverted, bit-identical
     to prior HEAD. Didn't test the idea's own narrower proposal (Horner
     only for the small-magnitude l3/l4 tail, keeping Estrin for the
-    dominant l0/l1 terms) -- given the *full* Horner chain (a much larger
-    serial run) already regressed this badly, a *shorter* serial tail
-    (just 3-4 fma's) would carry a proportionally smaller version of the
-    same penalty, but whether that smaller penalty still outweighs
-    removing 1-2 multiplies from just the tail remains genuinely open;
-    left for a session that wants to test the narrower, literal variant
-    specifically rather than the blunter full-replacement proxy tried
-    here. *Total operation count is not a reliable proxy for vectorized
+    dominant l0/l1 terms) empirically, but worked the algebra by hand
+    afterward and it closes the question anyway: the tail's contribution
+    (`l2*s4+l3*s6+l4*s8`, degree >=4) written as a Horner-evaluated
+    sub-poly needs 5 serial fma's plus 1 more to combine with `r0` -- 6
+    fma's total, *fully* serially dependent. The current Estrin tail
+    (`l2`,`l3`,`l4` computed in parallel, then `r1`,`r2`,`p` combining
+    them) is *also* exactly 6 fma's, but only 4 deep (3 independent
+    leaves, then 3 dependent combine stages) instead of 6 -- same op
+    count, strictly shorter critical path. So the narrower literal
+    variant isn't an open question after all: it can only match or lose
+    to the existing Estrin tail, never win, since there's no actual op
+    reduction available once the reconstruction algebra is worked
+    through (the earlier "fewer fma's" framing only held for the *full*
+    poly, where Estrin's own `s2`/`s4` precompute -- 2 extra multiplies
+    -- is the only place real ops are spent beyond what Horner needs;
+    restricting to just the tail removes that comparison's own basis).
+    Not pursued further; this fully closes idea #99 rather than leaving
+    it open. *Total operation count is not a reliable proxy for vectorized
     throughput when the operations being removed also happen to shorten
     the critical dependency path -- a "fewer ops" restructuring that
     lengthens the serial chain can lose badly even in a throughput-
