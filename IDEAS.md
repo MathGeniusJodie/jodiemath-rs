@@ -2646,8 +2646,70 @@ cousin.
     repeated finding elsewhere (asin's branch-count changes, the
     Newton/Halley correction-step rejections) that op-count alone rarely
     predicts mca's actual verdict.*
-100. **A cost model for "add a division"**: the divider-idle finding keeps
-    paying off (cbrt rcp, sinh_throughput, log1p) — write down the actual
-    reciprocal-throughput arithmetic (divider ports vs FMA ports per
-    vector width) so candidates can be paper-screened instead of
-    mca-round-tripped one at a time.
+100. ~~**A cost model for "add a division"**~~ (resolved 2026-07-10):
+    measured directly with a minimal hand-written asm probe fed straight
+    to `llvm-mca -resource-pressure` (four independent instructions per
+    region, both `ymm`/8-wide and `zmm`/16-wide, `-mcpu=native`) rather
+    than reasoning from first principles. Results:
+
+    | op | width | latency | RThroughput | cyc/elem |
+    |----|-------|---------|-------------|----------|
+    | vfmadd231ps/vmulps | ymm (8) | 4 | 0.50 | 0.0625 |
+    | vfmadd231ps/vmulps | zmm (16) | 4 | 1.00 | 0.0625 |
+    | vdivps | ymm (8) | 11 | 5.00 | 0.625 |
+    | vdivps | zmm (16) | 18 | 10.00 | 0.625 |
+    | vsqrtps | ymm (8) | 12 | 6.00 | 0.75 |
+    | vsqrtps | zmm (16) | 20 | 12.00 | 0.75 |
+
+    **Headline number: one packed division costs ~10x a single FMA/mul
+    per element on this CPU (0.625 vs 0.0625 cyc/elem); one packed sqrt
+    costs ~12x.** Paper-screening rule: replacing a division with N
+    extra FMAs is a throughput win whenever N is meaningfully below 10
+    (comfortable at N<=3-4, the shape every actual divider-idle win this
+    crate has shipped -- cbrt's Newton reciprocal, sinh_throughput,
+    log1p -- already has), a wash around N~8-10, and a loss past that.
+
+    **A genuinely interesting second finding, width-invariance:** the
+    divider/sqrt's own per-element cost is *identical* at ymm and zmm
+    width (0.625 and 0.75 cyc/elem respectively, exactly, both widths) --
+    confirmed via the resource table: a 512-bit `vdivps`/`vsqrtps`
+    decomposes into *two* sequential 256-bit sub-uOps against the same
+    `ICXFPDivider` resource (RThroughput exactly doubles alongside the
+    doubled element count), unlike the FMA story below. **This means
+    division-heavy code doesn't pay idea #76's zmm penalty at all** --
+    going wider is a clean win there (fewer broadcast/overhead
+    instructions, same per-element divider cost) with none of the
+    downside that hit `exp_checked`/`pown`.
+
+    **Refines idea #76's own FMA finding, doesn't contradict it:** re-ran
+    the same probe for `vfmadd231ps` specifically (4 fully independent,
+    mutually non-dependent FMA instructions per region, no shared
+    registers) and found per-element *throughput* is actually equal at
+    both widths too in this idealized case (0.0625 cyc/elem, matching
+    ymm's dual-port 2-per-cycle rate against zmm's single-port 1-per-cycle
+    rate exactly, since a zmm op does double the work per instruction).
+    Confirmed via resource pressure that ymm's 4 independent FMAs split
+    2.00/2.00 across `ICXPort0`/`ICXPort1`, while zmm's put all 4.00 on
+    `ICXPort0` alone (`ICXPort1` completely idle) -- so idea #76's
+    original "only one port handles 512-bit FMA" statement holds exactly.
+    The missing piece idea #76 didn't fully spell out: in this idealized
+    *independent* case, losing the second port costs nothing because a
+    single zmm instruction already does 2x the ymm instruction's work, so
+    "half the issue rate, double the work per issue" nets out even. Real
+    functions regress specifically when their poly evaluation has a
+    *long serial dependency chain* (Horner-style `p = fma(p, r, c)`
+    repeated many times) -- the *default* ymm build's own double-unrolled
+    codegen (two textually-separate copies of the whole chain, one per
+    8-element half) gets *free* cross-copy parallelism from the
+    scheduler interleaving copy A's and copy B's independent chains
+    across both ports, fully masking each copy's own serial latency. At
+    zmm width there is only *one* copy (all 16 elements share one
+    register), so that free masking disappears entirely -- the single
+    chain is now serially bottlenecked *and* stuck on one port, with
+    nothing independent left to interleave. This is exactly why
+    `exp_checked`'s dense poly and `pown`'s long squaring ladder regressed
+    hard while broadcast/overhead-bound functions (most of the other 60)
+    didn't: those functions' *chains* were short/shallow to begin with,
+    so they were never relying on the free cross-copy masking in the
+    first place, only paying for redundant broadcast/loop overhead that
+    zmm genuinely eliminates.
