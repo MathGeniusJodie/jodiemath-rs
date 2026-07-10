@@ -35,6 +35,19 @@ fn check_bounded(name: &str, got: f32, bound: f32) {
     );
 }
 
+/// Same idea as `check_bounded`, but for an asymmetric range (e.g.
+/// `erfc`'s own `[0,2]`, not centered on zero) instead of `|got| <= bound`.
+fn check_range(name: &str, got: f32, lo: f32, hi: f32) {
+    let ok = got.is_finite() && got >= lo && got <= hi;
+    println!(
+        "{} {:30} got {:e} (0x{:08x}) (in [{lo},{hi}])",
+        if ok { "ok  " } else { "FAIL" },
+        name,
+        got,
+        got.to_bits()
+    );
+}
+
 fn main() {
     // log_2
     check("log_2(0)", log_2(0.0), f32::NEG_INFINITY);
@@ -226,7 +239,13 @@ fn main() {
     check("sinc(nan)", sinc(f32::NAN), f32::NAN);
     check("sinc(inf)", sinc(f32::INFINITY), f32::NAN);
     check("sinc(-inf)", sinc(f32::NEG_INFINITY), f32::NAN);
-    check_finite("sinc(f32::MAX)", sinc(f32::MAX));
+    // |sinc(x)| = |sin(pi*x)/(pi*x)| <= 1 for all real x (a provable
+    // mathematical fact, |sin(u)| <= |u| everywhere) -- checked directly
+    // (2026-07-10), no violation found anywhere, but check_bounded locks
+    // this in as a permanent guard the same way sin_checked/cos_checked's
+    // own `[-1,1]` bound is now guarded, rather than leaving it as only an
+    // implicit consequence of sinpi's own correctness.
+    check_bounded("sinc(f32::MAX)", sinc(f32::MAX), 1.0);
 
     // sind/cosd: argument in degrees. Exact reduction only up to ~4.7e7
     // (180.0's own trailing-zero-bit limit, see sind's doc comment) --
@@ -587,10 +606,15 @@ fn main() {
     // erfc's clamp used to not fully protect its internal exp2 call for
     // |x| >= ~9.35 (see its doc comment) -- these used to be inf/huge
     // garbage instead of the correct near-0 (or near-2 for negative x).
-    check_finite("erfc(9.5)", erfc(9.5));
-    check_finite("erfc(10)", erfc(10.0));
-    check_finite("erfc(-9.5)", erfc(-9.5));
-    check_finite("erfc(-10)", erfc(-10.0));
+    // `erfc(x)` is mathematically bounded to `[0,2]` for every real `x`
+    // (`erfc = 1-erf`, `erf` bounded to `[-1,1]`) -- checked directly
+    // (2026-07-10), no violation found, but locked in as a permanent
+    // guard via `check_bounded` rather than just `check_finite`, same
+    // reasoning as the `sinc`/`sin_checked` hardening above.
+    check_range("erfc(9.5)", erfc(9.5), 0.0, 2.0);
+    check_range("erfc(10)", erfc(10.0), 0.0, 2.0);
+    check_range("erfc(-9.5)", erfc(-9.5), 0.0, 2.0);
+    check_range("erfc(-10)", erfc(-10.0), 0.0, 2.0);
 
     // erfcx(x) = e^(x^2)*erfc(x), backlog idea #51. For x>=0 the
     // exponentials cancel exactly (see its doc comment), so erfcx(0)
