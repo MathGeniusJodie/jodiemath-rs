@@ -1390,6 +1390,66 @@ cousin.
    coordinate-descent result -- even one that passed a real dense-domain
    verification pass, if that verification itself reused the same wrong
    structure.*
+
+   **Systematic `tune.rs` fidelity audit across every remaining `_c` probe
+   (2026-07-10) -- found two more real bugs, one of which led to a real,
+   adopted `exp2` accuracy win.** Given `erf_tail_c`'s Horner-vs-Estrin bug
+   just above, checked every other `_c`-suffixed probe function in
+   `tune.rs` against its real `src/lib.rs` counterpart (delegated the
+   systematic comparison, then independently re-derived and confirmed the
+   two live-function findings by hand before touching any code):
+   - **`exp2_c` had the exact same class of bug, previously unnoticed**:
+     it computed the *old, already-replaced* "two degree-2 Horner halves
+     times `exp2int*f^4`/`exp2int*f`" A/B split -- the exact structure
+     `exp2`'s own doc comment says was replaced by the current 3-balanced-
+     Estrin-pair form specifically to save 2 multiplies. Same target
+     polynomial in exact arithmetic, different real f32 rounding. Grepped
+     IDEAS.md first to confirm no prior committed conclusion ever cited a
+     raw `tune -- exp2` result directly (none did -- this was a live but
+     never-triggered landmine, not a retroactive correction).
+   - **`erfc_c`/`erfc_lo_c`/`erfc_hi_c` had a second bug beyond the
+     already-known `.exp2()` vs `exp2_checked()` gap**: `exp2term * n / d`
+     parses as `(exp2term*n)/d` (left-to-right, same precedence), a
+     different rounding order than the shipped `exp2_checked(...) *
+     erfc_rational(xa)` (where `n/d` rounds to its own value first). This
+     compounds with the already-documented `.exp2()` gap in the same
+     dispatch this session already flagged as unreliable.
+   - Other findings judged not worth fixing: `atan_poly_c`'s own `main()`
+     seed is a stale, retired 2/2 Pade form (the correct 3/3 stand-in,
+     `atan_poly7_c`, already exists under a different name) -- a naming/
+     staleness issue, not a structural bug in a function anyone would
+     currently reach for; `asin_mid_c` has no live counterpart at all
+     (the branch it modeled was deleted in an earlier fix). Left both as
+     historical/dead code rather than editing further, matching this
+     file's own "keep rejected/superseded infra, don't chase every stale
+     corner" convention.
+
+   Fixed `exp2_c`'s structure (mirroring `exp2`'s real g0/g1/g2 pairing,
+   including getting the c-index-to-pair mapping right on the *second*
+   attempt -- the first fix compiled fine but silently swapped the g0/g2
+   roles, caught immediately by a nonsensical "start max 3838477" sanity
+   number before it could mislead anything) and `erfc_c`/`erfc_lo_c`/
+   `erfc_hi_c`'s multiply/divide order (commit `d3d5604`). With `exp2_c`
+   now faithful, re-ran coordinate descent on `exp2`'s own `g0/g1/g2` poly
+   from its actual current coefficients: a real move on the grid,
+   confirmed bit-identical against the compiled `exp2_checked` in-domain
+   (0 mismatches over 1.1M spot-checked points) before trusting it, then
+   verified on a real ~562M-point dense sweep of the whole unchecked
+   domain: avg ulp 0.07176->0.06914 (max ulp unchanged at 1, already the
+   practical ceiling). Applied to all 6 standalone copies of this poly
+   (`exp2`, `exp2_checked`, `exp10`, `exp10_checked`, `exp2m1`,
+   `exp2_checked_df`) and verified via the crate's own real exhaustive
+   sweep: every one held steady or improved, with `exp10_checked` getting
+   a genuine max-ulp win too (2->1), not just average -- `mca` confirms
+   zero perf cost (bit-identical timing to readme.md's existing numbers,
+   as expected for a pure-literal change). Committed as `9522111`
+   (readme.md's accuracy table updated to match). *Fixing a `tune.rs`
+   fidelity bug isn't just defensive cleanup -- it can directly unlock a
+   real, previously-invisible coefficient-search win on a function used by
+   nearly every transcendental in the crate. And even a "fix" to a probe
+   function needs its own sanity check (a wildly bad starting score is a
+   free, immediate signal that the fix itself has a bug) before trusting
+   whatever comes out the other end of coordinate descent.*
 4. **Per-function transformed-variable fit search**: fit in u=s/(s+2),
    u=s·(s+a), etc., searching over the transform family. Distinct from
    centered-variable refits (rejected — that only moved the origin);
