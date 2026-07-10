@@ -1092,6 +1092,62 @@ cousin.
    sweeps; powf/atan2/hypot/remainder only get fuzz. Guided search
    (branch-and-bound over exponent-pair classes, or fixed y/x ratio
    classes for atan2) would find real worst cases fuzz misses.
+
+   ~~**atan2** (idea #39, resolved 2026-07-10)~~: structured octant/ratio
+   sweep found nothing worse than the documented max ulp 3 -- see idea
+   #39's own entry.
+
+   **powf (tested 2026-07-10, real find: true max ulp is at least ~2.5x
+   worse than documented, not fixed, doc corrected)**: unlike atan2, this
+   one found something real. Random 10M-sample fuzz documents `powf`'s
+   max ulp as 127; a structured sweep -- fixing `x` near specific values
+   (both near 1.0 at ulp granularity, and log-spaced across the full
+   range) and solving for `y` so the domain-constraining product
+   `y*log2(x)` lands at chosen targets, rather than hoping uniform random
+   sampling stumbles onto a bad combination -- found a first worse point
+   almost immediately (207 ulp at x=1.0013627, y=63095.734, product
+   ~123.96), verified two independent ways (`(x as f64).powf(y as f64)`
+   and a manual `(y*ln(x)).exp()`, both agreeing to 10+ significant
+   digits against each other and disagreeing with `powf`'s own output by
+   exactly 207 ulp -- not a probe artifact this time, unlike idea #39's
+   own first-pass bug).
+
+   Local refinement around that point, then broader targeted sweeps
+   specifically biasing `y` so the product approaches the domain's own
+   upper boundary (128) from below, found progressively worse points
+   across several rounds: 207 -> 229 -> 260 -> 277 -> 312 ulp (last found
+   at x=1.1969347, y=485.83997, product ~125.9999). Each refinement round
+   found something a little worse without fully converging -- **312 is a
+   confirmed real lower bound on the true worst case, not a proven exact
+   supremum**; a more exhaustive search would likely find something
+   somewhat worse still. `powf_unchecked` is confirmed bit-identical to
+   `powf` at every one of these points (as its own doc comment promises),
+   so it inherits the same true max. `powf_checked` is measurably better
+   at the same three spot-checked points (192/82/107 ulp vs. `powf`'s
+   312/209/207) but still far from clean -- consistent with its own
+   documented "substantially more accurate for large `|y|`" framing
+   (better, not perfect).
+
+   All of this concentrates in the region where `y*log2(x)` approaches
+   the domain's own upper edge (128) rather than being uniformly spread
+   across the whole valid range -- consistent with, and a harder
+   quantitative confirmation of, this file's own older "residual lives in
+   the log2_df/exp2_checked_df double-float chain; not root-caused
+   further" finding (see the "Other spots" section) -- just with concrete
+   numbers now (207-312, not just "worse than expected") and a
+   characterized danger zone (`y*log2(x)` near the upper domain boundary)
+   instead of an unlocalized shrug. Not root-caused further at the
+   double-float-arithmetic level this round either (would need tracing
+   `log2_df`'s own per-term error through `exp2_checked_df`'s k1/k2 split
+   at the specific bit patterns involved, real additional work). Updated
+   readme.md's `powf`/`powf_unchecked` max ulp from `127`/`135` to
+   `>=312` (avg ulp columns left alone -- these bad points are sparse
+   enough that 10M-sample fuzzing's *average* almost certainly isn't
+   materially affected, only its claimed *max* was wrong). *A "worse than
+   documented" find via structured search doesn't need a fix to be worth
+   committing -- correcting a wrong documented bound to the true, verified
+   one is itself the deliverable, same as this session's several mca/
+   accuracy staleness fixes elsewhere.*
 9. **Structured-error probes**: plot per-function error vs mantissa and vs
    exponent separately; periodic structure invites a cheap structural
    correction (one select or exponent-derived fma) instead of a refit.
@@ -1620,11 +1676,11 @@ cousin.
     exact value the function under test actually receives, not from
     whatever higher-precision value was used to construct it -- a cast
     that overflows/rounds differently than expected will silently compare
-    against the wrong input otherwise.* Not yet applied to
-    hypot/powf/remainder (see idea #8) -- hypot's own max ulp is already
-    1 (bounded) domain-wide, leaving little room for this technique to
-    find anything; powf/remainder remain open if someone wants to extend
-    this same harness to them.
+    against the wrong input otherwise.* hypot's own max ulp is already 1
+    (bounded) domain-wide, leaving little room for this technique to find
+    anything there. Applied to `powf` next -- see idea #8's own entry
+    below for a real, substantial worse-case find. `remainder` remains
+    open if someone wants to extend this same harness to it.
 40. **atan_latency: fold FRAC_PI_2-p select into sign trickery (adopted
     2026-07-09)**: implemented as described -- apply `mulsign` to `p` and
     `FRAC_PI_2` individually first (`mulsign(a,x) - mulsign(b,x) ==
