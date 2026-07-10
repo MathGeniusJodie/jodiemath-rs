@@ -1406,6 +1406,40 @@ cousin.
    correction term. Still open for a function this technique hasn't been
    tried on yet, or for chasing the smaller `[0.03,0.25]` bump
    specifically if someone wants the average-only, modest payoff.
+
+   **Applied to `rcbrt` (2026-07-10, real periodic structure found, but
+   root-caused to an already-understood, already-optimized mechanism --
+   not a missed correction term either)**: picked `rcbrt` (`1.0/cbrt(x)`)
+   since its documented avg ulp (0.418) is the highest of the crate's
+   three "composed reciprocal" functions (`rsqrt` 0.260, `rhypot` 0.065,
+   `rcbrt` 0.418) and it hadn't been individually investigated this
+   session beyond the oddness check. A 60M-sample sweep bucketed by
+   `x`'s own exponent found a clean, exact period-3 pattern (not just
+   "roughly periodic" -- identical numbers to 3-4 significant figures
+   repeat every 3 exponents across the full `[-30,30]` range checked):
+   `exponent mod 3 == 0` bucket avg 0.70/max 5, `== 1` avg 0.33/max 4,
+   `== 2` avg 0.22/max 2 -- a genuine, real 3.2x spread in average error
+   depending purely on `x`'s exponent class. But this is *exactly* the
+   already-documented "octave-periodicity" `cbrt_normal`'s own doc
+   comment already names as the reason its correction poly was
+   specifically fit "over one representative octave" -- the period-3
+   structure traces directly to the bit-trick seed's `ax / 3 + magic`
+   construction (an integer division by 3 whose remainder necessarily
+   depends on the exponent mod 3), a mechanism this crate's own cbrt
+   refits have already explicitly designed around and fit against,
+   not a newly-discovered, unexploited correction opportunity. Since
+   `rcbrt` is just `cbrt` plus one more hardware division (no fitting of
+   its own), it inherits this pattern directly; there's no new lever
+   specific to `rcbrt` here; the poly it depends on has already been
+   through multiple refit rounds (including the max-capped Chebyshev LP,
+   see `cbrt_normal`'s own doc comment) that already account for this
+   exact periodicity by construction. No `src/lib.rs` change; one
+   standalone scratch probe used, not committed. *A clean, undeniably
+   real periodic structure in a bucketed-error sweep is still not
+   automatically new information -- check whether the function's own
+   upstream dependency (here, `cbrt_normal`'s seed construction) already
+   documents and has already been fit around the exact periodicity found,
+   before treating it as an untapped correction opportunity.*
 10. ~~**Monotonicity/oddness harness metrics**~~ (tried 2026-07-10,
     resolved -- two real deviations found, both explained by already-
     accepted tradeoffs/noise, no new actionable fix): built a standalone
