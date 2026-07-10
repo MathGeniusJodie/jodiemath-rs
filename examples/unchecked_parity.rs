@@ -143,6 +143,13 @@ fn main() {
         powf_checked_unchecked,
     );
 
+    // hypot's own contract: bit-identical to hypot_unchecked whenever
+    // neither argument is infinite (NaN is fine either way -- both share
+    // the same fma/sqrt path for it, only the explicit +-inf override
+    // differs between the two).
+    let hypot_domain = |x: f32, y: f32| !x.is_infinite() && !y.is_infinite();
+    ok &= check2("hypot / hypot_unchecked", N, hypot_domain, hypot, hypot_unchecked);
+
     if !ok {
         std::process::exit(1);
     }

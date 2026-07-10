@@ -1647,6 +1647,23 @@ cousin.
     the standing test itself (not just the audit) is the deliverable --
     it locks the invariant in for future coefficient/logic changes to
     either half of any pair.
+
+    **Follow-up (2026-07-10): the standing test itself had a coverage
+    gap.** Cross-referenced every `pub fn` ending in `_unchecked` against
+    this file's own pair list (the same audit technique already applied
+    to `accuracy.rs`/`edgecheck.rs` elsewhere in this session) -- 10 of
+    11 such functions were covered, but `hypot_unchecked` was missing
+    entirely, despite readme.md documenting it as "(bit-identical to
+    hypot on its domain)" the same way every other pair is. Added
+    `hypot`/`hypot_unchecked` as an 11th pair (domain: neither argument
+    infinite -- NaN passes through identically either way, only the
+    explicit `+-inf` override differs between the two, per `hypot`'s own
+    doc comment). Ran it: 50M in-domain samples, bit-identical, confirming
+    the documented claim genuinely holds. *A "standing test" is itself
+    just another artifact that can silently miss a function added (or
+    renamed) after it was written -- periodically re-run the same
+    coverage-audit technique against the test's own pair list, not just
+    against the crate's source once at creation time.*
 13. **Generalize the cbrt_accurate recipe** (cheap ≤1-ulp core + one Df32
     Newton step) into a template: candidates rsqrt_accurate,
     exp_accurate/ln_accurate (each is the other's Newton residual),
