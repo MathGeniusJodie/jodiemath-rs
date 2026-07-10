@@ -747,6 +747,20 @@ git history / readme.md, not here. Untested backlog is at the bottom.
   live risk to the measurement, not a free style win -- read what the
   flagged code is actually *for* before applying a mechanical fix.*
 
+- **`cargo fmt --check` (2026-07-10, checked, deliberately not applied)**:
+  no `rustfmt.toml` anywhere in the repo, and `--check` reports 182 diffs
+  spread across every source/example file -- almost all "wrap this
+  expression, it's past the default 100-column width" reflows. Given how
+  pervasive and *consistent* this is (the same dense, pack-it-on-one-line
+  style appears everywhere this session's own reading has touched --
+  coefficient arrays, `fma` chains, closures), this reads as the crate's
+  own genuine, deliberate style choice (or simply a project that has
+  never run `cargo fmt` as part of its workflow), not accumulated drift
+  from careless edits. Applying `cargo fmt -- --write` wholesale would
+  rewrite hundreds of lines across nearly every file for zero functional
+  benefit, fighting the codebase's own established, consistent voice --
+  not done. No code change; noted here so a future session doesn't
+  rediscover the same 182-line diff and wonder whether to run it blind.
 ## sin_checked / cos_checked internals
 
 - **round_x_over_pi: remove dead pre_offset=0.0 add (2026-07-07)**:
