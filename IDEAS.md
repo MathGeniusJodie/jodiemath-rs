@@ -4527,6 +4527,47 @@ cousin.
     tried here, left open for a session that wants to build the exact
     per-point rounding-interval formulation rather than a continuous
     stand-in for it.*
+
+    **Second application, `exp_pos_neg` (sinh/cosh's shared poly,
+    2026-07-10) -- this time the idealized LP gain survived real f32
+    rounding, a genuine adopted win.** Picked this poly specifically
+    because idea #7's own round-off audit already established its error
+    is *fit-quality*-dominated (unlike `log_2`, where rounding dominates)
+    -- exactly the shape of function where a better continuous fit should
+    have a real chance of transferring. Built the same ulp-weighted
+    Chebyshev LP shape as the `log_2` attempt, but jointly scoring *both*
+    `p_pos` (~`e^r`) and `p_neg` (~`e^-r`) over `r` in `[-ln2/2,ln2/2]`
+    (linear in all 4 free coefficients, same as before). Found real
+    headroom in the idealized metric (max weighted residual `1.90->1.35`,
+    ~29% tighter) -- notably, the LP's own `c0`/`c1` converged to
+    *bit-identical* values to `exp`'s own separately-fit poly, only
+    `c2`/`c3` differing by a handful of ULP to account for the joint
+    (not single-direction) fitting target. Building the verification
+    probe caught a real bug in itself before trusting anything: the first
+    pass copied `sinh_small`'s shape wrong (an Estrin-style `x2`/`x4`
+    grouping instead of the real plain Horner-in-`x2` chain) -- the exact
+    same mistake class already made and caught for `asin_small` earlier
+    this session, this time initially *missed* on first write, caught
+    only because the fidelity check against the real compiled
+    `sinh`/`cosh` came back with 9798/224356 mismatches instead of zero.
+    Fixed, re-verified (0 mismatches), then checked a real ~559M-point
+    dense sweep: `sinh` avg ulp `0.08875->0.08121`, `cosh`
+    `0.08792->0.07638`, max ulp unchanged at 5 for both -- the idealized
+    gain mostly held up this time. Adopted (commit `c1aed75`): confirmed
+    on the crate's own exhaustive sweep (`sinh` `0.081->0.073`, `cosh`
+    `0.071->0.059`, and `sinh_checked`/`cosh_checked`, which share this
+    poly via the separate `exp_pos_neg_checked_half` copy, also updated
+    and improved: `0.042->0.038`/`0.037->0.031`), `mca` bit-identical to
+    readme.md's existing numbers (pure coefficient swap). *Whether an
+    idealized LP's continuous-fit gain survives real f32 rounding is
+    predictable in advance from idea #7's own round-off-audit
+    classification -- fit-dominated functions (this one) are worth the
+    verification effort, rounding-dominated ones (`log_2`) mostly aren't.
+    And even a probe built specifically to be careful about fidelity
+    (learning from `cbrt_normal`'s wrapper lesson and `log_2`'s idealized-
+    vs-real lesson) can still contain the exact bug those lessons were
+    meant to prevent -- the fidelity check itself, not just having a
+    checklist of past lessons in mind, is what actually caught it here.*
 92. **Domain-specific fast-math contract tiers**: a `finite-math-only`
     cargo feature gating away every inf/nan select in checked functions
     (complements the FTZ/DAZ backlog entry, which only covers denormals).
