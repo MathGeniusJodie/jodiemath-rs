@@ -391,6 +391,32 @@ git history / readme.md, not here. Untested backlog is at the bottom.
 
 ## asin / acos / atan / atan2
 
+- **acos: mulsign-reassociate the trailing `+select(PI,0)` (2026-07-10,
+  new idea this session, tried and rejected)**: inspired by the
+  `atan_latency` fix's `mulsign(a,x)-mulsign(b,x) == mulsign(a-b,x)`
+  reassociation (a pure identity on *already-computed* values, no new
+  rounding) -- tried the analogous `acos(x) = FRAC_PI_2 -
+  mulsign(FRAC_PI_2 - y, x)` in place of the shipped `mulsign(y,x) +
+  if x<0.0 {PI} else {0.0}`, hoping to trade a compare+select for pure
+  sign-bit arithmetic the same cheap way. Verified specials match (0,
+  -0, ±1, NaN, ±inf all bit-identical) but a 100M-sample fuzz found it's
+  *not* bit-identical to the original (60,142/49.6M samples differ) and,
+  worse, a real accuracy regression: avg ulp barely moved (0.1362->0.1371)
+  but max ulp jumped 6->**121**. Root cause: unlike `atan_latency`'s
+  trick, which only reassociates two values that already existed with no
+  new subtraction between them, this introduces a genuinely *new*
+  subtraction (`FRAC_PI_2 - y`) that suffers catastrophic cancellation
+  exactly where `y` approaches `FRAC_PI_2` (i.e. `x` near `0`, where
+  `acos(x)` itself is near `pi/2`) -- the same "algebraically-exact
+  identity reintroduces cancellation" bug class this file's `sigmoid`/
+  `atanh` entries already document, now confirmed a third time. Reverted,
+  no lib.rs changes (mca not even checked -- the accuracy regression alone
+  is decisive). *A mulsign-reassociation trick is only free when it
+  reassociates values that already exist untouched; introducing any *new*
+  subtraction as part of the reassociation reopens the door to
+  cancellation and needs the same full accuracy verification as any other
+  algorithm change, not just a bit-identity spot-check.*
+
 - **acos_poly Horner→Estrin (2026-07-07)**: real latency win, but fma
   reassociation regressed asin max ulp 9→12, acos 4→5 (retuning made it
   worse, →6). Reverted — acos's accuracy is a protected invariant.
