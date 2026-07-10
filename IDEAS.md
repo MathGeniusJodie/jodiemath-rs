@@ -3745,10 +3745,38 @@ cousin.
     majority-win result is still worth fully root-causing (not just
     measuring) when the mechanism might explain a previously-mysterious
     related finding, as it did here for idea #72's own `pown` outlier.*
-77. **mca/wall-clock disagreement detector**: script that runs both on
-    every candidate and flags direction disagreements automatically
-    (sincos_checked precedent) instead of relying on remembering to
-    triangulate.
+77. ~~**mca/wall-clock disagreement detector**~~ (implemented 2026-07-10):
+    script that runs both on every candidate and flags direction
+    disagreements automatically (sincos_checked precedent) instead of
+    relying on remembering to triangulate. Built as
+    `examples/perf_compare.rs`: a `snapshot <filter> <out.json>` mode
+    captures both `mca` and `quickbench`'s raw output for a given filter,
+    and a `compare <before.json> <after.json>` mode diffs two snapshots,
+    printing each function's mca-throughput and quickbench-throughput %
+    change side by side and flagging any row where the two disagree in
+    sign (both exceeding a 1% noise-floor threshold, to avoid flagging
+    pure measurement jitter as a real disagreement). Deliberately does
+    *not* automate `git stash`/`checkout` itself -- risky git operations
+    stay under direct caller control, matching this crate's own general
+    safety discipline, rather than being buried inside a benchmarking
+    tool that could silently misfire. Validated end-to-end (not just
+    unit-tested in isolation): took two snapshots of the exact same
+    unchanged code and compared them -- `mca` correctly reported a
+    deterministic `0.0%` for every row (matching its own nature as a
+    static, non-timing-based model), while `quickbench` showed real,
+    substantial run-to-run noise (+2.9% to +11.5% to -6.1% on different
+    rows purely from timing jitter) with zero false `DISAGREE` flags
+    (since `mca`'s own delta never exceeded the 1% threshold). This is
+    directly the kind of check that would have caught `sincos_checked`'s
+    own mismatch immediately instead of after the fact, and would have
+    given a clean fallback the moment `pown_df32_seed`'s own `mca` run
+    failed outright (this same day) rather than leaving that
+    investigation with no wall-clock cross-check at all. One known
+    cosmetic limitation: multi-word quickbench labels ("std cbrt") get
+    truncated to their first token in the parsed output (the *value* is
+    still parsed correctly regardless) -- doesn't affect the crate's own
+    single-word function names, the actual comparison targets this tool
+    exists for.
 78. **Throughput harness with N independent input streams**: current
     quickbench shape may be ILP-limited in ways that hide or exaggerate
     wins; 4 interleaved streams approximates a real vectorized caller
