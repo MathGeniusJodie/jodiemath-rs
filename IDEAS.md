@@ -1973,6 +1973,31 @@ cousin.
    from everywhere else the biased grid under-samples, only visible once
    checked against the real, unbiased evaluation distribution.*
 
+   **Cross-check with an unbiased grid (2026-07-10): confirms no headroom
+   a third way, and surfaces a `tune.rs`-specific measurement gotcha.**
+   Re-ran coordinate descent using `tune.rs`'s own existing "erfc" grid
+   recipe (bit-uniform steps across the whole `[0,10]`, not biased toward
+   the bump) but wired to the *real* shipped formula (`exp2_checked`) this
+   time instead of `tune.rs`'s own `erfc_c` (which uses std `.exp2()`).
+   Result: essentially zero movement (one coefficient nudges by ~49 ULP of
+   its own representation, everything else untouched), and the real dense
+   `[-10,10]` verification comes back *bit-for-bit identical* between
+   shipped and "tuned" (`max 109 avg 0.32117`, both). `erfc_rational` is
+   confirmed at a genuine local optimum against the real formula, not just
+   "no improvement survived verification" as found on the biased grid --
+   there's no improvement to find here at all. Separately: running
+   `tune.rs`'s own unmodified `erfc` dispatch (`cargo run --example tune --
+   erfc`, using its `.exp2()`-based `erfc_c`) reports a *misleading*
+   "improvement" (`max 96->81`) that doesn't correspond to anything real on
+   the actual `exp2_checked`-based function -- `tune.rs`'s own
+   approximation gap (documented elsewhere as an accepted limitation of
+   its scalar scoring model) is large enough for `erfc` specifically to
+   manufacture a fake local move that a naive re-run could mistake for
+   found headroom. Worth flagging for any future session tempted to trust
+   `tune.rs`'s own `erfc` dispatch output directly without cross-checking
+   against the real function first. No `src/lib.rs` change; scratch probe
+   used, not committed.
+
    **Applied to `rcbrt` (2026-07-10, real periodic structure found, but
    root-caused to an already-understood, already-optimized mechanism --
    not a missed correction term either)**: picked `rcbrt` (`1.0/cbrt(x)`)
