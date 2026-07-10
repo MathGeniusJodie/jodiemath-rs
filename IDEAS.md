@@ -1609,6 +1609,46 @@ cousin.
    (`cbrt_normal`/`sinf_poly`/`expm1_near0`/`exp_r_c`/`asin_poly`) --
    `exp2` and `acos_poly` remain the only two real, adopted wins found
    this way.
+
+   **Final sweep (2026-07-10): `ln`/`log10`/`erf_near0`/`atan_poly7`
+   (3/3)/`atan_pure_poly` all clean too -- every remaining "confirmed
+   faithful" probe from the original audit has now been checked.** All
+   five had correctly-seeded, structurally-faithful `tune.rs` stand-ins
+   (no staleness this time) and every one showed only a noise-level grid
+   move from coordinate descent, max ulp unchanged in each case: `ln`
+   (0.23441->0.23408, ~0.14%), `log10` (0.25509->0.25385, ~0.49%),
+   `erf_near0` (0.63744->0.63601, ~0.22%), `atan_poly7`/current-3/3-form
+   (0.28610->0.28554, ~0.2%), `atan_pure_poly`/`atan_latency`'s own poly
+   (0.10872->0.10857, ~0.14%) -- all comfortably under this session's
+   established "isolated signal under ~10-15% isn't worth the round-trip"
+   threshold, several an order of magnitude below even that. None pursued
+   further given `cbrt_normal`'s own lesson that even a *bigger* isolated
+   grid signal (1.75% avg cost for a real max win) can still reverse on
+   the real wrapped function -- these sub-0.5% moves aren't worth the
+   verification effort at all. **This closes out the entire `tune.rs`
+   coefficient-search audit**: of every shipped poly checked this
+   session (`exp2`, `exp2_checked`, `exp10`, `exp10_checked`, `exp2m1`,
+   `exp2_checked_df`, `acos_poly`, `log_2`, `expm1_near0`, `exp`'s own
+   poly, `asin_poly`, `sinf_poly`, `cbrt_normal`, `ln`, `log10`,
+   `erf_near0`, `atan_poly7`, `atan_pure_poly`), exactly two produced a
+   real, adopted, verified win (`exp2`'s shared poly, `acos_poly`) and
+   one looked real but reversed on full verification (`cbrt_normal`,
+   reverted) -- the rest were already at their genuine local optima.
+   Five separate `tune.rs` staleness bugs were found and fixed along the
+   way (`exp_pos_neg`, `erf_tail_c`, `acos_poly`, `cbrt_normal`,
+   `exp_r_c`), plus two real structural fidelity bugs (`exp2_c`'s stale
+   A/B split, `erfc_c`'s multiply/divide reordering) and one imprecise
+   seed (`asin_poly`) -- the audit's own infrastructure value turned out
+   larger and more reliable than its direct coefficient-search yield.
+   *A crate this heavily retuned already (multiple LP/Chebyshev refit
+   rounds per major poly, most within the last few days) has little
+   coefficient headroom left to find with coordinate descent alone --
+   the technique's main remaining payoff here was catching measurement-
+   tool bugs, not shipped-code wins. Idea #4 (transformed-variable fits)
+   or #91 (true rlibm-style exhaustive-domain LP) are the more promising
+   next levers for squeezing further accuracy out of these same polys,
+   since both change the underlying fit *family*, not just search within
+   the one coordinate descent already covers exhaustively.*
 4. **Per-function transformed-variable fit search**: fit in u=s/(s+2),
    u=s·(s+a), etc., searching over the transform family. Distinct from
    centered-variable refits (rejected — that only moved the origin);
