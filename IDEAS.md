@@ -2183,9 +2183,48 @@ cousin.
 
 ### Accuracy micro-fixes / surveys (cheap to check, maybe nothing there)
 
-79. **Survey sinpi/cospi/sind/cosd/exp10/sigmoid max ulp** — several newer
-    functions have no recorded exhaustive numbers in readme.md; can't
-    prioritize what isn't measured.
+79. ~~**Survey sinpi/cospi/sind/cosd/exp10/sigmoid max ulp**~~ (resolved
+    2026-07-10): ran a genuine `thorough` (exhaustive, every f32 bit
+    pattern in each function's own documented domain) sweep for all six,
+    rather than trusting that readme.md's existing numbers were already
+    exhaustive rather than leftover fuzz-mode (100M sample) estimates.
+    Five of six matched their documented numbers exactly: `sinpi`
+    (0.1969/2 vs. documented 0.197/2), `cospi` (0.2813/868814811 vs.
+    0.281/8.7e8, the already-known near-a-zero artifact), `sind`
+    (0.1237/2 vs. 0.124/2), `cosd` (0.0725/2 vs. 0.073/2), `exp10`
+    (0.0343/2 vs. 0.034/2) -- confirming the existing numbers really were
+    already the true exhaustive worst case, not stale fuzz estimates,
+    despite never having been explicitly re-verified as such.
+
+    `sigmoid` was the exception: exhaustive measured 0.0925/4, *tighter*
+    than the documented 0.100/5 -- a discrepancy in the safe direction
+    (the doc overstated the error), but still wrong and worth tracing.
+    Since a random-sample fuzz can never find a worse max than the true
+    exhaustive sweep (fuzz here literally uses `rand::rng().random::<u32>()`,
+    a raw uniform subset of the same bit-pattern space `exhaustive()`
+    enumerates completely -- see `examples/accuracy.rs`'s `fuzz` fn), the
+    documented "5" had to predate some real change. Root-caused via `git
+    log -S"pub fn sigmoid"`, which initially (and misleadingly) showed no
+    hits -- that pickaxe search only catches the function being added or
+    removed, not its body being edited while the signature stays put.
+    Broadening to any commit touching `sigmoid` found it immediately:
+    commit `2632e14` ("sigmoid: single exponent-field construction
+    instead of exp's k1/k2 split", 2026-07-09) already measured and
+    reported this *exact* number (0.0925/4, bit-identical to the original,
+    not a new approximation) as part of a real, already-shipped speed win
+    (mca throughput 2.713->1.354 cyc/elem, halved) -- but that commit's
+    diff touched only `src/lib.rs`, never `readme.md`. The mca table's own
+    sigmoid row *was* correctly resynced at the time (still reads
+    61.09/1.354, matching), so this was a partial doc-sync miss: one
+    table updated, the sibling accuracy table forgotten, the same failure
+    shape as this session's earlier erf/log1p/atanh/sinpi/tanpi/sinc mca
+    staleness findings, just on the accuracy side instead of mca. Fixed
+    readme.md's sigmoid accuracy row to `0.093 | 4`. *A pickaxe search for
+    a function's own signature line is not sufficient to rule out "this
+    function's body changed" -- it only proves the function wasn't added
+    or removed. When auditing whether a specific number could be stale,
+    search for any commit touching the function by name (or grep the
+    commit log directly), not just the declaration line.*
 80. **exp2 poly evaluated as 1+f·Q vs direct P(f)=2^f with c0=1 pinned
     (paper-screened 2026-07-09, not implemented -- real modest op savings
     identified, but needs a fresh fit, not a mechanical rewrite)**: traced
