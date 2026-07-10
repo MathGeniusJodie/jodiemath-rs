@@ -172,6 +172,52 @@ git history / readme.md, not here. Untested backlog is at the bottom.
   model samples at all; run all three before trusting any reduction-scheme
   change, not just two of them.*
 
+- **sinpi/cospi/sind/cosd/tanpi/tand special-case matrix (2026-07-10,
+  resolved -- mostly clean, one cosmetic non-issue found and left as-is)**:
+  built the usual matrix (`{0,-0,±1,±0.5,±2,±90,±180,±inf,NaN}`) against
+  hand-computed closed forms. Clean except two related, explicable, and
+  ultimately non-actionable findings:
+  1. **`cosd`'s NaN sign/payload is inverted relative to every sibling in
+     this family** (`cosd(inf)`/`cosd(NaN)` both come out positive-NaN
+     while `sinpi`/`cospi`/`tanpi`/`sind`/`tand` all come out negative-NaN
+     for the same inputs). Root cause: `cos`/`cosd` compute their sign via
+     `parity = !kb.to_bits() << 31` (bitwise `NOT` of the reduction
+     variable's raw bits, extracting `(k+1)`'s parity from `k`'s own bit
+     pattern without materializing `k+1` as a float) where `sin`/`sind`
+     use the un-negated `qb.to_bits() << 31`. This trick's derivation only
+     holds when `kb` represents a genuine finite `k+0.5`; for non-finite
+     `kb` (`x=inf`/`NaN`), the `!` just flips whatever bit happens to sit
+     in that position, mechanically producing a different NaN sign than
+     the un-negated sibling functions. Per idea #84's already-established
+     precedent (erf/erfc NaN sign audit): NaN sign/payload is
+     implementation-defined under IEEE754/C99, not a spec violation, and
+     this crate has already decided not to spend a real `.abs()`-style op
+     on every NaN-producing path just to canonicalize it. Same call here
+     -- left as is, not a new class of bug.
+  2. **`sinpi`/`sind`/`tanpi`/`tand` don't preserve odd-function sign-of-
+     -zero at nonzero integers**: `sinpi(1.0) == sinpi(-1.0) == -0.0`
+     (same sign, not flipped) rather than the `-0.0`/`+0.0` pair pure odd
+     symmetry would require. Root cause: `r = x - q` where
+     `q=x.round_ties_even()` equals `x` itself exactly at any integer,
+     and IEEE754 defines `x-x` as *always* `+0.0` regardless of `x`'s own
+     sign -- the same "opposite/same-signed-zero operation erases sign"
+     mechanism this crate has hit and fixed multiple times before
+     (`sinf_poly`'s own `-0` fix, `atan2(-0,+0)`, `sinpi`'s existing
+     `x==0.0` guard), just recurring at every nonzero integer instead of
+     only at `x=0`. Confirmed by hand-tracing both `sinpi(1.0)` and
+     `sinpi(-1.0)` through the actual reduction. **Not fixed**, unlike
+     those prior instances, for two reasons specific to this case: (a)
+     `sinpi` is a crate-specific function with no C99/std convention
+     dictating which signed zero is "correct" at a nonzero integer
+     crossing (unlike `sin(-0)=-0`, which *is* standard) -- there's no
+     wrong answer to converge to, only an arbitrary choice; (b) confirmed
+     via `accuracy.rs`'s own `ulp_diff`/`ord()` that `+0.0` and `-0.0`
+     already sort identically (`ord(+0.0)==ord(-0.0)==0`), so this is
+     invisible to every accuracy metric this crate tracks, and a real fix
+     (detecting exact-integer `x` and selecting a sign from `parity(q)`)
+     would cost a real branchless select for a benefit no measurement
+     here can see. Left as is. No code changes from this audit.
+
 ## cbrt family
 
 - **Seed constant + degree-2 poly joint search (2026-07-07)**: best across
