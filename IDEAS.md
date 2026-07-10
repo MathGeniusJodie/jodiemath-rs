@@ -1174,6 +1174,44 @@ cousin.
    committing -- correcting a wrong documented bound to the true, verified
    one is itself the deliverable, same as this session's several mca/
    accuracy staleness fixes elsewhere.*
+
+   **remainder (checked 2026-07-10, confirms existing documented behavior,
+   nothing new found)**: extended the same structured-search technique to
+   the last binary function idea #39 left open. Targeted `q = round(x/y)`
+   landing on large magnitudes (2^10 through 2^30) and on exact
+   half-integer ties across many `y` scales. Found a real invariant
+   violation almost immediately -- `remainder`'s own fundamental guarantee
+   `|result| <= |y|/2` failing by more than 3x at `x=5.330646e37,
+   y=7.9432826e29` (`remainder` returned `1.2840237e30` against a true
+   value of `-3.046328e29`, `|y|/2 = 3.972e29`). But checking `remainder`'s
+   *own doc comment* before treating this as new: it already explicitly
+   states "`round(x/y)*y`'s absolute error scales with ulp(x), which
+   swamps the true remainder... once `|x/y|` is large" and points to
+   `remainder_checked`/`remainder_wide` as the designed fix. Tested both:
+   `remainder_checked` *also* violates the invariant at this same point
+   (`4.897e29`, still over `|y|/2`, though less badly than plain
+   `remainder`) -- but `remainder_checked`'s own doc comment *also*
+   already says so explicitly ("Confirmed by fuzzing... 0 max ulp for
+   `|x/y|` up to `1e7`, degrading only past `2^24`... a separate, harder
+   limit this correction can't reach past" -- my point's ratio is
+   `~6.7e7`, past both thresholds). `remainder_wide` handles it correctly
+   (`-3.0463283e29`, matching the true value to the last couple of ulp).
+   So: not a new bug, just a structured re-derivation of an already-fully-
+   documented, already-solved-by-tiering limitation (same
+   fast/near-tie-safe/wide-safe three-tier shape as `powf`/`powf_checked`
+   above). Given `remainder_checked`'s doc comment makes a specific,
+   falsifiable claim ("0 max ulp for `|x/y|` up to `1e7`"), tested *that*
+   directly instead: a dense structured sweep (many `y` scales, `x`
+   chosen to land on or extremely near half-integer ties every ~5 units
+   of `q` up to `1e7`, 2.814 billion `(x,y)` pairs total) found **zero**
+   counterexamples -- the documented claim holds up under targeted search,
+   not just the random fuzz that originally established it. No code
+   changed; this closes idea #8's `remainder` extension with high
+   confidence rather than leaving it as an unverified claim. *Before
+   treating a structured-search find as new, check the target function's
+   own doc comment for an existing, already-quantified acknowledgment --
+   `powf`'s worse-than-documented number was genuinely new because no
+   such acknowledgment existed; `remainder`'s wasn't, because it did.*
 9. **Structured-error probes**: plot per-function error vs mantissa and vs
    exponent separately; periodic structure invites a cheap structural
    correction (one select or exponent-derived fma) instead of a refit.
@@ -1705,8 +1743,9 @@ cousin.
     against the wrong input otherwise.* hypot's own max ulp is already 1
     (bounded) domain-wide, leaving little room for this technique to find
     anything there. Applied to `powf` next -- see idea #8's own entry
-    below for a real, substantial worse-case find. `remainder` remains
-    open if someone wants to extend this same harness to it.
+    below for a real, substantial worse-case find. `remainder` also
+    checked (2026-07-10, see idea #8's own entry) -- confirms existing
+    documented behavior rather than finding anything new.
 40. **atan_latency: fold FRAC_PI_2-p select into sign trickery (adopted
     2026-07-09)**: implemented as described -- apply `mulsign` to `p` and
     `FRAC_PI_2` individually first (`mulsign(a,x) - mulsign(b,x) ==
