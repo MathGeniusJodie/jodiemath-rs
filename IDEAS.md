@@ -1084,6 +1084,59 @@ cousin.
    already found its dominant error split roughly evenly between
    rounding and truncation with no single cheap lever, a related
    (if not identical) conclusion.
+
+   **`tanh`'s own `0.25` threshold checked directly too (2026-07-10, no
+   code changes -- extends the "no headroom" pattern to a fourth
+   function)**: found via idea #9's exponent-bucketed error-sweep
+   technique first, applied to a function it hadn't been tried on yet
+   (as that entry's own text explicitly left open) -- a 30M-sample sweep
+   of `tanh`'s error bucketed by `floor(log2(|x|))` against an f64
+   reference turned up a real, visible spike right at the bucket
+   `|x| in [0.25,0.5)` (avg ulp 0.94, max 6, both roughly double the
+   immediately adjacent buckets on either side: `[0.125,0.25)` avg 0.37,
+   `[0.5,1.0)` avg 0.50) -- exactly adjacent to the branch's own `0.25`
+   crossover, so worth checking the same way idea #6 already checked
+   `sinh`. Reimplemented both of `tanh`'s branches standalone (`a`, the
+   Pade small-argument form; `b`, the `exp2int`-based direct
+   `exp(2x)-1` form) and measured each *independently* across
+   `[0.0625,1.0)` in half-width buckets:
+
+   | range | `a` avg/max | `b` avg/max |
+   |---|---|---|
+   | [0.0625,0.125) | 0.55/4 | 3.59/24 |
+   | [0.125,0.1875) | 0.48/3 | 2.81/16 |
+   | [0.1875,0.25) | 0.62/4 | 2.20/8 |
+   | [0.25,0.3125) | 2.07/6 | 1.31/6 |
+   | [0.3125,0.375) | 9.87/19 | 0.52/3 |
+   | [0.375,0.4375) | 32.66/55 | 0.78/3 |
+   | [0.4375,0.5) | 87.33/133 | 1.09/4 |
+
+   `a` wins clearly everywhere up through `[0.1875,0.25)` (the last
+   bucket before the shipped threshold) and degrades sharply past it
+   (already 15x worse than `b` one bucket later); `b` is worse than `a`
+   for every bucket *below* `0.25` (24x worse at the smallest bucket,
+   where its own `exp2int` reduction is least favorable) and becomes the
+   better choice starting exactly at `[0.25,0.3125)`. The shipped `0.25`
+   threshold is switching branches at essentially the exact crossover
+   point -- neither an earlier nor a later cutoff would help, matching
+   `sinh`/`asin`/`erf`'s own conclusion rather than opening a new lever.
+   The max-ulp-6 spike the original bucketed sweep found is simply `b`'s
+   own genuine, unavoidable worst case immediately past the crossover
+   (visible directly in the table: `b`'s max is 6 right at
+   `[0.25,0.3125)`, already down to 3 one bucket later), not a
+   threshold-placement artifact -- consistent with, and now a concrete
+   fourth data point for, this idea's own running finding that these
+   branch crossovers are already well-placed by whatever process
+   originally chose them. Two standalone scratch probes used for this
+   (exponent-bucket sweep, then the two-branch crossover comparison);
+   neither committed, no `src/lib.rs` change. *A visible error spike
+   right next to a branch threshold is exactly the shape a misplaced
+   crossover would produce, but it's equally the shape produced by a
+   crossover that's already correctly placed right where the two
+   branches' own error curves cross -- distinguishing the two needs
+   measuring both branches independently through the boundary (this
+   idea's own technique), not just eyeballing where the spike sits
+   relative to the constant in the code.*
 7. **Round-off budget audit per function**: enumerate every rounding on the
    critical path with a bound, attack the largest term. This is exactly how
    exp's Cody-Waite fix was found; do it systematically for the remaining
