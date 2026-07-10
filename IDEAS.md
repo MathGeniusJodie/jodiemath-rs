@@ -3148,6 +3148,42 @@ cousin.
   out numerically: modest-and-local, severe-and-wide, or a total,
   wide information blackout. The phrase alone doesn't tell you which.*
 
+- **`ln` vs. naive `log_2(x) * LN_2`, quantified -- real but far milder
+  than the doc comment's own wording suggests, and concentrated in a
+  different place than its stated mechanism predicts (2026-07-10,
+  confirmed direction, refined magnitude/location, no bug)**: `ln`'s own
+  doc comment describes the naive form's extra rounding as costing
+  "nearly a full ulp of avoidable error," attributed to "that second
+  rounding [applying] to the *whole* result (dominated by the integer
+  exponent term k...)". Measured across a 100M-sample uniform fuzz: `ln`
+  avg 0.234/max 3 vs. naive avg 0.253/max 3 -- a real, consistent,
+  reproducible degradation (naive is worse on every large sample run),
+  but only ~8% worse on average, not "nearly a full ulp" (which would
+  mean the average degrading by close to 1.0, not ~0.02). Bucketed by
+  `x`'s own exponent to check whether the gap concentrates at large `|k|`
+  the way "dominated by the integer exponent term" implies it should:
+  it doesn't -- bands with large `|k|` (`e` near `+-120`) show `ln` and
+  naive roughly *tied*, sometimes naive even slightly ahead, while the
+  single largest gap in the whole sweep sits right at `e=0` (`x` near 1,
+  `k=0`, where there's no large exponent term to dominate anything):
+  `ln` avg 0.138 there (its own independently-fitted poly's real
+  accuracy edge) vs. naive avg 0.276 (~2x worse, and the only bucket
+  where naive's own max reaches 3). So the *direction* of the doc
+  comment's claim holds up (naive really is measurably worse, real and
+  reproducible), but neither the *magnitude* ("nearly a full ulp") nor
+  the *stated mechanism's predicted location* (large `|k|`) survive
+  contact with the real measurement -- the actual gap is small in
+  absolute average-ulp terms and concentrated where `k=0`, not where `k`
+  is large. No code change (this is `ln`'s own already-shipped,
+  already-correct construction; the naive form was never implemented,
+  only reasoned about). *A doc comment's own stated mechanism for* why *a
+  naive form is worse can survive as directionally true while being wrong
+  about both how much worse and where the difference actually shows up --
+  worth checking the bucketed/located version of a claim, not just its
+  aggregate direction, especially when the comment names a specific
+  cause ("dominated by k") that implies a specific, checkable
+  concentration pattern.*
+
 89. **Bit-sliced two-for-one**: evaluate sin and cos polynomials sharing
     y=r² registers across the *same* vector when the caller wants both —
     a sincos slice API (not scalar API, which already failed) where lane
