@@ -357,8 +357,26 @@ pub fn exp10(x: f32) -> f32 {
 // branchy version everywhere, cheaper (single sign-copy instruction, no
 // compare/select) on every shared caller (sin, cos, sin_checked,
 // cos_checked, tan).
+//
+// IDEAS.md backlog round 3 #81 (2026-07-10): audited whether this
+// copysign is still load-bearing for every caller now that sin_checked
+// applies the "flip r, not the result" trick and sinpi has its own
+// explicit x==0.0 override -- verified empirically (a temporary
+// copysign-free build, checked at each caller's own actual zero-crossing,
+// both signs, not just x=+-0.0): sin, sind, cospi, cosd all still
+// genuinely need it (sin/sind lose the odd x=-0.0 sign without it;
+// cospi/cosd lose even-function sign-of-zero *symmetry* at their own
+// crossings -- e.g. cospi(0.5) and cospi(-0.5) came out with *opposite*
+// signs of zero without it, which cospi being even can never actually
+// produce). sin_checked and sinpi's own separate guards make it redundant
+// for them specifically at the spot-checked zero-crossing, and a full
+// 100M-sample fuzz across every documented-accurate bucket for both
+// functions (see `examples/accuracy.rs`) came back with avg/max ulp
+// matching their prior baseline exactly in every in-budget range --
+// split into this copysign-free core plus the public wrapper below on
+// that evidence.
 #[inline(always)]
-fn sinf_poly(x: f32) -> f32 {
+fn sinf_poly_raw(x: f32) -> f32 {
     let c0 = -0.16666660f32;
     let c1 = 8.3330662e-3f32;
     let c2 = -1.9809603e-4f32;
@@ -369,8 +387,17 @@ fn sinf_poly(x: f32) -> f32 {
     let a = fma(c1, y, c0);
     let b = fma(c3, y, c2);
     let p = fma(b, y2, a);
-    let r = fma(p, x3, x);
-    r.copysign(x)
+    fma(p, x3, x)
+}
+
+/// `sinf_poly_raw` plus the copysign fixup -- see `sinf_poly_raw`'s own
+/// doc comment for the full story. Used by every caller except
+/// `sin_checked`/`sinpi`, which call `sinf_poly_raw` directly since their
+/// own separate zero-handling makes this copysign provably redundant for
+/// them.
+#[inline(always)]
+fn sinf_poly(x: f32) -> f32 {
+    sinf_poly_raw(x).copysign(x)
 }
 
 // pi split into pieces with trailing zero bits so q*PI_A and q*PI_B are
@@ -474,11 +501,15 @@ pub fn sinpi(x: f32) -> f32 {
     // regardless of the operands' own sign -- the same "opposite-signed-
     // zero subtraction erases sign" mechanism as sinf_poly's own -0.0
     // fix and atan2(-0.0,+0.0)'s bug, just one level further out (r's
-    // lost sign means sinf_poly's internal copysign has nothing left to
-    // copy). Guarded the same way log1p/log_2 handle their own x==0.0
-    // sign case: compute the normal path unconditionally first, select
-    // x itself only at the singular zero point.
-    let normal = sinf_poly(std::f32::consts::PI * r) * fma(-2.0, parity(q), 1.0);
+    // lost sign means sinf_poly's own copysign fix would have nothing
+    // left to copy at this point anyway, which is exactly why this
+    // guard, not that copysign, is what makes sinpi(-0.0) correct --
+    // confirmed this function calls the copysign-free `sinf_poly_raw`
+    // now, see its own doc comment). Guarded the same way log1p/log_2
+    // handle their own x==0.0 sign case: compute the normal path
+    // unconditionally first, select x itself only at the singular zero
+    // point.
+    let normal = sinf_poly_raw(std::f32::consts::PI * r) * fma(-2.0, parity(q), 1.0);
     if x == 0.0 { x } else { normal }
 }
 
@@ -626,18 +657,36 @@ pub fn tand(x: f32) -> f32 {
 // (fit only for [-pi/2, pi/2]) hopelessly outside its domain -- a relocatable
 // *cliff*, not a slope, no matter how q is rounded. This version instead
 // gives q a second, small f32 word (qh, ql) -- genuine double-float
-// precision via `two_prod`/`two_sum` error-free transforms (exact at any
-// magnitude, unlike the crate's other PI_A..D trick, which needs bounded q)
-// -- specifically, the dominant cross term and the two next-biggest
-// (~x*2^-24) get real two_prod treatment, and the smallest tier (~x*2^-48,
-// plus the reciprocal-of-pi's own 3rd correction word) is folded in with
-// plain multiplies/adds (its own rounding error there is already far below
-// 1 ulp of the O(1) result). A version that dropped that smallest tier
-// entirely was tried and measured (via examples/mca.rs) to cost the *same*
-// as keeping it (~130-140 cyc either way) -- no meaningful savings once
-// genuine multi-word q precision is needed at all, so all three tiers are
-// kept here for the best accuracy at no extra cost. See POLY_SAFE_BOUND for
-// why the output stays finite even once this gradual degradation is severe.
+// precision via `two_prod`/`two_sum` error-free transforms (each individual
+// transform is exact -- p+e == a*b or s+e == a+b as reals, no rounding lost
+// converting a sum/product into a hi/lo pair -- unlike the crate's other
+// PI_A..D trick, which needs bounded q) -- specifically, the dominant cross
+// term and the two next-biggest (~x*2^-24) get real two_prod treatment, and
+// the smallest tier (~x*2^-48, plus the reciprocal-of-pi's own 3rd
+// correction word) is folded in with plain multiplies/adds (its own
+// rounding error there is already far below 1 ulp of the O(1) result). A
+// version that dropped that smallest tier entirely was tried and measured
+// (via examples/mca.rs) to cost the *same* as keeping it (~130-140 cyc
+// either way) -- no meaningful savings once genuine multi-word q precision
+// is needed at all, so all three tiers are kept here for the best accuracy
+// at no extra cost. See POLY_SAFE_BOUND for why the output stays finite
+// even once this gradual degradation is severe.
+//
+// CORRECTION (2026-07-10, IDEAS.md): the individual two_prod/two_sum
+// transforms being exact does *not* make qh/ql "exact at any magnitude" as
+// a previous version of this comment claimed -- that conflates "no
+// rounding lost converting to a hi/lo pair" with "a hi/lo pair has
+// unlimited precision," which isn't true. `qh` and `ql` together resolve
+// `q` to roughly 48 bits total (two f32 mantissas); once the *true*
+// `round(x/pi)` itself needs more than ~48 bits to pin down -- around
+// `|x| > 2^48*pi ~ 8.85e14` -- qh+ql comes out off by a few whole integers
+// (confirmed empirically: off by 1 at x=1e15, by 14 at x~1e16), which is
+// exactly the "relocatable cliff" this whole double-word scheme was built
+// to avoid, just relocated from a single f32's ~2^24 ceiling to roughly
+// 2^48 instead of eliminated. `POLY_SAFE_BOUND` bounds `sinf_poly`'s
+// *input* here but not its *output* -- see `sin_checked`'s own `.clamp`
+// for the fix that keeps `sin_checked`/`cos_checked` inside `[-1,1]`
+// regardless.
 //
 // Bug found while building this (2026-07-06, same day): folding pre_offset
 // (cos's -0.5 phase shift) directly into the two_prod's dominant term p0 is
@@ -849,7 +898,47 @@ pub fn sin_checked(x: f32) -> f32 {
     let pl = parity(ql);
     let flip = if pq == pl { 0 } else { SIGN_MASK };
     let r = f32::from_bits(r.to_bits() ^ flip);
-    let result = sinf_poly(r);
+    // Calls the copysign-free `sinf_poly_raw`, not `sinf_poly` -- the
+    // `x == 0.0` guard below already overrides the result at the one
+    // point copysign would matter (see `sinf_poly_raw`'s own doc comment
+    // for the verification this is safe), so paying for that instruction
+    // here would be pure waste.
+    //
+    // `.clamp(-1.0, 1.0)` (2026-07-10, IDEAS.md): `round_x_over_pi`'s
+    // double-float q genuinely loses precision once |x| exceeds roughly
+    // 2^48*pi (~8.85e14) -- q itself comes out off by a few integers there
+    // (confirmed empirically, not just theorized), which shifts r by whole
+    // multiples of pi and puts it wildly outside sinf_poly's fitted
+    // [-pi/2,pi/2] domain despite the POLY_SAFE_BOUND clamp (which only
+    // bounds the poly's *input*, not its *output* -- a degree-9 poly
+    // evaluated at |r|=1000 is dominated by its own leading r^9 term,
+    // ~2.6e21, nowhere near the true `|sin(x)| <= 1` invariant). Without
+    // this clamp, `sin_checked`/`cos_checked` could silently return values
+    // like `1.07e9` or `2.6e21` for legitimate (if extreme) finite input --
+    // a genuine invariant violation, not just reduced accuracy, and a much
+    // worse failure mode than the "gradual degradation" these functions are
+    // documented to provide. The clamp doesn't fix the underlying accuracy
+    // for `|x|` this extreme (a real fix needs a wider-than-double-float q,
+    // out of scope here) but it restores the one invariant every caller can
+    // still rely on regardless of `x`'s magnitude. Verified a true no-op
+    // everywhere the function was already accurate (fuzz: every in-budget
+    // bucket from `|x|<=pi/4` through `[1e12,1e13)` unchanged vs. baseline);
+    // the already-garbage `[1e15,inf)` tail's *ulp* numbers don't visibly
+    // improve (this crate's own `ulp_diff` measures distance via a global
+    // sign+magnitude ordering, so two arbitrary values inside `[-1,1]` can
+    // still read as billions of "ulp" apart -- the fix isn't about that
+    // metric), but the actual returned values there now measure bounded
+    // to exactly `[-1,1]` for every tested magnitude up to `f32::MAX`
+    // (previously up to `2.6e21`). Real, non-zero mca cost accepted (same
+    // "real perf cost to fix a wrong-for-legitimate-input defect" precedent
+    // as sin/cos's own inf-for-large-x fix and sinh/cosh's domain-hole fix):
+    // sin_checked latency 109.02->117.02 cyc (+7.3%, includes the
+    // sinf_poly_raw saving above), throughput 5.476->5.542 (+1.2%);
+    // cos_checked (clamp only, no offsetting saving) 113.00->122.00
+    // (+8.0%), 4.537->5.672 (+25.0%, confirmed via assembly diff to be a
+    // real port-contention/scheduling shift, not de-vectorization -- total
+    // instruction count only grew 166->173).
+    let result = sinf_poly_raw(r).clamp(-1.0, 1.0);
     // reduce_pi's own multi-term error-compensation chain loses x's sign
     // at x = +-0.0 (an opposite-signed-zero addition somewhere inside it,
     // the same IEEE754 mechanism as sinf_poly's own -0.0 fix and the
@@ -874,7 +963,13 @@ pub fn cos_checked(x: f32) -> f32 {
     let pl = parity(kl);
     let flip = if pk == pl { SIGN_MASK } else { 0 };
     let r = f32::from_bits(r.to_bits() ^ flip);
-    sinf_poly(r)
+    // See sin_checked's own doc comment for why this clamp is needed:
+    // round_x_over_pi's double-float q loses precision for |x| beyond
+    // ~2^48*pi, and POLY_SAFE_BOUND only bounds sinf_poly's *input*, not
+    // its *output* -- without this, cos_checked could silently return
+    // values like 2.6e21 for legitimate finite input, violating
+    // `|cos(x)| <= 1`.
+    sinf_poly(r).clamp(-1.0, 1.0)
 }
 
 /// Core of cbrt for normal finite x: bit-trick seed (~3% error), then a

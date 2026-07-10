@@ -414,6 +414,91 @@ git history / readme.md, not here. Untested backlog is at the bottom.
   constant doesn't exist as f32); half-magnitude magic quantizes q wrong;
   folding elsewhere reintroduces rounding near cos's zeros. Not attempted.
 
+- **sinf_poly copysign audit (idea #81) → sin_checked/cos_checked
+  `[-1,1]` output invariant fix (2026-07-10, adopted -- real correctness
+  bug found, not what the audit set out to look for)**: idea #81 asked
+  whether `sinf_poly`'s internal `.copysign(x)` is still load-bearing for
+  every caller now that `sin_checked` flips `r`'s sign before the poly and
+  `sinpi` has its own `x==0.0` override. Checked empirically (a temporary
+  copysign-free build, tested at each of 8 callers' own actual
+  zero-crossing, both signs -- not just `x=+-0.0`, which is the wrong
+  probe point for the cos-family functions, whose own singular point is
+  at their *own* zero-crossing, e.g. `pi/2` for `cos`, not `0`): `sin`,
+  `sind`, `cospi`, `cosd` all still genuinely need it (`sin`/`sind` lose
+  the odd `x=-0.0` sign; `cospi`/`cosd` lose even-function sign-of-zero
+  *symmetry* at their own crossings -- `cospi(0.5)` and `cospi(-0.5)` came
+  out with *opposite* signs of zero without it, impossible for a genuinely
+  even function). `sin_checked` and `sinpi`'s own separate guards make it
+  provably redundant for them specifically -- split into a copysign-free
+  `sinf_poly_raw` core plus the existing `sinf_poly` wrapper, confirmed
+  bit-identical via a 100M-sample fuzz across every documented-accurate
+  bucket for both functions.
+  While verifying this at scale (running the full `examples/accuracy.rs`
+  sweep rather than trusting the narrow spot-check), found something the
+  audit wasn't looking for: `sin_checked`/`cos_checked`'s `[1e15,1e16)`
+  bucket showed avg ulp in the *hundreds of millions*, not "gradually
+  degraded." Root-caused (not just re-measured): `round_x_over_pi`'s
+  double-float `(qh,ql)` representation of `q=round(x/pi)` only resolves
+  `q` to ~48 bits total (two f32 mantissas) -- genuinely exact for the
+  *transforms* used to build it (`two_prod`/`two_sum` lose no precision
+  converting a sum/product to a hi/lo pair), but that doesn't give the
+  pair *unlimited* resolution. Once the true `q` itself needs more than
+  ~48 bits to pin down (`|x| > 2^48*pi ~ 8.85e14`), `qh+ql` comes out off
+  by a few whole integers (confirmed directly: off by 1 at `x=1e15`, by 14
+  at `x~1e16`) -- exactly the "relocatable cliff, not a slope" this whole
+  double-word scheme was built to eliminate, just relocated from a single
+  f32's `~2^24` ceiling to `~2^48` instead of actually removed (an
+  incorrect claim, "exact at any magnitude," in this function's own prior
+  doc comment -- corrected). Each unit of `q` error shifts the reduced
+  residual `r` by a whole multiple of pi, and `POLY_SAFE_BOUND` only
+  clamps `sinf_poly`'s *input* (to `+-1000`) -- it does nothing to the
+  *output*, and a degree-9 poly evaluated at `|r|=1000` (dominated by its
+  own leading `r^9` term) returns values up to `~2.6e21`. Confirmed via a
+  direct probe: `sin_checked`/`cos_checked` already silently return values
+  like `1.07e9` or `2.6e21` for ordinary (if extreme) finite input on
+  *unmodified* master -- a real, pre-existing, previously-undocumented
+  violation of the fundamental `|sin(x)| <= 1` invariant, not a regression
+  from this session's own changes (verified against a fresh git-stash
+  baseline before concluding anything). This is a substantially worse
+  failure mode than reduced accuracy -- any caller relying on the basic
+  sine/cosine range guarantee (e.g. `sqrt(1 - sin_checked(x)^2)`) could
+  silently misbehave. `sind`/`cosd` share the identical mechanism (same
+  `POLY_SAFE_BOUND` pattern) but their own doc comment already explicitly
+  disclaims correctness past their own `~4.7e7` exactness limit, promising
+  only finiteness (which `2.6e21` technically satisfies) -- not the same
+  class of broken promise as `sin_checked`/`cos_checked`'s "full-range
+  gradual degradation," so left unchanged.
+  Fixed with a final `.clamp(-1.0, 1.0)` on both `sin_checked` and
+  `cos_checked`'s return value -- doesn't repair the underlying accuracy
+  for `|x|` this extreme (a real fix needs a wider-than-double-float `q`,
+  a substantially bigger undertaking, left open), but restores the one
+  invariant every caller can rely on regardless of `x`'s magnitude.
+  Verified a true no-op everywhere the functions were already accurate
+  (100M-sample fuzz: every bucket from `|x|<=pi/4` through `[1e12,1e13)`
+  unchanged vs. baseline); the `[1e15,inf)` tail's own *ulp* numbers don't
+  visibly improve in `accuracy.rs`'s own report (this crate's `ulp_diff`
+  measures distance via a global sign+magnitude ordering, so two arbitrary
+  values inside `[-1,1]` can still read as billions of "ulp" apart --
+  that metric was never going to show this fix), but the actual returned
+  values there are now confirmed bounded to exactly `[-1,1]` up to
+  `f32::MAX` (previously unbounded up to `2.6e21`). Real, non-zero mca
+  cost, accepted under this crate's own established "real perf cost to
+  fix a wrong-for-legitimate-input defect" precedent (same shape as
+  sin/cos's inf-for-large-x fix and sinh/cosh's domain-hole fix): combined
+  with the `sinf_poly_raw` saving above, `sin_checked` latency
+  109.02->117.02 cyc (+7.3%), throughput 5.476->5.542 (+1.2%);
+  `cos_checked` (clamp only, no offsetting saving) 113.00->122.00 (+8.0%),
+  4.537->5.672 (+25.0% -- confirmed via assembly diff to be a real
+  port-contention/scheduling shift, not de-vectorization: total
+  instruction count only grew 166->173, `codegen_check` clean). readme.md
+  mca table updated to match. *A narrow, well-scoped audit (idea #81) that
+  ran its verification at real scale (the actual 100M-sample fuzz, not
+  just the zero-crossing spot-check it set out to confirm) surfaced a
+  much bigger, previously-invisible bug purely as a side effect of
+  actually running the full test -- this is exactly why "verify with the
+  real harness, not a narrow spot-check" keeps paying off in this crate,
+  even for changes that look self-contained going in.*
+
 ## Missed fma contractions
 
 - **asin: a*a-a → fma(a,a,-a) (2026-07-07)**: bit-identical, but throughput

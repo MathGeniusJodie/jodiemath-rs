@@ -270,9 +270,9 @@ exp10_checked       |          72.06 |             2.736
 log2                |          34.23 |             1.556
 log2_unchecked      |          34.23 |             0.958
 sin                 |          46.00 |             1.151
-sin_checked         |         109.02 |             5.476
+sin_checked         |         117.02 |             5.542
 cos                 |          54.00 |             1.406
-cos_checked         |         113.00 |             4.537
+cos_checked         |         122.00 |             5.672
 sinpi               |          43.02 |             1.149
 cospi               |          51.00 |             1.283
 tanpi               |          66.97 |             2.521
