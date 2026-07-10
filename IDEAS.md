@@ -812,9 +812,20 @@ cousin.
 11. **Differential testing vs sleef/core-math/rlibm** built locally, not
     just f64-rounded references — also catches double-rounding artifacts in
     accuracy.rs's own reference path.
-12. **Standing test: every `_unchecked` bit-matches its checked sibling on
-    the documented domain** (several doc comments promise this; nothing
-    enforces it).
+12. ~~**Standing test: every `_unchecked` bit-matches its checked sibling on
+    the documented domain**~~ (implemented 2026-07-10, `examples/
+    unchecked_parity.rs`): fuzzed all 10 checked/unchecked pairs
+    (`log_2`/`ln`/`log10`, `cbrt`/`cbrt_accurate`, `atan2`, `fmod`,
+    `remainder`, `powf`/`powf_checked`) at 50M samples each against the
+    exact domain closures `accuracy.rs` already uses for its own ulp
+    reporting -- all 10 came back bit-identical, confirming the doc
+    comments' promises are genuinely true today. Exits nonzero on any
+    mismatch so it can be run as a real regression gate, not just a
+    one-off check. `edgecheck.rs`'s existing 2-3 pinned spot-values per
+    pair weren't a systematic sweep; this is. No bugs found this run, but
+    the standing test itself (not just the audit) is the deliverable --
+    it locks the invariant in for future coefficient/logic changes to
+    either half of any pair.
 13. **Generalize the cbrt_accurate recipe** (cheap ≤1-ulp core + one Df32
     Newton step) into a template: candidates rsqrt_accurate,
     exp_accurate/ln_accurate (each is the other's Newton residual),

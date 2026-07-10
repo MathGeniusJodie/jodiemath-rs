@@ -1,0 +1,149 @@
+// IDEAS.md backlog round 3 #12: "Standing test: every `_unchecked` bit-
+// matches its checked sibling on the documented domain (several doc
+// comments promise this; nothing enforces it)." `edgecheck.rs` only pins
+// 2-3 spot values per pair, not a systematic sweep -- this fuzzes each
+// pair across the exact domain closures `examples/accuracy.rs` already
+// uses for its own ulp reporting (reused verbatim to stay consistent with
+// the crate's established domain definitions), asserting bit-for-bit
+// equality rather than measuring accuracy. Run with:
+//   cargo run --release --example unchecked_parity
+// (debug builds are slow for 50M samples/pair but not refused outright,
+// unlike accuracy.rs's exhaustive mode -- this is fuzz-only, not 2^32).
+use jodiemath_rs::*;
+
+struct Rng(u64);
+impl Rng {
+    fn next_u32(&mut self) -> u32 {
+        // xorshift64
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        (self.0 >> 32) as u32
+    }
+    fn next_f32(&mut self) -> f32 {
+        f32::from_bits(self.next_u32())
+    }
+}
+
+#[must_use]
+fn check1(name: &str, n: u64, domain: impl Fn(f32) -> bool, checked: impl Fn(f32) -> f32, unchecked: impl Fn(f32) -> f32) -> bool {
+    let mut rng = Rng(0x9E3779B97F4A7C15 ^ (name.len() as u64 + 1));
+    let mut checked_count = 0u64;
+    let mut mismatches = 0u64;
+    let mut first_mismatch: Option<(f32, f32, f32)> = None;
+    for _ in 0..n {
+        let x = rng.next_f32();
+        if !domain(x) {
+            continue;
+        }
+        checked_count += 1;
+        let a = checked(x);
+        let b = unchecked(x);
+        if a.to_bits() != b.to_bits() && !(a.is_nan() && b.is_nan()) {
+            mismatches += 1;
+            if first_mismatch.is_none() {
+                first_mismatch = Some((x, a, b));
+            }
+        }
+    }
+    if mismatches > 0 {
+        let (x, a, b) = first_mismatch.unwrap();
+        println!(
+            "MISMATCH {name}: {mismatches}/{checked_count} in-domain samples differ; first at x={x:e} checked={a:e} (0x{:08x}) unchecked={b:e} (0x{:08x})",
+            a.to_bits(), b.to_bits()
+        );
+        false
+    } else {
+        println!("ok       {name}: {checked_count} in-domain samples, bit-identical");
+        true
+    }
+}
+
+#[must_use]
+fn check2(
+    name: &str,
+    n: u64,
+    domain: impl Fn(f32, f32) -> bool,
+    checked: impl Fn(f32, f32) -> f32,
+    unchecked: impl Fn(f32, f32) -> f32,
+) -> bool {
+    let mut rng = Rng(0x2545F4914F6CDD1D ^ (name.len() as u64 + 1));
+    let mut checked_count = 0u64;
+    let mut mismatches = 0u64;
+    let mut first_mismatch: Option<(f32, f32, f32, f32)> = None;
+    for _ in 0..n {
+        let x = rng.next_f32();
+        let y = rng.next_f32();
+        if !domain(x, y) {
+            continue;
+        }
+        checked_count += 1;
+        let a = checked(x, y);
+        let b = unchecked(x, y);
+        if a.to_bits() != b.to_bits() && !(a.is_nan() && b.is_nan()) {
+            mismatches += 1;
+            if first_mismatch.is_none() {
+                first_mismatch = Some((x, y, a, b));
+            }
+        }
+    }
+    if mismatches > 0 {
+        let (x, y, a, b) = first_mismatch.unwrap();
+        println!(
+            "MISMATCH {name}: {mismatches}/{checked_count} in-domain samples differ; first at x={x:e} y={y:e} checked={a:e} (0x{:08x}) unchecked={b:e} (0x{:08x})",
+            a.to_bits(), b.to_bits()
+        );
+        false
+    } else {
+        println!("ok       {name}: {checked_count} in-domain samples, bit-identical");
+        true
+    }
+}
+
+fn main() {
+    const N: u64 = 50_000_000;
+    let mut ok = true;
+
+    let positive_normal = |x: f32| x >= f32::MIN_POSITIVE && x.is_finite();
+    ok &= check1("log_2 / log_2_unchecked", N, positive_normal, log_2, log_2_unchecked);
+    ok &= check1("ln / ln_unchecked", N, positive_normal, ln, ln_unchecked);
+    ok &= check1("log10 / log10_unchecked", N, positive_normal, log10, log10_unchecked);
+
+    let normal_finite = |x: f32| x.abs() >= f32::MIN_POSITIVE && x.is_finite();
+    ok &= check1("cbrt / cbrt_unchecked", N, normal_finite, cbrt, cbrt_unchecked);
+
+    let accurate_safe_range = |x: f32| {
+        let ax = x.to_bits() & 0x7fff_ffff;
+        ax >= 0x2380_0000 && ax < 0x7f00_0000
+    };
+    ok &= check1(
+        "cbrt_accurate / cbrt_accurate_unchecked",
+        N,
+        accurate_safe_range,
+        cbrt_accurate,
+        cbrt_accurate_unchecked,
+    );
+
+    let atan2_domain = |x: f32, y: f32| x != 0.0 && !(x.is_infinite() && y.is_infinite());
+    ok &= check2("atan2 / atan2_unchecked", N, atan2_domain, atan2, atan2_unchecked);
+
+    let rem_domain = |x: f32, y: f32| x != 0.0 && y.is_finite();
+    ok &= check2("fmod / fmod_unchecked", N, rem_domain, fmod, fmod_unchecked);
+    ok &= check2("remainder / remainder_unchecked", N, rem_domain, remainder, remainder_unchecked);
+
+    let pow_domain = |x: f32, y: f32| {
+        x >= f32::MIN_POSITIVE && x.is_finite() && y != 0.0 && (-126.0..128.0).contains(&(x.log2() * y))
+    };
+    ok &= check2("powf / powf_unchecked", N, pow_domain, powf, powf_unchecked);
+    ok &= check2(
+        "powf_checked / powf_checked_unchecked",
+        N,
+        pow_domain,
+        powf_checked,
+        powf_checked_unchecked,
+    );
+
+    if !ok {
+        std::process::exit(1);
+    }
+}
