@@ -10,6 +10,24 @@ git history / readme.md, not here. Untested backlog is at the bottom.
   `log_2` 9→8 (max ulp 3-5 vs 2 cap), `exp2` Q 5→4 (est. max rel error 40x
   worse), `sinf_poly` 9→7 (178x worse). Not implemented.
 
+- **accuracy.rs coverage audit (2026-07-10, resolved -- no gap)**: cross-
+  referenced every `pub fn` in `src/lib.rs` against `examples/accuracy.rs`
+  to check for a silently-unmeasured public function (the same class of
+  gap the `edgecheck.rs`/`codegen_check.rs` hardening passes closed for
+  other tools). 12 functions have zero references there
+  (`cbrt_accurate_normal`, `cbrt_approx`, `cbrt_constant`, `exp2_approx`,
+  `ln_normal`, `log10_normal`, `log2_approx`, `log_2_normal`, `pown_const`,
+  `rcp_approx`, `rsqrt_approx`, `sqrt_approx`) -- all confirmed benign:
+  `*_normal` are shared internal cores whose public wrappers (`ln`,
+  `log10`, `log_2`, `log_2_unchecked`, etc.) are already measured;
+  `pown_const` is a compile-time-specialized copy of `pown`'s own already-
+  measured algorithm, no new numerics to check; the `*_approx`/
+  `cbrt_constant` family are deliberately-rough exploratory functions kept
+  only for the `*_approx_plot` test suite/PNG generation (already
+  documented elsewhere, e.g. `rsqrt`'s own doc comment, as "not a
+  candidate replacement," never meant to carry the crate's real accuracy
+  guarantee). No code changes.
+
 - **exp2/log_2 coefficient refit (2026-07-07)**: coordinate-descent tuner
   found bit-identical (zero-move) coefficients on both — already optimal
   from an earlier session.
