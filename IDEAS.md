@@ -28,6 +28,38 @@ git history / readme.md, not here. Untested backlog is at the bottom.
   candidate replacement," never meant to carry the crate's real accuracy
   guarantee). No code changes.
 
+- **edgecheck.rs coverage audit (2026-07-10, real gaps found and fixed)**:
+  the same cross-reference technique as the `accuracy.rs` audit above,
+  applied to `edgecheck.rs` this time -- checked every `pub fn` for at
+  least one direct special-value pin (not just an incidental appearance
+  as a comparison reference for a sibling `_unchecked` variant). Found
+  two real, previously-unpinned gaps: `cbrt`/`cbrt_accurate` had **zero**
+  direct zero/inf/nan pins anywhere -- both are only ever exercised
+  indirectly, as the *reference* side of `cbrt_unchecked`/
+  `cbrt_accurate_unchecked`'s own comparisons at a few finite points,
+  which never touch this domain at all. `sinh_throughput`/
+  `cosh_throughput` had no pins at all, direct or indirect -- genuinely
+  distinct functions from `sinh`/`cosh` (own `accuracy.rs` sweep entries,
+  own reported ulp numbers, a different `e - 1/e` vs. `exp_pos_neg`
+  formula), not just an alias. Verified current behavior first before
+  pinning (all correct, no bug this time, unlike the earlier `sin_checked`
+  range-invariant and `acos(-0.0)` finds this session): `cbrt`/
+  `cbrt_accurate` both propagate 0/-0/inf/-inf/nan correctly via their own
+  `x + x` special-case fallback (sign-preserving, NaN-preserving);
+  `cbrt_accurate(-8)`/`cbrt_accurate(27)` land on exact integer cube
+  roots; `sinh_throughput`/`cosh_throughput` correctly preserve `-0.0`'s
+  sign through their shared small-x Taylor branch (the same branch
+  `sinh`/`cosh` use, not the `e - 1/e` form that would give `+0`
+  regardless of input sign at `x=0` exactly). Added 8 new `cbrt`/
+  `cbrt_accurate` pins and 4 new `sinh_throughput`/`cosh_throughput` pins
+  as permanent regression guards; all 601 edgecheck pins pass, `cargo
+  test` clean. *`accuracy.rs`'s own coverage audit checks "is this
+  function measured at all"; `edgecheck.rs`'s coverage needs a stricter
+  version of the same question -- "does this function have its own
+  direct pin," not just "does its name appear somewhere in the file" --
+  since a function can look covered by showing up only as another
+  function's comparison reference.*
+
 - **exp2/log_2 coefficient refit (2026-07-07)**: coordinate-descent tuner
   found bit-identical (zero-move) coefficients on both — already optimal
   from an earlier session.

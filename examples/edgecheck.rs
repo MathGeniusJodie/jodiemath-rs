@@ -102,6 +102,24 @@ fn main() {
         check_min_max(&format!("{n}(max)"), f(f32::MAX), ((f32::MAX as f64).cbrt()) as f32);
         check(&format!("{n}(2^-57)"), f(f32::from_bits(0x2300_0000)), ((f32::from_bits(0x2300_0000) as f64).cbrt()) as f32);
     }
+    // cbrt/cbrt_accurate's own zero/inf/nan special cases (2026-07-10):
+    // neither had ever had a direct pin -- only exercised indirectly via
+    // the _unchecked comparisons below, which never touch this domain at
+    // all. Both propagate via `x + x`, which preserves sign for 0/inf and
+    // is NaN-preserving for nan (verified correct before pinning, not
+    // assumed).
+    check("cbrt(0)", cbrt(0.0), 0.0);
+    check("cbrt(-0)", cbrt(-0.0), -0.0);
+    check("cbrt(inf)", cbrt(f32::INFINITY), f32::INFINITY);
+    check("cbrt(-inf)", cbrt(f32::NEG_INFINITY), f32::NEG_INFINITY);
+    check("cbrt(nan)", cbrt(f32::NAN), f32::NAN);
+    check("cbrt_accurate(0)", cbrt_accurate(0.0), 0.0);
+    check("cbrt_accurate(-0)", cbrt_accurate(-0.0), -0.0);
+    check("cbrt_accurate(inf)", cbrt_accurate(f32::INFINITY), f32::INFINITY);
+    check("cbrt_accurate(-inf)", cbrt_accurate(f32::NEG_INFINITY), f32::NEG_INFINITY);
+    check("cbrt_accurate(nan)", cbrt_accurate(f32::NAN), f32::NAN);
+    check("cbrt_accurate(-8)", cbrt_accurate(-8.0), -2.0);
+    check("cbrt_accurate(27)", cbrt_accurate(27.0), 3.0);
     // cbrt_unchecked: contract is x normal/finite (no denormal/zero/inf/nan)
     // -- must match cbrt inside that domain (verified more thoroughly via a
     // ~200M-sample fuzz, not preserved in-repo; permanent regression guard).
@@ -385,6 +403,17 @@ fn main() {
 
     check("sinh(0)", sinh(0.0), 0.0);
     check("cosh(0)", cosh(0.0), 1.0);
+
+    // sinh_throughput/cosh_throughput (2026-07-10): distinct functions
+    // from sinh/cosh (own accuracy.rs sweep entries, own reported ulp
+    // numbers), but had zero edgecheck coverage at all. Same small-x
+    // Taylor branch as sinh, so 0/-0 sign is preserved through the
+    // multiply-by-x form, not through the e-1/e subtraction that would
+    // give +0 regardless of input sign.
+    check("sinh_throughput(0)", sinh_throughput(0.0), 0.0);
+    check("sinh_throughput(-0)", sinh_throughput(-0.0), -0.0);
+    check("cosh_throughput(0)", cosh_throughput(0.0), 1.0);
+    check("cosh_throughput(-0)", cosh_throughput(-0.0), 1.0);
 
     // sinh_checked/cosh_checked: full range (backlog idea #85's fifth
     // wave) -- exp_pos_neg_checked_half clamps x to +-170 (comfortably
