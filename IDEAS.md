@@ -1295,9 +1295,24 @@ cousin.
     relative to the effort, e.g. idea #52's own "effort/payoff ratio"
     call). Not pursued this session; left open with the concrete numbers
     above for whoever wants to chase the average further.
-38. **asin via atan2(x, sqrt((1-x)(1+x)))**: different algorithm entirely
-    (correctly-rounded sqrt, atan max 4). Probably slower (division inside
-    atan) but it's a one-evening accuracy ceiling probe for asin's max 9.
+38. ~~**asin via atan2(x, sqrt((1-x)(1+x)))**~~ (tried 2026-07-10,
+    rejected -- decisive perf regression, mixed accuracy result too):
+    implemented literally as `atan2(x, ((1.0-x)*(1.0+x)).sqrt())` and
+    fuzz-compared (50M in-domain samples) against shipped `asin`. The
+    accuracy ceiling probe's own premise was half right: max ulp really
+    is much better (9->4), but avg ulp is nearly *double* (0.0506->0.0953)
+    -- a real max/avg tradeoff, not a clean win, before even considering
+    speed. And speed was never close: mca showed a catastrophic
+    regression, not just "probably slower" -- latency 59.03->100.22 cyc
+    (+69.8%), throughput 0.968->**3.622** cyc/elem (+274%, nearly 4x).
+    Decisive enough that no further exhaustive verification was needed.
+    Reverted (probe only, no lib.rs changes). *"Probably slower" turned
+    out to undersell it by an order of magnitude -- routing a single-
+    branch function through a full binary function (`atan2`, itself a
+    division plus a poly plus several selects) costs far more than
+    intuition from "it's just one extra call" suggests; always mca a
+    cross-function reformulation like this before trusting the "probably"
+    in a backlog note.*
 39. **atan2 octant-symmetric exhaustive harness**: sweep all x at a few
     thousand fixed y/x ratios (and vice versa) — turns the binary-input
     problem into affordable near-exhaustive slices.
