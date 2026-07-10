@@ -1922,6 +1922,55 @@ cousin.
     never landed on; when it does, root-cause it precisely enough to
     correct the doc comment and scope the exclusion exactly, rather than
     either silently deleting the pair or leaving a permanently-red test.*
+
+    **Fourth follow-up, same day: pushed the same pair to 500M samples
+    (10x again) and found a second, more serious bug -- a genuine sign
+    flip, not just precision loss.** At `x=-1.6501572e19,
+    y=9.675702e13`: `remainder_checked` gives `+4.837851e13`,
+    `remainder_wide` gives the *negative* of that. Verified with exact
+    rational arithmetic (not just f64 approximation) that `x/y` is
+    *exactly* `-170546.5` -- a genuine mathematical half-integer tie, not
+    a floating-point illusion. Traced precisely: `remainder_checked`'s
+    own tie-break is a sign-matching `±1` selector, never blind
+    `.round()`; `remainder_wide` runs three stages (`q0` via `.round()`,
+    a middle `adj` stage meant to recover coarse-grid quantization gaps
+    `q0` can miss at extreme `|x/y|`, then `remainder_checked`'s own
+    logic renamed `adj2`/`r2`). `q0` already correctly resolves the tie
+    (ties away from zero, matching the family's own convention), landing
+    residual `r0` on exactly `±y/2` -- but the middle `adj` stage's own
+    `(r0/ys).round()` sees this *already-correct* tie and treats it as
+    "one more whole `y` to remove," flipping the sign *before*
+    `remainder_checked`'s own (correct) tie-break logic ever runs; that
+    final stage then sees the same magnitude again (now wrong-signed)
+    and its strict `>` correctly declines to touch an *equal* magnitude,
+    so the flipped value ships. `remainder_checked`'s own final selector
+    uses the identical strict `>` and is unaffected, since its own
+    residual never gets a spurious extra nudge in the first place --
+    confirming the bug is specific to the middle stage's blind rounding,
+    not a shared design flaw. Needs an exact mathematical tie in `x/y`
+    (3 hits in 292M samples) -- narrower than the denormal case, but a
+    sign flip is a more serious defect class than a few-ulp miss. **Not
+    fixed this session**: the `adj` stage's blind `.round()` is
+    load-bearing for its actual job (recovering potentially many-integer
+    quantization gaps for extreme ratios, `remainder_wide`'s whole reason
+    to exist), and a safe fix needs to distinguish "genuine multi-integer
+    gap" from "already-resolved single tie" without touching the former
+    -- not designed or validated here, given the real risk of quietly
+    breaking the large-ratio correctness this function exists for.
+    Documented precisely in `remainder_wide`'s own doc comment and
+    excluded from the standing test's domain (`x/y` landing on an exact
+    half-integer, checked via `(x as f64/y as f64 - trunc()).abs() ==
+    0.5`) rather than left as either a silent gap or a permanent
+    failure. Settled `N` back to `50_000_000` afterward -- the 10x/100x
+    density passes were a one-time deep audit, not something worth
+    paying 4+ minutes for on every routine run once both findings are
+    correctly excluded. *Two escalating sample-density passes on the
+    exact same pair found two, unrelated, real bugs of different
+    severity -- a "standing test passes" result is only as strong as the
+    density it was last run at; the value of occasionally paying for a
+    much denser one-off pass, then settling back to a fast default once
+    its findings are captured, can be worth doing more than once on the
+    same target.*
 13. **Generalize the cbrt_accurate recipe** (cheap ≤1-ulp core + one Df32
     Newton step) into a template: candidates rsqrt_accurate,
     exp_accurate/ln_accurate (each is the other's Newton residual),

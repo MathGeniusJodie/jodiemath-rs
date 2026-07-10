@@ -3805,6 +3805,39 @@ pub fn remainder_checked(x: f32, y: f32) -> f32 {
 /// denormal boundary) and small (a few ulp, not a gross error) -- not
 /// chased further, but the doc claim is corrected here rather than left
 /// overstated.
+///
+/// A second, distinct exception (found the same day, running the same
+/// standing test at 500M samples instead of 30M): whenever `x/y` lands
+/// on an *exact* half-integer (confirmed with exact rational arithmetic,
+/// not just an f64 approximation, on the triggering case), this function
+/// can return the *wrong sign* -- not just a few ulp off, the negative of
+/// the correct magnitude. Root cause: `q0 = (xs/ys).round()` already
+/// correctly resolves the tie (ties away from zero, matching
+/// `remainder`/`remainder_checked`'s own established convention), which
+/// makes the residual `r0` land on exactly `+-ys/2` -- but the next
+/// stage, `adj = (r0/ys).round()`, exists to recover coarse-grid
+/// quantization gaps `q0` can miss for extreme `|x/y|` (see below), and
+/// its own blind `.round()` treats this *already-correctly-resolved* tie
+/// as "one more whole `y` to remove," silently re-flipping a value that
+/// was already right before `remainder_checked`'s own tie-breaking logic
+/// (renamed `adj2`/`r2` here) even runs. That final stage then sees the
+/// same `+-ys/2` magnitude again (now wrong-signed) and, using the exact
+/// same strict `>` comparison `remainder_checked` itself uses (correctly
+/// -- verified by hand that `remainder_checked` handles this same exact
+/// tie shape correctly, since its residual never gets a spurious extra
+/// nudge in the first place), doesn't trigger a correction for an *equal*
+/// magnitude, so the wrong sign ships. Needs a genuine, exact mathematical
+/// tie in `x/y` -- 3 hits in 292M uniform-random samples -- so this is
+/// even narrower than the denormal case above, but a real sign flip is a
+/// more serious defect class than a few-ulp miss. Not fixed this session
+/// (the `adj` stage's blind rounding is load-bearing for its own real
+/// job -- recovering potentially many-integer quantization gaps for
+/// extreme ratios -- and a safe fix needs to distinguish "genuine
+/// multi-integer gap" from "already-resolved single tie" without
+/// breaking the former, not verified here). Excluded from the standing
+/// test's own domain instead (`examples/unchecked_parity.rs`) rather
+/// than either silently deleting the pair or leaving a permanently-red
+/// test for an extremely narrow, already-diagnosed case.
 /// Real extra mca cost on top of `remainder_checked` (two Df32
 /// subtractions plus two Df32 products, plus the rescale guard below):
 /// latency 46.03->179.13 cyc (~3.9x), throughput 1.282->8.351 cyc/elem
