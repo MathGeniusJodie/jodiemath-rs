@@ -14,10 +14,10 @@ All functions auto-vectorize, it's a hard requirement
           cbrt_accurate |    0.000   |     1     |    0    |    0
 cbrt_accurate_unchecked (+) | 0.000 |     1     | (bit-identical to cbrt_accurate on its domain)
                   rcbrt |    0.418   |     5     | (no std rcbrt)
-                   exp2 |    0.030   |     1     |  0.000  |    1
-           exp2_checked |    0.016   |     1     |  0.000  |    1
-                  exp10 |    0.034   |     2     | (no std exp10)
-          exp10_checked |    0.034   |     2     | (no std exp10)
+                   exp2 |    0.026   |     1     |  0.000  |    1
+           exp2_checked |    0.014   |     1     |  0.000  |    1
+                  exp10 |    0.031   |     2     | (no std exp10)
+          exp10_checked |    0.031   |     1     | (no std exp10)
                    log2 |    0.003   |     3     |  0.000  |    1
    log2_unchecked (+)   |    0.006   |     3     | (bit-identical to log2 on its domain)
         sin (|x|<1.3e7) |    0.065   |   1183    |  0.003  |    1

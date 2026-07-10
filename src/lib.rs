@@ -151,10 +151,22 @@ pub fn exp2(x: f32) -> f32 {
     // same accuracy target) and the same 4-deep fma critical path, but the
     // combine only ever needs f^2 (never exp2int*f^4), so it's 2 fewer
     // plain multiplies per call than the old A/B split.
+    //
+    // g1/g2's leading coefficients refit (2026-07-10) via coordinate
+    // descent from the shipped values (idea #3 in IDEAS.md), after fixing
+    // tune.rs's own `exp2_c` probe to actually match this Estrin structure
+    // (it had silently been testing the old, already-replaced A/B split
+    // instead). Verified against a real ~562M-point dense sweep of the
+    // whole unchecked domain: avg ulp 0.07176->0.06914 (~3.7% tighter),
+    // max ulp unchanged at 1 (already the practical ceiling for a
+    // single-fma-final-rounding construction) -- zero perf cost, same
+    // instructions. Shared verbatim by exp2_checked/exp10/exp10_checked/
+    // exp2m1/exp2_checked_df below (all "standalone copies" of this exact
+    // poly), updated together to keep them in sync.
     let f2 = f * f;
     let g0 = fma(2.4022985e-1, f, 6.93147e-1);
-    let g1 = fma(9.678826e-3, f, 5.548333e-2);
-    let g2 = fma(2.1702237e-4, f, 1.2439679e-3);
+    let g1 = fma(9.678817e-3, f, 5.548333e-2);
+    let g2 = fma(2.1702255e-4, f, 1.2439643e-3);
     let h = fma(g2, f2, g1);
     let q = fma(h, f2, g0);
     fma(q, exp2int * f, exp2int)
@@ -212,8 +224,8 @@ pub fn exp2_checked(x: f32) -> f32 {
     // multiplies (never needs t1*f^4, only t1*f)
     let f2 = f * f;
     let g0 = fma(2.4022985e-1, f, 6.93147e-1);
-    let g1 = fma(9.678826e-3, f, 5.548333e-2);
-    let g2 = fma(2.1702237e-4, f, 1.2439679e-3);
+    let g1 = fma(9.678817e-3, f, 5.548333e-2);
+    let g2 = fma(2.1702255e-4, f, 1.2439643e-3);
     let h = fma(g2, f2, g1);
     let q = fma(h, f2, g0);
     // weave t1 into the fma chain (t1*f is exact: both factors normal) so
@@ -301,8 +313,8 @@ pub fn exp10_checked(x: f32) -> f32 {
     let t2 = f32::from_bits((k2b.to_bits() << 8) & EXPONENT_MASK);
     let f2 = f * f;
     let g0 = fma(2.4022985e-1, f, 6.93147e-1);
-    let g1 = fma(9.678826e-3, f, 5.548333e-2);
-    let g2 = fma(2.1702237e-4, f, 1.2439679e-3);
+    let g1 = fma(9.678817e-3, f, 5.548333e-2);
+    let g2 = fma(2.1702255e-4, f, 1.2439643e-3);
     let h = fma(g2, f2, g1);
     let q = fma(h, f2, g0);
     let p = fma(q, t1 * f, t1);
@@ -337,8 +349,8 @@ pub fn exp10(x: f32) -> f32 {
     let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
     let f2 = f * f;
     let g0 = fma(2.4022985e-1, f, 6.93147e-1);
-    let g1 = fma(9.678826e-3, f, 5.548333e-2);
-    let g2 = fma(2.1702237e-4, f, 1.2439679e-3);
+    let g1 = fma(9.678817e-3, f, 5.548333e-2);
+    let g2 = fma(2.1702255e-4, f, 1.2439643e-3);
     let h = fma(g2, f2, g1);
     let q = fma(h, f2, g0);
     fma(q, exp2int * f, exp2int)
@@ -1773,8 +1785,8 @@ pub fn exp2m1(x: f32) -> f32 {
     let t2 = f32::from_bits((k2b.to_bits() << 8) & EXPONENT_MASK);
     let f2 = f * f;
     let g0 = fma(2.4022985e-1, f, 6.93147e-1);
-    let g1 = fma(9.678826e-3, f, 5.548333e-2);
-    let g2 = fma(2.1702237e-4, f, 1.2439679e-3);
+    let g1 = fma(9.678817e-3, f, 5.548333e-2);
+    let g2 = fma(2.1702255e-4, f, 1.2439643e-3);
     let h = fma(g2, f2, g1);
     let q = fma(h, f2, g0);
     let p = fma(q, t1 * f, t1);
@@ -3284,8 +3296,8 @@ fn exp2_checked_df(v: Df32) -> f32 {
     let t2 = f32::from_bits((k2b.to_bits() << 8) & EXPONENT_MASK);
     let f2 = f * f;
     let g0 = fma(2.4022985e-1, f, 6.93147e-1);
-    let g1 = fma(9.678826e-3, f, 5.548333e-2);
-    let g2 = fma(2.1702237e-4, f, 1.2439679e-3);
+    let g1 = fma(9.678817e-3, f, 5.548333e-2);
+    let g2 = fma(2.1702255e-4, f, 1.2439643e-3);
     let h = fma(g2, f2, g1);
     let q = fma(h, f2, g0);
     let p = fma(q, t1 * f, t1);
