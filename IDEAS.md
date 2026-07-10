@@ -417,6 +417,35 @@ git history / readme.md, not here. Untested backlog is at the bottom.
   cancellation and needs the same full accuracy verification as any other
   algorithm change, not just a bit-identity spot-check.*
 
+  **Follow-up, same day: a genuinely safe variant, still not adopted
+  (real but tiny perf regression, zero accuracy benefit)**. Root-caused
+  *why* the first attempt failed (it subtracted the continuously-varying
+  `y` from a constant) and why `atan2`'s own precedent is safe (it only
+  ever subtracts between the two *discrete* values `+FRAC_PI_2` and
+  `-FRAC_PI_2`, both exact) -- constructed an acos analog that keeps the
+  same discreteness: `correction = FRAC_PI_2 - mulsign(FRAC_PI_2, xn)`
+  (exactly `0.0` for `x>=0`, exactly `PI` for `x<0` -- confirmed
+  `2*FRAC_PI_2` bit-matches the independently-rounded `PI` constant
+  exactly, so this is exact either way), then `mulsign(y, xn) +
+  correction`, never touching `y` in the subtraction at all. This *is*
+  bit-identical to the shipped form (verified: 99.2M-sample fuzz, zero
+  mismatches, every special value matches) and the real 100M-sample
+  accuracy.rs sweep confirms unchanged avg/max ulp (0.0676/5, matching
+  baseline). But mca showed no speedup -- a real, if small, *regression*:
+  throughput 0.820->0.834 cyc/elem (+1.7%, confirmed against a fresh
+  git-stash baseline matching readme.md exactly), latency unchanged
+  (37.11 both ways). Since this doesn't speed up the function and the
+  accuracy is bit-identical (not improved), it clears neither of this
+  loop's two bars. Reverted, bit-identical to prior HEAD (confirmed via
+  `git diff`). *Even a reassociation that's provably safe on accuracy
+  (bit-identical, unlike the first attempt) still needs an actual mca
+  measurement before adopting -- "replaces a compare+select with sign-bit
+  arithmetic" was the exact reasoning that worked for `atan_latency`, but
+  doesn't automatically transfer to every structurally-similar-looking
+  select; LLVM's own instruction selection for `acos`'s specific
+  surrounding code apparently already handles the original select as
+  cheaply or more cheaply than the reassociated form.*
+
 - **acos_poly Horner→Estrin (2026-07-07)**: real latency win, but fma
   reassociation regressed asin max ulp 9→12, acos 4→5 (retuning made it
   worse, →6). Reverted — acos's accuracy is a protected invariant.
