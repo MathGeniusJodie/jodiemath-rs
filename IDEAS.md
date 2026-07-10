@@ -5098,3 +5098,69 @@ cousin.
     independently-fuzzed sweeps -- different random samples finding
     different worst cases within the same distribution looks identical to
     a real divergence until checked at a shared point.*
+
+    **Option 2 tried (2026-07-10): Df32-precision-only reciprocal seed,
+    plain-f32 squaring chain otherwise -- doesn't fix the overflow bug
+    (barely moves it), but does halve max ulp on the existing documented
+    ranges; not adopted due to a new, unresolved codegen wrinkle.**
+    Rationale checked mathematically first: for `pown(0.997296, -32767)`,
+    the initial reciprocal's own rounding error is the term subject to
+    the *most* compounding amplification (each of the ~14 remaining
+    squarings roughly doubles a relative error present from the start,
+    while errors introduced by *later* squarings only get amplified by
+    the squarings still remaining) -- so improving just that one value
+    looked disproportionately promising relative to its cost. Implemented
+    using the crate's own already-existing `Df32` type (`Div for Df32`
+    and `.square()`, both already present -- no new `Mul`/`WideFloat`
+    needed, unlike the fuller attempt above): compute the reciprocal as
+    `Df32::from_f32(1.0) / Df32::from_f32(x)`, blend with
+    `Df32::from_f32(x)` for the `n>=0` case, do *one* `.square()` in Df32
+    precision, collapse to f32, then run the existing unmodified 31-
+    iteration plain-f32 loop for the rest. Tested against the same
+    structured sweep that found the bug: of ~302k finite-true-answer
+    cases with ~18k broken under shipped `pown`, only **6** got fixed by
+    this change -- confirming the math-first intuition was directionally
+    right (this term matters) but nowhere near sufficient alone (14
+    *other* squarings each also introduce their own compounding error,
+    untouched by this fix). However, max ulp among the still-non-broken
+    cases dropped from an astronomical `~7.3e20` to `~4.0e5` (still huge,
+    but 15 orders of magnitude tighter), and -- more usefully -- the
+    *existing documented* `|n|<=8`/`|n|<=64` ranges both showed a real,
+    roughly-halved max ulp improvement in a quick structured check.
+    Wired it in as a new `pown_df32_seed` function to check real codegen
+    before going further: `codegen_check` passed clean (0 `vextractps` in
+    either function, the crate's own real de-vectorization signature),
+    but `examples/mca` itself then failed outright -- llvm-mca reported
+    "found an invalid region end directive" for the throughput region.
+    Traced it to two `# LLVM-MCA-END` markers inside one function body
+    (should be exactly one): the region splits into two large blocks
+    (~157 and ~67 `vmulps` instructions respectively, both genuinely
+    vectorized, not scalar), consistent with LLVM hoisting the `n<0`
+    branch *outside* the loop once it recognizes `n` is loop-invariant in
+    this harness's own "same exponent, varying base" calling pattern
+    (matching `pown` itself, whose own doc comment already establishes
+    this is the realistic, tested pattern -- *not* per-lane-varying `n`,
+    contrary to an initial misreading) -- producing two independently-
+    vectorized specialized paths (one per branch of `n`'s sign) rather
+    than one blended path, which is plausibly an efficient, entirely
+    correct compilation strategy in its own right, but breaks `llvm-mca`'s
+    own simple single-linear-region parsing assumption. Given (a) the
+    original motivating bug is barely touched by this change, (b) the
+    accuracy win, while real, applies only to already-in-budget
+    documented ranges rather than the actual target, and (c) getting a
+    trustworthy mca number now needs either restructuring to suppress the
+    branch-hoist or switching to real wall-clock timing (the
+    `sincos_checked` precedent's own resolution for a similar mca
+    limitation) -- not adopted this round. Fully reverted (pure addition
+    across `src/lib.rs`/`examples/mca_target.rs`/`examples/mca.rs`,
+    confirmed via `git status`/`git checkout`, no manual reconstruction
+    needed); scratch probe not committed. *A partial fix's own math can be
+    directionally correct (this term really is disproportionately
+    amplified) while still being practically insufficient (14 other
+    compounding sources dominate) -- and a function passing
+    `codegen_check`'s specific de-vectorization signatures doesn't
+    guarantee `llvm-mca` itself can measure it: a loop-invariant branch
+    hoisted by the optimizer can produce two genuinely-vectorized regions
+    that this crate's own mca tooling was never built to parse, a
+    distinct failure mode from every previous codegen surprise this
+    session found.*
