@@ -3777,11 +3777,47 @@ cousin.
     still parsed correctly regardless) -- doesn't affect the crate's own
     single-word function names, the actual comparison targets this tool
     exists for.
-78. **Throughput harness with N independent input streams**: current
-    quickbench shape may be ILP-limited in ways that hide or exaggerate
-    wins; 4 interleaved streams approximates a real vectorized caller
-    better. (Also sidesteps part of the mix() sign blind spot — but only
-    part; sign-only work still needs the exhaustive bit-check.)
+78. ~~**Throughput harness with N independent input streams**~~
+    (implemented 2026-07-10, applied to *latency* not throughput -- see
+    below for why): current quickbench shape may be ILP-limited in ways
+    that hide or exaggerate wins; 4 interleaved streams approximates a
+    real vectorized caller better. (Also sidesteps part of the mix() sign
+    blind spot — but only part; sign-only work still needs the
+    exhaustive bit-check.)
+
+    **Reconsidered the target before building anything: throughput's own
+    `TP_ARR=4096`-element array loop already provides ample cross-element
+    independence via auto-vectorization + LLVM's own loop unrolling (idea
+    #76 already found the *default* ymm build double-unrolls, giving 2-way
+    ILP for free) -- so "N independent streams" adds little there that
+    isn't already happening. The *latency* benchmark, by contrast, is
+    deliberately a single serial dependency chain with zero cross-call
+    independence by design -- exactly where this idea's own concern
+    actually bites.** Added `bench_latency_n` (4 independent interleaved
+    chains, `quickbench latencyn`) and spot-checked against a spread of
+    codegen shapes: `pown` (fully-unrolled branchy loop), `exp2` (short
+    balanced-Estrin chain), `sinh` (branch-selected two-branch combine),
+    `acos` (plain Horner). Result, reproducible across repeated runs:
+    4-stream latency is **substantially lower per-op** than the existing
+    single-chain number for every function tested -- `exp2` ~3.75x,
+    `sinh` ~3.7x, `acos` ~4.4x, `pown` ~1.8x (noisier and smaller ratio,
+    consistent with its own already-branchy structure leaving less
+    "hidden" ILP for extra streams to unlock). This doesn't mean the
+    crate's functions are faster than documented -- the single-chain
+    number already accurately measures what it claims to (pure serial
+    dependency cost, useful for genuinely iterative/recursive callers) --
+    but it quantifies for the first time *how pessimistic* that number is
+    as a stand-in for any caller with even modest concurrent independent
+    work available (the common case), closing much of the gap toward
+    throughput-shaped numbers with just 4 streams. Not wired into the
+    main documented readme.md tables (that would be a bigger, separate
+    decision about what the table's own "latency" column should mean);
+    kept as an opt-in diagnostic mode. *Before building a proposed
+    measurement improvement, check which of the *existing* metrics the
+    concern actually applies to -- this idea's own text nominally targeted
+    "throughput," but the mechanism it worried about (hidden ILP masking
+    or exaggerating a cost) turned out to already be handled for
+    throughput and squarely unaddressed for latency instead.*
 
 ### Accuracy micro-fixes / surveys (cheap to check, maybe nothing there)
 
