@@ -2834,3 +2834,83 @@ cousin.
     so they were never relying on the free cross-copy masking in the
     first place, only paying for redundant broadcast/loop overhead that
     zmm genuinely eliminates.
+
+101. **`pown`: real intermediate-overflow correctness bug for large `|n|`,
+    found via structured search 2026-07-10, fix attempted and doesn't
+    work as hoped, not fixed this round**: `pown` has no documented
+    accuracy number for large `|n|` at all (readme.md only covers
+    `|n|<=8` and `|n|<=64`, both already high -- 11 and 90 ulp
+    respectively, clearly growing with range). Extended this session's
+    structured worst-case mining to `pown`'s own (f32, i32) domain,
+    targeting `n` values with many consecutive set bits (`2^k-1`, which
+    force every one of `pown`'s 32 squaring iterations to actually
+    contribute to `result`, maximizing the number of compounded rounding
+    steps) crossed with `x` near 1.0 (so `x^n` can still land on a large
+    but finite, representable value even for huge `n`). Found a real,
+    reproducible **correctness bug**, not just an ulp gap: `pown(0.997296,
+    -32767)` returns `inf`, but the true value (`3.4025991e38`) is
+    finite and comfortably under `f32::MAX` (`3.4028235e38`). Traced
+    exactly where: `pown` does exponentiation-by-squaring, 32 always-
+    executed iterations, multiplying an accumulator by `base` whenever
+    the corresponding bit of `n` is set and unconditionally squaring
+    `base` every iteration. At iteration 14 (the last set bit for
+    `n=32767`, whose binary form is 15 one-bits), the exact product of
+    the accumulated `result` (`1.8443513e19`) and `base`
+    (`1.849352e19`) is `~3.4109e38` -- genuinely over `f32::MAX` --
+    while the *true* mathematically exact answer is `3.4026e38`,
+    comfortably under it. **The gap between these two numbers is 14
+    squaring steps' worth of compounded relative rounding error (each up
+    to half a ulp, compounding multiplicatively)** landing the computed
+    intermediate just over the overflow threshold when the true answer
+    sits just under it -- not a wild miscalculation, a boundary case
+    where accumulated imprecision is exactly the size of the gap between
+    the true answer and the overflow cliff. Quantified how often this
+    matters: of ~5.86M structured `(x, n)` pairs with a finite true
+    answer (large all-ones `n` crossed with `x` near 1), ~10.2% came back
+    as `pown` incorrectly returning `inf`/`0` -- a real, substantial rate
+    *within this deliberately boundary-focused sweep* (not a claim that
+    10% of all `pown` calls are broken; ordinary calls with small `|n|`
+    or `x` far from 1 aren't near this cliff at all).
+
+    **Tried the obvious fix and it doesn't work, for an instructive
+    reason**: prototyped tracking `base`/`result` as `Df32` (double-float)
+    through the squaring loop, with a hand-rolled `Df32*Df32` multiply
+    (error-free two-product of the high words, cross terms in plain
+    f32, matching this crate's own established double-float idiom).
+    Result: **zero** of the 599,974 broken cases got fixed, and the
+    specific traced example got *worse* (`NaN` instead of `inf`). Root
+    cause of the prototype's own failure: `Df32` buys back *precision*
+    (a second word to hold what a single f32 rounds away) but not
+    *range* -- its primary (`.0`) word is still an ordinary f32 with the
+    same `f32::MAX` ceiling, and `to_f32()` collapses back to
+    `self.0 + self.1`, so if the primary term itself crosses the
+    overflow boundary during the squaring chain, the extra precision in
+    `.1` is irrelevant; the pair is already `(inf, something)` and stays
+    `inf` once collapsed. **The real fix needs range extension (an
+    explicit, separately-tracked exponent/scale, applied via integer
+    arithmetic and reconstructed at the end via a bit-level scale, the
+    same shape `remainder_wide`'s own `big`/`scale` rescue and
+    `cbrt_accurate`'s large-magnitude rescale already use elsewhere in
+    this crate), not precision extension** -- a genuinely different, more
+    invasive fix than the one that worked for e.g. `log2_df`'s own
+    precision bug (idea #58). Not implemented this round: this crate's
+    own hard auto-vectorization requirement rules out a data-dependent
+    "detect overflow, fall back to a safer path" branch (any fallback
+    must be paid unconditionally on every call, in every lane, or it
+    doesn't vectorize), so a real fix means redesigning the whole
+    squaring loop around a uniformly-applied rescale, real engineering
+    work beyond this iteration's scope -- left open as a well-defined,
+    scoped follow-up, not a vague "someone should look at this."
+    Currently `pown` has no `_checked`/`_wide` sibling tier at all (unlike
+    `sin`/`exp2`/`powf`/`remainder`, which all offer a slower-but-safer
+    variant for exactly this class of extreme input) -- that gap is
+    itself worth closing, whether by fixing `pown` directly (if the
+    rescale can be made cheap enough to justify changing the default) or
+    by adding a `pown_wide` opt-in tier (matching this crate's own
+    established default/checked split precedent). No code changed this
+    round; this is a real, verified, quantified, root-caused bug report,
+    not a fix. *Df32/double-float compensation fixes rounding-error bugs
+    (too little precision) but is structurally the wrong tool for
+    overflow bugs (too little range) -- know which class of problem
+    you're looking at before reaching for double-float as the default
+    hammer.*
