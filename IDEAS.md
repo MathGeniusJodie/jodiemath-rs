@@ -2964,3 +2964,113 @@ cousin.
     fixes that each correctly solve half the problem can each
     individually look like they "don't work at all" if judged only
     against a symptom that happens to require both halves.*
+
+    **Final chapter, same day: implemented the combined fix for real
+    (`pown_wide`, `Df32`-precision mantissa via a new `WideFloat` type +
+    `Mul for Df32`), fully verified correct, then discovered a second,
+    unrelated, genuine blocker -- LLVM will not auto-vectorize this
+    computation, no matter how it's restructured. Not shipped; fully
+    reverted; documented here in detail since the investigation itself
+    is the reusable asset.**
+
+    The real implementation (mantissa tracked as `Df32`, renormalized to
+    `[1,2)`; exponent tracked as `f32`, not `i64` -- an `i64` field
+    doesn't share this crate's 16-lanes-of-f32 vectorization width, found
+    and fixed early via `codegen_check`) passed every verification this
+    session's other fixes were held to: the traced bug case
+    (`pown(0.997296, -32767)`) now returns the true value bit-exactly
+    (`0` ulp); zero of the found overflow cases remained broken across
+    the full structured sweep; the existing documented `|n|<=8`/`|n|<=64`
+    ranges *improved* (11->8, 90->64 max ulp) rather than regressed;
+    `cargo test` passed; a real intermediate-exponent-construction
+    subtlety (`f32::powi(-128)` wrongly returns `0.0` -- std's own
+    `powi` hits the *exact same bug class* this tier exists to fix,
+    computing the positive exponent first and overflowing before
+    reciprocating) was found and worked around with this crate's own
+    `ROUND_MAGIC` bit-construction idiom (borrowed from `exp2_checked`,
+    shift amount `23` confirmed by exhaustive check over `e` in
+    `[-126,127]`, not derived by inspection alone). First `mca` numbers
+    looked genuinely good: latency 132.28 cyc (*better* than plain
+    `pown`'s 176.00), throughput 5.536 cyc/elem (+45% over `pown`'s
+    3.805) -- a real cost for a real fix, in line with this crate's own
+    `remainder`/`remainder_wide` precedent.
+
+    Then `codegen_check` failed: `pown_wide_throughput` had **zero**
+    packed arithmetic and a genuine scalar loop (`jmp`/`cmpq $16`/`je`
+    over an explicit element index, not a masked blend) -- this crate's
+    hard auto-vectorization requirement, violated. Root-caused via five
+    separate isolation probes rather than guessing:
+    - Removing all special-case handling (0/inf/nan, sign, `n==0`) and
+      keeping just the bare 32-iteration loop: still fully scalar.
+    - Removing the wide-exponent tracking entirely (pure `Df32`
+      arithmetic only, no `WideFloat`): still fully scalar, identical
+      instruction profile.
+    - Replacing `Df32` (a struct) with raw `(f32,f32)` tuples and inlined
+      `two_sum`/`two_prod` (no struct type, no method calls at all):
+      still fully scalar, ruling out "struct-of-2-f32 confuses the
+      vectorizer" as the cause.
+    - Confirmed `pown` itself *also* compiles its `for i in 0..32`
+      loop to a real runtime loop with real branches (58 `jne`/`testl`
+      instructions) -- branches-around-a-vectorized-body is fine and
+      already how this crate's own shipped `pown` works (LLVM hoists the
+      scalar, per-call-shared `bit_set` check outside the per-lane
+      arithmetic, branching around a *vectorized* multiply rather than
+      blending it per lane); so "has branches" was never the
+      discriminator between working and non-working.
+    - Iteration count, bisected precisely: 8 iterations compiles to a
+      fully vectorized loop (330 packed arithmetic instructions found);
+      9 and 10 also vectorize (374, 418 packed instructions); **11
+      iterations of the exact same per-iteration computation collapses
+      to zero packed instructions** -- a sharp cliff, not a gradual
+      falloff, confirmed by testing every iteration count from 8 to 32.
+
+    **This means the fix's own correctness requirement (need up to 31-32
+    iterations to cover `i32::MIN`/`MAX`) and this crate's own hard
+    vectorization requirement are in direct, apparently irreconcilable
+    tension for this specific per-iteration computation's complexity** --
+    10 iterations (the vectorizing ceiling found) only covers
+    `|n|<=1023`, nowhere near enough (the originally-traced bug needs 15
+    iterations just for `n=32767`; the worst structured-search cases
+    needed up to 30). This reads like a genuine LLVM loop-vectorizer
+    cost-model threshold (total unrolled instruction count for a single
+    tightly-dependent recurrence, not iteration count per se, given
+    8/9/10 all vectorize with proportionally more instructions each) --
+    not a workaround-able quirk of this crate's own code style, since
+    three independently-restructured implementations (struct-based,
+    tuple-based, exponent-free) all hit the *identical* wall at the same
+    iteration count with the same per-iteration op cost.
+
+    Reverted completely: `WideFloat`, `pown_wide`, the new `Mul for Df32`
+    impl, and every harness wiring change (`mca_target.rs`, `mca.rs`'s
+    `order` array, `accuracy.rs`'s sweep entries) -- confirmed via
+    `git diff --numstat` that every changed file was a pure addition (0
+    deletions), so `git checkout` cleanly restored the pre-existing
+    state with no manual reconstruction risk. Left open as real,
+    precisely-scoped future work, in decreasing order of promise:
+    1. Split the computation into two (or more) independently-vectorized
+       sub-loops of <=10 iterations each, combined *outside* whatever
+       triggers the vectorizer's cost-model bailout (untested whether
+       the combining step itself reintroduces the same wall).
+    2. A lower-complexity per-iteration recurrence that still fixes the
+       original bug's root cause (dominant error from the single f32
+       reciprocal, amplified by `|n|`) without needing the full two_sum/
+       two_prod machinery every iteration -- e.g. correcting only the
+       initial reciprocal to `Df32` precision and leaving the squaring
+       chain as plain `f32` might already shrink the amplified error
+       enough in practice, worth checking against the same structured
+       sweep before assuming the full per-iteration `Df32` treatment is
+       necessary.
+    3. Accept a documented, `pown_small`-style restricted-range safer
+       tier (e.g. `|n|<=1023`, matching the confirmed 10-iteration
+       vectorizing ceiling) instead of a full-range one -- narrower than
+       hoped, but still a real, shippable, vectorizing improvement over
+       nothing, if a future session decides that's worth doing.
+    *A fix being fully verified correct doesn't mean it's finished --
+    always confirm the target still meets every one of the crate's own
+    hard requirements (here, auto-vectorization) before considering
+    something ready to ship, and when a requirement conflicts with a
+    fix's own inherent complexity, isolate exactly where the conflict
+    lives (iteration count vs. total instruction count vs. specific
+    operations) before concluding it's unfixable — a precisely
+    characterized dead end is still a valuable, reusable result, even
+    unshipped.*
