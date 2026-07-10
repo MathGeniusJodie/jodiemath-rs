@@ -101,6 +101,77 @@ git history / readme.md, not here. Untested backlog is at the bottom.
   poly in the crate. A 2-domain split needs 14 total, likely more work than
   the current expm1-based formula. Not implemented.
 
+- **exp2/exp2_checked/exp10/exp10_checked/exp2m1/exp2_checked_df:
+  round-based Q(f) reduction (2026-07-09/10, rejected everywhere it was
+  tried)**: backlog round 3 #1's core premise -- refit `Q(f)=(2^f-1)/f`
+  over the centered `f∈[-0.5,0.5]` (k=round(x)) instead of `f∈[0,1)`
+  (k=floor(x)) -- did land a real, measurable win on `tune.rs`'s own coarse
+  grid (degree 5: max ulp 2→1, avg 0.20307→0.04845) and the degree-4 half
+  of the idea was cleanly falsified first (max ulp 13, not competitive, no
+  Rust round-trip needed). But every one of the 6 functions sharing this
+  poly failed for a *different* reason once actually wired in and verified
+  against the real 100M-sample fuzz, `edgecheck.rs`, and `mca` -- not one
+  survived:
+  - **exp2, exp10 (unchecked, single-exponent-field, no k1/k2 split)**: a
+    genuine new correctness bug, not an accuracy tradeoff. `round(x)` can
+    land `k=128` for `x` strictly inside the documented `[-126,128)`
+    domain (e.g. `x=127.6`), which this construction can't represent --
+    produces `NaN` inside the promised-safe range. Caught immediately by
+    the real fuzz (`ulp_diff`'s NaN-mismatch sentinel), not by `tune.rs`'s
+    own coarse grid (which only ever samples floor-reachable `x`).
+  - **exp2_checked**: no structural saving available (never had a
+    floor-adjust to remove), so the swap was pure cost -- `x.floor()`
+    (one `vroundps`, an otherwise-idle port on this CPU) became an
+    explicit `(xs+M)-M` add/sub pair that instead contends with the
+    poly's own already-saturated fma/add ports. Confirmed via assembly
+    diff (64→66 total instructions, `vroundps` 2→0, `vaddps` 4→8, fma
+    count unchanged at 14) and `mca` (throughput 1.399→**3.007** cyc/elem,
+    more than double, latency flat). Also a real max-ulp regression on the
+    full fuzz (1→2) that the coarse grid didn't predict (grid showed
+    max 1→1).
+  - **exp2m1**: same coefficient/reduction swap, same port-contention
+    mechanism, smaller but still real cost (latency +1 cyc, throughput
+    +3.3%) and a real max-ulp regression (3→6/7, avg roughly flat).
+  - **exp2_checked_df**: the one case with a genuine accuracy win that
+    *did* survive real verification -- unlike `exp2_checked` itself,
+    `powf_checked`'s overall error is dominated by `log2_df`/the
+    downstream `y`-multiply, not this poly's own fit quality, so the
+    tighter centered fit helped rather than getting swamped (`powf_checked`
+    avg ulp 0.0229→0.0118, max 123→118; `powf_checked_unchecked` avg
+    0.0459→0.0243, max 96→89). But `mca` showed the same inherited
+    port-contention cost, diluted but still real: `powf_checked`
+    9.105→9.418 cyc/elem (+3.4%), `powf_checked_unchecked`
+    7.234→7.475 (+3.3%). Real accuracy gain *with* a real perf penalty --
+    doesn't clear this loop's bar.
+  - **exp10_checked**: looked like the one clean win -- real structural
+    saving (deletes the floor-adjust select + 2 adds, since `exp10`'s own
+    reduction is natively round-based already), confirmed by both fuzz
+    (avg ulp 0.0343→0.0107, max 1→2, still inside the crate's ≤2 budget)
+    and `mca` (latency 72.06→**51.06** cyc, -29%; throughput
+    2.736→**1.903**, -30%). But `edgecheck.rs` caught a real correctness
+    bug the fuzz never sampled: at the overflow-saturation boundary (`k`
+    clamped down to exactly `128`, reached via `exp10_checked(inf)` after
+    its own `x.clamp(-1000,1000)`), `t1*t2=2^128` sits right at
+    `f32::MAX`. The old floor convention guarantees `f>=0` there, so the
+    poly's `2^f>=1` factor only ever pushes the product *up* into
+    overflow; the round convention allows `f<0`, letting `2^f<1` pull the
+    product just *under* `f32::MAX` instead -- `exp10_checked(inf)` came
+    out `3.237e38` (finite) instead of `inf`, a real contract violation.
+  All six reverted, bit-identical to prior HEAD (verified via diff: only
+  doc-comment additions remain, zero non-comment lines changed). *Two
+  compounding lessons, both already documented separately in this file but
+  now confirmed together on one idea: (1) always verify a `tune.rs`
+  coarse-grid result against the real 100M-sample fuzz -- the grid's
+  domain coverage and sampling density both differ from the real one in
+  ways that can hide either a regression (exp2_checked/exp2m1's max-ulp
+  surprises) or a bug (exp2/exp10's NaN, which the grid's own floor-only
+  reachable-x set structurally couldn't reach). (2) `mca` and a wide fuzz
+  sweep both passing is *still* not sufficient -- `edgecheck.rs`'s
+  dedicated special-value pins (here, `x=inf`) exercise boundary
+  conditions neither a random fuzz nor a static instruction-scheduling
+  model samples at all; run all three before trusting any reduction-scheme
+  change, not just two of them.*
+
 ## cbrt family
 
 - **Seed constant + degree-2 poly joint search (2026-07-07)**: best across
@@ -546,12 +617,23 @@ cousin.
 
 ### Approximation theory / fitting (cross-cutting)
 
-1. **Round-based reduction for exp2/exp2_checked/exp10**: fit Q over
-   f∈[-0.5,0.5] (k=round) instead of [0,1) (k=floor). Halving the interval
-   scales minimax error ~2^-(d+1) — may allow degree 5→4 where the [0,1)
-   degree probe was rejected. Also kills exp10's floor-adjust select pair
-   (its reduction is natively round-based). Magic-round already proven
-   faster than vroundps in exp.
+1. ~~**Round-based reduction for exp2/exp2_checked/exp10**~~ (tried
+   2026-07-09/10, rejected on all 6 functions sharing this poly --
+   see the "exp2 / exp / sin / cos / tan" section near the top of this
+   file for the full writeup). Degree 5→4 falsified outright (max ulp
+   13, not competitive); degree 5 itself won on `tune.rs`'s coarse grid
+   but failed real verification differently on every function: NaN
+   inside the documented domain (exp2/exp10 unchecked), a real >2x
+   throughput regression from floor→round port contention
+   (exp2_checked), a real max-ulp regression with a real-if-smaller perf
+   cost (exp2m1), a real accuracy win *with* a real perf cost
+   (exp2_checked_df), and a genuine overflow-saturation correctness bug
+   at `x=inf` only `edgecheck.rs` caught, not the fuzz or mca
+   (exp10_checked, which had otherwise looked like the one clean win).
+   "Magic-round already proven faster than vroundps in exp" doesn't
+   transfer here: `exp`'s own magic-round is fused into a multiply the
+   reduction needs anyway, while exp2/exp2_checked's would-be swap adds
+   a bare, unfused add/sub pair with nothing to share it with.
 2. **Gather-based real LUTs (vgatherdps)**: 8/16-entry table indexed by top
    mantissa bits — log family (per-interval rcp + log pair, shorter poly),
    exp2 (2^(i/16) exact). Distinct from the rejected select-tree "LUT"

@@ -127,6 +127,18 @@ pub fn exp2(x: f32) -> f32 {
     // the same floor(x) as f: computing it from x + 383 double-counts the
     // integer part when x + 383 rounds up across an integer (e.g.
     // x = 4.9999999).
+    //
+    // IDEAS.md backlog round 3 #1 tried k=round(x) here (f in [-0.5,0.5],
+    // a tighter Q(f) fit at the same degree) -- rejected for this
+    // *unchecked*, non-split tier specifically: round(x) can land k=128
+    // for x within the promised [-126,128) domain (e.g. x=127.6), which
+    // this single exp2int construction (unlike exp2_checked's k1/k2
+    // split) can't represent, producing NaN inside the documented safe
+    // range -- a real regression, not just an accuracy tradeoff. The same
+    // backlog idea was tried and rejected on every other function sharing
+    // this poly too (exp2_checked, exp10, exp10_checked, exp2m1,
+    // exp2_checked_df), each for its own distinct reason -- see each
+    // function's own doc comment and IDEAS.md for the full writeup.
     let k = x.floor();
     let f = x - k;
     let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
@@ -159,6 +171,27 @@ pub fn exp2_checked(x: f32) -> f32 {
     // k must come from the same floor(x) as f: computing the exponent from
     // x + 383 double-counts the integer part when x + 383 rounds up across
     // an integer (e.g. x = 4.9999999).
+    //
+    // IDEAS.md backlog round 3 #1 tried k=round(x) here (matching exp10's
+    // own natural convention, which would have let exp10_checked skip its
+    // own floor-adjust step) -- rejected for exp2_checked specifically:
+    // unlike exp10_checked, exp2_checked never had a floor-adjust to
+    // remove (it already computed k straight from x), so the only effect
+    // of the swap was replacing `x.floor()` (a single vroundps, on this
+    // CPU's own otherwise-idle rounding port) with an explicit `(xs+M)-M`
+    // add/sub pair that instead contends with the poly's own already-busy
+    // fma/add ports -- confirmed via assembly diff (64->66 total
+    // instructions, vroundps count 2->0, vaddps 4->8, fma count unchanged
+    // at 14) and mca (throughput 1.399->3.007 cyc/elem, latency flat --
+    // more than double the cost for zero structural savings). Also
+    // regressed real max ulp 1->2 on the full 100M-sample fuzz despite the
+    // coarse tune.rs-grid refit showing an improvement (avg
+    // 0.0158->0.0051, max 1->1 on that grid) -- another instance of
+    // "verify a tune.rs coarse-grid result against the real fuzz before
+    // trusting it". (exp10_checked's own attempt at the floor-adjust
+    // removal separately failed too, for a different, correctness-level
+    // reason -- see its own doc comment.) Reverted, bit-identical to prior
+    // HEAD.
     let xs = x.clamp(-151.0, 128.0);
     let k = xs.floor();
     let f = xs - k;
@@ -211,6 +244,27 @@ pub fn exp2_checked(x: f32) -> f32 {
 /// into `exp2_checked`'s own `[0,1)` convention), instead of recombining
 /// them into one f32 and letting `exp2_checked` re-derive (and re-round)
 /// its own `k`/`f` from that already-lossy sum.
+///
+/// IDEAS.md backlog round 3 #1 tried dropping the floor-adjust entirely
+/// (feed `kr`/`fr` straight through, sharing a round-domain Q(f) fit with
+/// exp2_checked) -- real mca win when it worked (latency 72.06->51.06 cyc,
+/// -29%; throughput 2.736->1.903, -30%) and real avg-ulp win too
+/// (0.0343->0.0107), but `edgecheck.rs` caught a genuine correctness bug
+/// the 100M-sample fuzz missed entirely: at the overflow-saturation
+/// boundary (`k` clamped down to exactly `128`, e.g. `exp10_checked(inf)`
+/// after its own `x.clamp(-1000,1000)` reduces to `x=1000`), `t1*t2 =
+/// 2^128` sits right at `f32::MAX`. The old floor convention guarantees
+/// `f >= 0` there (so the poly's `2^f >= 1` factor only ever pushes the
+/// product *up* into overflow, correctly saturating to `inf`); the
+/// round convention allows `f < 0`, so `2^f < 1` can instead pull the
+/// product just *under* `f32::MAX`, giving `exp10_checked(inf) ==
+/// 3.237e38` (finite!) instead of `inf` -- an actual contract violation,
+/// not an accuracy tradeoff. Reverted (kept the floor-adjust), bit-
+/// identical to prior HEAD. *A change that looks clean on both mca and a
+/// 100M-sample fuzz can still hide a real bug at a boundary condition
+/// neither tool samples -- `edgecheck.rs`'s dedicated special-value pins
+/// (here, `x=inf`) are not redundant with fuzzing; run both before
+/// trusting a reduction-scheme change.*
 #[inline(always)]
 pub fn exp10_checked(x: f32) -> f32 {
     // Clamped before the reduction starts (matching exp2_checked's own
@@ -253,6 +307,14 @@ pub fn exp10_checked(x: f32) -> f32 {
 /// construction (no k1/k2 split) instead of two -- faster, narrower-
 /// domain tier, same pairing as `exp2`/`exp2_checked`. Valid while `k`
 /// (see `exp10_checked`'s own doc comment) stays in `[-126,128)`.
+///
+/// IDEAS.md backlog round 3 #1's round-domain refit (skip the floor-adjust
+/// entirely, feed kr/fr straight through) was tried and rejected here for
+/// the same reason as plain `exp2`: this single-exponent-field
+/// construction has no k1/k2 split to absorb `kr` landing on `128` right
+/// at the promised domain edge, producing NaN inside `[-126,128)` instead
+/// of a correct finite value. Kept the floor-adjust; see `exp2`'s own doc
+/// comment for the full story (same root cause, same fix).
 #[inline(always)]
 pub fn exp10(x: f32) -> f32 {
     const ROUND_MAGIC: f32 = 12582912.0;
@@ -1569,6 +1631,15 @@ pub fn exp_m1_over_x(x: f32) -> f32 {
 /// discontinuity at the `|x|<0.5` threshold. Inherits `exp2_checked`'s
 /// full `[-151, 128)` clamp, so is total (never NaN/inf-producing outside
 /// its own true asymptotes): `exp2m1(-inf) = -1`, `exp2m1(inf) = inf`.
+///
+/// IDEAS.md backlog round 3 #1's round-domain Q(f) refit was tried here
+/// too (same coefficients as the exp2_checked attempt) -- real max-ulp
+/// regression on the full fuzz (3->6/7, avg roughly flat) for a real but
+/// small mca cost (latency +1 cyc, throughput +3.3%), and would likely
+/// have hit the same `f<0` overflow-saturation gap exp10_checked's own
+/// attempt did at the `exp2m1(inf)=inf` boundary above (not confirmed via
+/// edgecheck since the fuzz/mca result alone already killed it). Reverted,
+/// bit-identical to prior HEAD.
 #[inline(always)]
 pub fn exp2m1(x: f32) -> f32 {
     let y = x * LN_2;
@@ -3067,6 +3138,19 @@ fn exp2_checked_df(v: Df32) -> f32 {
     // the Df32 multiply), flooring first and clamping after would compute
     // `inf - floor(inf)` = `inf - inf` = NaN instead of correctly
     // saturating.
+    //
+    // IDEAS.md backlog round 3 #1's round-domain refit was tried here too:
+    // a real accuracy win downstream (powf_checked avg ulp 0.0229->0.0118,
+    // max 123->118; powf_checked_unchecked avg 0.0459->0.0243, max 96->89
+    // -- unlike exp2_checked itself, powf_checked's own error is dominated
+    // by log2_df/the y-multiply, not this poly's fit quality, so the
+    // tighter centered-domain fit helped rather than getting swamped). But
+    // mca showed a real, if modest, throughput cost inherited from the
+    // same floor->round port-shift as exp2_checked (see its own doc
+    // comment): powf_checked 9.105->9.418 cyc/elem (+3.4%),
+    // powf_checked_unchecked 7.234->7.475 (+3.3%), latency flat both ways.
+    // Doesn't clear this crate's bar (accuracy gain *without* a perf
+    // penalty) -- reverted, bit-identical to prior HEAD.
     let xs = v.0.clamp(-151.0, 128.0);
     let k = xs.floor();
     let f = xs - k;
