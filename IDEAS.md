@@ -1537,6 +1537,48 @@ cousin.
    over its *whole* domain (including the wrapper's own boundary), not
    just the core poly's typical operating range, no matter how many
    octaves that range spans.*
+
+   **Remaining probes from the checklist closed out (2026-07-10): `sinf_poly`,
+   `expm1_near0`, and `exp`'s own poly (`exp_r_c`) all confirm clean, no
+   headroom.** Finishes the list this backlog item's own earlier text
+   named (`cbrt_normal_c` above; `sinf_poly_c`/`expm1_near0_c`/
+   `exp_r_c`/`exp_r_pair_c` here):
+   - `sinf_poly` (shared by `sin`/`cos`/`sin_checked`/`cos_checked`/
+     `sinpi`/`cospi`): grid was already seeded with the current shipped
+     coefficients (no staleness bug this time). Coordinate descent found
+     only a ~1.6% grid-level avg move (`0.00248->0.00244`, max unchanged
+     at 2) -- noise-level, well under this session's own "isolated signal
+     under ~10-15% isn't worth the round-trip" threshold, and this poly
+     feeds *six* different callers each with their own wrapping logic
+     (learned the hard way from `cbrt_normal` just above not to trust a
+     small isolated signal without full verification) -- not pursued
+     further given the weak signal alone.
+   - `expm1_near0` (the Pade branch, already refit 2026-07-07 with a
+     documented exhaustive-verified result): grid already correctly
+     seeded. Coordinate descent found **zero movement** for both the
+     shipped degree-3 form and a degree-5-numerator bump (the new term's
+     own coefficient stayed at exactly `0.0`) -- already a genuine local
+     optimum.
+   - `exp_r_c` (models `exp`'s own poly specifically, *not*
+     `exp_pos_neg` -- confirmed by reading both bodies: `exp_r_c`'s
+     `l0=r+1.0`/Estrin-in-r2/r4 shape matches `exp`'s real poly exactly,
+     while the separate `exp_r_pair_c` matches `exp_pos_neg`'s even/odd
+     split, already fully explored earlier in this same entry). Its own
+     `tune.rs` seed was stale too -- still held the pre-2026-07-09
+     coordinate-descent values `exp`'s own doc comment explicitly says
+     were *superseded* by a proper scipy-LP refit (fixed, commit
+     `c0d0b51`). With the real current coefficients seeded, coordinate
+     descent found essentially nothing (max unchanged at 2, avg moves
+     <0.4%, every coefficient landing within 1 part in 10,000 of its
+     start) -- confirming the LP refit already found this poly's genuine
+     optimum, a coordinate-descent search can't do better. *Three for
+     three "clean" results in a row after the `cbrt_normal` scare --
+     coefficient headroom in this crate is now mostly exhausted wherever
+     a poly has already been through a real, careful (LP or multi-round)
+     refit; the technique's remaining value is catching `tune.rs`'s own
+     staleness (found again here, a fifth instance this session:
+     `exp_pos_neg`, `erf_tail_c`, `acos_poly`, `cbrt_normal`, `exp_r_c`)
+     more than finding new shipped wins.*
 4. **Per-function transformed-variable fit search**: fit in u=s/(s+2),
    u=s·(s+a), etc., searching over the transform family. Distinct from
    centered-variable refits (rejected — that only moved the origin);
