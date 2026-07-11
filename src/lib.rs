@@ -449,11 +449,7 @@ pub fn exp10_checked(x: f32) -> f32 {
     let k = kr - adjust;
     let f = fr + adjust;
     let k = k.clamp(-151.0, 128.0);
-    const ROUND_MAGIC2: f32 = 12582912.0;
-    let k1b = fma(k, 0.5, ROUND_MAGIC2) - (ROUND_MAGIC2 - 383.0);
-    let k2b = (k + 766.0) - k1b;
-    let t1 = f32::from_bits((k1b.to_bits() << 8) & EXPONENT_MASK);
-    let t2 = f32::from_bits((k2b.to_bits() << 8) & EXPONENT_MASK);
+    let (t1, t2) = exp2_field_split(k);
     let q = exp2_q_poly!(f);
     let p = fma(q, t1 * f, t1);
     p * t2
@@ -1695,10 +1691,7 @@ pub fn exp(x: f32) -> f32 {
     // 58.00/2.523, 94.91/2.567) -- expected, pure coefficient swap, same
     // instructions.
     let p = exp_r_poly!(r);
-    let k1b = fma(k, 0.5, ROUND_MAGIC) - (ROUND_MAGIC - 383.0);
-    let k2b = (k + 766.0) - k1b;
-    let t1 = f32::from_bits((k1b.to_bits() << 8) & EXPONENT_MASK);
-    let t2 = f32::from_bits((k2b.to_bits() << 8) & EXPONENT_MASK);
+    let (t1, t2) = exp2_field_split(k);
     p * t1 * t2
 }
 
@@ -1726,10 +1719,7 @@ pub fn exp_checked(x: f32) -> f32 {
     let r = fma(-k, LN2_HI, x);
     let r = fma(-k, LN2_LO, r);
     let p = exp_r_poly!(r);
-    let k1b = fma(k, 0.5, ROUND_MAGIC) - (ROUND_MAGIC - 383.0);
-    let k2b = (k + 766.0) - k1b;
-    let t1 = f32::from_bits((k1b.to_bits() << 8) & EXPONENT_MASK);
-    let t2 = f32::from_bits((k2b.to_bits() << 8) & EXPONENT_MASK);
+    let (t1, t2) = exp2_field_split(k);
     p * t1 * t2
 }
 
@@ -1750,33 +1740,35 @@ pub fn exp_checked(x: f32) -> f32 {
 #[inline(always)]
 pub fn expm1(x: f32) -> f32 {
     let a = pade_expm1_ratio!(x, mul);
-    // Deliberately a standalone copy of exp's reduction/poly (not routed
-    // through the public `exp` fn) ending in fma(p*t1, t2, -1.0) instead of
+    // Deliberately a standalone copy of exp's reduction (not routed through
+    // the public `exp` fn) ending in fma(p*t1, t2, -1.0) instead of
     // exp(x)-1.0 -- fuses the trailing subtract into the last multiply,
     // one rounding fewer than rounding p*t1*t2 fully and then subtracting
     // 1.0 separately. This is the branch that carries expm1's actual
     // worst-case ulp (the Pade branch above is the one with headroom, not
     // this one -- confirmed by the exhaustive sweep's worst-x always
     // landing at |x|>=0.5, contradicting a stale claim in exp's own doc
-    // comment). Factoring this through a shared `exp`-returning-parts `fn`
-    // was tried first and measured a real, reproducible mca latency
-    // regression on `sinh_throughput` (+32%, unrelated caller, apparently
-    // a scheduling side effect of the new function boundary) even though
-    // `exp` itself was bit-identical -- so the reduction/exponent-
-    // reconstruction stays duplicated here. The 4-coefficient poly
-    // evaluation itself (given `r`) is shared via `exp_r_poly!`, a macro
-    // (no function-call boundary at all) -- confirmed via a full pre/post
-    // assembly diff that this specific mechanism doesn't reproduce the
-    // `fn` version's regression (see IDEAS.md's own idea log, 2026-07-10).
+    // comment). Factoring the *whole* reduction+poly+combine through a
+    // shared `exp`-returning-parts `fn` was tried first and measured a
+    // real, reproducible mca latency regression on `sinh_throughput` (+32%,
+    // unrelated caller, apparently a scheduling side effect of the new
+    // function boundary) even though `exp` itself was bit-identical -- so
+    // the reduction (`k`/`r`) stays duplicated here (each caller derives
+    // `k` slightly differently, from a plain reduction vs. exp2_checked's
+    // own clamp-then-reduce). The 4-coefficient poly evaluation is shared
+    // via `exp_r_poly!` (a macro, no function-call boundary at all), and
+    // the exponent-field-split below is shared via `exp2_field_split` (an
+    // already-existing small `fn`, already relied on by `exp_pos_neg` --
+    // reusing an existing call site rather than introducing a new one is a
+    // different risk profile than the original rejected experiment, and a
+    // full pre/post assembly diff confirms zero byte differences, see
+    // IDEAS.md's own idea log, 2026-07-11).
     const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
     let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
     let r = fma(-k, LN2_HI, x);
     let r = fma(-k, LN2_LO, r);
     let p = exp_r_poly!(r);
-    let k1b = fma(k, 0.5, ROUND_MAGIC) - (ROUND_MAGIC - 383.0);
-    let k2b = (k + 766.0) - k1b;
-    let t1 = f32::from_bits((k1b.to_bits() << 8) & EXPONENT_MASK);
-    let t2 = f32::from_bits((k2b.to_bits() << 8) & EXPONENT_MASK);
+    let (t1, t2) = exp2_field_split(k);
     let b = fma(p * t1, t2, -1.0);
     if x.abs() < 0.5 { a } else { b }
 }
@@ -1809,10 +1801,7 @@ pub fn exp_m1_over_x(x: f32) -> f32 {
     let r = fma(-k, LN2_HI, x);
     let r = fma(-k, LN2_LO, r);
     let p = exp_r_poly!(r);
-    let k1b = fma(k, 0.5, ROUND_MAGIC) - (ROUND_MAGIC - 383.0);
-    let k2b = (k + 766.0) - k1b;
-    let t1 = f32::from_bits((k1b.to_bits() << 8) & EXPONENT_MASK);
-    let t2 = f32::from_bits((k2b.to_bits() << 8) & EXPONENT_MASK);
+    let (t1, t2) = exp2_field_split(k);
     let b = fma(p * t1, t2, -1.0) / x;
     if x.abs() < 0.5 { a } else { b }
 }
@@ -3351,11 +3340,7 @@ fn exp2_checked_df(v: Df32) -> f32 {
     let xs = v.0.clamp(-151.0, 128.0);
     let k = xs.floor();
     let f = xs - k;
-    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
-    let k1b = fma(k, 0.5, ROUND_MAGIC) - (ROUND_MAGIC - 383.0);
-    let k2b = (k + 766.0) - k1b;
-    let t1 = f32::from_bits((k1b.to_bits() << 8) & EXPONENT_MASK);
-    let t2 = f32::from_bits((k2b.to_bits() << 8) & EXPONENT_MASK);
+    let (t1, t2) = exp2_field_split(k);
     let q = exp2_q_poly!(f);
     let p = fma(q, t1 * f, t1);
     let result = p * t2;
