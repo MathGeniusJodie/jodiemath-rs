@@ -5713,7 +5713,7 @@ cousin.
     8-line fragment. Applied the same `exp_r_poly!` substitution (leaving
     `sigmoid`'s own reduction/clamp/combine untouched) and re-verified
     with the same full assembly diff -- again zero byte differences.
-    `cargo test` clean. Commit `<pending>`. *An established "don't share
+    `cargo test` clean. Commit `87be29b`. *An established "don't share
     this, it regressed X" lesson is scoped to the specific mechanism that
     was actually tried -- when a different mechanism becomes available
     (here, a macro, used successfully elsewhere in the same session) that
