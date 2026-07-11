@@ -496,6 +496,24 @@ what shipped.
   worse) and accuracy split the other way (cosh fine, sinh regressed ~12x
   avg ulp). When two functions share a reassociated intermediate, check
   accuracy for both independently.
+- **exp_pos_neg_checked_half: fold the ×0.5 into the integer reciprocal
+  trick** (backlog idea #17): `t1*0.5`/`t1n*0.5` as exact exponent-field
+  decrements (`t1.to_bits() - 0x0080_0000`, `0x7E80_0000 - t1.to_bits()`)
+  instead of float multiplies. Bit-exact (edgecheck's known boundary
+  probes plus a full exhaustive 2^32-pattern sweep of both callers, not
+  just quick fuzz, given this site's documented history of exponent-
+  boundary bugs — max ulp landed at exactly 5/5, matching the existing
+  documented magnitude, no blowup). But mca showed the same asymmetric
+  split as the entry above, same shared-callee mechanism: sinh_checked
+  throughput improved (2.527→2.346 cyc/elem, -7.2%, reproducible) while
+  cosh_checked got much worse (2.212→3.203, +44.8%, reproducible) — a
+  `#[inline(always)]` shared body gets independently rescheduled per
+  caller once inlined, and the register-pressure/port-assignment
+  consequences aren't predictable from op count alone (cosh_checked's
+  throughput region actually has *fewer* total vector instructions than
+  sinh_checked's, which has sinh's own extra small-x branch on top and
+  still came out faster). Reverted — cosh_checked's regression is too
+  large to accept for sinh_checked's smaller win.
 - **Newton-free correction for rsqrt** (`e=fma(r,r*x,-1)`,
   `r_new=fma(-0.5*r,e,r)`): real accuracy win (avg ulp 0.2599→0.1226, ~2x
   tighter, max unchanged at 1) at a real modest cost (latency +43.0%,
@@ -878,9 +896,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     mulsign-reassociation also measured worse — see rejected section —
     so per-site mca is required, not assumed, for each remaining site
     here too.)
-17. **exp_pos_neg_checked_half: fold the ×0.5 into the integer
-    reciprocal trick** — `t1n*0.5 = from_bits(0x7E80_0000 − t1_bits)`
-    (and t1·0.5 analogously) — deletes two multiplies.
 18. **reduce_pi: downgrade p2's full two_sum to quick_two_sum for
     throughput** — the documented keep-reason was latency-only ("not on
     the critical path, saves no latency") but it's still 3 ops of port
