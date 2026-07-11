@@ -1130,7 +1130,7 @@ bottleneck, so "add a division to remove fmas" is a legitimate direction.
   that, no fresh `mca`/`accuracy.rs` run was needed (behavior and cost
   are both already proven identical at the assembly level, the strongest
   form of "no regression" this crate's tooling can offer). `cargo test`
-  clean. Commit `<pending>`. Doesn't touch idea #24's own larger, riskier
+  clean. Commit `9ea4bf6`. Doesn't touch idea #24's own larger, riskier
   scope (the `_normal` poly bodies themselves, not just this shared
   preamble) -- left open. *When a refactor claims "no behavior change,"
   a full pre/post assembly diff (not just the harness's own targeted
