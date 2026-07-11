@@ -6206,3 +6206,30 @@ cousin.
     phrasing directly, not just scanning for literal duplicate lines,
     since a human noticing and writing down a duplication is at least as
     strong a signal as a mechanical line-window match.*
+
+109. **`remainder`/`remainder_ieee`/`fmod`: shared `x - q*y` combine plus
+    special-case selects deduped via macro (adopted 2026-07-11)**: found
+    the same way as idea #108 -- `fmod`'s own doc comment already said
+    "Same structure as `remainder` otherwise... just `.trunc()` instead of
+    `.round()`". All three functions compute `q` via a different rounding
+    method (`.round()`, `.round_ties_even()`, `.trunc()` -- a genuinely
+    different, documented-as-different-cost operation each time, *not* a
+    duplicate itself, see `remainder_ieee`'s own doc comment on why it's
+    cheaper than `remainder`), then feed it through an identical 3-line
+    tail: `fma(-q,y,x)`, the `x==0.0`-sign-preservation guard, and the
+    `y.is_infinite() && x.is_finite()` no-reduction override. Extracted
+    into `remainder_style_combine!(x, y, q) -> f32`, leaving each
+    function's own distinct `q` computation untouched at the call site.
+    `remainder_unchecked`/`fmod_unchecked` (no special-case selects at
+    all, just the bare `fma(-q,y,x)`) were left alone -- not a match for
+    this macro's contract, and only a single line each, not worth further
+    extraction. Verified with the same rigor as every dedup this session:
+    full pre/post `mca_target` assembly diff -- zero byte differences.
+    `cargo test`, `codegen_check` (71 regions clean), `edgecheck` (601
+    pins, same 2 known won't-fix cbrt misses, no new failures) all clean.
+    Pure hygiene, no accuracy/perf claim. *Third dedup found this session
+    by grepping doc comments for "same as"/"see X's own doc comment"
+    phrasing rather than scanning literal code -- this technique is
+    holding up as a reliable complement to the line-window scanner
+    (idea #107), worth treating as a standing check alongside it rather
+    than a one-off.*
