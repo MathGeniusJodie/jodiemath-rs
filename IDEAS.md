@@ -3437,6 +3437,44 @@ cousin.
     representative "the current operating point" stays across the whole
     domain being fit, and near a `sqrt(1-a)`-style domain edge it
     isn't.*
+
+    **Third data point in this series: `erfc_rational`'s numerator
+    (denominator fixed, same "fix one side" shape as `atan_poly`'s own
+    established denominator-fixed precedent), 2026-07-10 -- a real
+    max-ulp *regression*, not adopted, and neither a clean win
+    (`erf_poly`) nor a clean loss on both axes (`asin_poly`).** Weighted
+    each point by `d(erfc)/d(numer) = gauss(xa)/d(xa)` (the Gaussian
+    factor over the fixed denominator) rather than the numerator's own
+    raw ulp. Idealized LP metric predicted a real, modest tightening
+    (weighted residual max `15.06->4.97`, ~3x -- much smaller and more
+    plausible-looking than `asin_poly`'s wildly overstated 21x). Verified
+    bit-identical fidelity against the real compiled `erfc` (0 mismatches)
+    then a real ~1.09-billion-point dense sweep: **max ulp 109->129
+    (+18.3%), avg ulp only modestly better (0.31737->0.30292, -4.6%)** --
+    the max ulp (this crate's own primary documented ceiling, and the same
+    metric the earlier domain-split idea was rejected for not moving
+    enough) got measurably *worse* while avg improved only slightly, the
+    least favorable of any tradeoff shape found this session. Not
+    adopted; no `src/lib.rs` change, verified before touching it. Root
+    cause, consistent with idea #53's own already-established mechanism:
+    `erfc`'s max-109 worst case lives in the large-`xa` region where
+    `erfc(xa)` itself shrinks toward 0 -- the combine-sensitivity weight
+    used here (`gauss/d`) *also* shrinks there (the same Gaussian factor
+    driving `erfc`'s own small-output problem), so this weighting
+    under-emphasizes precisely the region already known to dominate the
+    max, the same failure shape (sensitivity vanishing exactly where the
+    real worst case lives) that broke `asin_poly`, just producing a
+    smaller, still-real regression here rather than a dramatic one.
+    *Three attempts of the same technique this session, three different
+    outcomes (clean win, clean regression, mixed-but-still-net-negative
+    regression) -- the common thread in both failures is the linearized
+    sensitivity term vanishing in the exact region that already dominates
+    the function's own documented worst case. Before trusting this
+    technique on a new target, check whether the combine's own
+    sensitivity is roughly uniform across the domain (favorable, as for
+    `exp_pos_neg`/`erf_poly`) or specifically shrinks in the function's
+    already-known hard region (unfavorable, as for `asin_poly`/`erfc`) --
+    this is checkable analytically before ever running the LP.*
 53. **erfc negative-side accuracy survey (resolved 2026-07-09, structural,
     not actionable)**: split the exhaustive sweep by sign (temporary
     accuracy.rs domain split, not kept) -- confirmed a real asymmetry:
