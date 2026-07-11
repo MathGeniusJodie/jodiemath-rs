@@ -53,6 +53,38 @@ macro_rules! denormal_rescale {
     }};
 }
 
+// Shared by log_2_normal/ln_normal/log10_normal (IDEAS.md idea #24: "the
+// three `_normal` bodies are identical modulo constants"): the exponent
+// extraction, s = m - 1 decomposition, and degree-9 Estrin poly evaluation
+// are all byte-for-byte the same shape across all three -- only the
+// coefficient array and each function's own final k-combine differ.
+// Returns (p, s, k) so each caller does its own combine (log_2_normal's
+// plain `fma(p, s, k)`, ln_normal/log10_normal's own Cody-Waite HI/LO
+// split). Macro, not a fn -- avoids the function-call-boundary
+// codegen-regression risk this crate's own expm1/tanh doc comments
+// already found for a different shared-helper attempt.
+macro_rules! log_family_normal {
+    ($x:expr, $koff:expr, $c:expr) => {{
+        let e = ($x.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23;
+        let m = f32::from_bits(($x.to_bits() as i32).wrapping_sub(e << 23) as u32);
+        let k = e as f32 + $koff;
+        let s = m - 1.0;
+        let c: [f32; 10] = $c;
+        let s2 = s * s;
+        let s4 = s2 * s2;
+        let l0 = fma(c[1], s, c[0]);
+        let l1 = fma(c[3], s, c[2]);
+        let l2 = fma(c[5], s, c[4]);
+        let l3 = fma(c[7], s, c[6]);
+        let l4 = fma(c[9], s, c[8]);
+        let r0 = fma(l1, s2, l0);
+        let r1 = fma(l3, s2, l2);
+        let r2 = fma(l4, s4, r1);
+        let p = fma(r2, s4, r0);
+        (p, s, k)
+    }};
+}
+
 #[inline(always)]
 #[allow(clippy::neg_cmp_op_on_partial_ord)] // deliberate: !(x < inf) exploits
 // NaN's always-false comparisons to catch both +inf and NaN in one check
@@ -90,33 +122,22 @@ pub fn log_2_normal(x: f32, koff: f32) -> f32 {
     // is exact (Sterbenz) and centered on 0: log2 stays relatively
     // accurate near x = 1. log2(m) = s * P(s), degree-9 minimax P fitted
     // with lolremez (rel. error 4.1e-9).
-    let e = (x.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23; // exponent if m in [√2/2, √2)
-    let m = f32::from_bits((x.to_bits() as i32).wrapping_sub(e << 23) as u32);
-    let k = e as f32 + koff; // both integers: exact, and off the poly's critical path
-    let s = m - 1.0;
-    let c: [f32; 10] = [
-        std::f32::consts::LOG2_E, // bit-identical to this literal; not a coincidence
-        -0.72134733,
-        0.4808985,
-        -0.36069715,
-        0.288568,
-        -0.23961738,
-        0.20460059,
-        -0.19106273,
-        0.18617496,
-        -0.10994955,
-    ];
-    let s2 = s * s;
-    let s4 = s2 * s2;
-    let l0 = fma(c[1], s, c[0]);
-    let l1 = fma(c[3], s, c[2]);
-    let l2 = fma(c[5], s, c[4]);
-    let l3 = fma(c[7], s, c[6]);
-    let l4 = fma(c[9], s, c[8]);
-    let r0 = fma(l1, s2, l0);
-    let r1 = fma(l3, s2, l2);
-    let r2 = fma(l4, s4, r1);
-    let p = fma(r2, s4, r0);
+    let (p, s, k) = log_family_normal!(
+        x,
+        koff,
+        [
+            std::f32::consts::LOG2_E, // bit-identical to this literal; not a coincidence
+            -0.72134733,
+            0.4808985,
+            -0.36069715,
+            0.288568,
+            -0.23961738,
+            0.20460059,
+            -0.19106273,
+            0.18617496,
+            -0.10994955,
+        ]
+    );
     // k + s * P(s) in a single rounding
     fma(p, s, k)
 }
@@ -1318,33 +1339,22 @@ pub fn ln(x: f32) -> f32 {
 #[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
 pub fn ln_normal(x: f32, koff: f32) -> f32 {
-    let e = (x.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23;
-    let m = f32::from_bits((x.to_bits() as i32).wrapping_sub(e << 23) as u32);
-    let k = e as f32 + koff;
-    let s = m - 1.0;
-    let c: [f32; 10] = [
-        1.0,
-        -0.49999988,
-        0.33333343,
-        -0.25001621,
-        0.20002009,
-        -0.16609012,
-        0.14181833,
-        -0.13243459,
-        0.12904665,
-        -0.07621122,
-    ];
-    let s2 = s * s;
-    let s4 = s2 * s2;
-    let l0 = fma(c[1], s, c[0]);
-    let l1 = fma(c[3], s, c[2]);
-    let l2 = fma(c[5], s, c[4]);
-    let l3 = fma(c[7], s, c[6]);
-    let l4 = fma(c[9], s, c[8]);
-    let r0 = fma(l1, s2, l0);
-    let r1 = fma(l3, s2, l2);
-    let r2 = fma(l4, s4, r1);
-    let p = fma(r2, s4, r0);
+    let (p, s, k) = log_family_normal!(
+        x,
+        koff,
+        [
+            1.0,
+            -0.49999988,
+            0.33333343,
+            -0.25001621,
+            0.20002009,
+            -0.16609012,
+            0.14181833,
+            -0.13243459,
+            0.12904665,
+            -0.07621122,
+        ]
+    );
     let k_hi = k * LN2_HI; // exact, see LN2_HI's comment
     fma(p, s, k_hi) + k * LN2_LO
 }
@@ -1381,33 +1391,22 @@ pub fn log10(x: f32) -> f32 {
 #[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
 pub fn log10_normal(x: f32, koff: f32) -> f32 {
-    let e = (x.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23;
-    let m = f32::from_bits((x.to_bits() as i32).wrapping_sub(e << 23) as u32);
-    let k = e as f32 + koff;
-    let s = m - 1.0;
-    let c: [f32; 10] = [
-        std::f32::consts::LOG10_E, // bit-identical to this literal; not a coincidence
-        -0.2171472,
-        0.14476489,
-        -0.10858066,
-        0.08686763,
-        -0.07213202,
-        0.06159092,
-        -0.05751561,
-        0.05604425,
-        -0.03309811,
-    ];
-    let s2 = s * s;
-    let s4 = s2 * s2;
-    let l0 = fma(c[1], s, c[0]);
-    let l1 = fma(c[3], s, c[2]);
-    let l2 = fma(c[5], s, c[4]);
-    let l3 = fma(c[7], s, c[6]);
-    let l4 = fma(c[9], s, c[8]);
-    let r0 = fma(l1, s2, l0);
-    let r1 = fma(l3, s2, l2);
-    let r2 = fma(l4, s4, r1);
-    let p = fma(r2, s4, r0);
+    let (p, s, k) = log_family_normal!(
+        x,
+        koff,
+        [
+            std::f32::consts::LOG10_E, // bit-identical to this literal; not a coincidence
+            -0.2171472,
+            0.14476489,
+            -0.10858066,
+            0.08686763,
+            -0.07213202,
+            0.06159092,
+            -0.05751561,
+            0.05604425,
+            -0.03309811,
+        ]
+    );
     let k_hi = k * LOG10_2_HI; // exact, see LN2_HI's comment (same trick)
     fma(p, s, k_hi) + k * LOG10_2_LO
 }

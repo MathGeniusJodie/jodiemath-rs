@@ -2807,19 +2807,39 @@ cousin.
     generic-const core removes 3 hand-synced copies — hygiene, zero perf
     claim, reduces refit-application errors.
 
-    **Narrower slice adopted (2026-07-10): the shared tiny/xs/koff
+    **Narrower slice adopted first (2026-07-10): the shared tiny/xs/koff
     denormal-rescale preamble each of the four functions carries before
     calling into its own distinct `_normal`/`log2_df` body** -- see the
     dedicated entry above (log_2/ln/log10 section) for the full writeup
     (macro, not fn; byte-identical assembly before/after, whole-file
-    diff). This idea's own larger, riskier claim -- that the `_normal`
-    poly bodies *themselves* are identical modulo constants and could
-    share a generic-const core -- wasn't attempted here (each body's own
-    coefficients, fma-chain shape, and any per-function fixes applied
-    since first written would all need reconciling into one generic
-    template, a meaningfully bigger and riskier undertaking than the
-    preamble alone). Left open for a future session that wants the
-    larger dedup.
+    diff).
+
+    **The larger claim adopted too, same day, same session: the three
+    `_normal` bodies' poly cores really are byte-for-byte identical in
+    shape.** Read all three side by side to confirm before touching
+    anything: `log_2_normal`/`ln_normal`/`log10_normal` share the
+    identical exponent extraction
+    (`(x.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23`), the same
+    `s = m - 1.0` decomposition, the same `s2`/`s4`, and the exact same
+    10-coefficient Estrin evaluation (`l0..l4`, `r0..r2`, `p`) -- only the
+    literal `c` array and each function's own final combine (`log_2`'s
+    plain `fma(p, s, k)` vs. `ln`/`log10`'s own Cody-Waite `k_hi =
+    k*HI; fma(p,s,k_hi) + k*LO`) differ. Extracted the shared shape into
+    a second macro, `log_family_normal!(x, koff, c) -> (p, s, k)`,
+    leaving each function's own distinct final combine untouched at the
+    call site (a `fn` was deliberately not used here either, same
+    codegen-regression caution as the preamble macro). Verified with the
+    exact same rigor: full pre/post assembly diff of the compiled
+    `mca_target` binary -- again **zero byte differences**, this time
+    across all three call sites and their `_unchecked` siblings at once.
+    `cargo test` clean. Commit `<pending>`. This closes idea #24's own
+    full original scope, not just the preamble slice. *A "these look
+    identical modulo constants" claim across three independently-grown
+    functions is worth actually reading side by side before believing --
+    here it held completely (down to the exact fma-chain shape), but had
+    it not (different degree, different exponent trick, a since-applied
+    per-function fix), forcing a shared macro would have been the wrong
+    call.*
 25. ~~**log_2 denormal path: fold the ×2^24 rescale into the wrapping_sub
     magic**~~ (killed on paper 2026-07-10, confirmed dead on arrival as
     suspected -- not just "probably", provably so): the idea's own hope
