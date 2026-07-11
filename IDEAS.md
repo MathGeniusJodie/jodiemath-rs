@@ -6280,3 +6280,29 @@ cousin.
     candidates found the same run -- worth systematically working through
     *every* hit from a scan, not just the first one or two that look most
     promising, before concluding the technique is exhausted.*
+
+112. **`sin`/`cos`: shared Cody-Waite pi-split reduction + poly eval
+    deduped via macro (adopted 2026-07-11)**: another hit the line-window
+    scanner had surfaced since its very first run this session (idea
+    #107) but that wasn't investigated until systematically working
+    through the remaining hit list per idea #111's own lesson. Given each
+    function's own `q` (`sin`'s plain `round(x/pi)` vs `cos`'s phase-
+    shifted `round(x/pi-0.5)+0.5`), the 4-fma `PI_A`/`PI_B`/`PI_C`/`PI_D`
+    reduction plus the `sinf_poly(r)` call is byte-for-byte identical --
+    only each function's own `q` construction and final parity-based sign
+    combine (both already distinct, left at the call site) differ.
+    Extracted into `pi_reduce_and_poly!(x, q) -> f32` (the poly output,
+    still called `s` at each call site). Verified with the same rigor as
+    every dedup this session: full pre/post `mca_target` assembly diff --
+    zero byte differences. `cargo test`, `codegen_check` (71 regions
+    clean), `edgecheck` (601 pins, same 2 known won't-fix cbrt misses, no
+    new failures) all clean. Pure hygiene, no accuracy/perf claim --
+    same framing as every dedup since idea #107. This is likely the last
+    easy win from the line-window scanner's original hit list (the
+    remaining un-investigated hits are either already-excluded-by-design
+    duplication like `exp`/`expm1`'s own reduction or `exp2_checked`/
+    `exp2m1`'s xs-based k1b variant, genuinely trivial 1-2 line
+    coincidences, or example/plotting scaffolding rather than library
+    logic) -- confirmed by re-running the scanner once more after this
+    fix and finding nothing new left to chase in `src/lib.rs`'s own
+    numeric core.
