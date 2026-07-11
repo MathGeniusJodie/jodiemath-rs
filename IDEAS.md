@@ -906,8 +906,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     cuts a whole division's latency off atan2's critical path and
     removes one rounding (x/y is singly-rounded where 1/(y/x) rounds
     twice).
-20. **sigmoid: fold the `(-x)` negation into the reduction constants**
-    (negated LOG2_E/LN2_HI/LN2_LO words) — one vxorps saved.
 21. **Standing codegen_check harness**: auto-grep every public fn's
     emitted asm for scalar-fallback signatures (cvttss2si class,
     kshift-assembled masks) — automates the manual rule that caught two
