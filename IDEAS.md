@@ -5665,3 +5665,52 @@ cousin.
     correct and cheap-to-verify still doesn't mean it clears a real,
     measured perf-cost bar, and documenting the true shape precisely is
     worth doing even when the fix itself stays on the shelf.*
+
+103. **exp/expm1/tanh's shared 4-coefficient poly evaluation, deduped via
+    macro (adopted 2026-07-10) -- re-tests an established `fn`-sharing
+    regression with a mechanism that was never actually tried.**
+    `expm1`'s own doc comment already documents a real, hard-won lesson:
+    "factoring this through a shared `exp`-returning-parts helper was
+    tried first and measured a real, reproducible mca latency regression
+    on `sinh_throughput` (+32%, unrelated caller, apparently a scheduling
+    side effect of the new function boundary)... duplicating the ~10
+    lines here avoids touching `exp`'s own codegen at all" -- and
+    `tanh`'s own doc comment cites the identical reasoning for its own
+    copy. Both fixes were a genuine `fn` extraction, which necessarily
+    introduces a new function-call boundary (and, per the finding, an
+    apparently non-local codegen effect on a completely unrelated
+    caller in the same compilation unit). This session had just used a
+    *macro* (not a `fn`) to successfully dedupe `log_2_normal`/
+    `ln_normal`/`log10_normal`'s shared poly core (see idea #24's own
+    updated entry), verified via a full pre/post assembly diff of the
+    compiled `mca_target` binary -- zero byte differences. A macro is a
+    fundamentally different mechanism (pure textual substitution before
+    codegen even begins, no new symbol or call site at all), so the
+    already-documented regression doesn't obviously transfer to it --
+    worth re-testing specifically, not assuming either way.
+
+    Confirmed by direct comparison that `exp`, `expm1`, and `tanh` each
+    carry a byte-identical textual copy of the same 8-line fragment
+    (the `c` array through the final `p = fma(l2, r4, r0)`) -- only
+    their own reduction (`k`/`r` construction) and exponent
+    reconstruction/final combine differ (`exp`/`expm1`'s k1/k2 split vs.
+    `tanh`'s single `exp2int` field). Extracted just that shared
+    fragment into `exp_r_poly!(r) -> p`, leaving each function's own
+    distinct reduction and combine at the call site untouched. Verified
+    with the same rigor as idea #24's own dedup: full pre/post assembly
+    diff of the compiled binary -- **zero byte differences** across all
+    three functions (and everything downstream that calls them, e.g.
+    `sinh`/`cosh`/`sigmoid`, none of which even reference this macro
+    directly). This is a real, positive confirmation of the *mechanism*
+    distinction the original finding's own wording already implied
+    ("a scheduling side effect of the new function boundary") but never
+    isolated: it's specifically the function boundary that caused the
+    regression, not the act of sharing this code at all. `cargo test`
+    clean. Commit `<pending>`. *An established "don't share this, it
+    regressed X" lesson is scoped to the specific mechanism that was
+    actually tried -- when a different mechanism becomes available
+    (here, a macro, used successfully elsewhere in the same session) that
+    structurally avoids the exact thing blamed for the regression (a new
+    function-call boundary), it's worth a fresh, cheap-to-verify test
+    rather than treating the old lesson as covering every possible way
+    to share the same code.*

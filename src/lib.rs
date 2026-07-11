@@ -85,6 +85,35 @@ macro_rules! log_family_normal {
     }};
 }
 
+// Shared by exp/expm1/tanh's own `exp(r)`-for-tiny-`r` poly evaluation:
+// `exp`'s own doc comment establishes the coefficients (c0/c1 pinned to
+// 1.0, c2..c5 LP-refit 2026-07-09) and notes the fit "cascades to every
+// caller since they all reuse this poly directly" -- expm1 and tanh each
+// carry a byte-identical textual copy of this exact 8-line fragment
+// (confirmed by direct comparison), deliberately NOT calling a shared fn
+// (both their own doc comments cite a real, reproduced +32% mca
+// regression on an unrelated caller, `sinh_throughput`, from a prior `fn`-
+// based sharing attempt -- "a scheduling side effect of the new function
+// boundary"). A macro has no function-call boundary at all (pure textual
+// substitution before codegen), so it's a fundamentally different
+// mechanism than what was already tried and rejected -- verified via a
+// full pre/post assembly diff before trusting that distinction (see
+// IDEAS.md). Each caller keeps its own reduction (`k`/`r`) and exponent
+// reconstruction/final-combine around this, since those differ (exp/
+// expm1's k1/k2 split vs. tanh's single exp2int field).
+macro_rules! exp_r_poly {
+    ($r:expr) => {{
+        let c: [f32; 4] = [4.9999300e-1, 1.6667245e-1, 4.1883811e-2, 8.3009899e-3];
+        let r2 = $r * $r;
+        let r4 = r2 * r2;
+        let l0 = $r + 1.0;
+        let l1 = fma(c[1], $r, c[0]);
+        let l2 = fma(c[3], $r, c[2]);
+        let r0 = fma(l1, r2, l0);
+        fma(l2, r4, r0)
+    }};
+}
+
 #[inline(always)]
 #[allow(clippy::neg_cmp_op_on_partial_ord)] // deliberate: !(x < inf) exploits
 // NaN's always-false comparisons to catch both +inf and NaN in one check
@@ -1599,14 +1628,7 @@ pub fn exp(x: f32) -> f32 {
     // throughput bit-for-bit identical on exp/sinh/tanh (42.00/1.327,
     // 58.00/2.523, 94.91/2.567) -- expected, pure coefficient swap, same
     // instructions.
-    let c: [f32; 4] = [4.9999300e-1, 1.6667245e-1, 4.1883811e-2, 8.3009899e-3];
-    let r2 = r * r;
-    let r4 = r2 * r2;
-    let l0 = r + 1.0;
-    let l1 = fma(c[1], r, c[0]);
-    let l2 = fma(c[3], r, c[2]);
-    let r0 = fma(l1, r2, l0);
-    let p = fma(l2, r4, r0);
+    let p = exp_r_poly!(r);
     let k1b = fma(k, 0.5, ROUND_MAGIC) - (ROUND_MAGIC - 383.0);
     let k2b = (k + 766.0) - k1b;
     let t1 = f32::from_bits((k1b.to_bits() << 8) & EXPONENT_MASK);
@@ -1677,24 +1699,21 @@ pub fn expm1(x: f32) -> f32 {
     // worst-case ulp (the Pade branch above is the one with headroom, not
     // this one -- confirmed by the exhaustive sweep's worst-x always
     // landing at |x|>=0.5, contradicting a stale claim in exp's own doc
-    // comment). Factoring this through a shared `exp`-returning-parts
-    // helper was tried first and measured a real, reproducible mca latency
+    // comment). Factoring this through a shared `exp`-returning-parts `fn`
+    // was tried first and measured a real, reproducible mca latency
     // regression on `sinh_throughput` (+32%, unrelated caller, apparently
     // a scheduling side effect of the new function boundary) even though
-    // `exp` itself was bit-identical -- duplicating the ~10 lines here
-    // avoids touching `exp`'s own codegen at all.
+    // `exp` itself was bit-identical -- so the reduction/exponent-
+    // reconstruction stays duplicated here. The 4-coefficient poly
+    // evaluation itself (given `r`) is shared via `exp_r_poly!`, a macro
+    // (no function-call boundary at all) -- confirmed via a full pre/post
+    // assembly diff that this specific mechanism doesn't reproduce the
+    // `fn` version's regression (see IDEAS.md's own idea log, 2026-07-10).
     const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
     let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
     let r = fma(-k, LN2_HI, x);
     let r = fma(-k, LN2_LO, r);
-    let c: [f32; 4] = [4.9999300e-1, 1.6667245e-1, 4.1883811e-2, 8.3009899e-3];
-    let r2 = r * r;
-    let r4 = r2 * r2;
-    let l0 = r + 1.0;
-    let l1 = fma(c[1], r, c[0]);
-    let l2 = fma(c[3], r, c[2]);
-    let r0 = fma(l1, r2, l0);
-    let p = fma(l2, r4, r0);
+    let p = exp_r_poly!(r);
     let k1b = fma(k, 0.5, ROUND_MAGIC) - (ROUND_MAGIC - 383.0);
     let k2b = (k + 766.0) - k1b;
     let t1 = f32::from_bits((k1b.to_bits() << 8) & EXPONENT_MASK);
@@ -2124,14 +2143,7 @@ pub fn tanh(x: f32) -> f32 {
     let k = fma(y, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
     let r = fma(-k, LN2_HI, y);
     let r = fma(-k, LN2_LO, r);
-    let c: [f32; 4] = [4.9999300e-1, 1.6667245e-1, 4.1883811e-2, 8.3009899e-3];
-    let r2 = r * r;
-    let r4 = r2 * r2;
-    let l0 = r + 1.0;
-    let l1 = fma(c[1], r, c[0]);
-    let l2 = fma(c[3], r, c[2]);
-    let r0 = fma(l1, r2, l0);
-    let p = fma(l2, r4, r0);
+    let p = exp_r_poly!(r);
     let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
     let b = fma(p, exp2int, -1.0);
     let e = if y.abs() < 0.5 { a } else { b };
