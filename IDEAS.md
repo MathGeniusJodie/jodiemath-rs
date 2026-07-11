@@ -5699,18 +5699,28 @@ cousin.
     distinct reduction and combine at the call site untouched. Verified
     with the same rigor as idea #24's own dedup: full pre/post assembly
     diff of the compiled binary -- **zero byte differences** across all
-    three functions (and everything downstream that calls them, e.g.
-    `sinh`/`cosh`/`sigmoid`, none of which even reference this macro
-    directly). This is a real, positive confirmation of the *mechanism*
+    three functions. This is a real, positive confirmation of the *mechanism*
     distinction the original finding's own wording already implied
     ("a scheduling side effect of the new function boundary") but never
     isolated: it's specifically the function boundary that caused the
     regression, not the act of sharing this code at all. `cargo test`
-    clean. Commit `27c2856`. *An established "don't share this, it
-    regressed X" lesson is scoped to the specific mechanism that was
-    actually tried -- when a different mechanism becomes available
+    clean. Commit `27c2856`.
+
+    **Fourth caller found and included, same day: `sigmoid` carries the
+    identical copy too.** Its own doc comment already says "standalone
+    copy of exp's reduction/poly... matching expm1's own established
+    pattern" -- direct comparison confirmed the same byte-identical
+    8-line fragment. Applied the same `exp_r_poly!` substitution (leaving
+    `sigmoid`'s own reduction/clamp/combine untouched) and re-verified
+    with the same full assembly diff -- again zero byte differences.
+    `cargo test` clean. Commit `<pending>`. *An established "don't share
+    this, it regressed X" lesson is scoped to the specific mechanism that
+    was actually tried -- when a different mechanism becomes available
     (here, a macro, used successfully elsewhere in the same session) that
     structurally avoids the exact thing blamed for the regression (a new
     function-call boundary), it's worth a fresh, cheap-to-verify test
     rather than treating the old lesson as covering every possible way
-    to share the same code.*
+    to share the same code. Also worth a second look once a shared
+    mechanism exists: a 4th caller (`sigmoid`) carrying the exact same
+    duplicated fragment was found simply by noticing its doc comment
+    already cited the same pattern by name.*
