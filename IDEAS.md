@@ -6173,3 +6173,36 @@ cousin.
     literal, which a fixed-size window comparison can miss depending on
     where the varying line falls); this one turned up under a 3-line
     window instead.*
+
+108. **`powf`/`powf_checked`: shared negative-base/y-parity/y==0/x==+-1
+    special-case combine deduped via macro (adopted 2026-07-11)**:
+    re-running the block scanner (idea #107's technique) at multiple
+    window sizes on the current file turned up a bigger duplicate than
+    either of the last two -- `powf`'s own doc comment even already
+    admitted it ("Same negative-x/y-parity/y==0 handling as powf -- see
+    its own doc comment for the reasoning") without ever actually
+    deduping it. The ~15-line tail of both functions -- `y_int`/`y_odd`/
+    `neg_signed`/`neg_result` (twice, for the `x==0`/`x.is_infinite()`
+    exemption and the separate `y.is_infinite()` override)/the final
+    `x.is_sign_negative()` select/the `x==1.0`/`x==-1.0 && y.is_infinite()`
+    overrides/the closing `y==0.0` override -- is byte-for-byte identical
+    given each function's own already-computed `mag` (`powf`'s plain
+    `exp2_checked(log_2(ax)*y)` vs. `powf_checked`'s `is_safe`-gated Df32
+    pipeline, both upstream of this shared tail). Extracted into
+    `powf_sign_combine!(x, y, mag) -> f32`, moving all the C99-special-
+    case explanatory comments (previously split between the two
+    functions, with `powf_checked`'s copy just pointing back at `powf`'s)
+    into the macro definition itself, where the logic they describe now
+    actually lives. Verified with the same rigor as every dedup this
+    session: full pre/post `mca_target` assembly diff -- zero byte
+    differences. `cargo test`, `codegen_check` (71 regions clean),
+    `edgecheck` (601 pins, same 2 known won't-fix cbrt misses, no new
+    failures) all clean. Pure hygiene, no accuracy/perf claim -- same
+    framing as idea #107. *The biggest dedup found by the block-scanning
+    technique so far, and the file's own doc comments had already flagged
+    it in plain English ("see its own doc comment for the reasoning")
+    without anyone circling back to actually share the code -- worth
+    grepping doc comments for "same as X" / "see Y's own doc comment"
+    phrasing directly, not just scanning for literal duplicate lines,
+    since a human noticing and writing down a duplication is at least as
+    strong a signal as a mechanical line-window match.*
