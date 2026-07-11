@@ -2131,6 +2131,24 @@ pub fn cosh_throughput(x: f32) -> f32 {
 /// fix a "wrong/NaN for legitimate finite input" domain hole (see sin/
 /// cos's own inf-for-large-x fix), which is a more serious defect class
 /// than an in-domain ulp regression.
+// Shared by tanh/sigmoid: the reduction plus single-exponent-field
+// construction (given each caller's own already-clamped `y`) is
+// identical -- only the shared poly's own consumer differs
+// (`fma(p, exp2int, -1.0)`'s trailing -1 fusion for tanh's exp(y)-1 vs.
+// sigmoid's plain `p * exp2int`). Returns `(p, exp2int)`. Macro, not a
+// fn -- same reasoning as this file's other shared-body macros.
+macro_rules! exp_r_singlefield {
+    ($y:expr) => {{
+        const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+        let k = fma($y, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
+        let r = fma(-k, LN2_HI, $y);
+        let r = fma(-k, LN2_LO, r);
+        let p = exp_r_poly!(r);
+        let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
+        (p, exp2int)
+    }};
+}
+
 #[inline(always)]
 pub fn tanh(x: f32) -> f32 {
     // Standalone copy of expm1 (not a call through the public `expm1` fn,
@@ -2144,12 +2162,7 @@ pub fn tanh(x: f32) -> f32 {
     // as expm1's own fix.
     let y = (2.0 * x).clamp(-87.0, 88.0);
     let a = pade_expm1_ratio!(y, mul);
-    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
-    let k = fma(y, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
-    let r = fma(-k, LN2_HI, y);
-    let r = fma(-k, LN2_LO, r);
-    let p = exp_r_poly!(r);
-    let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
+    let (p, exp2int) = exp_r_singlefield!(y);
     let b = fma(p, exp2int, -1.0);
     let e = if y.abs() < 0.5 { a } else { b };
     e / (e + 2.0)
@@ -2233,12 +2246,7 @@ pub fn sigmoid(x: f32) -> f32 {
     // meaningful metric" precedent (see cospi's own doc comment); not
     // pursued further, the practical improvement is already total.
     let y = (-x).clamp(-87.0, 88.722839111673);
-    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
-    let k = fma(y, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
-    let r = fma(-k, LN2_HI, y);
-    let r = fma(-k, LN2_LO, r);
-    let p = exp_r_poly!(r);
-    let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
+    let (p, exp2int) = exp_r_singlefield!(y);
     let e = p * exp2int;
     1.0 / (1.0 + e)
 }
