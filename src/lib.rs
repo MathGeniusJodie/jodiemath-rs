@@ -574,15 +574,26 @@ const ROUND_MAGIC: f32 = 12582912.0;
 /// [-pi/2, pi/2] -- including returning inf for some large finite x, since
 /// nothing here clamps the residual. Use sin_checked for full-range gradual
 /// degradation instead of this cliff; this version is much faster.
+// Shared by sin/cos: the Cody-Waite pi-split reduction (given each
+// caller's own `q`, computed differently -- sin's plain `round(x/pi)` vs
+// cos's phase-shifted `round(x/pi-0.5)+0.5`) plus the `sinf_poly` call is
+// byte-for-byte identical. Macro, not a fn -- same reasoning as this
+// file's other shared-body macros.
+macro_rules! pi_reduce_and_poly {
+    ($x:expr, $q:expr) => {{
+        let r = fma($q, -PI_A, $x);
+        let r = fma($q, -PI_B, r);
+        let r = fma($q, -PI_C, r);
+        let r = fma($q, -PI_D, r);
+        sinf_poly(r)
+    }};
+}
+
 #[inline(always)]
 pub fn sin(x: f32) -> f32 {
     let qb = fma(x, FRAC_1_PI, ROUND_MAGIC);
     let q = qb - ROUND_MAGIC;
-    let r = fma(q, -PI_A, x);
-    let r = fma(q, -PI_B, r);
-    let r = fma(q, -PI_C, r);
-    let r = fma(q, -PI_D, r);
-    let s = sinf_poly(r);
+    let s = pi_reduce_and_poly!(x, q);
     // sin(x) = (-1)^q * sin(r); parity of q is the lowest mantissa bit of qb
     let parity = qb.to_bits() << 31;
     f32::from_bits(s.to_bits() ^ parity)
@@ -594,11 +605,7 @@ pub fn cos(x: f32) -> f32 {
     // k = round(x/pi - 0.5), q = k + 0.5, r = x - q*pi in [-pi/2, pi/2]
     let kb = fma(x, FRAC_1_PI, -0.5) + ROUND_MAGIC;
     let q = (kb - ROUND_MAGIC) + 0.5;
-    let r = fma(q, -PI_A, x);
-    let r = fma(q, -PI_B, r);
-    let r = fma(q, -PI_C, r);
-    let r = fma(q, -PI_D, r);
-    let s = sinf_poly(r);
+    let s = pi_reduce_and_poly!(x, q);
     // cos(x) = (-1)^(k+1) * sin(r)
     let parity = !kb.to_bits() << 31;
     f32::from_bits(s.to_bits() ^ parity)
