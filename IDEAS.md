@@ -2832,7 +2832,7 @@ cousin.
     exact same rigor: full pre/post assembly diff of the compiled
     `mca_target` binary -- again **zero byte differences**, this time
     across all three call sites and their `_unchecked` siblings at once.
-    `cargo test` clean. Commit `<pending>`. This closes idea #24's own
+    `cargo test` clean. Commit `1efbfb4`. This closes idea #24's own
     full original scope, not just the preamble slice. *A "these look
     identical modulo constants" claim across three independently-grown
     functions is worth actually reading side by side before believing --
