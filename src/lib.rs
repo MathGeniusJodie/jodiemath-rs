@@ -3491,6 +3491,27 @@ pub fn powf_unchecked(x: f32, y: f32) -> f32 {
 /// needs no special-casing either -- integer powers of a negative base
 /// are always well-defined (unlike `powf`'s general real-exponent
 /// case), so plain repeated multiplication already gets the sign right.
+// Shared by pown/pown_small/pown_const -- the exponentiation-by-squaring
+// body itself (invert-if-negative, then square-and-select loop) is
+// identical across all three; only the iteration count differs (32 to
+// cover i32::MIN's full range, 8 for pown_small's narrower |n|<=255
+// contract) along with whether `n` is a runtime i32 or a const generic.
+// Macro, not a fn -- same reasoning as this file's other shared-body
+// macros (no function-call boundary, verified via full assembly diff).
+macro_rules! pown_body {
+    ($x:expr, $n:expr, $iters:expr) => {{
+        let mut base = if $n < 0 { 1.0 / $x } else { $x };
+        let un = $n.unsigned_abs();
+        let mut result = 1.0f32;
+        for i in 0..$iters {
+            let bit_set = (un >> i) & 1 == 1;
+            result = if bit_set { result * base } else { result };
+            base *= base;
+        }
+        result
+    }};
+}
+
 #[inline(always)]
 pub fn pown(x: f32, n: i32) -> f32 {
     // Invert x *before* the squaring loop (not the final result after)
@@ -3504,18 +3525,10 @@ pub fn pown(x: f32, n: i32) -> f32 {
     // 0^negative (`1.0/0.0 = inf`, then `inf^n = inf`, correct) and
     // inf^negative (`1.0/inf = 0`, then `0^n = 0`, correct) for free,
     // with no separate final-inversion special case needed.
-    let mut base = if n < 0 { 1.0 / x } else { x };
-    let un = n.unsigned_abs();
-    let mut result = 1.0f32;
     // 32, not 31: i32::MIN's magnitude is exactly 2^31, needing bit
     // index 31 -- an off-by-one caught directly (pown(2.0, i32::MIN)
     // returned 1.0 instead of the correct 0.0 with a 0..31 range).
-    for i in 0..32u32 {
-        let bit_set = (un >> i) & 1 == 1;
-        result = if bit_set { result * base } else { result };
-        base *= base;
-    }
-    result
+    pown_body!(x, n, 32u32)
 }
 
 /// `pown` restricted to `|n| <= 255`: same exponentiation-by-squaring
@@ -3543,15 +3556,7 @@ pub fn pown(x: f32, n: i32) -> f32 {
 /// (~3.9x faster), throughput ~1.4→~0.22 ns (~6.4x faster) vs `pown`.
 #[inline(always)]
 pub fn pown_small(x: f32, n: i32) -> f32 {
-    let mut base = if n < 0 { 1.0 / x } else { x };
-    let un = n.unsigned_abs();
-    let mut result = 1.0f32;
-    for i in 0..8u32 {
-        let bit_set = (un >> i) & 1 == 1;
-        result = if bit_set { result * base } else { result };
-        base *= base;
-    }
-    result
+    pown_body!(x, n, 8u32)
 }
 
 /// `pown` with a compile-time-known exponent: same algorithm as `pown`,
@@ -3569,15 +3574,7 @@ pub fn pown_small(x: f32, n: i32) -> f32 {
 /// folding, only that it has enough information to.
 #[inline(always)]
 pub fn pown_const<const N: i32>(x: f32) -> f32 {
-    let mut base = if N < 0 { 1.0 / x } else { x };
-    let un = N.unsigned_abs();
-    let mut result = 1.0f32;
-    for i in 0..32u32 {
-        let bit_set = (un >> i) & 1 == 1;
-        result = if bit_set { result * base } else { result };
-        base *= base;
-    }
-    result
+    pown_body!(x, N, 32u32)
 }
 
 /// Higher-accuracy variant of [`powf`]: `exp2(log_2(x)*y)` amplifies
