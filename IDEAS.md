@@ -5537,3 +5537,76 @@ cousin.
     actually cleared; a scalar fallback's cost and a real vectorized
     cost are not the same measurement, and only the second one is the
     one that matters.*
+
+102. **`erfcx` for `|x| > 10`: real, unbounded (not just imprecise)
+    correctness gap found and a working fix verified, but rejected on
+    real perf cost -- doc comment clarified instead (2026-07-10).**
+    `erfcx`'s own doc comment already disclosed `|x| > 10` as
+    "bounded, not necessarily accurate" (inherited from `erfc_rational`'s
+    own `|xa|<=10` fit domain), in the same spirit as this session's
+    earlier "naive vs. dedicated, quantified with real numbers" survey
+    (`exp_m1_over_x`/`atanh`/`softplus`/`ln`/`log1p`) -- picked as the
+    natural next candidate to actually *quantify* rather than trust the
+    qualitative wording. Traced the mechanism first: `erfc_rational`
+    clamps its own input to `10.0` before evaluating, so for `xa > 10` it
+    doesn't degrade gracefully, it *freezes* at exactly
+    `erfc_rational(10.0)` forever. This is harmless for `erfc` itself
+    (the shared multiplicative `exp(-x^2)` factor correctly decays to 0
+    regardless, masking the frozen rational completely), but `erfcx`'s
+    entire construction exists specifically to *cancel* that same
+    factor -- so for `erfcx` the frozen value comes back completely
+    naked, with nothing decaying it toward the true, still-shrinking
+    answer. Quantified against `scipy.special.erfcx` (a proper reference
+    with no such artifact): relative error grows *without bound* as `x`
+    grows past 10, not just "less accurate" -- ~10% already at `x=11`,
+    ~50% at `x=15`, ~99% at `x=20`, ~895% by `x=100`, and unboundedly
+    worse beyond that, since the true value keeps shrinking toward 0
+    while the shipped one stays frozen at a fixed nonzero constant.
+
+    Checked whether a real fix is cheap: the standard asymptotic tail for
+    large `x`, `erfcx(x) ~ (1 - 1/(2x^2) + 3/(4x^4))/(x*sqrt(pi))`,
+    verified in Python against the same `scipy` reference first (<0.0002%
+    relative error for `x > 10`, already excellent even one step before
+    the boundary at `x=9`) before writing any Rust. Implemented as a
+    branchless blend (`if xa > 10.0 { asym } else { erfc_rational(xa) }`)
+    and verified thoroughly: bit-identical to the shipped form across a
+    dense `[-10,10]` sweep (2001 points, confirmed via `git stash`), max
+    relative error 0.00015% across `[-5,200]` against the same `scipy`
+    reference (down from unbounded), clean `codegen_check` (no
+    de-vectorization signatures). A real, working, *verified* fix.
+
+    Then `mca` gave the honest answer: throughput 2.278 -> 2.681
+    cyc/elem, a genuine **+17.7%**, not noise -- the asymptotic tail
+    needs its own division (`1.0/xa`) on top of `erfc_rational`'s
+    existing one, and since this is a branchless select both divisions
+    run unconditionally on every call regardless of the real `xa`
+    distribution. (Latency's own before/after numbers -- 39.36 -> 71.17
+    -- aren't a fair comparison on their own terms; this function's own
+    doc comment already flags its latency measurement as untrustworthy,
+    the same `mca` `mix()` sign-blind-spot this crate has hit before.)
+    This fails this crate's own consistently-enforced bar this session
+    ("accuracy win, *no* perf penalty") by a real, non-noise margin --
+    the same shape of rejection as `asin_small`'s extra Taylor term or
+    `sigmoid`'s LP refit, just for a much larger and more clear-cut
+    underlying correctness gap than either of those. Reverted the
+    functional change (confirmed via `git diff`, one clean line
+    replaced, no stray edits); the standalone verification probe wasn't
+    committed.
+
+    Rather than leave the disclaimer as vague as before, updated
+    `erfcx`'s own doc comment with the precise mechanism (freeze, not
+    decay) and the real numbers found (10%/50%/99%/895% at
+    11/15/20/100) -- a free, zero-risk clarification independent of
+    whether the fix itself ships. Not building an `erfcx_checked`/wider-
+    domain tier speculatively: no caller has asked for accurate `erfcx`
+    past `|x|=10`, matching this crate's own established "extend a
+    documented domain only on demand" gate (ideas #48, #90) -- the fix
+    itself, fully verified and ready, is left as a precisely-scoped
+    option for whenever that demand actually shows up. *A vague
+    "bounded, not necessarily accurate" disclaimer can describe two very
+    different failure shapes -- gracefully degrading, or frozen-and-
+    unboundedly-wrong -- and only measuring against a real reference
+    reveals which one a given function actually has; a fix being fully
+    correct and cheap-to-verify still doesn't mean it clears a real,
+    measured perf-cost bar, and documenting the true shape precisely is
+    worth doing even when the fix itself stays on the shelf.*

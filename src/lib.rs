@@ -3069,11 +3069,26 @@ pub fn erfc(x: f32) -> f32 {
 /// correctly rather than wrapping to garbage.
 ///
 /// Like `erfc`, `erfc_rational`'s own |xa|<=10 fit domain means this is
-/// only verified accurate for `|x| <= 10` -- for x > 10 (still finite
-/// and well short of erfcx's true asymptotic falloff), the rational is
-/// extrapolated past where it was fit, so treat larger x as "bounded,
-/// not necessarily accurate," the same contract this crate's other
-/// fast tiers carry past their own documented range.
+/// only verified accurate for `|x| <= 10` -- for x > 10, `erfc_rational`
+/// clamps its own input to 10.0 and so *freezes* at `erfc_rational(10.0)`
+/// forever, not just "less accurate": unlike `erfc` (where this same
+/// freeze is masked by the multiplicative `exp(-x^2)` factor correctly
+/// decaying to 0) `erfcx` has no such factor, so the frozen value comes
+/// back nakedly and relative error grows *without bound* as x grows
+/// (measured against a proper reference: ~10% already at x=11, ~50% at
+/// x=15, ~99% at x=20, ~895% by x=100 -- not a bounded imprecision).
+/// Checked whether the standard asymptotic tail
+/// (`erfcx(x) ~ (1 - 1/(2x^2) + 3/(4x^4))/(x*sqrt(pi))`, accurate to
+/// <0.0002% relative error for `x > 10` right here) is worth blending in
+/// past x=10: yes for correctness (verified against a proper reference,
+/// bit-identical to the shipped form for `|x|<=10`, clean codegen), but
+/// the real `mca` throughput cost is a genuine, not noise-level, +17.7%
+/// (2.278->2.681 cyc/elem) from the extra division the tail needs --
+/// fails this crate's own "accuracy win, no perf penalty" bar, so not
+/// adopted here. Left as a real, precisely-scoped option for an
+/// `erfcx_checked`/wider-domain opt-in tier if a caller ever actually
+/// needs `|x| > 10`, matching this crate's existing checked/unchecked
+/// tiering pattern -- not built speculatively.
 ///
 /// mca's own latency number for this function (see readme.md) is not
 /// trustworthy: this is a sign-dependent branch (`x >= 0.0`), and the
