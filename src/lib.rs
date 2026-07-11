@@ -226,6 +226,23 @@ pub fn log_2(x: f32) -> f32 {
 /// negative, denormal, inf, or nan input (those are the caller's job, see
 /// log_2). Called directly with an out-of-domain x, this returns a
 /// plausible-looking but wrong finite value rather than NaN/-inf.
+// Shared by log_2_normal and log2_df -- both compute log2 itself (one in
+// single-float, one in double-float form), so unlike ln_normal/log10_normal
+// (each independently minimax-fitted for their own target), these two
+// callers use the exact same degree-9 poly, not just a scaled variant.
+const LOG2_COEFFS: [f32; 10] = [
+    std::f32::consts::LOG2_E, // bit-identical to this literal; not a coincidence
+    -0.72134733,
+    0.4808985,
+    -0.36069715,
+    0.288568,
+    -0.23961738,
+    0.20460059,
+    -0.19106273,
+    0.18617496,
+    -0.10994955,
+];
+
 #[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
 pub fn log_2_normal(x: f32, koff: f32) -> f32 {
@@ -233,22 +250,7 @@ pub fn log_2_normal(x: f32, koff: f32) -> f32 {
     // is exact (Sterbenz) and centered on 0: log2 stays relatively
     // accurate near x = 1. log2(m) = s * P(s), degree-9 minimax P fitted
     // with lolremez (rel. error 4.1e-9).
-    let (p, s, k) = log_family_normal!(
-        x,
-        koff,
-        [
-            std::f32::consts::LOG2_E, // bit-identical to this literal; not a coincidence
-            -0.72134733,
-            0.4808985,
-            -0.36069715,
-            0.288568,
-            -0.23961738,
-            0.20460059,
-            -0.19106273,
-            0.18617496,
-            -0.10994955,
-        ]
-    );
+    let (p, s, k) = log_family_normal!(x, koff, LOG2_COEFFS);
     // k + s * P(s) in a single rounding
     fma(p, s, k)
 }
@@ -3311,22 +3313,7 @@ pub fn rhypot(x: f32, y: f32) -> f32 {
 #[inline(always)]
 fn log2_df(x: f32) -> Df32 {
     let (xs, koff) = denormal_rescale!(x);
-    let (p, s, k) = log_family_normal!(
-        xs,
-        koff,
-        [
-            LOG2_E,
-            -0.72134733,
-            0.4808985,
-            -0.36069715,
-            0.288568,
-            -0.23961738,
-            0.20460059,
-            -0.19106273,
-            0.18617496,
-            -0.10994955,
-        ]
-    );
+    let (p, s, k) = log_family_normal!(xs, koff, LOG2_COEFFS);
     Df32::from_f32(k) + Df32::from_mul(p, s)
 }
 

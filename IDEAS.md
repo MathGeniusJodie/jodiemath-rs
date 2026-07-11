@@ -2910,6 +2910,37 @@ cousin.
     right after believing a dedup is "done" -- the idea's own original
     text already named the 4th caller, and it was still missed on the
     first pass.*
+
+    **Fifth pass, one more real duplicate found (2026-07-11): the 4th
+    caller fix above deduped the *macro call shape* but left the actual
+    10-element coefficient array literal itself typed out twice** --
+    `log_2_normal` and `log2_df` each still wrote out the identical
+    `[LOG2_E, -0.72134733, 0.4808985, ..., -0.10994955]` array as a fresh
+    macro-call argument (unlike `ln_normal`/`log10_normal`, which
+    genuinely need their own distinct, independently-minimax-fitted
+    arrays -- only `log_2_normal`/`log2_df` share the literal *same* poly,
+    since `log2_df` is just `log_2`'s double-float form). Found via a
+    fresh whole-file grep for any 5+-significant-digit float literal
+    appearing more than once (the same mechanical technique idea #103's
+    own follow-ups used) -- turned up this exact 9-line block at two line
+    ranges, byte-for-byte. Extracted into a single file-scope `const
+    LOG2_COEFFS: [f32; 10]`, referenced by both callers instead of
+    retyping the array (confirmed `log2_df`'s own bare `LOG2_E` is
+    `const LOG2_E: f32 = std::f32::consts::LOG2_E;`, i.e. bit-identical to
+    `log_2_normal`'s `std::f32::consts::LOG2_E` literal, so the two arrays
+    really were the same value, not just visually similar). Verified with
+    the same rigor as every dedup this session: full pre/post `mca_target`
+    assembly diff, zero byte differences; `cargo test`, `codegen_check`
+    (71 regions clean), and `edgecheck` (601 pins, same 2 known
+    won't-fix cbrt misses, no new failures) all clean. This is even safer
+    than the macro dedups elsewhere in this idea -- a plain `const` array
+    has no function-call boundary and no macro-expansion-precedence
+    surface at all, just one named piece of data instead of two duplicate
+    literals. *A macro dedup that still takes a literal array as one of
+    its own arguments only closes the "same code shape" duplication, not
+    the "same data" duplication underneath it -- re-grep for the literal
+    payload itself after deduping the shape around it, even when the
+    surrounding idea already looked closed.*
 25. ~~**log_2 denormal path: fold the ×2^24 rescale into the wrapping_sub
     magic**~~ (killed on paper 2026-07-10, confirmed dead on arrival as
     suspected -- not just "probably", provably so): the idea's own hope
