@@ -5706,7 +5706,7 @@ cousin.
     ("a scheduling side effect of the new function boundary") but never
     isolated: it's specifically the function boundary that caused the
     regression, not the act of sharing this code at all. `cargo test`
-    clean. Commit `<pending>`. *An established "don't share this, it
+    clean. Commit `27c2856`. *An established "don't share this, it
     regressed X" lesson is scoped to the specific mechanism that was
     actually tried -- when a different mechanism becomes available
     (here, a macro, used successfully elsewhere in the same session) that
