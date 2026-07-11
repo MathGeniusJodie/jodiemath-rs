@@ -776,3 +776,717 @@ what shipped.
 - **Ulp-staircase-aware LP grids**: densify fit grids near output
   power-of-2 boundaries where ulp weight steps 2x. Complements the
   ulp-weighted-fit idea above (that's weights; this is node placement).
+
+### Kitchen-sink brainstorm (2026-07-11, unscreened)
+
+~100 brainstormed ideas, deliberately not filtered for likelihood — none
+tested, screened, or measured. Every one must keep the crate's branchless
+auto-vectorizing contract; items with known-risky codegen are flagged
+`codegen_check`. Each was checked against the rejected list above; where
+an idea revisits a rejection, the differing mechanism is stated.
+
+#### Fitting & search techniques
+
+1. **Real-chain refit**: build the fit Jacobian by finite-differencing
+   coefficient ulp steps through the *actual compiled construction*
+   scored on the real fuzz, not a continuous poly model — attacks the
+   "error is rounding-chain-dominated" wall that killed log_2's LP.
+   Candidates: log_2, acos_poly (max 5), sinf_poly.
+2. **MIP quantized fit**: HiGHS supports mixed-integer — fit with the
+   f32 quantization of each coefficient as integer variables (a
+   homegrown fpminimax, since sollya isn't installed).
+3. **1-D exhaustive ±few-hundred-ulp scan of each poly's final combine
+   constant** scored on the real fuzz — the cheap slice of #1.
+4. **Degree-shed sweep with the max-capped weighted-LP machinery** (the
+   rejected degree probes used plain lolremez minimax, a weaker tool):
+   ln/log10 (deg 9), atan_latency (deg 17), erf_poly — can any drop a
+   term while holding max ulp?
+5. **Per-caller Pade refit where domains genuinely differ**: exp2m1's
+   Pade argument is y=x·ln2, |y|<0.347 — narrower than expm1/tanh's
+   shared |y|<0.5 fit. (The rejected decouplings — sinf_poly,
+   exp_pos_neg — had *identical* caller domains; this one doesn't.)
+6. **Joint threshold+coefficient coordinate descent** in tune.rs
+   (crossover as a continuous search parameter) — automates the asin
+   fix-5 lesson instead of retuning thresholds against frozen polys.
+7. **Seam retunes not yet done**: exp2m1's 0.5, exp_m1_over_x's 0.5,
+   sinh_checked/cosh_checked's 0.5 (post-checked-half construction),
+   softplus/logaddexp's 87.0 cutoff, asinh/acosh's 2048 rescale
+   threshold. (The 5-function crossover audit covered sinh/tanh/expm1/
+   asin/erf only.)
+8. **atan_poly joint numerator+denominator nonlinear refit** (scipy
+   least_squares on the true rational) — only separate num-only/
+   denom-only LPs were tried; the max-4 worst point was diagnosed as
+   denominator-or-division-bound.
+9. **erf joint Pade+erf_poly refit with explicit crossover-region
+   weighting** — the rejected num-only LP regressed exactly at the 0.28
+   seam, which a joint objective would score directly.
+10. **exp2_q_poly combine-sensitivity LP** (weight by the
+    `fma(q, t1*f, t1)` combine's local derivative) — first check where
+    the real worst f sits: the technique's documented failure mode is
+    the sensitivity vanishing exactly at the hard region.
+
+#### Codegen & micro-optimizations
+
+11. **Combined range compares via wrapping_sub**: cbrt/cbrt_accurate's
+    `ax == 0 || ax >= EXPONENT_MASK` → single
+    `ax.wrapping_sub(1) >= EXPONENT_MASK - 1`; powf_checked's
+    `axb != 0 && axb < EXPONENT_MASK` likewise (one compare each).
+12. **Exponent fields from magic-round bits via integer ops**: after any
+    magic-round, k already sits in kb's low mantissa bits —
+    `((kb_bits + C) << 23) & EXPONENT_MASK` replaces the `(k+383)`
+    float-add/shift chain with vpaddd/vpslld on less-contended ports.
+    Sites: exp10/exp10_checked, exp_r_singlefield (tanh/sigmoid),
+    exp2_field_split. Verify negative-k two's-complement wrap;
+    codegen_check.
+13. **`core::hint::assert_unchecked` range hints after clamps** so LLVM
+    can prove bounds it currently can't — directly targets the rejected
+    "k1 from bit-twiddled k" (killed only because LLVM couldn't prove
+    the clamp bound at codegen time).
+14. **`f32::to_int_unchecked` where the range is guaranteed**: lowers to
+    plain vcvttps2dq (vectorizes), unlike the saturating `as i32` that
+    de-vectorized exp2_checked's rejected variant. codegen_check
+    mandatory, pairs with #13.
+15. **lzcnt-based denormal normalization** (`u32::leading_zeros` →
+    vplzcntd, AVX-512CD): replace the compare+select 2^24 rescale in the
+    log family/cbrt/hypot_checked with an exact shift-based normalize.
+    codegen_check that scalar leading_zeros autovectorizes here.
+16. **Sign-algebra select→xor audit**: port atan_latency's adopted
+    mulsign-reassociation to plain atan; screen erf's
+    `mulsign(1 − exp2(...), x)` combine and powf_sign_combine's
+    6-select tree for a bit-mask classify form. (acos's analog measured
+    slightly *worse* — per-site mca required, not assumed.)
+17. **exp_pos_neg_checked_half: fold the ×0.5 into the integer
+    reciprocal trick** — `t1n*0.5 = from_bits(0x7E80_0000 − t1_bits)`
+    (and t1·0.5 analogously) — deletes two multiplies.
+18. **reduce_pi: downgrade p2's full two_sum to quick_two_sum for
+    throughput** — the documented keep-reason was latency-only ("not on
+    the critical path, saves no latency") but it's still 3 ops of port
+    pressure; verify with the exhaustive sweep like the other
+    downgrades.
+19. **atan2: compute both y/x and x/y up front** (two independent,
+    parallel divisions) instead of atan's internal serial `1/(y/x)` —
+    cuts a whole division's latency off atan2's critical path and
+    removes one rounding (x/y is singly-rounded where 1/(y/x) rounds
+    twice).
+20. **sigmoid: fold the `(-x)` negation into the reduction constants**
+    (negated LOG2_E/LN2_HI/LN2_LO words) — one vxorps saved.
+21. **Standing codegen_check harness**: auto-grep every public fn's
+    emitted asm for scalar-fallback signatures (cvttss2si class,
+    kshift-assembled masks) — automates the manual rule that caught two
+    past de-vectorizations.
+22. **Toolchain-bump re-screen list**: tag the rejections that were pure
+    scheduling artifacts (pre_offset dead-add removal, ln/log10
+    trailing-fma fuse +1cyc, reduce_pi depth-2 rebalance) and re-measure
+    after each nightly bump — these can silently flip.
+
+#### exp / log family
+
+23. **exp/exp_checked floor-domain reduction**: k = floor(x·LOG2_E)
+    (native vroundps-down), r ∈ [0, ln2), poly refit — guarantees
+    k ≤ 127 in-domain so the k1/k2 split collapses to one exp2int
+    field (~5 ops deleted). Risks: doubled poly domain may need degree
+    +1 (scipy-screen first); breaks exp_pos_neg's p(−r) even/odd reuse
+    (that caller keeps round); edgecheck x=88.37628. Note the rejected
+    round-based experiments went the *opposite* direction (round where
+    floor existed).
+24. **exp t1-weave revisit with different port placement** (weave into
+    t2 instead, or pre-scale p): the rejected version's accuracy win
+    (max 3→2, cascading to expm1/sinh/cosh/tanh) was fully real — only
+    fma/mul port contention killed it.
+25. **exp_r_poly degree 5→6**: attacks expm1's direct-branch max 6;
+    cost one fma at already-amortized Estrin depth.
+26. **exp_pos_neg even/odd poly degree bump**: sinh/cosh's round-off
+    audit traced max 5 to the poly's own ~1.3e-7 fit error — degree is
+    the one lever there not yet tried.
+27. **exp10: treat LOG10_2_LO as a free fitted parameter** (end-to-end
+    exp10 objective) instead of the rounded mathematical residual.
+28. **exp10_reduction: floor-based adjust**
+    (`a = fr.floor(); k = kr + a; f = fr − a`) — one vroundps instead
+    of compare+select+2 adds. Screen bit-exactness.
+29. **exp10: fold LOG2_10 into a dedicated Q(d) poly in d directly**
+    (the sinpi/sind constant-folding trick) — deletes the `d*LOG2_10`
+    multiply and its rounding; the floor-adjust step's units need care
+    (speculative).
+30. **exp2m1: refit the Pade directly in x** (absorb ln2 into the
+    coefficients) — deletes the `y = x*LN_2` multiply and its rounding
+    from the seam-owning branch.
+31. **exp_m1_over_x: trailing `/x` → `* (1.0/x)` issued at entry**
+    (divider idle, division fully overlapped by reduction+poly). Costs
+    one extra rounding — accuracy screen.
+32. **exp_pos_neg: return halves pre-scaled by 0.5 for plain sinh/cosh
+    too** (like checked_half already does) — deletes the caller-side
+    `0.5*(ep±en)` multiply.
+33. **Public `sinhcosh` pair function**: exp_pos_neg already computes
+    both — callers needing both pay one reduction instead of two.
+34. **log1p/log2p1: two_sum the `ln(u) + corr` combine** (targets log1p
+    max 4, log2p1 max 3); ship as `_accurate` twins if the mca cost is
+    real.
+35. **log1p: `corr = c * (1.0/u)` with the division issued right after
+    u** (one add in) — overlaps the whole ln evaluation; one extra
+    rounding on the correction only; screen.
+36. **rlibm-style discrete rounding-interval LP extended to ln/log10**
+    (same 2^23 reduced-input multiplicity as the existing log_2 entry).
+37. **log_family_wrapper: cheaper special-case classify** — derive both
+    spec selects from one bits-domain compare pair; audit-grade micro.
+38. **softplus fused kernel**: one fitted poly for ln(1+2^-t) over the
+    k/f-reduced domain, replacing exp (full poly) → log1p (division +
+    deg-9 ln poly). Big throughput candidate.
+39. **logaddexp: same fused kernel** on |a−b|.
+40. **softplus/logaddexp: two_sum the final `m + corr`** — directly
+    targets logaddexp's documented ~1e4 max-ulp cancellation for one
+    two_sum's cost.
+41. **logaddexp2** (base-2 sibling, ML/audio) — near-free variant of
+    whatever #39 lands on.
+42. **tanh division-residual correction on e/(e+2)** (round-off audit:
+    error splits ~evenly poly/combine, so this targets the combine
+    half). Caution: atan's analogous division fix measured zero benefit
+    at +181% throughput — mca screen before any fitting work.
+
+#### sin / cos family
+
+43. **sinpi/cospi dedicated poly — fold π into sinf_poly's
+    coefficients** (fit sin(πr) in r over [−0.5,0.5]): deletes the π·r
+    multiply and its rounding at zero added ops; leading πr term via
+    `fma(r, PI_HI, …)` with the PI_LO·r residual absorbed into the fit.
+    Mechanism differs from the rejected two_prod correction (which
+    *added* ops for the same rounding). Targets cospi's avg 0.281.
+44. **sind/cosd/tand: same fold for DEG_TO_RAD_SMALL** — deletes the
+    d·c multiply and captures the accuracy the rejected HI/LO split
+    found (sind avg −45%) at *negative* op cost instead of +11%.
+45. **sin_checked/cos_checked: ql via magic-round** (rem is small, so
+    the magic add is exact) and read parity(ql) from the low mantissa
+    bit — deletes one parity() (floor+fma) per call; the fast tier
+    already proves the bit-parity pattern.
+46. **parity(qh) bit-derivation**: |p0| < 2^22 → magic bits; p0 ≥ 2^24
+    → deterministically even (every f32 there is an even integer); only
+    the 2^22..2^24 window needs a select. Screen vs the floor-based
+    parity.
+47. **Fast-tier reduction upgrade via two_prod**: replace the bounded-q
+    PI_A..D 4-fma chain with one two_prod(q, PI_HI) + a PI_LO word —
+    exact at any q, could push the fast tier's ~1.3e7 cliff far out at
+    similar op count. Concrete design for the backlog's "intermediate
+    tier" (distinct from the rejected *word-dropping* 3-word/3.5-word
+    attempts, which reduced precision; this adds none of that risk).
+48. **tan_checked**: sin_checked/cos_checked composition (the
+    shared-reduction fusion already measured slower wall-clock; plain
+    composition mirrors tanpi/tand).
+49. **sinf_poly real-chain refit** (#1's method) scoring sin_checked +
+    cos_checked's actual reductions jointly — the rejected LPs used
+    continuous grids that mis-weighted the caller split.
+50. **sinc: attribute the max-4 error** (division vs sinpi) and screen
+    an fma-residual correction on the division if division-bound.
+51. **tan/tand/tanpi cross-inline CSE audit**: each pays two full
+    reductions differing only in the q offset — asm-diff whether LLVM
+    shares the common work; hand-share at composition level if not.
+
+#### cbrt / sqrt / hypot
+
+52. **cbrt degree-4 correction poly**: deg-3 and deg-5 were both
+    measured, the midpoint never — +1 fma for possibly max 3→2,
+    bringing cbrt inside the 2-max budget.
+53. **rcbrt direct seed**: negated-exponent bit trick + refit of the
+    same deg-3 correction shape — deletes rcbrt's trailing division
+    entirely (its own doc explicitly defers this as "real fitting
+    work"). Targets rcbrt's 0.418/5.
+54. **asinh/acosh single-sqrt restructure**: select the sqrt *argument*
+    (ax²+1 vs 1+1/ax²), take one sqrt, post-multiply by select(1, ax) —
+    deletes one of two unconditional sqrts (sqrt isn't fully pipelined).
+55. **hypot3/rnorm3** (3-arg vector norm): fma chain + sqrt,
+    graphics/physics staple, trivially vectorizes.
+56. **Slice-tier FTZ/DAZ via MXCSR**: a slice entry point can set
+    FTZ/DAZ around its own loop and restore — gets the FTZ
+    feature-flag idea's win without a global cargo feature.
+
+#### asin / acos / atan
+
+57. **asin_small: minimax refit at the same degree over [0,0.25]** —
+    Taylor is optimal at 0, not over the interval, and the truncation
+    at the 0.25 edge is exactly where asin's max 9 lives. Zero op cost,
+    unlike the rejected extra-Taylor-term attack (+7.9% throughput).
+58. **asin: joint crossover-shift + both-sides refit** (e.g. 0.2 with
+    asin_poly refit over [0.2,1)) — the prior crossover retune held
+    coefficients fixed; the added refit dimension makes it a different
+    search.
+59. **atan_poly 4/4 Pade bump, properly seeded**: the 2/2→3/3 bump cut
+    max 18→4 for ~7% cost; a 4/4 could reach ≤2 on the crate's
+    cheapest still-over-budget function.
+60. **atan2_latency tier**: atan_latency-based atan2 — atan2 currently
+    stacks atan_poly's division on top of its own y/x division.
+61. **atan_bounded tier** (|x| ≤ 1 contract): skips the 1/a division
+    and fold select entirely; atan_poly alone is the whole answer
+    there.
+
+#### erf family
+
+62. **erfc_accurate opt-in tier** bundling the verified-but-rejected-on-
+    cost fixes (two_prod exponent: max 109→93; compensated Horner: avg
+    −14%) — the "no perf penalty" bar doesn't apply to an opt-in tier.
+63. **erfcx_checked**: the already-verified asymptotic tail for x>10
+    (fixes the documented unbounded freeze; the +17.7% cost was only
+    rejected as a *default*).
+64. **erfc_rational degree 5/5 bump — sequenced after an exponent fix**:
+    the current root cause is the exponent, so a tighter fit alone was
+    predicted useless; inside tier #62 the rational becomes the next
+    binding constraint.
+65. **erf tail: plain exp2 instead of exp2_checked** — the input is
+    provably in [−83.8, ~0), inside exp2's own domain; the checked swap
+    was "cheap extra insurance." Measure what the insurance costs;
+    edgecheck first.
+66. **erfinv** (Giles-style poly in w = ln(1−x²), two-poly branchless
+    select, fully fma-based) — sampling/ML staple, vectorizes cleanly.
+67. **norm_cdf/norm_pdf pair** (Φ via 0.5·erfc(−x/√2)) — thin
+    composites for API breadth.
+68. **erfcx negative branch: x²·LOG2_E exponent** has the same rounding
+    hole as erfc's — include in tier #62's scope.
+
+#### hyperbolics / activations
+
+69. **atanh restructure**: small-|x| odd-poly branch (|x|<0.25, ~5 odd
+    terms) + single-log1p-on-|x| form (`0.5·log1p(2a/(1−a))` +
+    mulsign) for the rest — halves the two-log1p cost. The rejected
+    single-log1p variants lacked the small branch; verify that's where
+    their accuracy loss actually lived before fitting.
+70. **ML activation pack**: gelu (via erf), silu (x·sigmoid),
+    softsign — trivial composites of existing kernels, all vectorize.
+71. **logit(p)** (sigmoid's inverse) via cancellation-safe log1p forms.
+72. **compound(x, n) = (1+x)^n** (financial kernel): n·log1p-based
+    route avoiding pown-on-(1+x)'s tiny-x precision loss.
+
+#### powf / pown / remainder
+
+73. **powf_mid tier**: 1.5-word log2 (k + one two_prod hi/lo pair, no
+    full Df32 arithmetic) through the y multiply + a single
+    multiplicative correction — targets powf's y-amplified error at a
+    fraction of powf_checked's +61% throughput cost.
+74. **powr (C23)**: x^y defined only for x ≥ 0 — powf minus the entire
+    powf_sign_combine select tree; a cheaper checked tier for the
+    common all-positive case.
+75. **rootn (C23)**: x^(1/n) with odd-n negative handling — cbrt
+    generalization reusing powf/pown pieces.
+76. **Constant-base powf slice**: precompute log2_df(x) once per slice;
+    per-element work drops to a Df32 multiply + exp2 (slice-tier
+    candidate, fixed-base workloads).
+77. **pown_16 tier** (|n| ≤ 65535): 16 iterations — pown_small's 8-iter
+    precedent measured ~4-6x over pown.
+78. **pown_small_accurate**: Df32-mantissa-only compensated squaring at
+    8 iterations — NOT the rejected WideFloat (that was 32 iters +
+    exponent tracking for the large-|n| overflow, 11-30x cost);
+    |n|≤255 avoids the overflow regime entirely, so plain Df32
+    suffices and the multiple should be far smaller. Targets
+    pown_small's max 304.
+79. **fmod_checked**: trunc-boundary analog of remainder_checked's ±1
+    nudge (fires when r0's sign disagrees with x's or |r0| ≥ |y|) —
+    closes fmod's documented ~3e-7 off-by-a-whole-y failure.
+80. **remainder_wide exact-tie sign-flip fix**:
+    `adj = (r0/ys).round_ties_even()` — at the documented failure
+    r0/ys is exactly ±0.5, which ties-even resolves to 0, killing the
+    spurious double-correction; genuine multi-integer gaps (|adj| ≥ 1)
+    unaffected. Also cheaper per remainder_ieee's own vroundps finding.
+    Then re-include the excluded tie domain in the standing test.
+81. **remainder_wide denormal-x corner**: gate the 0.125 rescale on |x|
+    too (q0 is always 0 in that corner) — closes the other documented
+    few-ulp exception.
+82. **Const-y remainder/fmod slice variant**: precompute 1/y,
+    `q = round(x * (1/y))` — trades the per-element division for a
+    multiply; the changed q rounding needs an accuracy screen
+    (slice-tier candidate).
+
+#### New functions / API breadth
+
+83. **exp10m1 + log10p1**: completes the C23 set next to
+    exp2m1/log2p1 — both reuse existing kernels (exp10's reduction
+    with the −1 fuse; log1p's Sterbenz trick in log10 units).
+84. **xlogy / xlog1py** (entropy kernels, 0·log(0)=0 convention via
+    select).
+85. **atanpi/atan2pi/asinpi/acospi** (C23 half-turn inverses): NOT
+    output-scaled (double rounding) — fold 1/π into each poly's own
+    coefficients; the π/2-derived constants become *exact* (0.5, 0.25),
+    so these could come out *more* accurate than the radian versions
+    for free.
+86. **exp2i/ldexp/frexp-style exact power-of-two utilities**
+    (exp2_field_split is already the core; vcvtdq2ps-friendly).
+87. **Public Df32 module** (log2_df/exp2_checked_df/two_prod etc.) for
+    power users composing their own accurate kernels.
+88. **Public checked pi-reduction API** (round_x_over_pi + reduce_pi)
+    for user compositions (custom periodic kernels).
+
+#### Infrastructure / harness / tiers
+
+89. **Gather-based LUT tier screen**: a true vgatherdps table + short
+    poly for exp2 (16/32-entry exact 2^(j/N) hi words) — distinct from
+    the rejected compare-select tree; screen the gather's mca cost
+    first; likely lives in the simd/slice tier.
+90. **Same gather screen for log_2** (mantissa-segment table +
+    low-degree poly).
+91. **Slice tier × rejected-global-flags interaction**: per-function
+    zmm-width and interleave=2 re-tests become possible via
+    #[target_feature] once the slice tier exists — two documented
+    median-win/outlier-veto rejections become recoverable.
+92. **simd-tier division-free kernels via vrcpps/vrsqrtps + NR**
+    (atan_poly's denominator, sigmoid/tanh's final division, rcbrt, an
+    rsqrt_fast) — unreachable from scalar autovectorized code, natural
+    once an explicit core::simd tier exists.
+93. **2-arg importance-sampling harness** for powf/atan2/hypot/
+    remainder: structured lattices near known-hard manifolds (e.g.
+    y·log2(x) near integers) — better worst-case discovery than
+    uniform sampling.
+94. **Differential testing against sleef/rlibm-built references** for
+    functions with no std twin (erfcx, sind, exp10, sinpi, …).
+95. **accuracy.rs per-branch attribution mode**: report which select
+    arm produced each worst case — speeds every future refit's
+    diagnosis step.
+96. **Thermal-controlled wall-clock harness** (cpufreq pinning,
+    alternating A/B batches): de-risks the one recorded mca-vs-
+    wall-clock *direction* disagreement (sincos_checked) and the
+    documented 3-9x environment swing.
+97. **Targeted LLVM flag screen**: -enable-unroll-and-jam,
+    -extra-vectorizer-passes, SLP horizontal reductions — cheap sweep,
+    same method as the interleave/zmm experiments.
+98. **Auto-`_unchecked` macro (existing entry) — concrete new
+    candidates**: sind/cosd (drop the POLY_SAFE_BOUND clamp under the
+    4.7e7 contract), erf (drop the 10.0 bound), softplus/logaddexp
+    (drop NaN guards), sinpi (drop the x==0 select).
+99. **tgamma** companion to the lgamma entry (Lanczos/Stirling, shares
+    machinery).
+100. **Bessel j0/j1** (Cephes-style two-region rational + trig
+     composition — big job, listed for completeness like lgamma).
+
+#### Batch 2 (same session): fitting & search, continued
+
+101. **Avg-first, max-capped simulated annealing** over coefficient ulp
+     space — the rejected basin-hop failed on its max-first tuple
+     objective (documented bias), not on the annealing mechanism itself.
+102. **LLL/lattice reduction over the coefficient quantization step**:
+     finds good *simultaneous* f32 roundings of a whole coefficient set
+     — the cheap cousin of the MIP idea (#2).
+103. **Low-discrepancy (Sobol) fit/verification grids** — avoids uniform
+     grids' aliasing against ulp staircases; complements the
+     staircase-node-placement entry (weights vs placement vs sequence).
+104. **True Remez exchange in-repo** (f64, certified equioscillation) —
+     the LP is a discretized stand-in; Remez gives certificates and
+     better conditioning on rationals (atan_poly, erfc_rational).
+105. **Gappa (or hand-rolled interval) certificates** for the crate's
+     exactness claims (Sterbenz subtractions, exact po2 multiplies,
+     k*LN2_HI) — the machine-checkable version of the interval
+     self-audit entry; several past bugs were exactly wrong claims of
+     this kind.
+106. **Caller-profile-weighted alternate coefficient sets** behind a
+     cargo feature (e.g. sin weighted toward [−2π,2π]) — same shapes
+     and cost, different literals.
+107. **PI_A..D bit-allocation joint refit**: keep all 4 words but
+     re-search each word's trailing-zero budget jointly with downstream
+     error — distinct from the rejected word-*dropping* attempts (3-word
+     chain, fitted 3.5-word split), which reduced total precision.
+108. **Clenshaw/Chebyshev-basis evaluation screen** for the worst-
+     conditioned polys (erfc_rational's n/d, atan_latency's deg-17) —
+     different rounding structure at comparable op count.
+109. **Literal-transcription standing test**: assert every decimal
+     literal against its intended bit pattern — the acos_poly 1.5707963
+     one-ulp transcription bug was found by luck, not by a test.
+110. **±few-ulp exhaustive scan of every non-poly literal** (clamp
+     bounds, seed constants, magic offsets, branch thresholds) scored on
+     the real fuzz — #3's sibling for non-coefficient constants.
+
+#### Batch 2: exp / log family
+
+111. **expm1_checked / exp_m1_over_x_checked**: input clamp + single
+     exponent field (the tanh/sigmoid pattern) — likely cheaper than the
+     current k1/k2 split *and* total-domain, since the clamp caps k at
+     127 by construction.
+112. **exp single-field narrow tier**: contract x ≤ ~88.02 (k ≤ 127
+     under round) — deletes exp2_field_split's second field for a
+     slightly narrower documented domain.
+113. **exp10_checked clamp consolidation**: re-derive the x clamp bound
+     so the separate k clamp is provably redundant and deletable.
+114. **FTZ-mode minimal exp2_checked/exp_checked** (rides the MXCSR
+     slice-tier idea #56): lower clamp −151→−126 and the
+     denormal-rounding half of the split's job disappears; same cascade
+     deletes denormal_rescale from the log family and cbrt — scope #56
+     to capture all of it.
+115. **exp_pos_neg: p_neg from the reciprocal identity**
+     p(r)·p(−r) = e² − (r·o)²: one division (idle divider, cbrt
+     precedent) instead of the second combine — internal to
+     exp_pos_neg, distinct from the rejected tanh-via-ratio route
+     (which needed two whole polys). Accuracy screen first.
+116. **Public exp2_kf(k, f) pre-reduced primitive** — exp10, powf, and
+     user custom-base kernels skip the redundant floor/frac.
+117. **exp_scaled(x, s) = e^x · 2^s** with s folded into the field
+     split for free — softmax/normalization building block.
+118. **logsigmoid(x) = −softplus(−x)** as a thin public function (loss
+     kernels); rides the fused-softplus idea (#38) if that lands.
+119. **tanh: absorb the ×2 into the reduction constants** (2·LOG2_E
+     etc.; the Pade side's rescale by powers of two is exact, no refit
+     needed) — deletes the `2.0*x` multiply.
+120. **log1p_unit: specialized log1p for u ∈ [1,2)** (k = 0 always) for
+     softplus/logaddexp's `log1p(e)` with e ∈ (0,1] — skips the whole
+     exponent extraction. Distinct from the rejected log1p small-|x|
+     *branch* (which added a poly to every general log1p call); this is
+     a separate callee for callers whose domain guarantees k=0.
+121. **asinh/acosh single-ln restructure**: both currently evaluate two
+     full ln cores per call (log1p_finite's ln(u) *plus* the
+     `ln(ax)+LN_2` overflow fallback, both unconditional in branchless
+     style). ln_normal already has a koff hook: select the *argument*
+     (u vs ax) and koff (0 vs +1, since ln(2ax) = ln(ax)+ln2) into one
+     ln_normal call — deletes an entire deg-9 poly + wrapper per call.
+     Verify the two-ln suspicion via asm first.
+
+#### Batch 2: trig
+
+122. **sin2pi/cos2pi/tan2pi** (full-turn arguments, DSP phase
+     accumulators): literally sinpi(2x) — the doubling is an exact po2
+     multiply — thin but discoverable API with the exactness documented.
+123. **asind/acosd/atand/atan2d**: fold 180/π into the poly/combine
+     constants (#85's mechanism) — 90.0/45.0 are exact where π/2 wasn't.
+124. **π-constant hi/lo splits in the inverse-trig combines**: atan's
+     `FRAC_PI_2 − y` fold (its max 4 sits at the fold boundary), acos's
+     `+PI`, atan2's correction, asin's big branch — distinct from the
+     rejected 1/a *division*-rounding fix (different rounding source at
+     the same location).
+125. **Integer-domain parity pipeline end-to-end** for
+     sin_checked/cos_checked (parities as bits, XOR combine, direct
+     sign mask) — composes #45/#46; deletes the float compare+select
+     flip.
+126. **wrap_pi(x) → [−π, π] public angle normalization** riding
+     round_x_over_pi/reduce_pi (robotics/geo staple; user-level face of
+     #88).
+127. **sin_prereduced/cos_prereduced public** (r ∈ [−π/2, π/2]
+     contract = sinf_poly + documented parity conventions) — for
+     callers who already did their own reduction; the trig analog of
+     #116.
+128. **tanpi/tand direct poly**: tan(πr) poly on |r| ≤ 0.25 + cotangent
+     reflection for the rest — every radian direct-tan attempt died on
+     *inexact reduction* near poles; tanpi/tand have *exact* reductions,
+     which removes precisely that documented blocker. Targets the
+     sinpi/cospi division and the near-pole ulp blowup.
+129. **sinpi: re-screen the x==0 guard after the poly fold (#43)** —
+     the fold changes which op erases the sign of zero.
+130. **sind/cosd: clamp on d instead of the radian product after #44**
+     (|d| ≤ 90 exact-domain form) — cheaper/earlier bound.
+131. **sinc_unnormalized** (sin(x)/x in radians, x=0 → 1) — DSP/physics
+     sibling of the existing normalized sinc.
+
+#### Batch 2: roots / hypot / geometry
+
+132. **sqrt1pm1(x) = sqrt(1+x) − 1 public** — the rationalized form
+     asinh/acosh/asin each re-derive inline today.
+133. **Half/third-power composition family**: x^(3/2) = x·sqrt(x),
+     x^(2/3) = cbrt(x)² (or cbrt(x·x)) as provided functions — each 1-2
+     correctly-rounded ops, always beats powf; also a docs pointer so
+     users stop calling powf for these.
+134. **rnorm4 / quaternion normalize** — companion to hypot3 (#55).
+135. **cross2 / diff_of_products** (Kahan's two_prod determinant,
+     exact-ish ad−bc) — geometry-predicate primitive, vectorizes.
+136. **normalize2/normalize3 slice kernels** (rhypot + scales — the
+     operation users actually want hypot for).
+137. **cbrt_throughput status decision**: document it as the approx-tier
+     member it is (5.5 avg ulp) or drop it — currently in limbo with no
+     doc comment.
+
+#### Batch 2: erf / inverse-trig follow-ups
+
+138. **Dawson function F(x)** — erfcx sibling (spectroscopy), shares the
+     rational machinery.
+139. **erfc_inv / probit (normal quantile)** alongside #66's erfinv —
+     completes the sampling stack.
+140. **erfc saturation-threshold tightening screen**: find where erfc
+     first rounds to exactly 0/2 — if it's meaningfully inside |x|=10,
+     a tighter clamp shrinks the rational's required fit domain and
+     frees headroom.
+141. **Sequencing note**: if asin_small's minimax refit (#57) lands,
+     re-run the crossover search (#58) — the two interact.
+142. **acos max 5 as an explicit real-chain-refit (#1) target** — its
+     coordinate descent is exhausted, which is exactly the case #1
+     exists for.
+143. **atan2_pos: [0, 2π) variant** via a branchless +2π fold —
+     geo/graphics convention ask.
+
+#### Batch 2: hyperbolics / ML / graphics
+
+144. **coshm1(x) = 2·sinh²(x/2)** — cancellation-safe cosh−1
+     (catenary/relativity), reuses sinh_small.
+145. **log1pmx(x) = log1p(x) − x** — statistics primitive
+     (gamma/Poisson kernels) that needs a dedicated cancellation-safe
+     form; near 0 it's −x²/2·(1−…), a small dedicated poly.
+146. **srgb_to_linear / linear_to_srgb**: the piecewise-2.4-power sRGB
+     transfer pair, branchless select over the linear toe — heavy
+     real-world vectorization demand; powf composition first, dedicated
+     poly if it earns it.
+147. **smoothstep/smootherstep graphics pack** (trivial fma polys with
+     exact endpoints; cheap API breadth).
+148. **Softmax / logsumexp / normalize slice reductions** (max-pass +
+     exp-pass + sum + scale in one fused traversal) — slice-tier
+     flagship, plus a rotate2d(sincos) demo kernel.
+149. **Monotonicity audit**: sigmoid/tanh/erf/atan/softplus checked for
+     local non-monotonic ulp wiggles (breaks bisection for ML users);
+     repair only if found and cheap.
+150. **sigmoid_grad / tanh_grad fused pairs** (s·(1−s) reusing the
+     already-computed e) — screen whether fusion beats the caller's own
+     two ops before building.
+
+#### Batch 2: powf / pown / remainder
+
+151. **signed_pow(x, y) = mulsign(|x|^y, x)** — graphics
+     gamma-on-signed convention; deletes powf's negative-base NaN
+     semantics for callers who explicitly don't want them.
+152. **rem_euclid / div_euclid f32 pair** (always-nonnegative remainder,
+     Rust-native semantics) — vectorizable, API breadth.
+153. **pown_const standing asm test**: its own doc comment says "verify
+     with --emit=asm before trusting" the const-fold — make that a test
+     instead of advice.
+154. **Const-arg slice family generalization**: const-y remainder
+     (#82), const-base powf (#76), const-base log (precompute
+     1/log2(b)) — one shared design decision.
+155. **powf slice integer-y dispatch**: slice checks all-y-integral once
+     and routes to the pown path — per-slice dispatch is free where
+     per-call isn't.
+156. **remainder_ieee as the documented default recommendation** —
+     cheaper (native vroundps) *and* standard; `remainder`'s ties-away
+     is an inherited port convention, not a design goal.
+157. **remainder_checked/remainder_wide consolidation screen** after the
+     ties-even fix (#80): can one tier serve both contracts, or does
+     wide's 6.5x cost keep them split? Screen only.
+
+#### Batch 2: AVX-512 simd-tier instruction ideas
+(all unreachable from scalar autovectorized code — natural once the
+core::simd tier exists; each replaces multi-op scalar idioms)
+
+158. **vgetexpps/vgetmantps log core**: exponent + mantissa extraction
+     in two instructions with denormals handled natively — replaces the
+     whole wrapping_sub bit-trick *and* denormal_rescale in a simd-tier
+     log family.
+159. **vscalefps exp core**: x·2^k in one instruction with correct
+     overflow/underflow/denormal semantics — replaces exp2_field_split
+     and most of its clamp machinery.
+160. **vreduceps/vrndscaleps**: fraction extraction (x − round-to-scale)
+     in one instruction — replaces floor+subtract in the exp2-family
+     reductions.
+161. **vfixupimmps**: table-driven special-value patching (zero/inf/nan
+     selects in one instruction) — collapses log_family_wrapper's select
+     chain.
+162. **vrangeps** for clamp pairs (single-instruction bounded
+     magnitude).
+163. **vpermi2ps in-register 32-entry LUTs** (two zmm registers hold the
+     whole table, no memory gather) — revisits the LUT idea (#89)
+     without vgatherdps' latency; the modern fast-table technique.
+
+#### Batch 2: harness / verification
+
+164. **Special-value matrix v2**: systematic ±0/±inf/NaN in/out matrix
+     for every public function as a standing test — five ±0 bugs found
+     ad hoc so far (acos, atan2, sinf_poly, sinpi, remainder).
+165. **Saturation-boundary pins**: every clamp constant and overflow
+     threshold gets an edgecheck pin at ±1 ulp around it — the
+     exp10_checked overflow-at-the-boundary pattern, systematized.
+166. **Denormal-output correctness audit**: which functions produce
+     correctly-rounded denormal outputs vs garbage (exp2_checked
+     documents its behavior; most others are unaudited).
+167. **Identity-consistency fuzz**: sin²+cos²≈1, cosh²−sinh²≈1, tanh vs
+     sinh/cosh, exp(ln x)≈x with documented tolerance bands — cheap
+     cross-function bug detector.
+168. **Worst-case corpus regression gate**: persist each function's
+     known worst-x list, re-check every commit in seconds between the
+     hours-long full sweeps.
+169. **ULP-error histogram artifacts** per function (not just avg/max)
+     — bimodal structure reveals branch-split opportunities.
+170. **Worst-pocket auto-bisection**: given a fuzz argmax, exhaustively
+     map the surrounding error pocket's shape and width — refit
+     diagnosis tool.
+171. **f16-lattice smoke gate**: all 65536 f16 values promoted to f32
+     against the f64 reference for every 1-arg function — sub-second CI
+     sanity check.
+172. **wgpu/GPU compute sweeps** for 2-arg functions — makes the
+     importance-sampling lattices (#93) orders of magnitude denser.
+173. **Round-trip contract measurement**: published ulp bounds for
+     exp(ln x), powf(powf(x,y),1/y), sin(asin x) pairs.
+174. **Auto-generated rustdoc accuracy tables from harness output** —
+     the readme's quickbench numbers already drifted once; generated
+     docs can't go stale.
+175. **NaN-payload/quietness propagation matrix** (which ops
+     canonicalize payloads) — documentation-grade completeness.
+
+#### Batch 2: portability / infrastructure
+
+176. **no_std/core-only feature**: most rounding already uses magic-add
+     tricks; audit the residual std surface (floor/round/trunc/sqrt) and
+     gate via core intrinsics or libm fallback.
+177. **C ABI export layer** (#[no_mangle] extern "C") — drop-in libm
+     comparison target and FFI consumers.
+178. **NEON/aarch64 re-audit**: fma is native there, but every
+     mca-derived scheduling decision in this crate is Tiger-Lake-
+     specific — the decided tradeoffs (division-vs-poly, Estrin
+     groupings) need re-measuring before claiming portability.
+179. **WASM relaxed-simd gate** (f32x4.relaxed_madd): without it the
+     fma compile_error! fires — document/feature-gate the story.
+180. **f64 sibling module** — the whole architecture transfers, polys
+     refit at higher degree (big job, lgamma-class, listed for
+     completeness).
+181. **strict-ieee cargo feature**: swaps the documented convention
+     divergences (remainder's ties-away, fmod's uncorrected quotient)
+     for slower std-matching forms — escape hatch instead of a doc
+     caveat.
+
+#### Batch 2: misc API / numerics
+
+182. **Compensated-Estrin generic infra** (EFT-based poly evaluation) as
+     reusable machinery for future _accurate tiers — compensated-Horner
+     was hand-rolled once (erfc, max stayed flat); infra makes the next
+     attempt nearly free to run.
+183. **Full Df32/Df32 division primitive** (div_to_f32 exists) — needed
+     by future rational _accurate tiers.
+184. **Public EFT toolkit**: two_prod/two_sum/quick_two_sum + mulsign
+     (with the mulsign-vs-copysign semantics doc) — users keep
+     reinventing these wrong.
+185. **fast_round_int public** (the ROUND_MAGIC idiom with its |x|<2^22
+     contract documented) — for callers building their own reductions.
+186. **Complex pack**: cexp/clog/cabs/carg composites (SoA-friendly,
+     mostly existing kernels).
+187. **n-ary logaddexp slice reduction** (tree or max+sum-exp) — pairs
+     with #148.
+188. **_approx tier promotion**: exp2_approx/log2_approx/rsqrt_approx
+     exist untabulated — publish error bounds, add sin/sigmoid/tanh
+     members for ML-inference users, explicitly outside the 0.5/2
+     budget (cbrt_throughput's tier, done properly).
+189. **periodic_poly! dedup macro** once #43/#44 land (four
+     near-identical folded-constant sinf_poly variants) — same
+     macro-not-fn pattern as pi_reduce_and_poly!.
+190. **#[doc(alias)] C-name annotations** (expf, atan2f, sincosf…) —
+     zero-cost discoverability.
+
+#### Batch 2: speculative / process
+
+191. **PWL+correction sigmoid_fast inference tier**: hard-clamped
+     piecewise-linear base + one poly correction — approx-tier member
+     (#188), ML-inference latency play.
+192. **Caller-side FTZ/DAZ behavior test**: callers often run with FTZ
+     set globally; document and test what each denormal-handling path
+     actually does under inherited MXCSR state.
+193. **Rayon-parallel accuracy sweeps**: the exhaustive 2^32 runs are
+     embarrassingly parallel — hours → minutes changes what's feasible
+     to verify per idea.
+194. **Multi-start coordinate descent in tune.rs** (N ulp-perturbed
+     seeds around the LP solution, keep best) — cheap robustness
+     against the single-seed local-optimum traps already documented.
+195. **Per-function error-budget ledger**: reduction X + poly Y +
+     combine Z ulp, from the round-off audits (several exist ad hoc for
+     expm1/sinh/tanh/erfc) — makes attack selection data-driven instead
+     of re-derived each session.
+196. **NaN-propagating min/max helpers** (`max_nan_prop`) + audit — the
+     IEEE maxNum NaN-discard trap has now bitten softplus,
+     hypot_checked, and logaddexp separately.
+197. **Seam continuity standing test**: value + one-sided-slope jump
+     measured at every branch seam (expm1/exp2m1/sinh's 0.5, asin's
+     0.25, erf's 0.28) — a seam regression detector for future refits.
+198. **Fix the mca latency harness's mix() sign blindness**: mix()
+     erases the sign bit each chain hop, so sign-dependent work
+     (cbrt, sin_checked's flips, erfcx's branch) is silently deleted
+     from every latency number — inject alternating sign into the chain
+     instead. Directly repairs a documented harness defect.
+199. **sigmoid one-sided evaluation**: compute e = exp(+|x|) ∈ [1,∞)
+     (k ≥ 0, single field trivially, no denormal side), s = 1/(1+e) ∈
+     (0, 0.5], select s or 1−s by sign — 1−s is safe here (result ≥
+     0.5, absolute error bounded by ulp(0.5)), unlike the rejected
+     0.5+0.5·tanh identity whose cancellation lived on the small side.
+200. **Auto-tune CI loop**: a scheduled job re-runs the tune.rs
+     coordinate descent (LP-seeded) on every poly and files a PR when a
+     real fuzz-verified improvement appears — automates the crate's
+     single most-repeated manual win pattern.
