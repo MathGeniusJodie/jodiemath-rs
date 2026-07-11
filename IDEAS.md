@@ -5864,3 +5864,53 @@ cousin.
     every other place the same "documented, manually-kept-in-sync
     standalone copies" pattern already exists, rather than assuming the
     first group found was the only one.*
+
+105. **expm1/exp_m1_over_x/exp2m1/tanh's shared Pade `N(v)/D(v)`
+    approximant, deduped via macro (adopted 2026-07-10) -- found by
+    grepping this session's own new-favorite signal (a repeated literal
+    coefficient), and a genuine new macro pitfall found and fixed along
+    the way.** `-1.9999927` (the Pade numerator's own leading
+    coefficient) appears 5 times in `src/lib.rs`; 4 of them are this
+    exact shared `N(v)/D(v)` rational, used two ways: `expm1`/`exp2m1`/
+    `tanh` compute `v * N(v) / D(v)`, `exp_m1_over_x` computes the bare
+    `N(v) / D(v)`.
+
+    First attempt returned `(n, d)` as a tuple and let each caller write
+    its own `v * n / d` -- passed the full assembly diff at 1515 lines
+    different, not zero. Investigated (per idea #103's own established
+    "non-zero diff means go find the mistake, not assume the technique
+    failed" discipline): the diff was pure register-allocation
+    reshuffling (same instruction count, same math), and `mca` confirmed
+    3 of 4 functions came back byte-for-byte unchanged in cost -- but
+    `expm1` specifically showed a real, if tiny, **+1.2% throughput**
+    (1.695->1.715 cyc/elem) purely from the tuple-destructuring
+    introducing named `n`/`d` locals before the combine.
+
+    Tried a leaner fix: a single macro expanding to a bare `n / d`
+    expression (no tuple, no named locals), with callers writing
+    `v * pade_expm1_ratio!(v)`. This made the diff *worse* (1675 lines)
+    and, checking the actual instruction reordering this time (not just
+    counting lines), found the real mechanism: **a macro invocation is
+    always parsed as a single atomic expression at its call site** -- so
+    `v * pade_expm1_ratio!(v)`, even though the macro's own body is
+    textually `N/D`, parses as `v * (N/D)`, not `(v*N)/D`. Rust's `*`/`/`
+    share precedence and are left-associative, so `v * N / D` written
+    directly in source means `(v*N)/D`, but a macro boundary breaks that
+    -- the expansion is opaque to the surrounding precedence, so it's
+    always grouped as if parenthesized. This silently reassociated the
+    real division, a genuinely different (if usually close) floating-
+    point computation, not just a register-allocation cosmetic. Fixed
+    with a two-armed macro (`pade_expm1_ratio!(v)` for the bare ratio,
+    `pade_expm1_ratio!(v, mul)` for `v * N / D` computed as a single
+    expansion, so ordinary precedence *inside* the macro body reproduces
+    the original grouping exactly) -- full assembly diff: zero byte
+    differences. `cargo test` clean. Commit `<pending>`. *Two lessons
+    stack here: (1) a non-zero diff after a dedup is worth decoding
+    instruction-by-instruction, not just eyeballing the line count --
+    "smaller diff" (1515) was actually the *more* correct one here, and
+    "bigger diff" (1675) revealed the real bug once actually read; (2) in
+    Rust, a macro invocation embedded in a larger expression is never
+    "as if the tokens were pasted in place" for precedence purposes --
+    it's always atomic, like a parenthesized sub-expression, which
+    matters enormously for any macro meant to reproduce an existing
+    left-to-right floating-point operation order exactly.*

@@ -173,6 +173,29 @@ macro_rules! exp_pos_neg_core {
     }};
 }
 
+// Shared by expm1/exp_m1_over_x/exp2m1/tanh's own Pade approximant for
+// e^v-1 near v=0 (an exact closed-form Pade identity, not an empirical
+// fit -- see exp_m1_over_x's own doc comment for the by-hand verification
+// at v=0). Two arms, not one: `v * fma(N) / fma(D)` (expm1/exp2m1/tanh)
+// vs. bare `fma(N) / fma(D)` (exp_m1_over_x). A macro invocation is
+// always parsed as one atomic expression at its call site, so writing
+// `v * pade_expm1_ratio!(v)` with a single `fma(N)/fma(D)`-only macro
+// would silently reassociate `(v*N)/D` (the original text's actual,
+// left-to-right operation order) into `v*(N/D)` -- mathematically equal
+// but not bit-identical (confirmed via a full assembly diff: this
+// exact mistake changed the compiled output, caught before committing).
+// The `mul` arm keeps `v * fma(N)` and the final `/ fma(D)` inside one
+// macro expansion, so ordinary Rust precedence inside that expansion
+// reproduces the original grouping exactly.
+macro_rules! pade_expm1_ratio {
+    ($v:expr) => {
+        fma(-1.9999927, $v * $v, -120.0) / fma($v, fma($v, $v - 12.000030, 59.999996), -120.0)
+    };
+    ($v:expr, mul) => {
+        $v * fma(-1.9999927, $v * $v, -120.0) / fma($v, fma($v, $v - 12.000030, 59.999996), -120.0)
+    };
+}
+
 #[inline(always)]
 #[allow(clippy::neg_cmp_op_on_partial_ord)] // deliberate: !(x < inf) exploits
 // NaN's always-false comparisons to catch both +inf and NaN in one check
@@ -1724,7 +1747,7 @@ pub fn exp_checked(x: f32) -> f32 {
 /// constants differ).
 #[inline(always)]
 pub fn expm1(x: f32) -> f32 {
-    let a = x * fma(-1.9999927, x * x, -120.0) / fma(x, fma(x, x - 12.000030, 59.999996), -120.0);
+    let a = pade_expm1_ratio!(x, mul);
     // Deliberately a standalone copy of exp's reduction/poly (not routed
     // through the public `exp` fn) ending in fma(p*t1, t2, -1.0) instead of
     // exp(x)-1.0 -- fuses the trailing subtract into the last multiply,
@@ -1778,7 +1801,7 @@ pub fn expm1(x: f32) -> f32 {
 /// `expm1` itself.
 #[inline(always)]
 pub fn exp_m1_over_x(x: f32) -> f32 {
-    let a = fma(-1.9999927, x * x, -120.0) / fma(x, fma(x, x - 12.000030, 59.999996), -120.0);
+    let a = pade_expm1_ratio!(x);
     const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
     let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
     let r = fma(-k, LN2_HI, x);
@@ -1831,7 +1854,7 @@ pub fn exp_m1_over_x(x: f32) -> f32 {
 // coefficient near ln(2), not ln(2) itself (bit pattern deliberately differs)
 pub fn exp2m1(x: f32) -> f32 {
     let y = x * LN_2;
-    let a = y * fma(-1.9999927, y * y, -120.0) / fma(y, fma(y, y - 12.000030, 59.999996), -120.0);
+    let a = pade_expm1_ratio!(y, mul);
 
     let xs = x.clamp(-151.0, 128.0);
     let k = xs.floor();
@@ -2124,7 +2147,7 @@ pub fn tanh(x: f32) -> f32 {
     // exists for. Also carries the same fma(p, exp2int, -1.0) tail fusion
     // as expm1's own fix.
     let y = (2.0 * x).clamp(-87.0, 88.0);
-    let a = y * fma(-1.9999927, y * y, -120.0) / fma(y, fma(y, y - 12.000030, 59.999996), -120.0);
+    let a = pade_expm1_ratio!(y, mul);
     const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
     let k = fma(y, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
     let r = fma(-k, LN2_HI, y);
