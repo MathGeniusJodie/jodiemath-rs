@@ -6233,3 +6233,25 @@ cousin.
     holding up as a reliable complement to the line-window scanner
     (idea #107), worth treating as a standing check alongside it rather
     than a one-off.*
+
+110. **`exp10`/`exp10_checked`: shared round-based reduction deduped via
+    macro (adopted 2026-07-11)**: `exp10`'s own doc comment already said
+    "Same reduction as [`exp10_checked`], but a single exponent-field
+    construction (no k1/k2 split) instead of two" -- another duplication
+    already admitted in plain English (same discovery technique as ideas
+    #108/#109). The 9-line reduction (`kb`/`kr`/`d`/`fr`/floor-adjust to
+    `(k, f)`) is byte-for-byte identical between the two; only
+    `exp10_checked`'s own leading `x.clamp(-1000,1000)` and trailing
+    `k.clamp(-151,128)` (needed since it feeds the k1/k2-split combine,
+    unlike `exp10`'s single-field one) differ, and stayed at each call
+    site. Extracted into `exp10_reduction!(x) -> (k, f)`. Verified with
+    the same rigor as every dedup this session: full pre/post
+    `mca_target` assembly diff -- zero byte differences. `cargo test`,
+    `codegen_check` (71 regions clean), `edgecheck` (601 pins, same 2
+    known won't-fix cbrt misses, no new failures) all clean. Pure
+    hygiene, no accuracy/perf claim. *Fourth dedup this session found via
+    the "grep doc comments for admitted duplication" technique -- at this
+    point it's caught as many real opportunities as the line-window
+    scanner (2 each) with less mechanical setup, for this specific
+    codebase where doc comments are unusually thorough and honest about
+    cross-referencing shared logic.*
