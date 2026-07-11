@@ -134,6 +134,45 @@ macro_rules! exp2_q_poly {
     }};
 }
 
+// Shared by exp_pos_neg/exp_pos_neg_checked_half (sinh/cosh's own
+// unchecked/checked exp(x)/exp(-x) core): identical Cody-Waite reduction,
+// even/odd-split poly (retuned 2026-07-09/10 -- see [`exp_pos_neg`]'s own
+// doc comment for the coefficient history, since that's still the
+// canonical place the refit story lives), and t1n/t2n reciprocal
+// construction. Only each caller's own optional input clamp and final
+// `0.5`-scaling differ, so those stay at the call site. Returns
+// `(p_pos, p_neg, t1, t2, t1n, t2n)`. Macro, not a fn -- same reasoning
+// as exp_r_poly!/exp2_q_poly! above.
+macro_rules! exp_pos_neg_core {
+    ($x:expr) => {{
+        const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+        let k = fma($x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
+        let r = fma(-k, LN2_HI, $x);
+        let r = fma(-k, LN2_LO, r);
+        let c: [f32; 4] = [4.99993e-1, 1.6667245e-1, 4.188372e-2, 8.300987e-3];
+        let r2 = r * r;
+        let r4 = r2 * r2;
+        let e = fma(c[2], r4, fma(c[0], r2, 1.0));
+        let o = fma(c[3], r4, fma(c[1], r2, 1.0));
+        let p_pos = fma(r, o, e);
+        let p_neg = fma(-r, o, e);
+        let (t1, t2) = exp2_field_split(k);
+        // t1n = 1/t1, t2n = 1/t2 (both exact power-of-two fields, so 1/t1
+        // is itself an exact power of two): for an exact power-of-two
+        // float with bit pattern b = (127+e)<<23, its reciprocal 2^-e has
+        // bit pattern (127-e)<<23 = 0x7F000000 - b (since (127+e)+(127-e)
+        // = 254 = 0xFE, and 0xFE<<23 == 0x7F000000). This is exactly the
+        // split exp2_field_split(-k) would have produced (round-half-to-
+        // even is antisymmetric under negation, so k1n=-k1/k2n=-k2), but
+        // built with two integer subtracts instead of a whole second
+        // magic-round fma/sub/sub chain -- deletes exp2_field_split(-k)'s
+        // independent dependency on k entirely.
+        let t1n = f32::from_bits(0x7F00_0000u32.wrapping_sub(t1.to_bits()));
+        let t2n = f32::from_bits(0x7F00_0000u32.wrapping_sub(t2.to_bits()));
+        (p_pos, p_neg, t1, t2, t1n, t2n)
+    }};
+}
+
 #[inline(always)]
 #[allow(clippy::neg_cmp_op_on_partial_ord)] // deliberate: !(x < inf) exploits
 // NaN's always-false comparisons to catch both +inf and NaN in one check
@@ -1661,14 +1700,7 @@ pub fn exp_checked(x: f32) -> f32 {
     let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
     let r = fma(-k, LN2_HI, x);
     let r = fma(-k, LN2_LO, r);
-    let c: [f32; 4] = [4.9999300e-1, 1.6667245e-1, 4.1883811e-2, 8.3009899e-3];
-    let r2 = r * r;
-    let r4 = r2 * r2;
-    let l0 = r + 1.0;
-    let l1 = fma(c[1], r, c[0]);
-    let l2 = fma(c[3], r, c[2]);
-    let r0 = fma(l1, r2, l0);
-    let p = fma(l2, r4, r0);
+    let p = exp_r_poly!(r);
     let k1b = fma(k, 0.5, ROUND_MAGIC) - (ROUND_MAGIC - 383.0);
     let k2b = (k + 766.0) - k1b;
     let t1 = f32::from_bits((k1b.to_bits() << 8) & EXPONENT_MASK);
@@ -1751,14 +1783,7 @@ pub fn exp_m1_over_x(x: f32) -> f32 {
     let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
     let r = fma(-k, LN2_HI, x);
     let r = fma(-k, LN2_LO, r);
-    let c: [f32; 4] = [4.9999300e-1, 1.6667245e-1, 4.1883811e-2, 8.3009899e-3];
-    let r2 = r * r;
-    let r4 = r2 * r2;
-    let l0 = r + 1.0;
-    let l1 = fma(c[1], r, c[0]);
-    let l2 = fma(c[3], r, c[2]);
-    let r0 = fma(l1, r2, l0);
-    let p = fma(l2, r4, r0);
+    let p = exp_r_poly!(r);
     let k1b = fma(k, 0.5, ROUND_MAGIC) - (ROUND_MAGIC - 383.0);
     let k2b = (k + 766.0) - k1b;
     let t1 = f32::from_bits((k1b.to_bits() << 8) & EXPONENT_MASK);
@@ -1868,10 +1893,6 @@ fn exp2_field_split(k: f32) -> (f32, f32) {
 
 #[inline(always)]
 fn exp_pos_neg(x: f32) -> (f32, f32) {
-    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
-    let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
-    let r = fma(-k, LN2_HI, x);
-    let r = fma(-k, LN2_LO, r);
     // Retuned for this even/odd split specifically (examples/tune.rs's
     // exp_r_pair_c/"exp_r_pair") -- the plain-Horner exp() coefficients
     // copied verbatim here left max ulp 4 on the tuning grid, retuning
@@ -1889,26 +1910,7 @@ fn exp_pos_neg(x: f32) -> (f32, f32) {
     // (~8.5% tighter), cosh avg ulp 0.08792->0.07638 (~13.1% tighter),
     // max ulp unchanged at 5 for both. Zero perf cost, same instructions
     // (same literal-swap shape as every other coefficient-only refit).
-    let c: [f32; 4] = [4.99993e-1, 1.6667245e-1, 4.188372e-2, 8.300987e-3];
-    let r2 = r * r;
-    let r4 = r2 * r2;
-    let e = fma(c[2], r4, fma(c[0], r2, 1.0));
-    let o = fma(c[3], r4, fma(c[1], r2, 1.0));
-    let p_pos = fma(r, o, e);
-    let p_neg = fma(-r, o, e);
-    let (t1, t2) = exp2_field_split(k);
-    // t1n = 1/t1, t2n = 1/t2 (both exact power-of-two fields, so 1/t1 is
-    // itself an exact power of two): for an exact power-of-two float with
-    // bit pattern b = (127+e)<<23, its reciprocal 2^-e has bit pattern
-    // (127-e)<<23 = 0x7F000000 - b (since (127+e)+(127-e) = 254 = 0xFE,
-    // and 0xFE<<23 == 0x7F000000). This is exactly the split
-    // exp2_field_split(-k) would have produced (round-half-to-even is
-    // antisymmetric under negation, so k1n=-k1/k2n=-k2), but built with
-    // two integer subtracts instead of a whole second magic-round
-    // fma/sub/sub chain -- deletes exp2_field_split(-k)'s independent
-    // dependency on k entirely.
-    let t1n = f32::from_bits(0x7F00_0000u32.wrapping_sub(t1.to_bits()));
-    let t2n = f32::from_bits(0x7F00_0000u32.wrapping_sub(t2.to_bits()));
+    let (p_pos, p_neg, t1, t2, t1n, t2n) = exp_pos_neg_core!(x);
     (p_pos * t1 * t2, p_neg * t1n * t2n)
 }
 
@@ -2008,20 +2010,7 @@ pub fn cosh(x: f32) -> f32 {
 #[inline(always)]
 fn exp_pos_neg_checked_half(x: f32) -> (f32, f32) {
     let x = x.clamp(-170.0, 170.0);
-    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
-    let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
-    let r = fma(-k, LN2_HI, x);
-    let r = fma(-k, LN2_LO, r);
-    let c: [f32; 4] = [4.99993e-1, 1.6667245e-1, 4.188372e-2, 8.300987e-3];
-    let r2 = r * r;
-    let r4 = r2 * r2;
-    let e = fma(c[2], r4, fma(c[0], r2, 1.0));
-    let o = fma(c[3], r4, fma(c[1], r2, 1.0));
-    let p_pos = fma(r, o, e);
-    let p_neg = fma(-r, o, e);
-    let (t1, t2) = exp2_field_split(k);
-    let t1n = f32::from_bits(0x7F00_0000u32.wrapping_sub(t1.to_bits()));
-    let t2n = f32::from_bits(0x7F00_0000u32.wrapping_sub(t2.to_bits()));
+    let (p_pos, p_neg, t1, t2, t1n, t2n) = exp_pos_neg_core!(x);
     (p_pos * (t1 * 0.5) * t2, p_neg * (t1n * 0.5) * t2n)
 }
 

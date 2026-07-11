@@ -5771,6 +5771,48 @@ cousin.
     duplicated fragment was found simply by noticing its doc comment
     already cited the same pattern by name.*
 
+    **Two more callers found and included, plus a real self-inflicted bug
+    caught by the assembly-diff check itself (2026-07-10): `exp_checked`
+    and `exp_m1_over_x` also carry the identical fragment.** Grepping the
+    poly's own literal coefficients (`4.9999300e-1` etc.) across the file
+    turned up two more matches this entry's own earlier pass missed.
+    Applying the same `exp_r_poly!` substitution to `exp_m1_over_x`
+    produced a **non-zero** assembly diff (2085 lines) on the very first
+    attempt -- unlike every other application this session, which came
+    back byte-identical on the first try. Investigated rather than
+    assumed benign: the edit had accidentally deleted the *second*
+    Cody-Waite correction line, `let r = fma(-k, LN2_LO, r);`, not just
+    the poly-eval block it was meant to replace (an old/new-string
+    boundary slip, not a macro problem) -- a real, silent accuracy bug
+    that `cargo build` alone gave no signal about at all (still
+    syntactically valid Rust, just semantically wrong). Restored the
+    missing line; re-ran the assembly diff -- zero byte differences.
+    `cargo test` clean. *The assembly-diff check isn't just insurance
+    against the macro mechanism itself -- it also caught a genuine
+    copy-paste-class editing mistake immediately, before it could reach
+    `mca`/`accuracy.rs` (which might not have caught a single dropped
+    correction term at all, or only as a confusing small ulp regression
+    days later). Treat a non-zero diff as "investigate before assuming
+    the technique failed," not as an automatic revert -- here the
+    technique was fine and the edit was the actual bug.*
+
+    **A third, larger shared fragment found and deduped the same day:
+    `exp_pos_neg`/`exp_pos_neg_checked_half` (sinh/cosh's unchecked/
+    checked `exp(x)`/`exp(-x)` core).** These two share an even bigger
+    identical block than the `exp_r_poly!` group -- not just the poly
+    eval, but the entire Cody-Waite reduction, the even/odd-split poly
+    (retuned via the LP win documented in `exp_pos_neg`'s own doc
+    comment), and the `t1n`/`t2n` reciprocal-power-of-two construction.
+    Only each function's own leading clamp (`exp_pos_neg_checked_half`'s
+    `x.clamp(-170.0, 170.0)`) and final `0.5`-scaling in the return tuple
+    differ. Extracted into `exp_pos_neg_core!(x) -> (p_pos, p_neg, t1,
+    t2, t1n, t2n)`, moving the explanatory comments (coefficient-refit
+    history, the `t1n`/`t2n` derivation) into the macro definition since
+    that's where the logic they describe now lives. Verified the same
+    way, carefully this time given the bug just above: full pre/post
+    assembly diff -- zero byte differences on the first attempt.
+    `cargo test` clean. Commit `<pending>`.
+
 104. **exp2/exp2_checked/exp10/exp10_checked/exp2m1/exp2_checked_df's
     shared `Q(f) = (2^f-1)/f` poly, deduped via macro (adopted
     2026-07-10) -- a bigger version of idea #103's own pattern, found by
