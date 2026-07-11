@@ -695,6 +695,19 @@ what shipped.
   cyc/elem, floating-point noise in mca's own arithmetic) — confirms the
   default profile isn't losing anything to a compilation-unit boundary,
   but no benefit either.
+- **Combined range compares via wrapping_sub** (backlog idea #11):
+  rewrote cbrt/cbrt_accurate's `ax == 0 || ax >= EXPONENT_MASK` and
+  powf_checked's `axb != 0 && axb < EXPONENT_MASK` as single
+  `wrapping_sub(1)` unsigned range compares. Confirmed bit-exact
+  (edgecheck + full/quick accuracy fuzz, identical avg/max ulp on both
+  functions) but a genuine no-op: `--emit=asm` diff of
+  `examples/mca_target.rs`'s whole compiled output before/after was
+  byte-for-byte identical (not just mca-equal) — LLVM's InstCombine
+  already canonicalizes this exact OR/AND-of-two-comparisons-on-one-
+  variable pattern into the same range check, same class as the
+  already-rejected `koff-free unchecked-log fast path` and `atan2`'s
+  bothzero/hpisignx entries above. Reverted (zero benefit, no reason to
+  carry the less-obvious source form).
 
 ## Untried backlog
 
@@ -827,10 +840,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### Codegen & micro-optimizations
 
-11. **Combined range compares via wrapping_sub**: cbrt/cbrt_accurate's
-    `ax == 0 || ax >= EXPONENT_MASK` → single
-    `ax.wrapping_sub(1) >= EXPONENT_MASK - 1`; powf_checked's
-    `axb != 0 && axb < EXPONENT_MASK` likewise (one compare each).
 12. **Exponent fields from magic-round bits via integer ops**: after any
     magic-round, k already sits in kb's low mantissa bits —
     `((kb_bits + C) << 23) & EXPONENT_MASK` replaces the `(k+383)`
