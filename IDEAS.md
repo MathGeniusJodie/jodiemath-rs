@@ -5904,7 +5904,7 @@ cousin.
     `pade_expm1_ratio!(v, mul)` for `v * N / D` computed as a single
     expansion, so ordinary precedence *inside* the macro body reproduces
     the original grouping exactly) -- full assembly diff: zero byte
-    differences. `cargo test` clean. Commit `<pending>`. *Two lessons
+    differences. `cargo test` clean. Commit `6632b08`. *Two lessons
     stack here: (1) a non-zero diff after a dedup is worth decoding
     instruction-by-instruction, not just eyeballing the line count --
     "smaller diff" (1515) was actually the *more* correct one here, and
