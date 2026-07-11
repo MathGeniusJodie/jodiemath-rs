@@ -5749,7 +5749,7 @@ cousin.
     guard) untouched at each call site. Verified with the same rigor as
     idea #103: full pre/post assembly diff of the compiled `mca_target`
     binary -- **zero byte differences**. `cargo test` clean. Commit
-    `<pending>`. *Once a dedup technique is proven safe for one group of
+    `92f8154`. *Once a dedup technique is proven safe for one group of
     duplicated functions, grepping the shared literal (a coefficient, a
     magic constant) across the rest of the file is a cheap way to find
     every other place the same "documented, manually-kept-in-sync
