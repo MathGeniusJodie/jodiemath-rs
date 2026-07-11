@@ -6255,3 +6255,28 @@ cousin.
     scanner (2 each) with less mechanical setup, for this specific
     codebase where doc comments are unusually thorough and honest about
     cross-referencing shared logic.*
+
+111. **`tanh`/`sigmoid`: shared reduction + single-exponent-field
+    construction deduped via macro (adopted 2026-07-11)**: found by the
+    line-window scanner (idea #107's technique), re-run on the file as it
+    stands after ideas #107-110 -- a hit that had actually shown up in
+    every earlier run of the scanner this session but wasn't investigated
+    until now. Unlike `exp`/`exp_checked`/`expm1`/`exp_m1_over_x` (which
+    use the k1/k2-split `exp2_field_split`), `tanh`/`sigmoid` deliberately
+    use the cheaper single-exponent-field trick (their own doc comments
+    explain why: their clamped domains never reach the `k=128` edge case
+    the split exists for). Given each caller's own already-clamped `y`,
+    the reduction-through-`exp2int` construction (`ROUND_MAGIC`/`k`/`r`/
+    `p = exp_r_poly!(r)`/`exp2int`) is byte-for-byte identical between
+    the two -- only what each does with `(p, exp2int)` afterward differs
+    (`tanh`'s `fma(p, exp2int, -1.0)` tail-fusion vs. `sigmoid`'s plain
+    `p * exp2int`). Extracted into `exp_r_singlefield!(y) -> (p,
+    exp2int)`. Verified with the same rigor as every dedup this session:
+    full pre/post `mca_target` assembly diff -- zero byte differences.
+    `cargo test`, `codegen_check` (71 regions clean), `edgecheck` (601
+    pins, same 2 known won't-fix cbrt misses, no new failures) all clean.
+    Pure hygiene, no accuracy/perf claim. *A duplicate-block scanner hit
+    can sit unexamined across several runs while attention goes to other
+    candidates found the same run -- worth systematically working through
+    *every* hit from a scan, not just the first one or two that look most
+    promising, before concluding the technique is exhausted.*
