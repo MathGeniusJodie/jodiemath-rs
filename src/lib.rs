@@ -3709,19 +3709,25 @@ pub fn powf_checked_unchecked(x: f32, y: f32) -> f32 {
 /// instead, correct for both this singularity and the ordinary
 /// remainder(+0.0, y) case (already correctly `+0.0`, so the guard is a
 /// no-op there).
+// Shared by remainder/remainder_ieee/fmod: given each caller's own `q`
+// (`.round()`, `.round_ties_even()`, or `.trunc()` -- the one place they
+// differ), the `x - q*y` combine plus the two special-case selects (the
+// `x==0.0` sign-preservation guard and the `y` infinite/`x` finite
+// no-reduction case, see `remainder`'s own doc comment above for the
+// full reasoning) are byte-for-byte identical across all three. Macro,
+// not a fn -- same reasoning as this file's other shared-body macros.
+macro_rules! remainder_style_combine {
+    ($x:expr, $y:expr, $q:expr) => {{
+        let normal = fma(-$q, $y, $x);
+        let r = if $x == 0.0 && !normal.is_nan() { $x } else { normal };
+        if $y.is_infinite() && $x.is_finite() { $x } else { r }
+    }};
+}
+
 #[inline(always)]
 pub fn remainder(x: f32, y: f32) -> f32 {
     let q = (x / y).round();
-    let normal = fma(-q, y, x);
-    let r = if x == 0.0 && !normal.is_nan() { x } else { normal };
-    // remainder(finite x, +-inf) = x (IEEE754/C99 special case): q rounds
-    // to exactly 0.0 for any finite x, but `fma(-q, y, x)` then multiplies
-    // that zero by an *infinite* y, giving NaN (0*inf is NaN) instead of
-    // the intended "no reduction happened, answer is just x" no-op. x
-    // itself infinite/nan still correctly falls through to `normal`
-    // (matches std's remainder(inf, ...) = NaN) since `x.is_finite()`
-    // excludes it here.
-    if y.is_infinite() && x.is_finite() { x } else { r }
+    remainder_style_combine!(x, y, q)
 }
 
 /// [`remainder`], but with the quotient rounded ties-to-even instead of
@@ -3751,9 +3757,7 @@ pub fn remainder(x: f32, y: f32) -> f32 {
 #[inline(always)]
 pub fn remainder_ieee(x: f32, y: f32) -> f32 {
     let q = (x / y).round_ties_even();
-    let normal = fma(-q, y, x);
-    let r = if x == 0.0 && !normal.is_nan() { x } else { normal };
-    if y.is_infinite() && x.is_finite() { x } else { r }
+    remainder_style_combine!(x, y, q)
 }
 
 /// remainder without domain checks: valid for `x != 0.0` and `y` finite
@@ -3976,9 +3980,7 @@ pub fn remainder_wide(x: f32, y: f32) -> f32 {
 #[inline(always)]
 pub fn fmod(x: f32, y: f32) -> f32 {
     let q = (x / y).trunc();
-    let normal = fma(-q, y, x);
-    let r = if x == 0.0 && !normal.is_nan() { x } else { normal };
-    if y.is_infinite() && x.is_finite() { x } else { r }
+    remainder_style_combine!(x, y, q)
 }
 
 /// [`fmod`] without domain checks: valid for `x != 0.0` and `y` finite
