@@ -6016,7 +6016,7 @@ cousin.
     clamp/select removes real instructions rather than adding any. A
     genuine two-for-one: real accuracy fix (an entire half-infinite tail
     of input space going from silently wrong to correct) *and* a small
-    real speedup, not a tradeoff between them. Commit `<pending>`. *The
+    real speedup, not a tradeoff between them. Commit `ef121c3`. *The
     lesson idea #102 left on the table -- "does this same clamp-then-
     freeze shape recur anywhere else" -- was worth actually checking
     once found in one place; the fix here was cheaper than erfcx's own
