@@ -3373,70 +3373,81 @@ fn exp2_checked_df(v: Df32) -> f32 {
 /// a rarely-hit edge branch, this touches every call): see mca numbers
 /// in the readme/IDEAS.md. See [`powf_checked`] for a variant with
 /// substantially better accuracy for large `|y|`, at extra cost.
+// Shared by powf/powf_checked: the negative-base/y-parity/y==0/x==+-1
+// special-case combine, given each caller's own already-computed `mag`
+// (powf's plain `exp2_checked(log_2(ax)*y)` vs. powf_checked's
+// is_safe-gated Df32 pipeline -- the two differ upstream of this, not in
+// how the sign/special-case logic itself works). Macro, not a fn -- same
+// reasoning as this file's other shared-body macros (no function-call
+// boundary, verified via full assembly diff).
+//
+// For negative x, `exp2(log2(|x|)*y)` alone can't ever be negative (exp2
+// of any real argument is positive), so routing straight through `mag`
+// always gave NaN for x < 0.0 -- even for a well-defined case like
+// `(-2.0)^3.0 = -8.0`. A real result only exists there when y is an
+// integer: even y -> +mag, odd y -> -mag (reusing `parity`, the same
+// integer-parity helper sin_checked/cos_checked already use),
+// non-integer y -> NaN (correctly matches std, e.g. `(-8.0)^(1/3)` is
+// NaN in f32 too -- real cube roots of negative numbers aren't picked by
+// this branch).
+//
+// `x == -0.0` and `x == -inf` are C99-exempt from the "non-integer y ->
+// NaN" rule above (found 2026-07-09 building a systematic special-case
+// matrix against std, backlog idea #85's fourth wave): unlike a
+// genuinely negative *finite* real number (where a non-integer power
+// really is undefined), `-0` and `-inf` are signed *boundary* values
+// whose magnitude-only result (`mag`) is always well-defined -- only the
+// *sign convention* depends on `y` being an odd integer specifically,
+// for *any* `y`, integer or not (e.g. `(-0.0).powf(0.5) == 0.0`, not
+// `NaN`, since only an odd-integer exponent would have kept `-0`'s
+// sign). `x == 0.0` catches `x == -0.0` here since this whole branch
+// only runs when `x.is_sign_negative()` is already true.
+//
+// `y` infinite is a third, independent special case: C99 defines
+// `pow(x, +-inf)` purely by `|x|` relative to `1` (`mag` already is
+// exactly that), never sign-flipped by `x`'s own sign regardless of
+// integer-ness. Overrides the selection above (not folded into its own
+// condition) since it must win even when the `y_int`/`x==0`/
+// `x.is_infinite()` check above would have produced a sign-flipped
+// answer.
+//
+// `x.is_sign_negative()` (bit-based), not `x < 0.0` (value-based): the
+// latter disagrees with the former exactly at x = -0.0 (same class of
+// bug as acos's earlier `-0.0` fix this session), which would silently
+// route `(-0.0)^3.0` through the wrong (positive) branch instead of the
+// correctly-signed `-0.0`.
+//
+// pow(1, y) = 1 for *any* y -- even inf, -inf, or NaN -- another
+// dedicated IEEE754/C99 special case the log/exp2 formula can't derive
+// on its own (log_2(1)=0, so mag=exp2_checked(0*y); for y=inf/-inf/NaN
+// that's a 0*inf or 0*NaN indeterminate form, degrading to NaN instead
+// of the correct 1). pow(-1, +-inf) = 1 is a second, narrower C99
+// special case (unlike pow(1,y), it does *not* extend to pow(-1,NaN),
+// which stays NaN) -- handled separately since it only overrides the
+// infinite-y case.
+//
+// pow(x, 0) = 1 for *any* x -- even 0, negative, or NaN -- a dedicated
+// IEEE754/C99 special case, not derivable from the log/exp2 formula
+// (0*inf and NaN*0 both degrade to NaN above). Override last.
+macro_rules! powf_sign_combine {
+    ($x:expr, $y:expr, $mag:expr) => {{
+        let y_int = $y == $y.trunc();
+        let y_odd = y_int && parity($y) != 0.0;
+        let neg_signed = if y_odd { -$mag } else { $mag };
+        let neg_result = if y_int || $x == 0.0 || $x.is_infinite() { neg_signed } else { f32::NAN };
+        let neg_result = if $y.is_infinite() { $mag } else { neg_result };
+        let r = if $x.is_sign_negative() { neg_result } else { $mag };
+        let r = if $x == 1.0 { 1.0 } else { r };
+        let r = if $x == -1.0 && $y.is_infinite() { 1.0 } else { r };
+        if $y == 0.0 { 1.0 } else { r }
+    }};
+}
+
 #[inline(always)]
 pub fn powf(x: f32, y: f32) -> f32 {
     let ax = x.abs();
     let mag = exp2_checked(log_2(ax) * y);
-    // For negative x, `exp2(log2(|x|)*y)` alone can't ever be negative
-    // (exp2 of any real argument is positive), so this route always gave
-    // NaN for x < 0.0 -- even for a well-defined case like `(-2.0)^3.0 =
-    // -8.0`. A real result only exists there when y is an integer: even y
-    // -> +mag, odd y -> -mag (reusing `parity`, the same integer-parity
-    // helper sin_checked/cos_checked already use), non-integer y -> NaN
-    // (correctly matches std, e.g. `(-8.0)^(1/3)` is NaN in f32 too --
-    // real cube roots of negative numbers aren't picked by this branch).
-    let y_int = y == y.trunc();
-    let y_odd = y_int && parity(y) != 0.0;
-    let neg_signed = if y_odd { -mag } else { mag };
-    // `x == -0.0` and `x == -inf` are C99-exempt from the "non-integer y
-    // -> NaN" rule above (found 2026-07-09 building a systematic
-    // special-case matrix against std, backlog idea #85's fourth wave):
-    // unlike a genuinely negative *finite* real number (where a
-    // non-integer power really is undefined), `-0` and `-inf` are signed
-    // *boundary* values whose magnitude-only result (`mag`, already
-    // correctly computed above via the full checked `log_2`/
-    // `exp2_checked` pipeline) is always well-defined -- only the
-    // *sign convention* depends on `y` being an odd integer specifically,
-    // for *any* `y`, integer or not (e.g. `(-0.0).powf(0.5) == 0.0`, not
-    // `NaN`, since only an odd-integer exponent would have kept `-0`'s
-    // sign). `x == 0.0` catches `x == -0.0` here since this whole branch
-    // only runs when `x.is_sign_negative()` is already true.
-    let neg_result = if y_int || x == 0.0 || x.is_infinite() { neg_signed } else { f32::NAN };
-    // `y` infinite is a third, independent special case: C99 defines
-    // `pow(x, +-inf)` purely by `|x|` relative to `1` (`mag` already is
-    // exactly that), never sign-flipped by `x`'s own sign regardless of
-    // integer-ness -- a negative base raised to an infinite power has no
-    // well-defined *sign* in the limit, only a magnitude. Overrides the
-    // selection above (not folded into its own condition) since it must
-    // win even when the `y_int`/`x==0`/`x.is_infinite()` check above
-    // would have produced a sign-flipped answer.
-    let neg_result = if y.is_infinite() { mag } else { neg_result };
-    // `x.is_sign_negative()` (bit-based), not `x < 0.0` (value-based): the
-    // latter disagrees with the former exactly at x = -0.0 (same class of
-    // bug as acos's earlier `-0.0` fix this session), which would silently
-    // route `(-0.0)^3.0` through the wrong (positive) branch instead of
-    // the correctly-signed `-0.0`.
-    let r = if x.is_sign_negative() { neg_result } else { mag };
-    // pow(1, y) = 1 for *any* y -- even inf, -inf, or NaN -- another
-    // dedicated IEEE754/C99 special case the log/exp2 formula can't derive
-    // on its own (log_2(1)=0, so mag=exp2_checked(0*y); for y=inf/-inf/NaN
-    // that's a 0*inf or 0*NaN indeterminate form inside exp2_checked's own
-    // Df32 combine, degrading to NaN instead of the correct 1). Found by
-    // checking IDEAS.md's own "powf(+-1, huge y)" suspicion directly
-    // against std (`1.0f32.powf(f32::INFINITY)` is `1.0`, this crate's
-    // `powf`/`powf_checked` gave `NaN`) -- x==1 with a *finite* y already
-    // worked (log_2(1)*y=0*finite=0 exactly, no indeterminate form), so
-    // this was invisible to any sweep that only fuzzed finite y.
-    // pow(-1, +-inf) = 1 is a second, narrower C99 special case (unlike
-    // pow(1,y), it does *not* extend to pow(-1,NaN), which stays NaN --
-    // verified against std: `(-1.0f32).powf(f32::NAN)` is `NaN`) --
-    // handled separately since it only overrides the infinite-y case.
-    let r = if x == 1.0 { 1.0 } else { r };
-    let r = if x == -1.0 && y.is_infinite() { 1.0 } else { r };
-    // pow(x, 0) = 1 for *any* x -- even 0, negative, or NaN -- a
-    // dedicated IEEE754/C99 special case, not derivable from the log/exp2
-    // formula (0*inf and NaN*0 both degrade to NaN above). Override last.
-    if y == 0.0 { 1.0 } else { r }
+    powf_sign_combine!(x, y, mag)
 }
 
 /// powf without domain/sign checks: valid for `x` positive, normal, and
@@ -3647,24 +3658,12 @@ pub fn powf_checked(x: f32, y: f32) -> f32 {
     let zero_or_inf = if (ax == 0.0) == (y > 0.0) { 0.0 } else { f32::INFINITY };
     let edge_mag = if ax.is_nan() || y.is_nan() { f32::NAN } else { zero_or_inf };
     let mag = if is_safe { mag_precise } else { edge_mag };
-    // Same negative-x/y-parity/y==0 handling as powf -- see its own doc
-    // comment for the reasoning.
-    let y_int = y == y.trunc();
-    let y_odd = y_int && parity(y) != 0.0;
-    let neg_signed = if y_odd { -mag } else { mag };
-    // `x == -0.0`/`x == -inf` exemption and the `y` infinite override:
-    // same fourth-wave C99 special cases as `powf`'s own doc comment
-    // describes -- see there for the full reasoning.
-    let neg_result = if y_int || x == 0.0 || x.is_infinite() { neg_signed } else { f32::NAN };
-    let neg_result = if y.is_infinite() { mag } else { neg_result };
-    let r = if x.is_sign_negative() { neg_result } else { mag };
-    // pow(1,y)=1 for any y and pow(-1,+-inf)=1: same two C99 special cases
-    // powf's own doc comment describes, needed here too (log2_df(1) is
-    // exactly Df32(0,0), and 0*inf/0*NaN inside the Df32 multiply
-    // degrades to NaN the same way).
-    let r = if x == 1.0 { 1.0 } else { r };
-    let r = if x == -1.0 && y.is_infinite() { 1.0 } else { r };
-    if y == 0.0 { 1.0 } else { r }
+    // Same negative-x/y-parity/y==0/x==+-1 handling as powf, shared via
+    // `powf_sign_combine!` -- see that macro's own doc comment (above
+    // `powf`) for the full reasoning; `log2_df(1)` is exactly `Df32(0,0)`,
+    // so the same "0*inf/0*NaN degrades to NaN" mechanism that motivates
+    // the x==1/x==-1 special cases there applies here too.
+    powf_sign_combine!(x, y, mag)
 }
 
 /// `powf_checked` without domain/sign checks: valid for `x` positive,
