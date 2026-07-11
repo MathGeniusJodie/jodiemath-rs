@@ -5950,6 +5950,56 @@ cousin.
     assembly diff -- zero byte differences on the first attempt.
     `cargo test` clean. Commit `4745193`.
 
+    **A fourth, different-shaped duplicate found and closed (2026-07-11):
+    the exponent-field-split (`k1b`/`k2b`/`t1`/`t2`, the "split `k` into
+    two representable power-of-two fields" step) was hand-inlined
+    identically in `exp`, `exp_checked`, `expm1`, `exp_m1_over_x`,
+    `exp10_checked`, and `exp2_checked_df` -- six more copies of the exact
+    same 4-line block this entry's own dedups above never touched, found
+    while scanning for duplicate *code blocks* generally (not just literal
+    coefficients) via a small script comparing every 4-consecutive-line
+    window in `src/lib.rs`.** The genuinely interesting part: an
+    already-existing `fn exp2_field_split(k: f32) -> (f32, f32)` (`#[inline(always)]`)
+    already implements this exact formula and is already called from
+    inside `exp_pos_neg_core!` (i.e. `sinh`/`cosh`/their `_checked`
+    siblings already depend on it) -- the six functions above just never
+    got routed through it, each hand-rolling an identical copy instead.
+    `expm1`'s own doc comment explicitly (and, it turns out, too broadly)
+    cited the established `sinh_throughput` +32% regression as the reason
+    "the reduction/exponent-reconstruction stays duplicated here" -- but
+    that finding was about introducing a *brand-new* shared `fn` that
+    `exp` and `sinh` would both newly depend on; calling an already-
+    existing, already-relied-upon `fn` from six *additional* call sites is
+    a different risk profile (no new function is introduced, and the
+    existing one's callers are unaffected since their own call sites don't
+    change). Confirmed the six candidates all compute `k1b`/`k2b`/`t1`/`t2`
+    from an already-integer `k` with the identical formula (`fma(k, 0.5,
+    ROUND_MAGIC) - (ROUND_MAGIC-383.0)`, etc.) before touching anything --
+    `exp2_checked` and `exp2m1` were deliberately excluded, since they
+    compute `k1b` from the *unfloored* `xs` instead (`fma(xs, 0.5, ...)`,
+    explicitly for ILP -- runs in parallel with the `floor()`, per
+    `exp2_checked`'s own doc comment), a genuinely different formula, not
+    a candidate for this fn. Replaced all six hand-inlined blocks with
+    `let (t1, t2) = exp2_field_split(k);`. Verified with the same rigor as
+    every dedup this session: full pre/post `mca_target` assembly diff --
+    **zero byte differences**. `cargo test`, `codegen_check` (71 regions
+    clean), `edgecheck` (601 pins, same 2 known won't-fix cbrt misses, no
+    new failures) all clean. Updated `expm1`'s own doc comment to stop
+    overstating the scope of the still-valid caution (the *reduction*
+    genuinely still can't share a `fn` across `exp`/`expm1` per the
+    original finding; the *field-split* specifically can, and now does).
+    Commit `<pending>`. *An established "don't share this, it regressed X"
+    lesson can be scoped even narrower than "this specific mechanism
+    (fn vs macro)" -- it can be scoped to "introducing a new shared
+    dependency," which doesn't apply when the shared thing already exists
+    and already has callers relying on it. Also: scanning for duplicate
+    *code blocks* (not just duplicate literal coefficients) via a plain
+    line-window comparison found a real opportunity the coefficient-grep
+    technique structurally couldn't (this block has no literal float
+    constants of its own beyond the same `ROUND_MAGIC`/`383.0`/`766.0`
+    already shared by design) -- worth running both techniques, not just
+    one.*
+
 104. **exp2/exp2_checked/exp10/exp10_checked/exp2m1/exp2_checked_df's
     shared `Q(f) = (2^f-1)/f` poly, deduped via macro (adopted
     2026-07-10) -- a bigger version of idea #103's own pattern, found by
