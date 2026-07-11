@@ -2129,12 +2129,15 @@ pub fn cosh_throughput(x: f32) -> f32 {
 /// fix a "wrong/NaN for legitimate finite input" domain hole (see sin/
 /// cos's own inf-for-large-x fix), which is a more serious defect class
 /// than an in-domain ulp regression.
-// Shared by tanh/sigmoid: the reduction plus single-exponent-field
-// construction (given each caller's own already-clamped `y`) is
-// identical -- only the shared poly's own consumer differs
-// (`fma(p, exp2int, -1.0)`'s trailing -1 fusion for tanh's exp(y)-1 vs.
-// sigmoid's plain `p * exp2int`). Returns `(p, exp2int)`. Macro, not a
-// fn -- same reasoning as this file's other shared-body macros.
+// tanh's own reduction plus single-exponent-field construction (given
+// its already-clamped `y`). Returns `(p, exp2int)`. Macro, not a fn --
+// same reasoning as this file's other shared-body macros. sigmoid used
+// to share this verbatim too (`fma(p, exp2int, -1.0)`'s trailing -1
+// fusion for tanh's exp(y)-1 vs. sigmoid's plain `p * exp2int` was the
+// only difference), but now inlines its own copy to fold its upfront
+// `-x`/reduction `-k` negations away (see sigmoid's own doc comment,
+// backlog idea #20) -- a reassociation this macro's `$y`-already-negated
+// calling convention doesn't accommodate.
 macro_rules! exp_r_singlefield {
     ($y:expr) => {{
         const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
@@ -2243,8 +2246,30 @@ pub fn sigmoid(x: f32) -> f32 {
     // matching this crate's own accepted "near a true zero, ulp isn't a
     // meaningful metric" precedent (see cospi's own doc comment); not
     // pursued further, the practical improvement is already total.
-    let y = (-x).clamp(-87.0, 88.722839111673);
-    let (p, exp2int) = exp_r_singlefield!(y);
+    // Backlog idea #20: avoid computing `-x` (and the reduction's own
+    // `-k`, reused in both LN2_HI/LN2_LO fmas) as explicit runtime
+    // negations. Clamp `x` directly instead of `-x`, via the identity
+    // `(-x).clamp(a,b) == -(x.clamp(-b,-a))` (swap and negate the
+    // literal bounds -- free, they're compile-time constants either
+    // way), fold the negation into `LOG2_E` for `k` (sign commutes
+    // exactly through a multiply, so `fma(xc,-LOG2_E,..) ==
+    // fma(-xc,LOG2_E,..)` bit-for-bit), then carry `k` positive through
+    // both LN2_HI/LN2_LO fmas and apply one final negation to get `r`.
+    // Bit-exact: FMA rounds odd/symmetrically under negation of all its
+    // inputs (`fma(-a,b,-c) == -fma(a,b,c)` always -- the same identity
+    // atan_latency's own mulsign reassociation relies on), so this is a
+    // pure reassociation, not a new approximation. Nets one fewer
+    // runtime negation than the original (which needed one for `-x` and
+    // one for `-k`, the latter reused but still a real op) -- verified
+    // exhaustively before adopting.
+    let xc = x.clamp(-88.722839111673, 87.0);
+    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+    let k = fma(xc, -LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
+    let t1 = fma(k, LN2_HI, xc);
+    let t2 = fma(k, LN2_LO, t1);
+    let r = -t2;
+    let p = exp_r_poly!(r);
+    let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
     let e = p * exp2int;
     1.0 / (1.0 + e)
 }
