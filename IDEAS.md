@@ -1191,9 +1191,58 @@ bottleneck, so "add a division to remove fmas" is a legitimate direction.
 - **f32x16/AVX-512 via #[target_feature]**: an explicit core::simd path
   sidesteps LLVM's refusal to force zmm-width; never measured.
 
-- **Cross-check mca with uiCA and real perf counters**: mca's scheduling
-  model has already produced caller-dependent surprises; uiCA is
-  reportedly more accurate for this CPU.
+- **Cross-check mca with uiCA and real perf counters (checked 2026-07-10,
+  uiCA unavailable, but the "real perf counters" half turned up a genuine
+  and useful data point instead)**: `uiCA` isn't installed in this
+  environment (no binary, no Python module) and there's no obvious way to
+  get it without network access -- that half of the idea stays blocked.
+  `perf` (Linux `perf stat`) *is* available, so tried the other half: a
+  standalone probe isolating just `sinpi`'s own throughput loop (matching
+  `quickbench.rs`'s exact harness shape -- `TP_ARR=4096`, `TP_PASSES=1024`,
+  `REPS=7` min-of) under `perf stat -e cycles:u,instructions:u`. Confirmed
+  real vectorization first (`objdump` showed real `ymm`/`zmm` usage, no
+  scalar fallback `call`), then found something more useful than the
+  original cross-check: the real measured throughput (~1.66 ns/elem) was
+  wildly higher than this exact function's own documented quickbench
+  number in readme.md (0.18 ns/elem) -- a ~9x gap. Re-ran the *actual*
+  `quickbench.rs` binary directly (not just my own probe) to rule out a
+  probe bug: it independently reproduced the same ballpark, ~1.0-1.66
+  ns/elem, confirming the discrepancy is real, not a probe artifact.
+
+  Checked whether this was `sinpi`-specific or systemic: `cbrt`
+  (documented 0.37, fresh 1.371, ~3.7x), `cbrt_unchecked` (documented
+  0.25, fresh 0.939, ~3.75x), and critically `std exp2` (documented 3.13,
+  fresh 9.154, ~2.9x) -- the *std library* reference function shows
+  essentially the same multiplier as jodie's own functions. Since std's
+  own `exp2` obviously has no jodie-side regression to blame, this rules
+  out a real code slowdown and confirms a uniform *environmental* effect
+  scaling every wall-clock throughput number by a similar factor,
+  regardless of which function is measured. This matches -- and gives a
+  concrete, higher magnitude for -- this crate's own already-documented
+  caveat ("the i5-1145G7 in this readme throttles up to ~2.5x
+  mid-session"): the actual factor in *this* execution environment
+  (agent sandbox, not necessarily the same bare-metal conditions the
+  original numbers were captured under) came out at ~3-9x across every
+  function checked, higher than the previously-cited figure. `mca`'s own
+  numbers, being a static model with no dependency on real execution at
+  all, stayed exactly consistent with history throughout this entire
+  session's extensive `mca` use (every re-run matched prior documented
+  figures) -- confirming `mca` remains the trustworthy, environment-
+  independent reference this crate already treats it as, while
+  `quickbench`'s raw absolute numbers are only ever meaningful *relative
+  to each other in the same run*, not as portable absolute truth across
+  different sessions/machines. Not proposing a readme.md edit -- doing so
+  would just bake in *this* session's own particular slowdown as if it
+  were a stable fact, exactly the mistake this finding warns against.
+  No `src/lib.rs` change; scratch probes not committed. *Absolute
+  wall-clock numbers recorded in a repo's own docs are a snapshot of one
+  particular machine/session's conditions, not a portable ground truth --
+  when cross-checking a theoretical model (`mca`) against real hardware,
+  measure fresh in the *current* environment and compare relative
+  ratios, rather than trusting a possibly-stale absolute number at face
+  value; the std-library control (measuring something with zero jodie-
+  side changes) is a cheap, decisive way to tell "real regression" from
+  "the whole machine is just slower right now."*
 
 ### sin / cos
 
