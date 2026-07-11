@@ -2989,7 +2989,8 @@ cousin.
     measure both functions sharing an idea separately, don't assume a
     shared reduction trick pays off identically for both.*
 28. **sind/cosd: same trick for d·DEG_TO_RAD_SMALL (two_prod variant tried
-    2026-07-09, rejected -- literal HI/LO split still untested)**: tested
+    2026-07-09, rejected; literal HI/LO split tried 2026-07-11, also
+    rejected -- but NOT for the reason the proxy predicted)**: tested
     idea #27's `two_prod`-based correction (recovers `d*DEG_TO_RAD_SMALL`'s
     own rounding error, not literally this idea's proposed HI/LO constant
     split, but attacking the same reduction step) on `sind`/`cosd`
@@ -3015,6 +3016,41 @@ cousin.
     airtight) signal the untested literal variant would fare similarly,
     since both attack the same reduction step and the dominant error
     source (the poly fit) is unaffected by either.*
+
+    **Follow-up (2026-07-11): the proxy's prediction was wrong -- built
+    and measured the actual literal HI/LO split for real closure.** Split
+    `DEG_TO_RAD_SMALL` into an exact `HI` (top bits, low 12 mantissa bits
+    zeroed so `d*HI` is exact for `d` in sind/cosd's own `[-90,90]`
+    pre-clamp range) + `LO` (the f64-computed remainder, rounded to f32),
+    replacing `d * DEG_TO_RAD_SMALL` with `fma(d, HI, d*LO)`. Unlike the
+    two_prod proxy (an additive derivative correction *after* `sinf_poly`,
+    per idea #27's own mechanism), this feeds a more accurate reduced
+    argument directly *into* `sinf_poly` -- a structurally different fix,
+    and it behaved differently: real, substantial accuracy improvement for
+    `sind` specifically (avg ulp 0.1237->0.0675, ~45% reduction, confirmed
+    on the full exhaustive `thorough` sweep over all 2^32 bit patterns, not
+    just the quick fuzz), `cosd` flat (0.0726->0.0720, noise), both `sind`/
+    `cosd` max ulp still comfortably in-budget at 2. `tand` (the
+    `sind(x)/cosd(x)` ratio) inherited `sind`'s improved avg ulp
+    (0.1772->0.1213) but also picked up a worse max ulp (3->4) at a
+    near-pole point (`cosd`≈0 around x≈89°), the same pole-amplification
+    class already documented as expected/harmless for `tanpi` (idea #29).
+    But mca killed it anyway: this is a real cost, not the two_prod proxy's
+    near-30% hit, but still real and non-trivial on *both* functions since
+    they share the reduction -- `sind` throughput 1.151->1.278 cyc/elem
+    (+11%, latency 46->50 cyc), `cosd` throughput 1.406->1.591 (+13.2%,
+    latency 54->58 cyc). Reverted, bit-identical to prior HEAD. Fails this
+    loop's bar (`cosd` gets zero accuracy gain for a real perf hit; `sind`
+    gets a real accuracy gain but *with* a real perf hit, not "without a
+    perf penalty"). *Genuinely closes idea #28 now -- but the closure
+    corrects, not confirms, the previous entry's own proxy reasoning: a
+    zero-benefit result from a mechanistically different fix (additive
+    post-hoc correction) is NOT a reliable stand-in for the literal
+    proposal (feeding a more accurate value into the poly directly), even
+    when both nominally "attack the same reduction step." The two
+    techniques recover error through different paths and can have
+    different payoffs; a proxy is only strong evidence when it's the same
+    mechanism, not just the same target line of code.*
 29. **tanpi / tand (implemented 2026-07-09)**: added as plain
     `sinpi(x)/cospi(x)` and `sind(x)/cosd(x)` ratios -- correct by
     construction, not an approximation: `tan(pi*x)` has period 1 in
