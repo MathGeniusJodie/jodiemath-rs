@@ -1114,8 +1114,29 @@ bottleneck, so "add a division to remove fmas" is a legitimate direction.
 
 ## log_2 / ln / log10
 
-- **Shared denormal-rescale helper**: pure hygiene (log_2/ln/log10
-  triplicate the tiny/xs/koff dance), no perf claim.
+- **Shared denormal-rescale helper (adopted 2026-07-10)**: pure hygiene
+  (log_2/ln/log10 triplicate the tiny/xs/koff dance, and log2_df
+  quadruplicates it), no perf claim -- and none found. Replaced all four
+  copies with one `denormal_rescale!($x) -> (xs, koff)` macro (not a
+  `fn`, specifically to avoid introducing a function-call boundary for
+  the auto-vectorizer to reason about, same caution `expm1`/`tanh`'s own
+  "duplicate rather than share" doc comments already established for a
+  different piece of code). Verified as rigorously as this kind of
+  change can be: captured the full compiled `mca_target` assembly before
+  and after via `git stash`, diffed the two `.s` files directly (not
+  just the four affected regions) -- **zero byte differences across all
+  213,650 lines**, proving the macro's textual substitution produced
+  byte-for-byte identical codegen, not just "probably the same." Given
+  that, no fresh `mca`/`accuracy.rs` run was needed (behavior and cost
+  are both already proven identical at the assembly level, the strongest
+  form of "no regression" this crate's tooling can offer). `cargo test`
+  clean. Commit `<pending>`. Doesn't touch idea #24's own larger, riskier
+  scope (the `_normal` poly bodies themselves, not just this shared
+  preamble) -- left open. *When a refactor claims "no behavior change,"
+  a full pre/post assembly diff (not just the harness's own targeted
+  region checks) is the strongest evidence available and costs almost
+  nothing to run when the change is small enough for the diff to stay
+  readable.*
 
 ## sin / cos / tan
 
@@ -2785,6 +2806,20 @@ cousin.
     identical modulo constants (and log2_df quadruplicates it). A macro or
     generic-const core removes 3 hand-synced copies — hygiene, zero perf
     claim, reduces refit-application errors.
+
+    **Narrower slice adopted (2026-07-10): the shared tiny/xs/koff
+    denormal-rescale preamble each of the four functions carries before
+    calling into its own distinct `_normal`/`log2_df` body** -- see the
+    dedicated entry above (log_2/ln/log10 section) for the full writeup
+    (macro, not fn; byte-identical assembly before/after, whole-file
+    diff). This idea's own larger, riskier claim -- that the `_normal`
+    poly bodies *themselves* are identical modulo constants and could
+    share a generic-const core -- wasn't attempted here (each body's own
+    coefficients, fma-chain shape, and any per-function fixes applied
+    since first written would all need reconciling into one generic
+    template, a meaningfully bigger and riskier undertaking than the
+    preamble alone). Left open for a future session that wants the
+    larger dedup.
 25. ~~**log_2 denormal path: fold the ×2^24 rescale into the wrapping_sub
     magic**~~ (killed on paper 2026-07-10, confirmed dead on arrival as
     suspected -- not just "probably", provably so): the idea's own hope

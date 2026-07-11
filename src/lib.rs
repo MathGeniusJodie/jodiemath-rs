@@ -35,6 +35,24 @@ fn fma(a: f32, b: f32, c: f32) -> f32 {
     a.mul_add(b, c)
 }
 
+// Shared by log_2/ln/log10/log2_df's own denormal handling (IDEAS.md
+// backlog: "log_2/ln/log10 shared-core macro"): scale a denormal input up
+// by 2^24 before the single normal-path evaluation, tracking the
+// compensating exponent offset to fold back in afterwards. A macro (not a
+// fn) so there's no function-call boundary for the auto-vectorizer to
+// reason about -- same "duplicate rather than share a helper" caution
+// this crate's other standalone-copy doc comments (expm1, tanh) already
+// establish, just applied via textual substitution instead of a literal
+// copy-paste.
+macro_rules! denormal_rescale {
+    ($x:expr) => {{
+        let tiny = $x < f32::MIN_POSITIVE;
+        let xs = if tiny { $x * 16777216.0 } else { $x };
+        let koff = if tiny { -24.0 } else { 0.0 };
+        (xs, koff)
+    }};
+}
+
 #[inline(always)]
 #[allow(clippy::neg_cmp_op_on_partial_ord)] // deliberate: !(x < inf) exploits
 // NaN's always-false comparisons to catch both +inf and NaN in one check
@@ -44,11 +62,10 @@ pub fn log_2(x: f32) -> f32 {
     // edge handling is done with selects (no early returns) so loops over
     // arrays of log_2 calls can auto-vectorize: scale denormals up before
     // the single normal-path evaluation, then patch specials afterwards.
-    let tiny = x < f32::MIN_POSITIVE; // denormal, zero, negative; false for nan
-    let xs = if tiny { x * 16777216.0 } else { x };
-    let koff = if tiny { -24.0 } else { 0.0 };
-    // koff is folded into the exponent term inside log_2_normal so the
+    // denormal, zero, negative rescaled up 2^24 (false for nan); koff is
+    // folded into the exponent term inside log_2_normal so the
     // correction stays off the serial critical path (k + koff is exact)
+    let (xs, koff) = denormal_rescale!(x);
     let r = log_2_normal(xs, koff);
     // -inf for +-0, nan for x < 0 (includes -inf); the select input only
     // depends on x, so it resolves in parallel with the poly evaluation
@@ -1277,9 +1294,7 @@ const LOG10_2_LO: f32 = 4.605039066518657e-6;
 // NaN's always-false comparisons to catch both +inf and NaN in one check,
 // same idiom as log_2's own doc comment explains.
 pub fn ln(x: f32) -> f32 {
-    let tiny = x < f32::MIN_POSITIVE;
-    let xs = if tiny { x * 16777216.0 } else { x };
-    let koff = if tiny { -24.0 } else { 0.0 };
+    let (xs, koff) = denormal_rescale!(x);
     let r = ln_normal(xs, koff);
     let spec = if x == 0.0 { f32::NEG_INFINITY } else { f32::NAN };
     let r = if x <= 0.0 { spec } else { r };
@@ -1350,9 +1365,7 @@ pub fn ln_unchecked(x: f32) -> f32 {
 // NaN's always-false comparisons to catch both +inf and NaN in one check,
 // same idiom as log_2's own doc comment explains.
 pub fn log10(x: f32) -> f32 {
-    let tiny = x < f32::MIN_POSITIVE;
-    let xs = if tiny { x * 16777216.0 } else { x };
-    let koff = if tiny { -24.0 } else { 0.0 };
+    let (xs, koff) = denormal_rescale!(x);
     let r = log10_normal(xs, koff);
     let spec = if x == 0.0 { f32::NEG_INFINITY } else { f32::NAN };
     let r = if x <= 0.0 { spec } else { r };
@@ -3274,9 +3287,7 @@ pub fn rhypot(x: f32, y: f32) -> f32 {
 /// (scale up, offset k).
 #[inline(always)]
 fn log2_df(x: f32) -> Df32 {
-    let tiny = x < f32::MIN_POSITIVE;
-    let xs = if tiny { x * 16777216.0 } else { x };
-    let koff = if tiny { -24.0 } else { 0.0 };
+    let (xs, koff) = denormal_rescale!(x);
     let e = (xs.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23;
     let m = f32::from_bits((xs.to_bits() as i32).wrapping_sub(e << 23) as u32);
     let k = e as f32 + koff;
