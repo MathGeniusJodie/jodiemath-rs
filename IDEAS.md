@@ -2854,7 +2854,7 @@ cousin.
     (reusing `log2_df`'s own already-present `denormal_rescale!(x)` call
     for `xs`/`koff`, matching how `log_2_normal` itself receives them).
     Verified with the same full pre/post assembly diff -- zero byte
-    differences. `cargo test` clean. Commit `<pending>`. *This* really*
+    differences. `cargo test` clean. Commit `6d11500`. *This* really
     closes idea #24's full original scope. Grepping a shared poly's own
     literal coefficients across the whole file, not just the functions a
     doc comment happens to name explicitly nearby, is worth doing even
