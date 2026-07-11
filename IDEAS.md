@@ -3394,6 +3394,49 @@ cousin.
     was already used once -- when a poly feeds a further nonlinear
     combine (here, `exp2_checked` then `1-x`), weight the fit by that
     combine's own local sensitivity, not just the poly's raw target.*
+
+    **Tried the identical technique on `asin_poly` right after (2026-07-10)
+    -- this time it's a clear regression, and an instructive one about
+    where the linearization itself breaks down.** `asin_poly`'s own doc
+    comment says its prior fit was "weighted by 1/target" (a third
+    weighting scheme, distinct from both erf_poly's old "ulp of the poly's
+    own target" and this new "linearized final-combine sensitivity"
+    approach) -- worth checking given coordinate descent had already found
+    *zero* movement on this poly earlier this session, and `erf_poly` had
+    just shown that "coordinate descent finds nothing" doesn't reliably
+    predict "an LP would also find nothing" (a genuine escaped local
+    optimum, not a coincidence). The LP's own idealized metric reported a
+    dramatic gap this time -- weighted residual max `2.126->0.101`, ~21x,
+    the largest predicted gain of any LP attempt this session, bigger even
+    than `exp_pos_neg`'s real ~29%. Built the same rigorous verification
+    (bit-identical fidelity against the real compiled `asin` confirmed
+    first, 0 mismatches) -- and the grid check alone already showed
+    trouble (`shipped` max 5 avg 0.887 vs. `LP` max **6** avg **1.390**,
+    worse on both axes on `tune.rs`'s own established grid, not just
+    "no improvement"). The real ~1.07-billion-point dense sweep confirmed
+    it: max ulp unchanged at 9, but avg ulp got **worse**
+    (`0.05681->0.06438`, +13.3%) -- a real regression, not adopted; no
+    `src/lib.rs` change (verified before ever touching it this time).
+    Root cause, on reflection: `asin_poly`'s own target
+    (`acos(a)/sqrt(1-a)`) diverges as `a->1` (the domain's own hard edge,
+    exactly where `asin`'s documented max ulp 9 actually lives), and the
+    combine sensitivity used to weight the fit (`d(final)/d(poly) =
+    -sqrt(1-a)`) *also* shrinks toward 0 in that same region -- so this
+    particular linearized weighting scheme systematically *de-emphasizes*
+    precisely the boundary region where the real worst case sits, letting
+    the LP trade real accuracy there for tightness in the easier interior
+    of the domain. `erf_poly`'s own analogous sensitivity
+    (`-2^poly * ln(2)`) doesn't have this same vanishing-near-the-hard-
+    part shape, which is plausibly why that one transferred cleanly and
+    this one didn't. *The same "weight by the final combine's own
+    sensitivity" technique that found a real win for `erf_poly` isn't a
+    universally-safe upgrade over a poly's own raw-target weighting --
+    check whether the sensitivity term itself vanishes or misbehaves
+    exactly where the function's real hard cases live before trusting a
+    large idealized-metric gap; a linearization is only as good as how
+    representative "the current operating point" stays across the whole
+    domain being fit, and near a `sqrt(1-a)`-style domain edge it
+    isn't.*
 53. **erfc negative-side accuracy survey (resolved 2026-07-09, structural,
     not actionable)**: split the exhaustive sweep by sign (temporary
     accuracy.rs domain split, not kept) -- confirmed a real asymmetry:
