@@ -5373,3 +5373,53 @@ cousin.
     that this crate's own mca tooling was never built to parse, a
     distinct failure mode from every previous codegen surprise this
     session found.*
+
+    **Option 1 feasibility check (2026-07-10): splitting the loop into
+    separate <=10-iteration constructs does NOT reintroduce the
+    vectorization wall, at least for the plain-f32 case -- the key
+    uncertainty this option's own text flagged is resolved, positively.**
+    Built a cheap, minimal test before investing in reconstructing the
+    (never-committed, so unrecoverable from git history) `WideFloat`
+    type: took `pown`'s existing plain-f32 algorithm (no Df32, no wide
+    exponent -- just the already-shipped, already-vectorizing logic) and
+    split its single 32-iteration loop into 4 separate, textually distinct
+    8-iteration loop constructs (`0..8`, `8..16`, `16..24`, `24..32`),
+    with `base`/`result` threaded sequentially across them (each loop
+    starts from the previous one's ending state -- not independent
+    computations, genuinely sequential). Wired into `mca_target.rs`
+    (initially forgot to register it in `main()`'s own `run_all!` macro,
+    which meant the function was silently absent from the compiled
+    assembly entirely -- a cheap trap worth remembering: an unregistered
+    `#[inline(never)] pub fn` in this harness can still vanish from the
+    final binary if nothing calls it). Once correctly wired,
+    `codegen_check` passed clean and direct inspection of the compiled
+    region confirmed real, substantial vectorization: 363 packed
+    arithmetic instructions, **zero** `vextractps` (the crate's own
+    established de-vectorization smoking gun), and -- unlike the option-2
+    attempt's own duplicate-region surprise -- **exactly one clean
+    `LLVM-MCA-BEGIN`/`LLVM-MCA-END` pair**, no branch-hoisting
+    complication this time (this simple version has no `n<0`-dependent
+    branch inside the split loops themselves, only the same single
+    upfront reciprocal select `pown` already has). Reverted immediately
+    (pure addition, confirmed via `git status`); no probe committed.
+    **This directly answers option 1's own explicitly-flagged open
+    question** ("untested whether the combining step itself reintroduces
+    the same wall") for the simple case: it doesn't. **What remains
+    genuinely untested**, and is the concrete next step for whoever
+    picks this up: does adding the *full* Df32-precision-mantissa +
+    wide-exponent-tracking complexity back into *each* 8-iteration
+    sub-loop (not just plain f32) still vectorize once chained across
+    all 4 groups? The prior full-fix investigation already separately
+    confirmed 8 iterations *of the complex version* vectorizes in
+    isolation (330 packed instructions, per that entry's own bisection);
+    this session's own new finding confirms simple 8-iteration groups
+    chain cleanly. Neither result alone proves the *combination*
+    (complex-per-group *and* chained) also works -- that's the one
+    remaining piece needed before reconstructing `WideFloat` and
+    attempting the real fix again. *A positive feasibility result for
+    part of a blocked fix is worth banking and documenting precisely,
+    even without immediately attempting the full (and here, substantial
+    -- a from-scratch custom numeric type, since the original was never
+    committed) reconstruction; scoping the exact remaining uncertainty
+    down to one concrete, checkable question is real progress on its
+    own.*
