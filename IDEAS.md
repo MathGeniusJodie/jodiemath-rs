@@ -5423,3 +5423,117 @@ cousin.
     committed) reconstruction; scoping the exact remaining uncertainty
     down to one concrete, checkable question is real progress on its
     own.*
+
+    **Final chapter (2026-07-10): the full reconstruction was built again
+    from scratch, correctness was verified far beyond the original bug
+    report, and it was made to auto-vectorize cleanly this time -- and
+    the resulting real `mca` numbers decisively kill it anyway. Not
+    shipped; fully reverted.** Rebuilt `WideFloat` (`Df32`-precision
+    mantissa renormalized to `[1,2)`, `f32` exponent, same design as the
+    prior attempt) plus a `pown_wide`. Along the way, fixed four real
+    bugs, in order of discovery: (1) a test-harness `ulp_diff` bug that
+    flagged correctly-infinite results as infinite-ulp mismatches; (2)
+    `Df32::square()` (an existing but, per a `grep -n "\.square()"
+    src/lib.rs` check, completely unused method) compounds error at ~4x
+    per squaring instead of the theoretically-correct ~2x -- fixed by
+    replacing every call site with a hand-written `from_mul` + single-fma
+    cross-term multiply instead; (3) the actual root cause of the
+    original traced bug case: the initial reciprocal (`1.0/x`) was still
+    being computed as a plain single-rounding f32 division *before* ever
+    entering `WideFloat`, baking in up to 0.5ulp of error that the loop's
+    extra precision could never recover -- fixed with a
+    `from_df32_normal` constructor that decomposes a real `Df32::Div`
+    result instead of collapsing to `f32` first; (4) that same
+    constructor breaking on denormal inputs (a genuine case: `x` near
+    `f32::MAX`, `n=-1` makes `1.0/x` itself denormal), fixed by detecting
+    the tiny case, pre-scaling by an exact `2^24`, and compensating the
+    tracked exponent. With all four fixed, correctness cleared every bar
+    checked: the original traced case (`pown(0.997296, -32767)`) matches
+    the true value bit-exactly; a structured sweep mirroring the original
+    bug-hunt methodology found `newly_broken=0`; accuracy stayed <1 ulp
+    for `|n|` up to ~2^17 (131071), far past the crate's existing
+    `pown_small`/`pown` documented ranges, degrading only gradually (not
+    catastrophically) out past `|n|` in the millions, with genuinely
+    fundamental precision limits (compounding amplification exceeding
+    even `Df32`'s ~48-bit floor) appearing only for the most extreme `|n|`
+    near `i32::MIN`/`MAX` -- deliberately left out of scope, a harder,
+    separate problem.
+
+    Then, same as last time, `codegen_check` failed -- but differently
+    this time, and further along. First failure: an `(x as f64).powi(n)
+    as f32` fallback for degenerate (0/inf/nan) inputs fully de-
+    vectorized the function (a `call`, saturating casts, scalar
+    div/sqrt, zero packed arithmetic) -- fixed by replacing it with a
+    branchless f32-only correction matching `pown`'s own documented
+    special-value semantics (nan needs no special case at all; it
+    propagates through the `Df32` arithmetic on its own). Second failure,
+    after that fix: `cvttsd2si`/`cvttss2si` plus zero packed arithmetic,
+    traced to `to_f32_saturating`'s `(e + scale_bias) as i32` --
+    idea #21's own already-documented de-vectorization class (a
+    saturating float->int cast doesn't vectorize even when the value is
+    runtime-bounded by an earlier `.clamp()`, since LLVM can't statically
+    prove the bound). Fixed by replacing the cast with a split-exponent
+    bit-trick reconstruction, adapting `exp2_checked`'s own established
+    `k1`/`k2` split (same bias `383`, same `<<8 & EXPONENT_MASK` idiom):
+    `e1 = (e*0.5).floor()`, `e2 = e - e1`, `t1 = 2^e1`, `t2 = 2^e2` via
+    the bit-trick, final result `mantissa * t1 * t2` -- no cast anywhere,
+    and denormal results fall out of the two multiplies for free (same
+    as `exp2_checked`'s own `p*t2`), so the old `denormal_target`/
+    `scale_bias` branch could be deleted entirely. Third failure, after
+    *that* fix: still zero packed arithmetic -- this session's own
+    4-group split (from the option-1 feasibility check above) used
+    8-iteration groups, matching what that *simpler* plain-f32 probe
+    vectorized at, but the *full* Df32+WideFloat per-iteration cost
+    turned out to sit past a lower cliff than the plain-f32 case's own --
+    re-bisecting for *this* exact per-iteration computation (not
+    re-trusting the plain-f32 probe's own threshold) found 4-iteration
+    groups (8 groups of `0..4`/`4..8`/.../`28..32`) vectorizes cleanly
+    where 8-iteration groups didn't. `codegen_check` then passed clean.
+
+    With vectorization finally solved, ran the real `mca` numbers this
+    combination has been blocked on since the very first attempt:
+    latency **1922.12 cyc** vs. plain `pown`'s 176.00 (~11x), throughput
+    **115.06 cyc/elem** vs. `pown`'s 3.805 (~30x). This decisively fails
+    the bar on both of this loop's own standing tests -- it neither
+    "speeds up the function" nor "improves accuracy without a perf
+    penalty" (a 30x throughput tax is about as far from "no penalty" as
+    a number can get). Notably, the *prior* (2026-07-10, earlier same
+    day) attempt's own first `mca` reading looked far more tolerable
+    (throughput 5.536 cyc/elem, +45%) -- but that reading came from a
+    region `codegen_check` had already condemned as **fully scalar**
+    (zero packed arithmetic); it was measuring a de-vectorized fallback
+    loop's cost, not a real vectorized loop's cost, and was never a fair
+    comparison to begin with. Now that a genuinely vectorized version
+    exists, the real, apples-to-apples number is in, and it's decisive:
+    even fully vectorized, the per-element cost of carrying a full
+    `Df32` mantissa plus a wide tracked exponent through 32 squaring
+    iterations is fundamentally too expensive, not a vectorization
+    artifact. Reverted completely (`WideFloat`, `pown_wide`, `df32_mul`,
+    every harness wiring change in `mca_target.rs`/`mca.rs`) -- confirmed
+    via `git diff --numstat` every changed file was a pure addition (0
+    deletions), so `git checkout` restored the pre-existing state
+    cleanly. The standalone correctness probe (`examples/pown_wide2.rs`)
+    was never committed and was deleted.
+
+    This closes idea #101's `pown_wide`/`WideFloat` avenue for good:
+    both of the two real blockers found across two independent from-
+    scratch attempts (vectorization, and now real per-element cost) have
+    been fully resolved/measured, and the answer is a clean no on cost
+    grounds, not an open question on feasibility grounds. Of the three
+    future-work options the first attempt left open, option 1 (split
+    loops) is now fully validated as sufficient for vectorization *and*
+    proven insufficient for cost; option 2 (reciprocal-only fix, plain-
+    f32 squaring) was separately tried and rejected for barely moving the
+    overflow bug; option 3 (a narrower `pown_small`-style restricted
+    tier) remains theoretically available but inherits the same per-
+    iteration `Df32` cost problem at a smaller iteration count, and
+    wasn't attempted since option 1's full-range version already
+    settled the cost question at any iteration count worth checking.
+    `pown`'s documented overflow bug for large `|n|` remains open and
+    unfixed. *A blocked fix clearing its blocker doesn't mean it clears
+    the crate's actual bar -- when a fix has been stuck on one hurdle for
+    long enough that clearing it feels like the finish line, resist
+    reporting a "looks tolerable" number measured before the blocker was
+    actually cleared; a scalar fallback's cost and a real vectorized
+    cost are not the same measurement, and only the second one is the
+    one that matters.*
