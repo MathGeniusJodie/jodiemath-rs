@@ -5988,7 +5988,7 @@ cousin.
     overstating the scope of the still-valid caution (the *reduction*
     genuinely still can't share a `fn` across `exp`/`expm1` per the
     original finding; the *field-split* specifically can, and now does).
-    Commit `<pending>`. *An established "don't share this, it regressed X"
+    Commit `79b3621`. *An established "don't share this, it regressed X"
     lesson can be scoped even narrower than "this specific mechanism
     (fn vs macro)" -- it can be scoped to "introducing a new shared
     dependency," which doesn't apply when the shared thing already exists
