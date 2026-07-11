@@ -462,6 +462,18 @@ what shipped.
 - **atan_latency's poly LP refit**: isolated fit predicted a modest 6%
   improvement — too weak a signal, found nothing real (avg ulp 0.0516 vs
   0.0517, statistically identical).
+- **Plain atan: port atan_latency's own adopted mulsign-reassociation**
+  (backlog idea #16's atan slice): apply `mulsign` to the poly result and
+  `FRAC_PI_2` individually, then select/subtract, instead of selecting
+  first and applying one final `mulsign`. Bit-exact as expected (same
+  identity atan_latency already verified; edgecheck + fuzz confirmed
+  atan's well-documented avg ulp 0.0675 unchanged) but real mca
+  regression: atan throughput 1.491→1.529 cyc/elem (+2.5%, reproducible
+  across repeat runs), latency/atan2 flat. Unlike atan_latency (no
+  division, poly-only), plain atan's `1.0/a` reciprocal changes the port-
+  pressure picture enough that the same reassociation lands as a net
+  loss here — the win doesn't transfer between the two constructions
+  despite the identical algebraic shape. Reverted.
 
 ### hyperbolics / sigmoid
 
@@ -859,11 +871,13 @@ an idea revisits a rejection, the differing mechanism is stated.
     vplzcntd, AVX-512CD): replace the compare+select 2^24 rescale in the
     log family/cbrt/hypot_checked with an exact shift-based normalize.
     codegen_check that scalar leading_zeros autovectorizes here.
-16. **Sign-algebra select→xor audit**: port atan_latency's adopted
-    mulsign-reassociation to plain atan; screen erf's
+16. **Sign-algebra select→xor audit**: screen erf's
     `mulsign(1 − exp2(...), x)` combine and powf_sign_combine's
     6-select tree for a bit-mask classify form. (acos's analog measured
-    slightly *worse* — per-site mca required, not assumed.)
+    slightly *worse*, and plain `atan`'s port of atan_latency's own
+    mulsign-reassociation also measured worse — see rejected section —
+    so per-site mca is required, not assumed, for each remaining site
+    here too.)
 17. **exp_pos_neg_checked_half: fold the ×0.5 into the integer
     reciprocal trick** — `t1n*0.5 = from_bits(0x7E80_0000 − t1_bits)`
     (and t1·0.5 analogously) — deletes two multiplies.
