@@ -3475,6 +3475,35 @@ cousin.
     `exp_pos_neg`/`erf_poly`) or specifically shrinks in the function's
     already-known hard region (unfavorable, as for `asin_poly`/`erfc`) --
     this is checkable analytically before ever running the LP.*
+
+    **Screened `tanh` next by the new heuristic before building anything
+    (2026-07-10): passes the "sensitivity doesn't vanish at the known hard
+    case" check, but hits a different, purely numerical obstacle, and is
+    capped by idea #7's own finding anyway -- not pursued.** `tanh`'s
+    combine is `p*exp2int - 1`, so `d(tanh)/dp = exp2int`; its own
+    documented worst case sits near the `|x|=0.25` branch threshold, not
+    at extreme `|x|`, so unlike `asin_poly`/`erfc` the sensitivity term
+    doesn't vanish where the real worst case lives -- looked like a
+    legitimate candidate by the heuristic. But `exp2int` itself spans the
+    clamp range's own full magnitude (`y` up to `+-88` means `exp2int`
+    from `~1.18e-38` to `~1.70e38`, 76 orders of magnitude) -- far more
+    dynamic range than `log_2`/`erf_poly`/`erfc`/`asin_poly` ever had, and
+    the same row-wise `/ulp` normalization that fixed HiGHS's earlier
+    "infeasible" misreport (idea #91's own entry above) wasn't enough
+    here: HiGHS reported an outright "Model error" instead, needing a
+    deeper fix (row *and* column scaling, or working in log-space) not
+    attempted given the second, independent reason this isn't worth
+    pursuing regardless: idea #7 already found `tanh`'s error "splits
+    roughly evenly between poly and final combine," so even a perfect fit
+    refit here caps out around half of `tanh`'s total error, a
+    structurally smaller ceiling than `exp_pos_neg`'s fully-fit-dominated
+    case (which itself only delivered ~10% real improvement). Not
+    pursued; no probe committed. *A target passing the "sensitivity
+    doesn't vanish" screen is necessary but not sufficient -- also check
+    whether the sensitivity term's own dynamic range is tractable for a
+    plain LP, and whether the function's round-off-audit classification
+    (idea #7) caps the achievable payoff before investing in fixing the
+    numerics.*
 53. **erfc negative-side accuracy survey (resolved 2026-07-09, structural,
     not actionable)**: split the exhaustive sweep by sign (temporary
     accuracy.rs domain split, not kept) -- confirmed a real asymmetry:
