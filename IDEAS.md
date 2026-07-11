@@ -3359,6 +3359,41 @@ cousin.
     speedup even when it "removes an op"). Not pursued further given the
     effort/payoff ratio; left open for a session that wants to invest in
     the full LP setup.
+
+    **The full LP setup now exists (2026-07-10, scipy confirmed available
+    this session) -- ran it, not for the `a0=0` constraint specifically,
+    but for a full 7-free-coefficient refit, and found a real, adopted
+    max-ulp win.** Built the same ulp-weighted Chebyshev LP shape as the
+    `log_2`/`exp_pos_neg` attempts, but weighted each point by the
+    *linearized sensitivity of erf's own final combine* (`d(1-2^poly)/
+    d(poly) = -2^poly * ln(2)`, evaluated at the true operating point)
+    rather than the poly's own raw output error -- the prior 2026-07-09
+    refit's own weighting (per its doc comment, "ulp-weighted... against
+    the poly's own target") didn't distinguish this from the final
+    output's own varying sensitivity across the domain. At the *same*
+    degree of freedom as shipped (all 7 coefficients free, not
+    constraining `a0`), the LP found a dramatically tighter idealized fit
+    (weighted residual max `2.989->0.505`, ~6x). Verified bit-identical
+    fidelity against the real compiled `erf` first (0 mismatches), then a
+    real ~1.09-billion-point dense sweep of the whole `[-10,10]` domain:
+    **max ulp 5->4, avg ulp unchanged** (`0.62958->0.63010`, +0.08%,
+    noise-level) -- a real win on the axis that moved, no cost on the
+    one that didn't. Confirmed on the crate's own exhaustive sweep
+    (`0.317/5` -> `0.318/4`), `erfc`/`erfcx` unaffected (neither uses
+    this poly), `mca` bit-identical (pure coefficient swap). Adopted,
+    commit `83e4db4`. Also incidentally answers the original idea's own
+    `a0=0`-constrained question without needing to run it separately:
+    since the *unconstrained* LP's own `a0` came out at `2.30e-5` (close
+    to, but not exactly, the old `3.36e-5`, and nowhere near `0`), `a0`
+    remains genuinely load-bearing at this weighting too -- the original
+    idea's own narrow "is a0 removable" framing was never really the
+    valuable question here; the *weighting scheme* used to fit the other
+    6 coefficients was. *A prior refit's own weighting choice (raw poly
+    error vs. final-output-sensitivity-weighted error) can leave real,
+    same-degree-of-freedom headroom on the table even after a "proper" LP
+    was already used once -- when a poly feeds a further nonlinear
+    combine (here, `exp2_checked` then `1-x`), weight the fit by that
+    combine's own local sensitivity, not just the poly's raw target.*
 53. **erfc negative-side accuracy survey (resolved 2026-07-09, structural,
     not actionable)**: split the exhaustive sweep by sign (temporary
     accuracy.rs domain split, not kept) -- confirmed a real asymmetry:
