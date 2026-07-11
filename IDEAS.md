@@ -5724,3 +5724,34 @@ cousin.
     mechanism exists: a 4th caller (`sigmoid`) carrying the exact same
     duplicated fragment was found simply by noticing its doc comment
     already cited the same pattern by name.*
+
+104. **exp2/exp2_checked/exp10/exp10_checked/exp2m1/exp2_checked_df's
+    shared `Q(f) = (2^f-1)/f` poly, deduped via macro (adopted
+    2026-07-10) -- a bigger version of idea #103's own pattern, found by
+    following its own precedent.** `exp2`'s own doc comment already
+    stated this explicitly: "Shared verbatim by exp2_checked/exp10/
+    exp10_checked/exp2m1/exp2_checked_df below (all 'standalone copies'
+    of this exact poly), updated together to keep them in sync" -- a
+    *manual* sync convention (6 hand-kept-identical copies, one more than
+    idea #103's 4), found by grepping for the poly's own literal leading
+    coefficients (`2.4022985e-1`, `9.678817e-3`) across the file right
+    after idea #103 closed. Unlike idea #103's exp/expm1/tanh case, no
+    prior `fn`-based sharing attempt (successful or regressed) is
+    documented for this poly specifically -- so this is straightforward
+    hygiene with the now-established-safe macro mechanism, not a re-test
+    of a known regression. Confirmed all 6 copies byte-identical in the
+    same 6-line fragment (`f2` through `q = fma(h, f2, g0)`) before
+    touching anything; extracted into `exp2_q_poly!(f) -> q`, leaving
+    each function's own distinct reduction and final combine (`exp2`/
+    `exp10`'s single-field `fma(q, exp2int*f, exp2int)` vs. the other
+    four's k1/k2-split `p = fma(q, t1*f, t1); p*t2` variants, `exp2m1`'s
+    own extra `fma(p, t2, -1.0)`, `exp2_checked_df`'s own downstream NaN-
+    guard) untouched at each call site. Verified with the same rigor as
+    idea #103: full pre/post assembly diff of the compiled `mca_target`
+    binary -- **zero byte differences**. `cargo test` clean. Commit
+    `<pending>`. *Once a dedup technique is proven safe for one group of
+    duplicated functions, grepping the shared literal (a coefficient, a
+    magic constant) across the rest of the file is a cheap way to find
+    every other place the same "documented, manually-kept-in-sync
+    standalone copies" pattern already exists, rather than assuming the
+    first group found was the only one.*

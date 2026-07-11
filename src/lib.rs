@@ -114,6 +114,26 @@ macro_rules! exp_r_poly {
     }};
 }
 
+// Shared by exp2/exp2_checked/exp10/exp10_checked/exp2m1/exp2_checked_df's
+// own `Q(f) = (2^f - 1)/f` evaluation (exp2's own doc comment already
+// documents this as "shared verbatim... all 'standalone copies' of this
+// exact poly, updated together to keep them in sync" -- a manual-sync
+// convention this macro now enforces structurally instead). Same macro-
+// not-fn reasoning as exp_r_poly! above. Returns `q`; each caller does its
+// own distinct final combine (exp2/exp10's single-field
+// `fma(q, exp2int*f, exp2int)` vs. exp2_checked/exp10_checked/exp2m1/
+// exp2_checked_df's k1/k2-split `p = fma(q, t1*f, t1); p*t2`).
+macro_rules! exp2_q_poly {
+    ($f:expr) => {{
+        let f2 = $f * $f;
+        let g0 = fma(2.4022985e-1, $f, 6.93147e-1);
+        let g1 = fma(9.678817e-3, $f, 5.548333e-2);
+        let g2 = fma(2.1702255e-4, $f, 1.2439643e-3);
+        let h = fma(g2, f2, g1);
+        fma(h, f2, g0)
+    }};
+}
+
 #[inline(always)]
 #[allow(clippy::neg_cmp_op_on_partial_ord)] // deliberate: !(x < inf) exploits
 // NaN's always-false comparisons to catch both +inf and NaN in one check
@@ -229,13 +249,10 @@ pub fn exp2(x: f32) -> f32 {
     // single-fma-final-rounding construction) -- zero perf cost, same
     // instructions. Shared verbatim by exp2_checked/exp10/exp10_checked/
     // exp2m1/exp2_checked_df below (all "standalone copies" of this exact
-    // poly), updated together to keep them in sync.
-    let f2 = f * f;
-    let g0 = fma(2.4022985e-1, f, 6.93147e-1);
-    let g1 = fma(9.678817e-3, f, 5.548333e-2);
-    let g2 = fma(2.1702255e-4, f, 1.2439643e-3);
-    let h = fma(g2, f2, g1);
-    let q = fma(h, f2, g0);
+    // poly), updated together to keep them in sync -- now enforced by
+    // sharing `exp2_q_poly!` (a macro, not a fn: see exp_r_poly!'s own
+    // doc comment for why that distinction matters in this crate).
+    let q = exp2_q_poly!(f);
     fma(q, exp2int * f, exp2int)
 }
 
@@ -289,12 +306,7 @@ pub fn exp2_checked(x: f32) -> f32 {
     // same 3-balanced-pair Q(f) as exp2 (see there for the derivation): same
     // coefficients/critical-path depth as the old A/B split, 2 fewer plain
     // multiplies (never needs t1*f^4, only t1*f)
-    let f2 = f * f;
-    let g0 = fma(2.4022985e-1, f, 6.93147e-1);
-    let g1 = fma(9.678817e-3, f, 5.548333e-2);
-    let g2 = fma(2.1702255e-4, f, 1.2439643e-3);
-    let h = fma(g2, f2, g1);
-    let q = fma(h, f2, g0);
+    let q = exp2_q_poly!(f);
     // weave t1 into the fma chain (t1*f is exact: both factors normal) so
     // only one multiply (by t2) remains after the polynomial
     let p = fma(q, t1 * f, t1);
@@ -378,12 +390,7 @@ pub fn exp10_checked(x: f32) -> f32 {
     let k2b = (k + 766.0) - k1b;
     let t1 = f32::from_bits((k1b.to_bits() << 8) & EXPONENT_MASK);
     let t2 = f32::from_bits((k2b.to_bits() << 8) & EXPONENT_MASK);
-    let f2 = f * f;
-    let g0 = fma(2.4022985e-1, f, 6.93147e-1);
-    let g1 = fma(9.678817e-3, f, 5.548333e-2);
-    let g2 = fma(2.1702255e-4, f, 1.2439643e-3);
-    let h = fma(g2, f2, g1);
-    let q = fma(h, f2, g0);
+    let q = exp2_q_poly!(f);
     let p = fma(q, t1 * f, t1);
     p * t2
 }
@@ -414,12 +421,7 @@ pub fn exp10(x: f32) -> f32 {
     let k = kr - adjust;
     let f = fr + adjust;
     let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
-    let f2 = f * f;
-    let g0 = fma(2.4022985e-1, f, 6.93147e-1);
-    let g1 = fma(9.678817e-3, f, 5.548333e-2);
-    let g2 = fma(2.1702255e-4, f, 1.2439643e-3);
-    let h = fma(g2, f2, g1);
-    let q = fma(h, f2, g0);
+    let q = exp2_q_poly!(f);
     fma(q, exp2int * f, exp2int)
 }
 
@@ -1814,12 +1816,7 @@ pub fn exp2m1(x: f32) -> f32 {
     let k2b = (k + 766.0) - k1b;
     let t1 = f32::from_bits((k1b.to_bits() << 8) & EXPONENT_MASK);
     let t2 = f32::from_bits((k2b.to_bits() << 8) & EXPONENT_MASK);
-    let f2 = f * f;
-    let g0 = fma(2.4022985e-1, f, 6.93147e-1);
-    let g1 = fma(9.678817e-3, f, 5.548333e-2);
-    let g2 = fma(2.1702255e-4, f, 1.2439643e-3);
-    let h = fma(g2, f2, g1);
-    let q = fma(h, f2, g0);
+    let q = exp2_q_poly!(f);
     let p = fma(q, t1 * f, t1);
     let b = fma(p, t2, -1.0);
     if x.abs() < 0.5 { a } else { b }
@@ -3363,12 +3360,7 @@ fn exp2_checked_df(v: Df32) -> f32 {
     let k2b = (k + 766.0) - k1b;
     let t1 = f32::from_bits((k1b.to_bits() << 8) & EXPONENT_MASK);
     let t2 = f32::from_bits((k2b.to_bits() << 8) & EXPONENT_MASK);
-    let f2 = f * f;
-    let g0 = fma(2.4022985e-1, f, 6.93147e-1);
-    let g1 = fma(9.678817e-3, f, 5.548333e-2);
-    let g2 = fma(2.1702255e-4, f, 1.2439643e-3);
-    let h = fma(g2, f2, g1);
-    let q = fma(h, f2, g0);
+    let q = exp2_q_poly!(f);
     let p = fma(q, t1 * f, t1);
     let result = p * t2;
     // when result saturates to 0 or +-inf (xs clamped away from its real
