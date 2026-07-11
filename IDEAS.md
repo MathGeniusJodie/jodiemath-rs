@@ -6297,12 +6297,45 @@ cousin.
     zero byte differences. `cargo test`, `codegen_check` (71 regions
     clean), `edgecheck` (601 pins, same 2 known won't-fix cbrt misses, no
     new failures) all clean. Pure hygiene, no accuracy/perf claim --
-    same framing as every dedup since idea #107. This is likely the last
-    easy win from the line-window scanner's original hit list (the
-    remaining un-investigated hits are either already-excluded-by-design
-    duplication like `exp`/`expm1`'s own reduction or `exp2_checked`/
-    `exp2m1`'s xs-based k1b variant, genuinely trivial 1-2 line
-    coincidences, or example/plotting scaffolding rather than library
-    logic) -- confirmed by re-running the scanner once more after this
-    fix and finding nothing new left to chase in `src/lib.rs`'s own
-    numeric core.
+    same framing as every dedup since idea #107. *(Correction: the next
+    entry, idea #113, found one more real hit immediately after this one
+    was written -- "likely the last easy win" was premature; see there
+    for why re-running the scanner yet again after every fix, not just
+    once, keeps paying off.)*
+
+113. **`log_2`/`ln`/`log10`: shared denormal-rescale + special-case-select
+    wrapper deduped via macro (adopted 2026-07-11)**: found by re-running
+    the line-window scanner immediately after idea #112, rather than
+    treating that entry's own "likely the last easy win" as true without
+    checking -- it wasn't. All three top-level entry points share an
+    identical 5-line wrapper (`denormal_rescale!(x)`, call the caller's
+    own `_normal` fn, the `x==0.0`-vs-`x<0.0` special-value select, the
+    final `!(x < f32::INFINITY)` inf/nan select) -- a genuine three-way
+    duplicate, not just a pairwise one like every other dedup this
+    session. Only which `_normal` function gets called differs.
+    Extracted into `log_family_wrapper!(x, $normal:ident) -> f32`, passing
+    the `_normal` function's own name as the macro's second argument
+    (called directly inside the expansion -- a bare function item is a
+    perfectly ordinary callable value here, no special macro handling
+    needed for it). Each function's own `#[allow(clippy::
+    neg_cmp_op_on_partial_ord)]` attribute stays on the function item
+    itself (attributes apply post-macro-expansion, so this still
+    suppresses the lint for the `!(x < inf)` check now living inside the
+    macro). Verified with the same rigor as every dedup this session:
+    full pre/post `mca_target` assembly diff -- zero byte differences.
+    `cargo test`, `codegen_check` (71 regions clean), `edgecheck` (601
+    pins, same 2 known won't-fix cbrt misses, no new failures) all clean.
+    Pure hygiene, no accuracy/perf claim. Re-ran the scanner once more
+    after this fix: the only remaining hits in `src/lib.rs`'s own numeric
+    core are the already-excluded-by-design `exp`/`expm1`/`exp_checked`/
+    `exp_m1_over_x` reduction (deliberately duplicated per their own doc
+    comments, not a dedup candidate) and the already-excluded
+    `exp2_checked`/`exp2m1` xs-based `k1b` variant (a genuinely different
+    formula, not `exp2_field_split`'s contract) -- everything else left is
+    single-line coincidences (`x2 = x*x`) or example/plotting scaffolding.
+    *Don't trust a "this looks like the last one" close-out claim without
+    actually re-running the check one more time first -- this is now the
+    second time in a row (after idea #112 itself) that claim was wrong on
+    the first try. When a technique keeps paying off, keep running it
+    until a re-run genuinely comes back empty, not until the results
+    just look like they're trailing off.*
