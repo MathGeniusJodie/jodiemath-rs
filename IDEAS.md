@@ -5811,7 +5811,7 @@ cousin.
     that's where the logic they describe now lives. Verified the same
     way, carefully this time given the bug just above: full pre/post
     assembly diff -- zero byte differences on the first attempt.
-    `cargo test` clean. Commit `<pending>`.
+    `cargo test` clean. Commit `4745193`.
 
 104. **exp2/exp2_checked/exp10/exp10_checked/exp2m1/exp2_checked_df's
     shared `Q(f) = (2^f-1)/f` poly, deduped via macro (adopted
