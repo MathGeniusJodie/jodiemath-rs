@@ -3064,12 +3064,20 @@ pub fn erfc(x: f32) -> f32 {
     // condition z already resolved.
     let w = 1.0 - z;
     let xa = x.abs();
-    // Same clamp erfc_rational applies internally, computed again here
-    // (redundant but cheap -- a single extra `min`) because the exponent
-    // below needs the *clamped* xa too, matching this function's
-    // pre-factoring behavior exactly.
-    let xa_bounded = if xa > 10.0 { 10.0 } else { xa };
-    let y = exp2_checked(-(xa_bounded * xa_bounded) * LOG2_E) * erfc_rational(xa);
+    // The exponent term deliberately uses the *true*, unclamped `xa`, not
+    // erfc_rational's own internal xa<=10 clamp: erfc_rational needs that
+    // bound to keep its own rational polynomial from overflowing, but
+    // exp2_checked already has its own established, correct saturate-to-0
+    // contract for arbitrarily negative exponents (clamps its own input to
+    // -151 internally). Using the clamped xa here instead (as a prior
+    // version of this function did) froze the exponent at exp2_checked
+    // (-100*log2e) for *every* xa>10, so erfc(x) for any x beyond ~10.02
+    // returned that same tiny nonzero constant (~3e-45) forever instead of
+    // the true value, which reaches exactly 0.0f32 well before x=11 --
+    // found via idea #102/#105's own "does the same clamp-then-freeze
+    // pattern erfcx hit also affect erfc itself" check, since erfc's own
+    // accuracy.rs sweep is restricted to |x|<=10 and never exercised this.
+    let y = exp2_checked(-(xa * xa) * LOG2_E) * erfc_rational(xa);
     fma(y, z, w)
 }
 

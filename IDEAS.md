@@ -5963,3 +5963,65 @@ cousin.
     it's always atomic, like a parenthesized sub-expression, which
     matters enormously for any macro meant to reproduce an existing
     left-to-right floating-point operation order exactly.*
+
+106. **`erfc` itself (not just `erfcx`) freezes for `x > ~10.06` instead
+    of correctly reaching `0.0` -- found by asking whether idea #102's
+    own `erfcx` bug shape could recur elsewhere, fixed for free (adopted
+    2026-07-10).** Idea #102 found `erfcx` frozen past `x=10` because
+    `erfc_rational`'s own internal clamp isn't masked by any decaying
+    factor in `erfcx`'s construction. Worth checking whether `erfc`
+    itself -- which *does* have a decaying `exp(-x^2)` factor, the thing
+    that was supposed to make this a non-issue there -- was accidentally
+    exposed to the same freeze anyway. It was: `erfc`'s own body computes
+    the exponent term as `exp2_checked(-(xa_bounded*xa_bounded)*LOG2_E)`,
+    using `xa_bounded` (clamped to 10.0, a *second*, redundant clamp
+    matching `erfc_rational`'s own internal one) instead of the true
+    `xa` -- so for any `x > 10`, the exponential term *also* freezes at
+    its own `x=10` value instead of continuing to decay. Confirmed
+    directly: `erfc(10)`, `erfc(15)`, `erfc(20)`, `erfc(100)`,
+    `erfc(1000)` all returned the identical `3e-45` -- the true value
+    rounds to exactly `0.0f32` starting at `x~10.06` (verified against
+    `scipy.special.erfc`), so this affected every representable `x` from
+    ~10.06 up to `f32::MAX` on the positive side (the negative side,
+    approaching `2.0`, was already correct -- the frozen exponent term
+    there gets subtracted from `2.0`, and at `f32` precision the tiny
+    frozen value is indistinguishable from the true near-zero one close
+    enough to `2.0` that it never showed up as a visible bug).
+
+    The fix turned out to be a pure simplification, not a new
+    computation: `exp2_checked` already has its own established, correct
+    saturate-to-`0.0` contract for arbitrarily negative exponents
+    (confirmed directly: `exp2_checked(-150)` through `exp2_checked
+    (-324.65)` all correctly give exactly `0.0`) -- so simply using the
+    *unclamped* `xa` in `erfc`'s own exponent term (dropping the
+    redundant `xa_bounded` variable there entirely, while leaving
+    `erfc_rational`'s own separate internal clamp on its rational
+    polynomial untouched, which still needs its own bound to avoid
+    overflowing) fixes it with no new arithmetic at all. Verified before
+    touching `src/lib.rs`: a standalone probe reimplementing both the
+    shipped and fixed forms confirmed **zero mismatches across a dense
+    20,000-point sweep of `[-10,10]`** (bit-exact, not just close) and
+    the fixed form correctly returning `0.0` for every `x>=10.2` tested
+    up to `1000`. Applied to `src/lib.rs`, then verified with the real
+    toolchain: `codegen_check` clean, `accuracy.rs`'s own `erf`-filtered
+    quick fuzz reproduced almost identical numbers to readme's own
+    documented row (`erfc` avg `0.3053`/max `105` vs. documented
+    `0.311`/`109`, consistent with ordinary quick-mode sampling noise
+    between independent runs, not a regression -- the real domain this
+    fix touches is outside `accuracy.rs`'s own `|x|<=10` restriction
+    entirely, so this sweep couldn't have shown the fix either way, only
+    confirm no regression). `mca` gave the actual bonus: throughput
+    **improved**, not just stayed flat -- `2.530->2.437` cyc/elem (~3.7%
+    faster), latency flat (`64.03->64.00`), since dropping the redundant
+    clamp/select removes real instructions rather than adding any. A
+    genuine two-for-one: real accuracy fix (an entire half-infinite tail
+    of input space going from silently wrong to correct) *and* a small
+    real speedup, not a tradeoff between them. Commit `<pending>`. *The
+    lesson idea #102 left on the table -- "does this same clamp-then-
+    freeze shape recur anywhere else" -- was worth actually checking
+    once found in one place; the fix here was cheaper than erfcx's own
+    rejected one specifically because `erfc` already had a decaying
+    factor available to lean on (just needed to stop needlessly
+    re-clamping the value that factor depends on), where `erfcx`
+    fundamentally lacks any such factor and needs real extra arithmetic
+    instead.*
