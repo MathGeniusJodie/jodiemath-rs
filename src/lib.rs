@@ -196,30 +196,41 @@ macro_rules! pade_expm1_ratio {
     };
 }
 
+// Shared by log_2/ln/log10: given each caller's own `_normal` fn (the
+// only thing that differs -- coefficients/final combine live there), the
+// denormal-rescale + special-case-select wrapper is byte-for-byte
+// identical: edge handling is done with selects (no early returns) so
+// loops over arrays of these calls can auto-vectorize -- scale
+// denormals up before the single normal-path evaluation, then patch
+// specials afterwards. `spec` is `-inf` for `+-0`, `NaN` for `x < 0`
+// (includes `-inf`); its select input only depends on `x`, so it
+// resolves in parallel with the poly evaluation. The final `!(x <
+// f32::INFINITY)` check (`+inf`/`nan`: `x*x` is `inf`/`nan`
+// respectively, false for `-inf` since `-inf < inf`) deliberately uses
+// `!(x < inf)` (exploiting NaN's always-false comparisons to catch both
+// +inf and NaN in one check) rather than `partial_cmp`, which would need
+// an extra `Option`-unwrap for what's already a single cheap `fcmp` --
+// each caller's own `#[allow(clippy::neg_cmp_op_on_partial_ord)]`
+// still applies to this check post-expansion. Macro, not a fn -- same
+// reasoning as this file's other shared-body macros.
+macro_rules! log_family_wrapper {
+    ($x:expr, $normal:ident) => {{
+        let (xs, koff) = denormal_rescale!($x);
+        let r = $normal(xs, koff);
+        let spec = if $x == 0.0 { f32::NEG_INFINITY } else { f32::NAN };
+        let r = if $x <= 0.0 { spec } else { r };
+        if !($x < f32::INFINITY) {
+            $x * $x
+        } else {
+            r
+        }
+    }};
+}
+
 #[inline(always)]
-#[allow(clippy::neg_cmp_op_on_partial_ord)] // deliberate: !(x < inf) exploits
-// NaN's always-false comparisons to catch both +inf and NaN in one check
-// (see the comment at the actual use site below); partial_cmp would need
-// an extra Option-unwrap for what's already a single cheap fcmp.
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
 pub fn log_2(x: f32) -> f32 {
-    // edge handling is done with selects (no early returns) so loops over
-    // arrays of log_2 calls can auto-vectorize: scale denormals up before
-    // the single normal-path evaluation, then patch specials afterwards.
-    // denormal, zero, negative rescaled up 2^24 (false for nan); koff is
-    // folded into the exponent term inside log_2_normal so the
-    // correction stays off the serial critical path (k + koff is exact)
-    let (xs, koff) = denormal_rescale!(x);
-    let r = log_2_normal(xs, koff);
-    // -inf for +-0, nan for x < 0 (includes -inf); the select input only
-    // depends on x, so it resolves in parallel with the poly evaluation
-    let spec = if x == 0.0 { f32::NEG_INFINITY } else { f32::NAN };
-    let r = if x <= 0.0 { spec } else { r };
-    // +inf and nan: x*x is inf/nan respectively (false for -inf: -inf < inf)
-    if !(x < f32::INFINITY) {
-        x * x
-    } else {
-        r
-    }
+    log_family_wrapper!(x, log_2_normal)
 }
 
 /// Core of log_2 for positive normal finite x only: no handling for zero,
@@ -1414,19 +1425,9 @@ const LOG10_2_LO: f32 = 4.605039066518657e-6;
 /// nearly a full ulp of avoidable error. Same domain behavior as log_2 (its
 /// edge handling covers zero/negative/denormal/inf/nan).
 #[inline(always)]
-#[allow(clippy::neg_cmp_op_on_partial_ord)] // deliberate: !(x < inf) exploits
-// NaN's always-false comparisons to catch both +inf and NaN in one check,
-// same idiom as log_2's own doc comment explains.
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
 pub fn ln(x: f32) -> f32 {
-    let (xs, koff) = denormal_rescale!(x);
-    let r = ln_normal(xs, koff);
-    let spec = if x == 0.0 { f32::NEG_INFINITY } else { f32::NAN };
-    let r = if x <= 0.0 { spec } else { r };
-    if !(x < f32::INFINITY) {
-        x * x
-    } else {
-        r
-    }
+    log_family_wrapper!(x, ln_normal)
 }
 
 /// Core of ln for positive normal finite x only -- see log_2_normal, same
@@ -1474,19 +1475,9 @@ pub fn ln_unchecked(x: f32) -> f32 {
 /// comment for why this avoids the naive `log_2(x) * LOG10_2`'s double
 /// rounding).
 #[inline(always)]
-#[allow(clippy::neg_cmp_op_on_partial_ord)] // deliberate: !(x < inf) exploits
-// NaN's always-false comparisons to catch both +inf and NaN in one check,
-// same idiom as log_2's own doc comment explains.
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
 pub fn log10(x: f32) -> f32 {
-    let (xs, koff) = denormal_rescale!(x);
-    let r = log10_normal(xs, koff);
-    let spec = if x == 0.0 { f32::NEG_INFINITY } else { f32::NAN };
-    let r = if x <= 0.0 { spec } else { r };
-    if !(x < f32::INFINITY) {
-        x * x
-    } else {
-        r
-    }
+    log_family_wrapper!(x, log10_normal)
 }
 
 /// Core of log10 for positive normal finite x only -- see ln_normal, same
