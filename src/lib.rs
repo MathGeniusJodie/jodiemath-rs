@@ -3280,33 +3280,22 @@ pub fn rhypot(x: f32, y: f32) -> f32 {
 #[inline(always)]
 fn log2_df(x: f32) -> Df32 {
     let (xs, koff) = denormal_rescale!(x);
-    let e = (xs.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23;
-    let m = f32::from_bits((xs.to_bits() as i32).wrapping_sub(e << 23) as u32);
-    let k = e as f32 + koff;
-    let s = m - 1.0;
-    let c: [f32; 10] = [
-        LOG2_E,
-        -0.72134733,
-        0.4808985,
-        -0.36069715,
-        0.288568,
-        -0.23961738,
-        0.20460059,
-        -0.19106273,
-        0.18617496,
-        -0.10994955,
-    ];
-    let s2 = s * s;
-    let s4 = s2 * s2;
-    let l0 = fma(c[1], s, c[0]);
-    let l1 = fma(c[3], s, c[2]);
-    let l2 = fma(c[5], s, c[4]);
-    let l3 = fma(c[7], s, c[6]);
-    let l4 = fma(c[9], s, c[8]);
-    let r0 = fma(l1, s2, l0);
-    let r1 = fma(l3, s2, l2);
-    let r2 = fma(l4, s4, r1);
-    let p = fma(r2, s4, r0);
+    let (p, s, k) = log_family_normal!(
+        xs,
+        koff,
+        [
+            LOG2_E,
+            -0.72134733,
+            0.4808985,
+            -0.36069715,
+            0.288568,
+            -0.23961738,
+            0.20460059,
+            -0.19106273,
+            0.18617496,
+            -0.10994955,
+        ]
+    );
     Df32::from_f32(k) + Df32::from_mul(p, s)
 }
 

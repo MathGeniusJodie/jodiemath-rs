@@ -2832,14 +2832,35 @@ cousin.
     exact same rigor: full pre/post assembly diff of the compiled
     `mca_target` binary -- again **zero byte differences**, this time
     across all three call sites and their `_unchecked` siblings at once.
-    `cargo test` clean. Commit `1efbfb4`. This closes idea #24's own
-    full original scope, not just the preamble slice. *A "these look
-    identical modulo constants" claim across three independently-grown
-    functions is worth actually reading side by side before believing --
-    here it held completely (down to the exact fma-chain shape), but had
-    it not (different degree, different exponent trick, a since-applied
+    `cargo test` clean. Commit `1efbfb4`. *A "these look identical modulo
+    constants" claim across three independently-grown functions is worth
+    actually reading side by side before believing -- here it held
+    completely (down to the exact fma-chain shape), but had it not
+    (different degree, different exponent trick, a since-applied
     per-function fix), forcing a shared macro would have been the wrong
     call.*
+
+    **Fourth caller found and included afterward, same day: this idea's
+    own original text ("and log2_df quadruplicates it") named a 4th
+    duplicate that the pass above missed entirely** -- closed the loop
+    only once a later grep for the poly's own literal leading coefficient
+    (`LOG2_E`/`-0.72134733`) across the whole file turned it up, the same
+    technique idea #103's own follow-up used to find its own missed
+    callers. `log2_df` carries the identical exponent-extraction and
+    10-coefficient poly-eval shape, differing only in its own `Df32`-
+    precision final combine (`Df32::from_f32(k) + Df32::from_mul(p, s)`
+    instead of the plain-f32 versions' `fma`/Cody-Waite combines).
+    Applied the same `log_family_normal!(xs, koff, c) -> (p, s, k)` call
+    (reusing `log2_df`'s own already-present `denormal_rescale!(x)` call
+    for `xs`/`koff`, matching how `log_2_normal` itself receives them).
+    Verified with the same full pre/post assembly diff -- zero byte
+    differences. `cargo test` clean. Commit `<pending>`. *This* really*
+    closes idea #24's full original scope. Grepping a shared poly's own
+    literal coefficients across the whole file, not just the functions a
+    doc comment happens to name explicitly nearby, is worth doing even
+    right after believing a dedup is "done" -- the idea's own original
+    text already named the 4th caller, and it was still missed on the
+    first pass.*
 25. ~~**log_2 denormal path: fold the ×2^24 rescale into the wrapping_sub
     magic**~~ (killed on paper 2026-07-10, confirmed dead on arrival as
     suspected -- not just "probably", provably so): the idea's own hope
