@@ -3099,6 +3099,52 @@ cousin.
     relative to the effort, e.g. idea #52's own "effort/payoff ratio"
     call). Not pursued this session; left open with the concrete numbers
     above for whoever wants to chase the average further.
+
+    **Chased (2026-07-10): ulp-weighted Chebyshev LP refit of `asin_poly`
+    (same combine-sensitivity technique as `exp_pos_neg`/`erf_poly`'s own
+    wins), targeting `g(a) = (pi/2 - asin(a))/sqrt(1-a)` over the full
+    `[0.25,1)` big-branch domain, weighted by `sqrt(1-a)/ulp(asin(a))`
+    (the combine's own linearized sensitivity). Idealized metric looked
+    dramatic -- max weighted residual 2.13->0.10, avg 1.06->0.06, roughly
+    a 20x tighter fit, the single best-looking idealized number of any LP
+    attempt this session. It did not survive contact with the real
+    construction: built a verification probe (bit-exact against the real
+    crate first -- 0 mismatches over ~2M sampled points, after catching a
+    small bug in the probe's own `asin_small` reimplementation, hand-typed
+    decimal coefficients instead of copying the real `1.0/6.0`-style
+    exact-rational literals verbatim), then measured shipped vs. LP
+    coefficients through the actual Horner-fma chain + `sqrt(1-a)` combine
+    on a 5M-point dense sweep: full `[0.25,1)` domain avg **0.731->1.165**
+    (worse), max 7->8 (worse); the specific `[0.25,0.5)` band this idea
+    itself flagged: avg **1.426->2.046** (worse), max 7->8 (worse). Not a
+    "no improvement," a real, measured regression on every axis checked.
+
+    Root-caused rather than left as a mystery: computed the poly's own
+    *idealized* fit-only residual (f64 polynomial evaluation against the
+    true `g(a)`, no f32 rounding anywhere) at its own worst point in
+    `[0.25,0.5)` -- only ~0.53 ulp-equivalent, nowhere close to the ~1.4
+    real average or the real max-7 this band actually shows. So the
+    polynomial's own continuous fit quality was never the bottleneck here
+    at all (matching `log_2`'s own already-established "rounding-
+    dominated, not fit-dominated" shape, not `exp_pos_neg`/`erf_poly`'s) --
+    the real error must come from elsewhere in the construction (the
+    `(1-a).sqrt()` term, or the poly's own Horner-chain rounding through
+    six fmas, not chased further since the ship/no-ship question was
+    already decisively answered). An LP can only ever improve the
+    *continuous fit* term; when that term is already three orders of
+    magnitude below the real observed error, no coefficient choice at all
+    can move the real number, and the "dramatic" idealized improvement
+    was optimizing a residual that was never the actual problem. Reverted
+    (probe deleted, no `src/lib.rs` change ever made -- `git status`
+    clean throughout). *This session's single most dramatic-looking
+    idealized LP result (20x) turned out to be its most decisive real
+    regression, the opposite of `exp_pos_neg`'s own outcome (a real,
+    substantial, ~29% idealized gain that mostly held up) -- the
+    idealized number's own *size* says nothing about whether it will
+    transfer; only the fit-vs-rounding-dominance classification (idea #7)
+    predicts that, and it's worth checking *before* running an expensive
+    LP, not just after a surprising real-world result demands an
+    explanation.*
 38. ~~**asin via atan2(x, sqrt((1-x)(1+x)))**~~ (tried 2026-07-10,
     rejected -- decisive perf regression, mixed accuracy result too):
     implemented literally as `atan2(x, ((1.0-x)*(1.0+x)).sqrt())` and
