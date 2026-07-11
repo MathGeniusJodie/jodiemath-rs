@@ -424,6 +424,31 @@ pub fn exp2_checked(x: f32) -> f32 {
 /// neither tool samples -- `edgecheck.rs`'s dedicated special-value pins
 /// (here, `x=inf`) are not redundant with fuzzing; run both before
 /// trusting a reduction-scheme change.*
+// Shared by exp10/exp10_checked: the round-based reduction (`kb`/`kr`/`d`/
+// `fr`/floor-adjust to `(k, f)`) is identical between the two -- only
+// exp10_checked's own leading `x` clamp and trailing `k` clamp (needed
+// since it feeds the k1/k2-split combine, unlike exp10's single-field
+// one) differ, both left at the call site. Macro, not a fn -- same
+// reasoning as this file's other shared-body macros.
+macro_rules! exp10_reduction {
+    ($x:expr) => {{
+        const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+        let kb = fma($x, std::f32::consts::LOG2_10, ROUND_MAGIC);
+        let kr = kb - ROUND_MAGIC; // round(x*log2(10)), coarse multiply is fine
+        let d = fma(-kr, LOG10_2_HI, $x);
+        let d = fma(-kr, LOG10_2_LO, d);
+        let fr = d * std::f32::consts::LOG2_10; // small, precise correction in log2 units, in [-0.5, 0.5]
+        // floor-adjust (kr, fr) from round's [-0.5,0.5] convention to
+        // exp2_checked's own floor-based [0,1) convention -- both ops exact
+        // or near-exact since they only ever combine values of comparable
+        // magnitude (unlike the rejected single-combine above).
+        let adjust = if fr < 0.0 { 1.0 } else { 0.0 };
+        let k = kr - adjust;
+        let f = fr + adjust;
+        (k, f)
+    }};
+}
+
 #[inline(always)]
 #[allow(clippy::approx_constant)] // g0's constant term is a fitted minimax
 // coefficient near ln(2), not ln(2) itself (bit pattern deliberately differs)
@@ -435,19 +460,7 @@ pub fn exp10_checked(x: f32) -> f32 {
     // enough that it never touches a genuinely in-range x (exp2_checked's
     // own clamp downstream still does the real range-limiting).
     let x = x.clamp(-1000.0, 1000.0);
-    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
-    let kb = fma(x, std::f32::consts::LOG2_10, ROUND_MAGIC);
-    let kr = kb - ROUND_MAGIC; // round(x*log2(10)), coarse multiply is fine
-    let d = fma(-kr, LOG10_2_HI, x);
-    let d = fma(-kr, LOG10_2_LO, d);
-    let fr = d * std::f32::consts::LOG2_10; // small, precise correction in log2 units, in [-0.5, 0.5]
-    // floor-adjust (kr, fr) from round's [-0.5,0.5] convention to
-    // exp2_checked's own floor-based [0,1) convention -- both ops exact
-    // or near-exact since they only ever combine values of comparable
-    // magnitude (unlike the rejected single-combine above).
-    let adjust = if fr < 0.0 { 1.0 } else { 0.0 };
-    let k = kr - adjust;
-    let f = fr + adjust;
+    let (k, f) = exp10_reduction!(x);
     let k = k.clamp(-151.0, 128.0);
     let (t1, t2) = exp2_field_split(k);
     let q = exp2_q_poly!(f);
@@ -471,15 +484,7 @@ pub fn exp10_checked(x: f32) -> f32 {
 #[allow(clippy::approx_constant)] // g0's constant term is a fitted minimax
 // coefficient near ln(2), not ln(2) itself (bit pattern deliberately differs)
 pub fn exp10(x: f32) -> f32 {
-    const ROUND_MAGIC: f32 = 12582912.0;
-    let kb = fma(x, std::f32::consts::LOG2_10, ROUND_MAGIC);
-    let kr = kb - ROUND_MAGIC;
-    let d = fma(-kr, LOG10_2_HI, x);
-    let d = fma(-kr, LOG10_2_LO, d);
-    let fr = d * std::f32::consts::LOG2_10;
-    let adjust = if fr < 0.0 { 1.0 } else { 0.0 };
-    let k = kr - adjust;
-    let f = fr + adjust;
+    let (k, f) = exp10_reduction!(x);
     let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
     let q = exp2_q_poly!(f);
     fma(q, exp2int * f, exp2int)
