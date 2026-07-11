@@ -6142,3 +6142,34 @@ cousin.
     re-clamping the value that factor depends on), where `erfcx`
     fundamentally lacks any such factor and needs real extra arithmetic
     instead.*
+
+107. **`pown`/`pown_small`/`pown_const`: shared exponentiation-by-squaring
+    body deduped via macro (adopted 2026-07-11)**: continuing the
+    duplicate-*code-block* scan (not just duplicate literals) that found
+    idea #103's `exp2_field_split` reuse, a wider window turned up a third
+    shape: `pown` (32-iteration, runtime `n`, covers `i32::MIN`),
+    `pown_small` (8-iteration, `|n|<=255` fast tier), and `pown_const`
+    (32-iteration, `n` as a const generic for compile-time folding) each
+    carry an identical 6-line body (`base = if n<0 {1/x} else {x}`; the
+    `un = n.unsigned_abs()`/`result`/squaring-loop). Only the iteration
+    count (32 vs 8) and whether `n` is a runtime `i32` or a const generic
+    differ -- both are just substitutable tokens for a macro. Extracted
+    into `pown_body!(x, n, iters) -> f32`, called as `pown_body!(x, n,
+    32u32)`, `pown_body!(x, n, 8u32)`, `pown_body!(x, N, 32u32)`
+    respectively (a const generic parameter is just an ordinary `i32`
+    value inside a macro expansion, no special handling needed). Verified
+    with the same rigor as every dedup this session: full pre/post
+    `mca_target` assembly diff -- zero byte differences. `cargo test`,
+    `codegen_check` (71 regions clean), `edgecheck` (601 pins, same 2
+    known won't-fix cbrt misses, no new failures) all clean. Pure hygiene
+    (matching this crate's own original framing for this class of fix,
+    idea #24's "hygiene, zero perf claim, reduces refit-application
+    errors") -- no accuracy or perf claim, just one fewer hand-synced
+    copy of `pown`'s own documented `i32::MIN` off-by-one trap to keep in
+    sync across three call sites. *A duplicate-code-block scan is worth
+    re-running at a few different window sizes -- the 4-line window that
+    found `exp2_field_split`'s reuse opportunity didn't surface this one
+    (a 6-line duplicate with a 2-line prefix that varies only in a
+    literal, which a fixed-size window comparison can miss depending on
+    where the varying line falls); this one turned up under a 3-line
+    window instead.*
