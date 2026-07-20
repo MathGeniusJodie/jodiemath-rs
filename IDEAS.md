@@ -213,6 +213,27 @@ what shipped.
   cyc/elem, +2.4%) and the extra rounding cost real accuracy too (avg
   ulp 0.0729→0.0757, max 6→7). Not a clean win on either non-latency
   axis; reverted.
+- **softplus/logaddexp: two_sum the final `m + corr`** (backlog idea
+  #40): rejected on inspection alone, no build/measurement needed --
+  this file's own `two_sum(a, b)` computes `s = a + b` as its literal
+  first line, then derives `e` as a *separate* auxiliary error term;
+  `s` is bit-identical to plain `a + b` by construction, always, for any
+  inputs. Since `logaddexp`/`softplus` return a single `f32` and the
+  idea never uses the auxiliary `e` for anything, swapping `m + corr`
+  for `two_sum(m, corr).0` cannot change a single output bit -- the same
+  class of proven no-op as `koff-free unchecked-log fast path` and the
+  `wrapping_sub` range-compare entries below, just provable from
+  `two_sum`'s own definition instead of an asm diff. The real
+  cancellation source is upstream: `corr` (`log1p_unit(e)`, itself
+  `ln_normal(u,0.0) + corr_inner`) carries a few-ULP-of-*its-own-value*
+  approximation error inherited from `ln_normal`/the division correction
+  -- when `m` and `corr` are large, opposite-signed, and nearly cancel to
+  a tiny true sum (`logaddexp`'s documented ~1e4 max-ulp outlier), that
+  absolute error becomes a huge *relative* error in the tiny result
+  regardless of how exactly the final addition itself rounds. Fixing
+  this for real would need a genuinely more precise `corr` (a
+  double-float `log1p_unit`, i.e. an `_accurate` tier, not a one-line
+  `two_sum` swap) -- a much bigger undertaking than the idea as stated.
 
 ### log family
 
@@ -1159,9 +1180,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     k/f-reduced domain, replacing exp (full poly) → log1p (division +
     deg-9 ln poly). Big throughput candidate.
 39. **logaddexp: same fused kernel** on |a−b|.
-40. **softplus/logaddexp: two_sum the final `m + corr`** — directly
-    targets logaddexp's documented ~1e4 max-ulp cancellation for one
-    two_sum's cost.
 41. **logaddexp2** (base-2 sibling, ML/audio) — near-free variant of
     whatever #39 lands on.
 42. **tanh division-residual correction on e/(e+2)** (round-off audit:
