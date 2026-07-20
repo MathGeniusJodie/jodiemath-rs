@@ -1635,38 +1635,60 @@ pub fn cosh_throughput(x: f32) -> f32 {
 /// bit-identical correctly-rounded answer. The clamp's real perf cost
 /// was accepted per this crate's usual "pay to fix wrong/NaN for
 /// legitimate finite input" precedent.
-// tanh's reduction plus single-exponent-field construction (given its
-// already-clamped `y`). Returns `(p, exp2int)`. Macro, not a fn -- see
-// exp_r_poly!. sigmoid used to share this too, but now inlines its own
-// copy to fold its upfront `-x`/reduction `-k` negations away (see its
-// body comment) -- a reassociation this macro's `$y`-already-negated
-// calling convention doesn't accommodate.
-macro_rules! exp_r_singlefield {
-    ($y:expr) => {{
-        const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
-        let k = fma($y, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
-        let r = fma(-k, LN2_HI, $y);
-        let r = fma(-k, LN2_LO, r);
-        let p = exp_r_poly!(r);
-        let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
-        (p, exp2int)
-    }};
-}
-
 #[inline(always)]
 pub fn tanh(x: f32) -> f32 {
     // Standalone copy of expm1 (not a call through the public `expm1`
     // fn, same shared-helper scheduling risk as everywhere else) but
     // with a single exponent-field construction instead of exp's k1/k2
-    // split: the `.clamp(-87.0, 88.0)` bound guarantees
-    // `k = round(y*log2e)` stays in [-126, 127], comfortably short of
-    // the k=128 edge case the split exists for. Same
-    // fma(p, exp2int, -1.0) tail fusion as expm1.
-    let y = (2.0 * x).clamp(-87.0, 88.0);
-    let a = pade_expm1_ratio!(y, mul);
-    let (p, exp2int) = exp_r_singlefield!(y);
+    // split: the clamp bound guarantees `k = round(x*2*log2e)` stays in
+    // [-126, 127], comfortably short of the k=128 edge case the split
+    // exists for. Same fma(p, exp2int, -1.0) tail fusion as expm1.
+    //
+    // Unlike the earlier form, `2*x` is never materialized as its own
+    // value: every downstream constant is pre-scaled by the matching
+    // power of two instead (2*LOG2_E, halved LN2_HI/LN2_LO, the poly's
+    // c[n] coefficients each *2^(n+1), the Pade numerator/denominator
+    // each /8 to match its two extra Horner multiplies). This is exact,
+    // not an approximation: correctly-rounded arithmetic (every `fma`/
+    // `*` step here) commutes exactly with power-of-2 scaling of all its
+    // inputs, so each intermediate is bit-for-bit the old value at half
+    // (or a smaller power-of-two fraction of) its former scale, all the
+    // way through to the final `a`/`b` -- verified bit-identical
+    // exhaustively, see IDEAS.md idea #119. Deletes the standalone
+    // `2.0 * x` multiply from the critical path.
+    let xc = x.clamp(-43.5, 44.0);
+
+    const PADE_N_A: f32 = -1.9999927; // unscaled: shared with expm1/sinh_small's own copy
+    const PADE_N_B: f32 = -120.0 / 4.0;
+    const PADE_D_C1: f32 = 12.000030 / 2.0;
+    const PADE_D_C2: f32 = 59.999996 / 4.0;
+    const PADE_D_C3: f32 = -120.0 / 8.0;
+    let a = xc * fma(PADE_N_A, xc * xc, PADE_N_B)
+        / fma(xc, fma(xc, xc - PADE_D_C1, PADE_D_C2), PADE_D_C3);
+
+    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+    const LOG2_E_X2: f32 = 2.0 * LOG2_E;
+    let k = fma(xc, LOG2_E_X2, ROUND_MAGIC) - ROUND_MAGIC;
+    const LN2_HI_HALF: f32 = LN2_HI / 2.0;
+    const LN2_LO_HALF: f32 = LN2_LO / 2.0;
+    let rh = fma(-k, LN2_HI_HALF, xc);
+    let rh = fma(-k, LN2_LO_HALF, rh);
+    // exp_r_poly!'s c[0..3], each rescaled by 2^(degree) for `rh = r/2`.
+    const D0: f32 = 4.0 * 4.9999300e-1;
+    const D1: f32 = 8.0 * 1.6667245e-1;
+    const D2: f32 = 16.0 * 4.1883811e-2;
+    const D3: f32 = 32.0 * 8.3009899e-3;
+    let rh2 = rh * rh;
+    let rh4 = rh2 * rh2;
+    let l0 = fma(2.0, rh, 1.0);
+    let l1 = fma(D1, rh, D0);
+    let l2 = fma(D3, rh, D2);
+    let r0 = fma(l1, rh2, l0);
+    let p = fma(l2, rh4, r0);
+    let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
     let b = fma(p, exp2int, -1.0);
-    let e = if y.abs() < 0.5 { a } else { b };
+
+    let e = if xc.abs() < 0.25 { a } else { b };
     e / (e + 2.0)
 }
 
