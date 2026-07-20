@@ -1078,13 +1078,13 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### erf family
 
-62. **erfc_accurate opt-in tier** bundling the verified-but-rejected-on-
-    cost fixes (two_prod exponent: max 109→93; compensated Horner: avg
-    −14%) — the "no perf penalty" bar doesn't apply to an opt-in tier.
-64. **erfc_rational degree 5/5 bump — sequenced after an exponent fix**:
-    the current root cause is the exponent, so a tighter fit alone was
-    predicted useless; inside tier #62 the rational becomes the next
-    binding constraint.
+64. **erfc_rational degree 5/5 bump — sequenced after `erfc_accurate`'s
+    exponent fix** (shipped, see lib.rs): the old root cause was the
+    exponent, so a tighter fit alone was predicted useless there — but
+    `erfc_accurate`'s `exp2_checked_df` route already closed most of
+    that gap (max ulp 105→~12), so the rational (still the same
+    plain-f32 fit) is now plausibly the next binding constraint on
+    `erfc_accurate` specifically, not `erfc` itself.
 66. **erfinv** (Giles-style poly in w = ln(1−x²), two-poly branchless
     select, fully fma-based) — sampling/ML staple, vectorizes cleanly.
 67. **norm_cdf/norm_pdf pair** (Φ via 0.5·erfc(−x/√2)) — thin
