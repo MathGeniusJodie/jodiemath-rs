@@ -3096,45 +3096,51 @@ pub fn remainder_checked(x: f32, y: f32) -> f32 {
 /// enough. Substantial mca cost over `remainder_checked` -- a separate
 /// opt-in tier so callers who don't need the range don't pay.
 ///
-/// One known, accepted exception vs `remainder_checked` in its own
-/// `|x/y| < 2^24` domain (bit-identical everywhere else): when
-/// `max(|x|,|y|) > f32::MAX/4` triggers the rescale below AND `|x|` is
-/// already near/below the denormal boundary, the unconditional `* 0.125`
-/// pushes `x` into the denormal range where low mantissa bits are
-/// unrepresentable; the round trip isn't lossless, so this can differ by
-/// a handful of ulp (up to ~4) where `remainder_checked` returns `x`
-/// bit-exact. Narrow and small, not chased.
+/// Two exceptions vs `remainder_checked` in its own `|x/y| < 2^24`
+/// domain used to exist here (bit-identical everywhere else, and now
+/// bit-identical in both these corners too, verified below):
 ///
-/// A second exception used to exist here too: when `x/y` landed on an
-/// *exact* half-integer, `adj`'s blind `.round()` (ties away from zero)
-/// treated the already-correctly-resolved tie (`q0` itself resolves
-/// ties away from zero, landing `r0` on exactly `+-ys/2`) as "one more
-/// whole `y` to remove", flipping the sign -- fixed by switching `adj`
-/// to `.round_ties_even()`: an exact `+-0.5` now rounds to `0` (no
-/// spurious correction) while every non-tie multi-integer-quantization
-/// gap `adj` exists to recover (`|adj| >= 1`, nowhere near a `.5`
-/// boundary) rounds identically either way. Verified zero mismatches
-/// against `remainder_checked` over 351M in-domain samples with the tie
-/// exclusion removed (previously ~4 in that many, all exact ties, none
-/// otherwise) -- re-included in `examples/unchecked_parity.rs`'s
-/// standing test now that it's fixed. Also faster, same finding
-/// `remainder_ieee`'s own `q` already made: `round_ties_even` lowers to
-/// a single native `vroundps` where `.round()`'s ties-away needs extra
-/// emulation.
+/// 1. When `x/y` landed on an *exact* half-integer, `adj`'s blind
+///    `.round()` (ties away from zero) treated the already-correctly-
+///    resolved tie (`q0` itself resolves ties away from zero, landing
+///    `r0` on exactly `+-ys/2`) as "one more whole `y` to remove",
+///    flipping the sign -- fixed by switching `adj` to
+///    `.round_ties_even()`: an exact `+-0.5` now rounds to `0` (no
+///    spurious correction) while every non-tie multi-integer-
+///    quantization gap `adj` exists to recover (`|adj| >= 1`, nowhere
+///    near a `.5` boundary) rounds identically either way. Also faster,
+///    same finding `remainder_ieee`'s own `q` already made:
+///    `round_ties_even` lowers to a single native `vroundps` where
+///    `.round()`'s ties-away needs extra emulation.
+/// 2. `Df32::from_mul(q0, y)` rounds the intermediate product to a
+///    single f32 before pairing it with its error term -- unlike a
+///    hardware `fma`, it can overflow on an intermediate value: `q0*y`
+///    can exceed `x` by up to `|y|/2`, so when `x` sits within a small
+///    factor of `f32::MAX` the exact product can exceed `f32::MAX` even
+///    though the true remainder is finite (gave NaN). Rescaling `x`
+///    (and `y`, to keep the ratio `x/y` unchanged) by an exact power of
+///    two (`0.125`) whenever `|x|` is within a 4x margin of `f32::MAX`
+///    is exact, not approximate: remainder is homogeneous of degree 1
+///    (`remainder(k*x,k*y) == k*remainder(x,y)` for `k>0`). The
+///    original gate was `max(|x|,|y|) > f32::MAX/4`, rescaling even
+///    when only `y` was huge and `x` was small/denormal-ish -- pushing
+///    that already-tiny `x` into the denormal range where low mantissa
+///    bits are unrepresentable for no reason: `q0*y` always tracks `x`
+///    itself (within `|y|/2`), so the overflow risk is governed
+///    entirely by `|x|`, regardless of `|y|`'s own magnitude (`q0`
+///    rounds to `~0` whenever `|x|` is tiny relative to `|y|`, so
+///    `q0*y` stays safely small too). Gating on `|x|` alone fixes this.
 ///
-/// The rescale guard: `Df32::from_mul(q0, y)` rounds the intermediate
-/// product to a single f32 before pairing it with its error term --
-/// unlike a hardware `fma`, it can overflow on an intermediate value.
-/// `q0*y` can exceed `x` by up to `|y|/2`, so when `x` or `y` sits
-/// within a small factor of `f32::MAX` the exact product can exceed
-/// `f32::MAX` even though the true remainder is finite (gave NaN).
-/// Rescaling both inputs by an exact power of two (`0.125`) whenever
-/// `max(|x|,|y|)` is within a 4x margin of `f32::MAX` is exact, not
-/// approximate: remainder is homogeneous of degree 1
-/// (`remainder(k*x,k*y) == k*remainder(x,y)` for `k>0`).
+/// Verified zero mismatches against `remainder_checked` over 351M
+/// in-domain samples for the tie fix (previously ~4 in that many, all
+/// exact ties) and 179M targeted denormal-x/huge-y samples for the
+/// rescale-gate fix (previously ~215K in that many, up to a few ulp) --
+/// both exclusions removed from `examples/unchecked_parity.rs`'s
+/// standing test now that they're fixed. The rescale-gate fix is also
+/// faster on its own (one fewer operand in the gating comparison).
 #[inline(always)]
 pub fn remainder_wide(x: f32, y: f32) -> f32 {
-    let big = x.abs().max(y.abs()) > f32::MAX * 0.25;
+    let big = x.abs() > f32::MAX * 0.25;
     let scale = if big { 0.125 } else { 1.0 };
     let xs = x * scale;
     let ys = y * scale;

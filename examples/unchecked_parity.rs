@@ -207,22 +207,16 @@ fn main() {
     // test either. No near_tie exclusion needed here (unlike accuracy.rs's
     // own remainder_checked sweep): that exclusion is about comparing
     // against a *reference*, not about whether these two implementations
-    // agree with *each other*. One real, narrow exception found running
-    // this at increasing sample density (see remainder_wide's own doc
-    // comment): at 30M samples, its rescale-near-f32::MAX guard can push
-    // an already-tiny x into denormal-underflow territory, losing up to
-    // ~4 ulp -- excluded here as a known, accepted, narrow limitation
-    // rather than a standing-test failure. A second exception (an exact
-    // half-integer x/y tie flipping sign, found at 500M samples) used to
-    // be excluded here too, but is now fixed (round_ties_even instead of
-    // round for adj, see remainder_wide's own doc comment) and verified
-    // at 351M in-domain samples with no exclusion needed -- removed from
-    // here accordingly.
-    let remainder_wide_domain = |x: f32, y: f32| {
-        y != 0.0
-            && (x / y).abs() < 16777216.0
-            && !(x.abs().max(y.abs()) > f32::MAX * 0.25 && x.abs() < 8.0 * f32::MIN_POSITIVE)
-    };
+    // agree with *each other*. Two exceptions used to be excluded here:
+    // an exact half-integer x/y tie flipping sign (found at 500M
+    // samples), and a rescale-near-f32::MAX guard pushing an
+    // already-tiny x into denormal-underflow territory (found at 30M
+    // samples, up to ~4 ulp). Both are now fixed (round_ties_even
+    // instead of round for adj; gating the rescale on |x| alone instead
+    // of max(|x|,|y|), since q0*y tracks x regardless of y's own
+    // magnitude -- see remainder_wide's own doc comment for both) and
+    // verified with no exclusion needed -- removed from here accordingly.
+    let remainder_wide_domain = |x: f32, y: f32| y != 0.0 && (x / y).abs() < 16777216.0;
     ok &= check2(
         "remainder_checked / remainder_wide",
         N,
