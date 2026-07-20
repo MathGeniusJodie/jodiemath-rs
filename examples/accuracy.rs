@@ -384,6 +384,61 @@ fn fuzz2(
     })
 }
 
+// 4-arg analog of fuzz2, for diff_of_products/cross2 (backlog idea #135).
+// Unlike fuzz2's transcendental references (sleef, batched via SIMD purely
+// to amortize their own call cost), a*b-c*d's f64 reference is a few plain
+// arithmetic ops -- no SIMD batching needed, plain scalar per-sample is
+// already fast enough. No exhaustive/"thorough" mode either: a real 4-arg
+// sweep is 2^128 combinations, not a coherent concept the way 1-arg
+// exhaustive (2^32) is.
+fn fuzz4(
+    samples: u64,
+    f: impl Fn(f32, f32, f32, f32) -> f32 + Sync,
+    reference: impl Fn(f64, f64, f64, f64) -> f64 + Sync,
+) -> Stats {
+    let threads = worker_threads();
+    let chunk = samples.div_ceil(threads);
+    std::thread::scope(|scope| {
+        (0..threads)
+            .map(|_| {
+                let f = &f;
+                let reference = &reference;
+                scope.spawn(move || {
+                    let mut s = Stats::zero();
+                    let mut i = 0u64;
+                    while i < chunk {
+                        i += 1;
+                        let a = f32::from_bits(rand::rng().random::<u32>());
+                        let b = f32::from_bits(rand::rng().random::<u32>());
+                        let c = f32::from_bits(rand::rng().random::<u32>());
+                        let d = f32::from_bits(rand::rng().random::<u32>());
+                        if !(a.is_finite() && b.is_finite() && c.is_finite() && d.is_finite()) {
+                            continue;
+                        }
+                        let refv32 = reference(a as f64, b as f64, c as f64, d as f64) as f32;
+                        if !refv32.is_finite() {
+                            continue;
+                        }
+                        let got = f(a, b, c, d);
+                        let dd = ulp_diff(got, refv32);
+                        s.sum += dd;
+                        if dd > s.max {
+                            s.max = dd;
+                            s.worst_x = a;
+                        }
+                        s.n += 1;
+                    }
+                    s
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .reduce(Stats::combine)
+            .unwrap()
+    })
+}
+
 fn exhaustive(
     in_domain: impl Fn(f32) -> bool + Sync,
     f: impl Fn(f32) -> f32 + Sync,
@@ -1003,6 +1058,28 @@ fn main() {
         let rhypot_ref = |v: F64xN, w: F64xN| F64xN::splat(1.0) / hypot_u35(v, w);
         let s = fuzz2(TWOARG_SAMPLES, hypot_domain, rhypot, rhypot_ref);
         report("rhypot", &s, t0);
+    }
+    if run("diff_of_products") {
+        // Same overflow tradeoff as hypot_domain above, applied to the two
+        // *products* rather than the raw operands directly: fuzz4 has no
+        // domain-filter parameter (unlike fuzz2/measure!), so the bound is
+        // baked into the reference closure itself -- reject samples where
+        // either product would leave f32's representable range, matching
+        // diff_of_products' own doc comment.
+        let bounded = |a: f64, b: f64, c: f64, d: f64| -> f64 {
+            let ok = |p: f64| p.abs() < 1e30;
+            if ok(a * b) && ok(c * d) { a * b - c * d } else { f64::NAN }
+        };
+        let s = fuzz4(QUICK_SAMPLES, diff_of_products, bounded);
+        report("diff_of_products", &s, t0);
+    }
+    if run("cross2") {
+        let bounded = |ax: f64, ay: f64, bx: f64, by: f64| -> f64 {
+            let ok = |p: f64| p.abs() < 1e30;
+            if ok(ax * by) && ok(ay * bx) { ax * by - ay * bx } else { f64::NAN }
+        };
+        let s = fuzz4(QUICK_SAMPLES, cross2, bounded);
+        report("cross2", &s, t0);
     }
     if run("pown") {
         // pown(x, n) takes an i32 exponent, not the f32/f64 pair shape

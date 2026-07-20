@@ -799,6 +799,20 @@ fn main() {
     check("rhypot(inf,nan)", rhypot(f32::INFINITY, f32::NAN), 0.0);
     check("rhypot(nan,inf)", rhypot(f32::NAN, f32::INFINITY), 0.0);
 
+    // diff_of_products(a,b,c,d) = a*b - c*d via Kahan's compensated
+    // two-product (backlog idea #135). NaN/inf propagate through the
+    // ordinary fma/mul chain with no special-cased override needed.
+    check("diff_of_products(2,3,1,1)", diff_of_products(2.0, 3.0, 1.0, 1.0), 5.0);
+    check("diff_of_products(0,0,0,0)", diff_of_products(0.0, 0.0, 0.0, 0.0), 0.0);
+    check("diff_of_products(1,1,1,1)", diff_of_products(1.0, 1.0, 1.0, 1.0), 0.0);
+    check("diff_of_products(inf,1,0,0)", diff_of_products(f32::INFINITY, 1.0, 0.0, 0.0), f32::INFINITY);
+    check("diff_of_products(nan,1,0,0)", diff_of_products(f32::NAN, 1.0, 0.0, 0.0), f32::NAN);
+    check("diff_of_products(1,0,0,nan)", diff_of_products(1.0, 0.0, 0.0, f32::NAN), f32::NAN);
+    // cross2 is diff_of_products(ax,by,ay,bx): parallel/perpendicular sanity.
+    check("cross2(1,0,0,1)", cross2(1.0, 0.0, 0.0, 1.0), 1.0);
+    check("cross2(1,0,1,0)", cross2(1.0, 0.0, 1.0, 0.0), 0.0);
+    check("cross2(0,0,5,5)", cross2(0.0, 0.0, 5.0, 5.0), 0.0);
+
     check("rsqrt(1)", rsqrt(1.0), 1.0);
     check("rsqrt(4)", rsqrt(4.0), 0.5);
     check("rsqrt(0)", rsqrt(0.0), f32::INFINITY);

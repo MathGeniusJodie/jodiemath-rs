@@ -287,6 +287,38 @@ throughput_fn!(thr_hypot_checked, "hypot_checked_throughput", |x: f32| hypot_che
 latency_fn!(lat_rhypot, "rhypot_latency", |x: f32| rhypot(x, 1.0));
 throughput_fn!(thr_rhypot, "rhypot_throughput", |x: f32| rhypot(x, 1.0));
 
+// black_box'd b/c/d: unlike hypot/rhypot's plain `1.0` above (fine there --
+// no branch or constant-foldable sub-expression depends on it), diff_of_products
+// computes w=c*d and e=fma(-c,d,w) from those operands alone -- with literal
+// constants LLVM folds both to compile-time values and the chain collapses to
+// one fma + one add, understating the real 1 mul + 2 fma + 1 add cost. Same
+// reasoning as pown's `n`/powf's `y` above.
+latency_fn!(lat_diff_of_products, "diff_of_products_latency", {
+    let b = black_box(1.7);
+    let c = black_box(2.3);
+    let d = black_box(0.9);
+    move |x: f32| diff_of_products(x, b, c, d)
+});
+throughput_fn!(thr_diff_of_products, "diff_of_products_throughput", {
+    let b = black_box(1.7);
+    let c = black_box(2.3);
+    let d = black_box(0.9);
+    move |x: f32| diff_of_products(x, b, c, d)
+});
+
+latency_fn!(lat_cross2, "cross2_latency", {
+    let ay = black_box(1.7);
+    let bx = black_box(2.3);
+    let by = black_box(0.9);
+    move |ax: f32| cross2(ax, ay, bx, by)
+});
+throughput_fn!(thr_cross2, "cross2_throughput", {
+    let ay = black_box(1.7);
+    let bx = black_box(2.3);
+    let by = black_box(0.9);
+    move |ax: f32| cross2(ax, ay, bx, by)
+});
+
 latency_fn!(lat_rsqrt, "rsqrt_latency", rsqrt);
 throughput_fn!(thr_rsqrt, "rsqrt_throughput", rsqrt);
 
@@ -548,6 +580,8 @@ fn main() {
         lat_hypot, thr_hypot;
         lat_hypot_checked, thr_hypot_checked;
         lat_rhypot, thr_rhypot;
+        lat_diff_of_products, thr_diff_of_products;
+        lat_cross2, thr_cross2;
         lat_rsqrt, thr_rsqrt;
         lat_powf, thr_powf;
         lat_powf_pos, thr_powf_pos;

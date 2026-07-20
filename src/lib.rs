@@ -2591,6 +2591,45 @@ pub fn rhypot(x: f32, y: f32) -> f32 {
     if x.is_infinite() || y.is_infinite() { 0.0 } else { normal }
 }
 
+/// `a*b - c*d`, computed via Kahan's compensated algorithm instead of the
+/// naive two-multiply-one-subtract form (backlog idea #135): the naive
+/// form's error is unbounded relative to the true result whenever `a*b`
+/// and `c*d` are close in magnitude, since each product's own independent
+/// rounding error survives the subtraction untouched. `w = c*d` (rounded
+/// once), then `e = fma(-c,d,w)` recovers that rounding's exact error term
+/// (a two-product, same construction `Df32::from_mul` uses elsewhere in
+/// this crate, just inlined rather than returning a pair), and `f =
+/// fma(a,b,-w)` folds `a*b`'s own rounding against the same `w` in one
+/// step -- `f + e` then combines both error corrections, accurate to
+/// within a couple ulp of the true value even at total cancellation, where
+/// the naive form has no error bound there at all.
+///
+/// Same overflow tradeoff as `hypot`/`rhypot` above, one level removed:
+/// if `a*b` or `c*d` individually overflows to `+-inf` in f32 even though
+/// the true difference is finite, `w` becomes infinite and the correction
+/// terms can degrade to `inf - inf = NaN` instead of the finite answer.
+/// Only reachable once `|a*b|` or `|c*d|` approaches `f32::MAX`; well
+/// inside that range (both products individually representable) this is
+/// unaffected.
+#[inline(always)]
+pub fn diff_of_products(a: f32, b: f32, c: f32, d: f32) -> f32 {
+    let w = c * d;
+    let e = fma(-c, d, w);
+    let f = fma(a, b, -w);
+    f + e
+}
+
+/// 2D cross product (scalar "determinant" form, `ax*by - ay*bx`) via
+/// [`diff_of_products`]: the standard signed-area/orientation predicate
+/// in graphics and computational geometry, exactly the shape
+/// [`diff_of_products`] exists to make accurate near cancellation (two
+/// nearly-parallel or nearly-antiparallel vectors, where the true cross
+/// product is small but each product term individually isn't).
+#[inline(always)]
+pub fn cross2(ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
+    diff_of_products(ax, by, ay, bx)
+}
+
 /// log2(x) as a double-float (Df32) instead of a collapsed f32, for
 /// positive finite x only (same domain log_2_normal assumes -- callers
 /// must guard zero/negative/inf/nan themselves). Reuses log_2_normal's
