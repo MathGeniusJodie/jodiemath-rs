@@ -341,6 +341,21 @@ what shipped.
 - **reduce_pi: downgrade e3's two_prod to plain multiply**: mca diverged
   by caller (sin_checked throughput improved, cos_checked's got worse) and
   the off-contract tail got dramatically worse.
+- **reduce_pi: downgrade the last remaining full two_sum** (`p3t`/`e3t`'s
+  merge, `two_sum(p3, tier2)`) **to quick_two_sum**: same "diverges by
+  caller" pattern as the e3 downgrade above. mca: sin_checked throughput
+  improved slightly (5.311→5.226, -1.6%) but cos_checked's *regressed*
+  (4.603→5.234, +13.7%), both latencies flat. In-domain accuracy looked
+  clean on a quick fuzz (all four documented buckets matched baseline
+  for both functions), consistent with this merge's own doc comment
+  flagging `e3t` as "large, not negligible" near cos's zero crossings —
+  the accuracy risk that comment warns about wasn't tripped here (the
+  sign/subtraction order was untouched, only the merge's own exactness
+  was relaxed), but the throughput cost lands the same way it did for
+  the e3 downgrade regardless. Reverted -- a real win for one caller
+  paired with a real, larger-magnitude loss for the other isn't a clean
+  win. This was the crate's last full `two_sum` call; `two_sum` itself
+  would need removing (dead code) if this were ever adopted.
 - **parity() via integer bit-ops**: bit-exact, latency unchanged,
   throughput worse for both — FP-port ops beat integer ops once scheduled.
 - **sin_checked/cos_checked clamp: move bound into poly's `y.min()`**:
