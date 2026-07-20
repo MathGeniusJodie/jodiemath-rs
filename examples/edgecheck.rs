@@ -993,6 +993,24 @@ fn main() {
     check("powf_pos(inf,-5)", powf_pos(f32::INFINITY, -5.0), 0.0);
     check("powf_pos(2,inf)", powf_pos(2.0, f32::INFINITY), f32::INFINITY);
     check("powf_pos(0.5,inf)", powf_pos(0.5, f32::INFINITY), 0.0);
+    // signed_pow: graphics/shading "raise |x| then reapply sign"
+    // convention (backlog idea #151) -- total for every finite x/y,
+    // never NaN for a negative base with a non-integer y, unlike powf's
+    // real domain error there. Note the deliberately *different* -1/inf
+    // convention from powf: powf(-1,inf)=1.0 (a dedicated C99 special
+    // case), but signed_pow(-1,inf)=-1.0 (unconditional sign
+    // reapplication on top of powf_pos(1,inf)=1.0, no special-casing).
+    check("signed_pow(2,3)", signed_pow(2.0, 3.0), 8.0);
+    check("signed_pow(-2,3)", signed_pow(-2.0, 3.0), -8.0);
+    check("signed_pow(-2,0.5)", signed_pow(-2.0, 0.5), -std::f32::consts::SQRT_2);
+    check("signed_pow(-2,2)", signed_pow(-2.0, 2.0), -4.0);
+    check("signed_pow(0,3)", signed_pow(0.0, 3.0), 0.0);
+    check("signed_pow(-0,3)", signed_pow(-0.0, 3.0), -0.0);
+    check("signed_pow(-0,2)", signed_pow(-0.0, 2.0), -0.0);
+    check("signed_pow(0,0)", signed_pow(0.0, 0.0), 1.0);
+    check("signed_pow(nan,3)", signed_pow(f32::NAN, 3.0), f32::NAN);
+    check("signed_pow(2,nan)", signed_pow(2.0, f32::NAN), f32::NAN);
+    check("signed_pow(-1,inf)", signed_pow(-1.0, f32::INFINITY), -1.0);
     // powf_checked shares powf's special-case handling on top of its
     // double-float-precision magnitude for large |y| -- same edge cases
     // should hold identically, plus a couple more that exercise the

@@ -174,6 +174,7 @@ fn main() {
         "rsqrt",
         "powf",
         "powf_pos",
+        "signed_pow",
         "powf_unchecked",
         "pown",
         "powf_checked",

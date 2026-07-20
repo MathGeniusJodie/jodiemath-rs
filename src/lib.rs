@@ -2768,6 +2768,28 @@ pub fn powf_pos(x: f32, y: f32) -> f32 {
     if y == 0.0 { 1.0 } else { r }
 }
 
+/// "Signed power", the graphics/shading convention for raising a
+/// possibly-negative value to a power without `powf`'s NaN-for-
+/// non-integer-exponent domain error: computes on `|x|` then reapplies
+/// `x`'s own sign unconditionally (`mulsign`, not folded into the
+/// integer-exponent parity `powf` uses), regardless of whether `y` is an
+/// integer. Total for every finite `x`/`y` -- no domain error, unlike
+/// `powf(-2.0, 0.5)` which is correctly `NaN` (real exponentiation of a
+/// negative base to a non-integer power has no real result) but is
+/// exactly the semantics some callers explicitly don't want (signed
+/// gamma curves, symmetric shaping functions).
+///
+/// Built on [`powf_pos`] rather than duplicating its formula: `x.abs()`
+/// is always `+0.0` for either zero input (never `-0.0`, unlike a raw
+/// sign-bit-preserving negation would give for `x == -0.0`), so this
+/// never hits `powf_pos`'s own documented `-0.0` gap -- verified bit-
+/// identical to `mulsign(powf_pos(x.abs(), y), x)` by construction, not
+/// separately fitted.
+#[inline(always)]
+pub fn signed_pow(x: f32, y: f32) -> f32 {
+    mulsign(powf_pos(x.abs(), y), x)
+}
+
 /// powf without domain/sign checks: valid for `x` positive, normal, and
 /// finite (the same domain [`log_2_unchecked`] requires) and `y != 0.0`.
 /// No handling for negative/zero/denormal/inf/nan `x`, no `y == 0.0`
