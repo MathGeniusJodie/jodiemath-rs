@@ -235,6 +235,14 @@ what shipped.
 - **exp10 third Cody-Waite reduction word**: already tight (avg
   0.0343/max ulp 2, 2.2B+ samples) — minimal headroom for a third word to
   collect, not worth the extra fma.
+  **Idea #27's "LOG10_2_LO as a free fitted parameter"** is the same
+  lever from a different angle (perturbing the existing second word's
+  own value instead of adding a third) -- checked directly (zero added
+  ops, so cheap to just try): a ±1 to ±8-ulp sweep of `LOG10_2_LO` (real
+  fuzz each time, not tune.rs's grid) left `exp10`/`exp10_checked` at
+  the same avg ulp (~0.0306-0.0307) and max ulp (1) regardless of which
+  nearby value was used. Confirms the same "already tight" conclusion
+  via a different probe; reverted (no perturbation tried moved anything).
 - **exp10_reduction: floor-based adjust** (backlog idea #28,
   `a = fr.floor(); k = kr + a; f = fr - a` instead of the compare+select+
   2 add/subs): expected bit-exact by construction (`fr.floor()` is
@@ -1454,8 +1462,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     t2 instead, or pre-scale p): the rejected version's accuracy win
     (max 3→2, cascading to expm1/sinh/cosh/tanh) was fully real — only
     fma/mul port contention killed it.
-27. **exp10: treat LOG10_2_LO as a free fitted parameter** (end-to-end
-    exp10 objective) instead of the rounded mathematical residual.
 29. **exp10: fold LOG2_10 into a dedicated Q(d) poly in d directly**
     (the sinpi/sind constant-folding trick) — deletes the `d*LOG2_10`
     multiply and its rounding; the floor-adjust step's units need care
