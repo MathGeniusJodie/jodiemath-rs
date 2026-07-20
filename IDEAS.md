@@ -604,6 +604,19 @@ what shipped.
   erfc's own exponent expression has up to 87 ulp of error in plain f32
   before exp2_checked even runs — the same cause the already-rejected
   two_prod fix targets, not worth its mca cost.
+  **Re-tested inside `erfc_accurate`** (idea #64's own sequencing note,
+  now that the exponent fix is real, not hypothetical): compensated
+  Horner for `erfc_rational`'s numerator/denominator (Df32 multiply +
+  `quick_add` at each step, `div_to_f32` at the end) still only moved
+  the needle modestly even with the exponent no longer dominating —
+  avg ulp 0.245→0.227 (~7.6%), max ulp 12→10 (barely). Real mca cost
+  was severe this time: erfc_accurate's own throughput more than
+  doubled (3.033→6.189 cyc/elem), latency +17.7% (74.00→87.11 cyc) on
+  top of the exponent fix's own already-accepted cost. Rejected —
+  `erfc_rational`'s degree-4 fit itself (not its evaluation rounding)
+  is the real remaining bottleneck; a genuine degree bump (the rest of
+  idea #64) is the more promising untried lever, not compensated
+  evaluation of the existing fit.
 - **erf joint boundary+coefficients refit**: cheap proxy sweep (8
   threshold candidates against unrefit coefficients) found a flat plateau
   around the current 0.28 boundary — no headroom, matching separate
