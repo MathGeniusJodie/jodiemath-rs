@@ -2128,37 +2128,40 @@ pub fn acos(x: f32) -> f32 {
     mulsign(y, x + 0.0) + if x < 0.0 { PI } else { 0.0 }
 }
 
-// asin(x) = x + x^3/6 + 3x^5/40 + 15x^7/336 + O(x^9), the odd Taylor
-// series (exact rational coefficients). Unlike sinh's Taylor series,
-// this one converges slowly as |x| approaches 1 (asin has a sqrt
-// singularity there), so it's only used below |x| < 0.25, where the
-// next (dropped) term is ~4.6e-7 relative -- a few ulp, comparable to
-// the other branch's own residual there.
+// Odd approximation asin(x) ~ x * P(x^2), degree 3 in x^2, on |x| < 0.25.
+// The leading coefficient is pinned to exactly 1.0 so tiny x returns x
+// (its correctly-rounded asin). The other three are a minimax refit over
+// [0, 0.25], *not* the odd Taylor series (1/6, 3/40, 15/336): Taylor is
+// optimal only at x=0 and leaves the worst case at the 0.25 edge (where
+// the next Taylor term is ~4.6e-7 relative), while an equal-degree minimax
+// fit spreads that error for a lower max ulp at identical op count. Nearer
+// |x|=1 the series would converge slowly (asin's sqrt singularity), so the
+// other branch takes over there. See IDEAS.md §asin/acos/atan.
 #[inline(always)]
 fn asin_small(x: f32) -> f32 {
     let x2 = x * x;
     let c0 = 1.0f32;
-    let c1 = 1.0 / 6.0f32;
-    let c2 = 3.0 / 40.0f32;
-    let c3 = 15.0 / 336.0f32;
+    let c1 = 0.166666746f32;
+    let c2 = 0.074942857f32;
+    let c3 = 0.0474379882f32;
     let p = fma(fma(fma(c3, x2, c2), x2, c1), x2, c0);
     x * p
 }
 
 /// Two branches, both computed unconditionally and selected (branchless,
-/// auto-vectorizes): the exact-coefficient Taylor series below
+/// auto-vectorizes): a dedicated odd minimax poly below
 /// `|x| < 0.25` (see asin_small), and `asin(x) = pi/2 - acos(x)` above
 /// it, via acos's own well-conditioned `sqrt(1-a) * poly(a)` formula (a
 /// shrinking sqrt factor times a smooth bounded poly -- and
 /// `pi/2 - acos(a)` doesn't cancel either, since acos(a) is small
 /// exactly where pi/2 is O(1); near x=0 that difference IS catastrophic
-/// cancellation, which is what the Taylor branch exists to avoid). Sign
+/// cancellation, which is what the small branch exists to avoid). Sign
 /// restored via `mulsign` (asin is odd). The poly is a dedicated
 /// `asin_poly`, decoupled from acos's coefficients -- see its doc
-/// comment. The 0.25 crossover is where the two branches' error curves
-/// cross (a coordinate search found a flat minimum there). Current: max
-/// ulp 9, avg 0.025 (exhaustive); the worst case sits just inside
-/// asin_small's domain. An earlier three-branch design with a rational
+/// comment. The 0.25 crossover is near where the two branches' error
+/// curves cross. Current: max ulp 7, avg 0.020 (exhaustive); the worst
+/// case sits just above the crossover, in the acos-based branch. An
+/// earlier three-branch design with a rational
 /// mid-branch was strictly worse -- see IDEAS.md §asin/acos for that
 /// history and the rejected refit variants.
 #[inline(always)]
