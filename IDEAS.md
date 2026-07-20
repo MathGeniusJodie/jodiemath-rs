@@ -608,6 +608,20 @@ what shipped.
   threshold candidates against unrefit coefficients) found a flat plateau
   around the current 0.28 boundary — no headroom, matching separate
   fixed-boundary refits. Full joint optimizer never built.
+- **asinh/acosh single-sqrt restructure** (backlog idea #54): select the
+  sqrt *argument* before the call instead of computing both branches'
+  own unconditional `.sqrt()` and selecting the *result* -- verified
+  bit-exact per-branch by construction (each branch's own fused/separate
+  rounding steps untouched, confirmed exhaustively over all 2^32 inputs
+  for both functions, identical avg/max ulp and worst-x). But real mca
+  showed *zero* movement on either function (asinh/acosh latency and
+  throughput both landed on the exact same numbers as before, to the
+  hundredth), and a direct `--emit=asm` diff of the compiled region
+  confirmed byte-for-byte identical machine code -- LLVM's own optimizer
+  already hoists the branch above the pure `sqrt` call automatically,
+  same class of already-established no-op as the `wrapping_sub`-combined-
+  range-compares and `koff-free unchecked-log` findings above. Reverted,
+  no reason to carry the less-obvious source form for zero benefit.
 
 ### cbrt / sqrt / hypot / powf / remainder
 
@@ -1037,9 +1051,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     same deg-3 correction shape — deletes rcbrt's trailing division
     entirely (its own doc explicitly defers this as "real fitting
     work"). Targets rcbrt's 0.418/5.
-54. **asinh/acosh single-sqrt restructure**: select the sqrt *argument*
-    (ax²+1 vs 1+1/ax²), take one sqrt, post-multiply by select(1, ax) —
-    deletes one of two unconditional sqrts (sqrt isn't fully pipelined).
 55. **hypot3/rnorm3** (3-arg vector norm): fma chain + sqrt,
     graphics/physics staple, trivially vectorizes.
 56. **Slice-tier FTZ/DAZ via MXCSR**: a slice entry point can set
