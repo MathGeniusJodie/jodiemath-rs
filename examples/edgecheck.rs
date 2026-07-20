@@ -694,6 +694,16 @@ fn main() {
     // guarantee, inherited here for free.
     check("erfcx(-1000)", erfcx(-1000.0), f32::INFINITY);
 
+    // erfcx_accurate: full-precision-exponent sibling of erfcx (same
+    // mechanism as erfc_accurate), same special-value behavior as erfcx.
+    check("erfcx_accurate(0)", erfcx_accurate(0.0), 1.0);
+    check("erfcx_accurate(-0)", erfcx_accurate(-0.0), 1.0);
+    check("erfcx_accurate(nan)", erfcx_accurate(f32::NAN), f32::NAN);
+    check_finite("erfcx_accurate(1e6)", erfcx_accurate(1e6));
+    check_finite("erfcx_accurate(-1)", erfcx_accurate(-1.0));
+    check_finite("erfcx_accurate(-9)", erfcx_accurate(-9.0));
+    check("erfcx_accurate(-1000)", erfcx_accurate(-1000.0), f32::INFINITY);
+
     // erfcx_checked: full-range sibling fixing erfcx's own documented
     // freeze past |x|=10 (see its doc comment). Bit-identical to erfcx
     // for |x|<=10 (same erfc_rational call).

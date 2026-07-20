@@ -2386,6 +2386,22 @@ pub fn erfcx(x: f32) -> f32 {
     if x >= 0.0 { r } else { 2.0 * exp2_checked(x * x * LOG2_E) - r }
 }
 
+/// Full-precision-exponent sibling of [`erfcx`], same mechanism as
+/// [`erfc_accurate`] (see its own doc comment): `erfcx`'s `x < 0` branch
+/// rounds `x*x` to a single f32 before multiplying by `LOG2_E`, and this
+/// is the branch where `erfcx`'s own worst case actually lives (`x>=0`
+/// has no exponential at all, so nothing to improve there -- confirmed
+/// empirically, `erfcx`'s worst-case `x` sits consistently around
+/// `-9.2`, not on the positive side). Fixed identically: `Df32::from_mul`
+/// through the multiply by `-LOG2_E` and into `exp2_checked_df`. Real
+/// accuracy win, not a full fix; `erfcx` itself untouched.
+#[inline(always)]
+pub fn erfcx_accurate(x: f32) -> f32 {
+    let xa = x.abs();
+    let r = erfc_rational(xa);
+    if x >= 0.0 { r } else { 2.0 * exp2_checked_df(Df32::from_mul(x, x) * LOG2_E) - r }
+}
+
 /// Full-range sibling of [`erfcx`]: fixes the freeze [`erfcx`]'s own doc
 /// comment documents for `x > 10` (unbounded relative error, not just
 /// imprecision) by switching to the standard asymptotic expansion there

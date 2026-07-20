@@ -269,6 +269,9 @@ throughput_fn!(thr_erfc_accurate, "erfc_accurate_throughput", erfc_accurate);
 latency_fn!(lat_erfcx, "erfcx_latency", erfcx);
 throughput_fn!(thr_erfcx, "erfcx_throughput", erfcx);
 
+latency_fn!(lat_erfcx_accurate, "erfcx_accurate_latency", erfcx_accurate);
+throughput_fn!(thr_erfcx_accurate, "erfcx_accurate_throughput", erfcx_accurate);
+
 latency_fn!(lat_erfcx_checked, "erfcx_checked_latency", erfcx_checked);
 throughput_fn!(thr_erfcx_checked, "erfcx_checked_throughput", erfcx_checked);
 
@@ -497,6 +500,7 @@ fn main() {
         lat_erfc, thr_erfc;
         lat_erfc_accurate, thr_erfc_accurate;
         lat_erfcx, thr_erfcx;
+        lat_erfcx_accurate, thr_erfcx_accurate;
         lat_erfcx_checked, thr_erfcx_checked;
         lat_hypot, thr_hypot;
         lat_hypot_checked, thr_hypot_checked;

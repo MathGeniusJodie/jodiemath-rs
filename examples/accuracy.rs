@@ -927,6 +927,8 @@ fn main() {
         let erfcx_ref = |v: F64xN| exp_u10(v * v) * erfc_u15(v);
         let s = measure!(erfc_domain, erfcx, erfcx_ref);
         report("erfcx", &s, t0);
+        let s = measure!(erfc_domain, erfcx_accurate, erfcx_ref);
+        report("erfcx_accurate", &s, t0);
         // erfcx_checked's own wider domain, extended past erfcx's |x|<=10
         // fit boundary (see its doc comment) -- still safely inside where
         // erfcx_ref's f64 `exp_u10(v*v)` doesn't itself overflow (v*v <=
