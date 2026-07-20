@@ -17,6 +17,12 @@
 // only that these specific known failure signatures aren't present. Treat
 // a clean run as "no known regression class detected," not "codegen is
 // optimal."
+//
+// Also checks the separate `pown_const*_latency` regions (idea #153):
+// `pown_const`'s own doc comment says to verify with `--emit=asm` that its
+// const-generic exponent fully constant-folds the 32-iteration bit-testing
+// loop away instead of trusting it as advice -- this makes that a standing
+// assertion (no branch/call/loop instruction in the region) instead.
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -59,25 +65,55 @@ fn main() {
     // region, the same BEGIN/END marker convention mca.rs's own parser
     // relies on.
     let mut regions: Vec<(String, Vec<&str>)> = Vec::new();
+    // idea #153: pown_const<N>'s own doc comment says "verify with
+    // --emit=asm before trusting" its 32-iteration bit-testing loop fully
+    // constant-folds away for a given N -- standing test instead of manual
+    // advice, so a future toolchain/LLVM change that silently breaks the
+    // fold gets caught. Collected separately (different naming pattern and
+    // a different check below) from the *_throughput regions.
+    let mut pown_const_regions: Vec<(String, Vec<&str>)> = Vec::new();
     let mut current: Option<(String, Vec<&str>)> = None;
+    let mut current_is_pown_const = false;
     for &line in &lines {
         let trimmed = line.trim();
         if let Some(name) = trimmed.strip_prefix("# LLVM-MCA-BEGIN ") {
             if name.ends_with("_throughput") {
                 current = Some((name.to_string(), Vec::new()));
+                current_is_pown_const = false;
+            } else if name.starts_with("pown_const") {
+                current = Some((name.to_string(), Vec::new()));
+                current_is_pown_const = true;
             }
         } else if trimmed == "# LLVM-MCA-END" {
             if let Some(region) = current.take() {
-                regions.push(region);
+                if current_is_pown_const {
+                    pown_const_regions.push(region);
+                } else {
+                    regions.push(region);
+                }
             }
         } else if let Some((_, body)) = current.as_mut() {
             body.push(line);
         }
     }
     assert!(!regions.is_empty(), "found no *_throughput regions -- did the BEGIN/END marker format change?");
+    assert!(
+        !pown_const_regions.is_empty(),
+        "found no pown_const* regions -- did examples/mca_target.rs drop its lat_pown_const* wiring?"
+    );
 
     let packed_simd = ["ymm", "zmm", "xmm"]; // xmm still packed (128-bit); scalar forms use an "ss"/"sd" mnemonic suffix, not just xmm registers
     let mut failures = Vec::new();
+    for (name, body) in &pown_const_regions {
+        let has_branch_or_call =
+            body.iter().any(|l| { let t = l.trim_start(); t.starts_with('j') || t.starts_with("call") || t.starts_with("loop") });
+        if has_branch_or_call {
+            failures.push(format!(
+                "{name}: contains a branch/call/loop instruction -- pown_const's const-generic \
+                 exponent loop may not have fully constant-folded away (see its own doc comment)"
+            ));
+        }
+    }
     for (name, body) in &regions {
         let has_call = body.iter().any(|l| l.trim_start().starts_with("call"));
         // "contains", not "starts_with": the AVX-encoded mnemonic has a
@@ -129,7 +165,12 @@ fn main() {
         }
     }
 
-    println!("checked {} *_throughput regions in {}", regions.len(), asm_path.display());
+    println!(
+        "checked {} *_throughput region(s) and {} pown_const* region(s) in {}",
+        regions.len(),
+        pown_const_regions.len(),
+        asm_path.display()
+    );
     if failures.is_empty() {
         println!("ok: no known de-vectorization signatures found in any region");
     } else {

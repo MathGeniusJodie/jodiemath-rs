@@ -409,6 +409,16 @@ throughput_fn!(thr_pown, "pown_throughput", {
 // correctness issue -- see quickbench.rs for pown_small's real wall-clock
 // numbers instead.
 
+// pown_const<N>: idea #153, standing codegen verification (not just
+// doc-comment "advice") that the const-generic exponent really does
+// constant-fold the whole 32-iteration bit-testing loop away, for a
+// representative small positive N (few bits set), a multi-bit positive N,
+// and a negative N (reciprocal path). codegen_check.rs asserts these
+// regions contain no branch/loop-back instruction at all.
+latency_fn!(lat_pown_const3, "pown_const3_latency", pown_const::<3>);
+latency_fn!(lat_pown_const7, "pown_const7_latency", pown_const::<7>);
+latency_fn!(lat_pown_const_neg5, "pown_const_neg5_latency", pown_const::<-5>);
+
 latency_fn!(lat_powf_checked, "powf_checked_latency", {
     let y = black_box(2.0);
     move |x: f32| powf_checked(x, y)
@@ -624,5 +634,8 @@ fn main() {
     black_box(lat_fmod_checked(black_box(1.234)));
     black_box(lat_rem_euclid(black_box(1.234)));
     black_box(lat_div_euclid(black_box(1.234)));
+    black_box(lat_pown_const3(black_box(1.234)));
+    black_box(lat_pown_const7(black_box(1.234)));
+    black_box(lat_pown_const_neg5(black_box(1.234)));
     black_box(&arr_out);
 }

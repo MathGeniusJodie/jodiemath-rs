@@ -1510,9 +1510,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### Batch 2: powf / pown / remainder
 
-153. **pown_const standing asm test**: its own doc comment says "verify
-     with --emit=asm before trusting" the const-fold — make that a test
-     instead of advice.
 154. **Const-arg slice family generalization**: const-y remainder
      (#82), const-base powf (#76), const-base log (precompute
      1/log2(b)) — one shared design decision.

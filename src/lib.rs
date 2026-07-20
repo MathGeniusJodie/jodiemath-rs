@@ -3118,10 +3118,12 @@ pub fn pown_small_accurate(x: f32, n: i32) -> f32 {
 /// "same exponent, hard-coded at the call site" pattern (`x*x*x`-style
 /// cubes/squares/reciprocals) that motivated `pown`'s own square-and-
 /// multiply redesign in the first place, taken to its logical conclusion
-/// once the exponent doesn't need to vary per call. Verify with
-/// `--emit=asm` before trusting this folds as described -- monomorphized
-/// generics don't automatically guarantee LLVM finishes the constant
-/// folding, only that it has enough information to.
+/// once the exponent doesn't need to vary per call. Monomorphized generics
+/// don't automatically guarantee LLVM finishes the constant folding, only
+/// that it has enough information to -- `examples/codegen_check.rs` holds
+/// a standing assertion (for N=3, 7, -5) that this really does fold to a
+/// branch/loop-free multiply sequence, instead of leaving that as manual
+/// `--emit=asm` advice.
 #[inline(always)]
 pub fn pown_const<const N: i32>(x: f32) -> f32 {
     pown_body!(x, N, 32u32)
