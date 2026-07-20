@@ -183,6 +183,7 @@ fn main() {
         "remainder_ieee",
         "remainder_wide",
         "fmod",
+        "fmod_checked",
         "fmod_unchecked",
     ];
 

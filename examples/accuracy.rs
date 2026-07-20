@@ -1218,6 +1218,12 @@ fn main() {
         };
         let s = fuzz2(TWOARG_SAMPLES, fmod_domain_unchecked, fmod_unchecked, fmod_ref);
         report("fmod_unchecked (+)", &s, t0);
+        // fmod_checked: no near_int exclusion -- that's exactly the
+        // domain it fixes (see its own doc comment), so this doubles as
+        // a standing regression check on the off-by-a-whole-y bug.
+        let fmod_checked_domain = |x: f32, y: f32| y != 0.0 && (x / y).abs() < 1000.0;
+        let s = fuzz2(TWOARG_SAMPLES, fmod_checked_domain, fmod_checked, fmod_ref);
+        report("fmod_checked", &s, t0);
     }
 
     println!("total: {:.2}s", t0.elapsed().as_secs_f64());

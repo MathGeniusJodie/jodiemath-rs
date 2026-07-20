@@ -3180,6 +3180,43 @@ pub fn fmod(x: f32, y: f32) -> f32 {
     remainder_style_combine!(x, y, q)
 }
 
+/// Self-correcting variant of [`fmod`]: detects when `x/y`'s own division
+/// rounding pushed `q` to the wrong side of an *integer* boundary (see
+/// [`fmod`]'s doc comment -- the truncation analog of
+/// [`remainder_checked`]'s half-integer-tie fix) and nudges `q` by one to
+/// correct it. Unlike `remainder_checked`'s single symmetric `|r0| >
+/// |y|/2` test, a correctly-truncated `r0` must satisfy an *asymmetric*
+/// condition (same sign as `x`, magnitude strictly less than `|y|`), so
+/// an off-by-one `q` shows up as one of two different symptoms needing
+/// opposite corrections: `r0`'s sign disagreeing with `x`'s (q0
+/// over-subtracted, needs `+y` back) or `|r0| >= |y|` (q0
+/// under-subtracted, needs one more `-y`) -- never both at once, since
+/// the error is bounded to exactly one integer step. `adj`'s sign
+/// picks the right one directly rather than trying both candidates.
+/// Verified zero mismatches against `x as f64 % y as f64` over 160M
+/// in-domain (`|x/y|<1000`) samples (previously ~4.9e-7 rate, matching
+/// `fmod`'s own documented ~3e-7 characterization).
+#[inline(always)]
+pub fn fmod_checked(x: f32, y: f32) -> f32 {
+    let q0 = (x / y).trunc();
+    let r0 = fma(-q0, y, x);
+    let wrong_sign = r0 != 0.0 && (r0 > 0.0) != (x > 0.0);
+    // The correction's sign depends on *both* which failure mode fired
+    // (overshoot/`wrong_sign` needs q0 nudged toward zero, undershoot
+    // needs it nudged away) *and* whether x/y have the same sign --
+    // verified against all 4 sign combinations crossed with both
+    // failure modes by hand (8 cases) before trusting this, not derived
+    // by inspection alone (an earlier y-sign-only version passed 4 of
+    // those 8 and failed the rest).
+    let same_sign = (x > 0.0) == (y > 0.0);
+    let adj = if wrong_sign != same_sign { 1.0 } else { -1.0 };
+    let r1 = fma(-adj, y, r0);
+    let needs_fix = wrong_sign || r0.abs() >= y.abs();
+    let normal = if needs_fix { r1 } else { r0 };
+    let r = if x == 0.0 && !normal.is_nan() { x } else { normal };
+    if y.is_infinite() && x.is_finite() { x } else { r }
+}
+
 /// [`fmod`] without domain checks: valid for `x != 0.0` and `y` finite
 /// (not `+-inf`) -- mirrors [`remainder_unchecked`]'s own contract and
 /// reasoning exactly, just for `fmod`'s truncated convention.

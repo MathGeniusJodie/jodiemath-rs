@@ -413,6 +413,11 @@ latency_fn!(lat_fmod, "fmod_latency", {
 // fmod_throughput deliberately NOT wired up here -- same
 // branch-specialization issue as remainder_throughput above (identical
 // short-body shape, same fix), see that comment for the full mechanism.
+latency_fn!(lat_fmod_checked, "fmod_checked_latency", {
+    let y = black_box(3.0);
+    move |x: f32| fmod_checked(x, y)
+});
+// fmod_checked_throughput deliberately NOT wired up either, same reason.
 latency_fn!(lat_fmod_unchecked, "fmod_unchecked_latency", {
     let y = black_box(3.0);
     move |x: f32| fmod_unchecked(x, y)
@@ -522,5 +527,6 @@ fn main() {
     black_box(lat_remainder(black_box(1.234)));
     black_box(lat_remainder_ieee(black_box(1.234)));
     black_box(lat_fmod(black_box(1.234)));
+    black_box(lat_fmod_checked(black_box(1.234)));
     black_box(&arr_out);
 }

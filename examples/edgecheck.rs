@@ -1177,6 +1177,30 @@ fn main() {
     check("fmod(0,nan)", fmod(0.0, f32::NAN), 0.0f32 % f32::NAN);
     check("fmod_unchecked(5,3)", fmod_unchecked(5.0, 3.0), fmod(5.0, 3.0));
     check("fmod_unchecked(-5,3)", fmod_unchecked(-5.0, 3.0), fmod(-5.0, 3.0));
+
+    // fmod_checked: same representative cases as fmod above, plus the
+    // specific off-by-a-whole-y cases found while testing idea #79 (one
+    // per sign combination of x/y, see fmod_checked's own doc comment).
+    check("fmod_checked(5,3)", fmod_checked(5.0, 3.0), 5.0f32 % 3.0);
+    check("fmod_checked(-5,3)", fmod_checked(-5.0, 3.0), -5.0f32 % 3.0);
+    check("fmod_checked(5,-3)", fmod_checked(5.0, -3.0), 5.0f32 % -3.0);
+    check("fmod_checked(-5,-3)", fmod_checked(-5.0, -3.0), -5.0f32 % -3.0);
+    check("fmod_checked(0,3)", fmod_checked(0.0, 3.0), 0.0);
+    check("fmod_checked(-0,3)", fmod_checked(-0.0, 3.0), -0.0);
+    check("fmod_checked(3,inf)", fmod_checked(3.0, f32::INFINITY), 3.0);
+    check("fmod_checked(-3,inf)", fmod_checked(-3.0, f32::INFINITY), -3.0);
+    check("fmod_checked(inf,3)", fmod_checked(f32::INFINITY, 3.0), f32::NAN);
+    check("fmod_checked(3,0)", fmod_checked(3.0, 0.0), f32::NAN);
+    check("fmod_checked(nan,3)", fmod_checked(f32::NAN, 3.0), f32::NAN);
+    check("fmod_checked(0,0)", fmod_checked(0.0, 0.0), 0.0f32 % 0.0f32);
+    // Off-by-a-whole-y cases (see fmod_checked's own doc comment for the
+    // adj-sign derivation these each pin one branch of): all four
+    // sign(x)/sign(y) combinations, values confirmed against
+    // (x as f64) % (y as f64) before pinning.
+    check("fmod_checked(-6.055322e9,-2.0952672e7)", fmod_checked(-6.055322e9, -2.0952672e7), -2.0952576e7);
+    check("fmod_checked(-7.871735e-1,1.574347e-3)", fmod_checked(-7.871735e-1, 1.574347e-3), -1.5743424e-3);
+    check("fmod_checked(2.4304448e2,-9.241235e-1)", fmod_checked(2.4304448e2, -9.241235e-1), 9.2411566e-1);
+    check("fmod_checked(9.885632e-22,2.4062233e-23)", fmod_checked(9.885632e-22, 2.4062233e-23), 2.0116773e-24);
 }
 
 /// f64-computed exact reference for a single spot-check triple, used only
