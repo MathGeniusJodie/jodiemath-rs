@@ -644,6 +644,27 @@ fn sinf_poly_c(x: f32, c: &[f32]) -> f32 {
     fma(p, x3, x)
 }
 
+// idea #43: dedicated sinpi/cospi poly, fit directly against sin(pi*r)
+// in r (r in [-0.5,0.5]) instead of routing r through an intermediate
+// `PI*r` value (which only keeps PI_HI's precision, discarding PI_LO*r)
+// before calling the generic sinf_poly. Same op count as sinf_poly_raw
+// applied to a pre-scaled `PI*r`: one multiply for the leading term
+// either way, just moved from the caller (computing `PI*r` before the
+// call) to here (computing `r*PI_HI` as this function's own leading
+// term) -- zero added ops, only different coefficient values, refit to
+// approximate sin(pi*r) directly instead of sin(t) generically.
+#[inline(always)]
+fn sinpi_poly_c(r: f32, c: &[f32]) -> f32 {
+    const PI_HI: f32 = 3.1415927410125732;
+    let y = r * r;
+    let y2 = y * y;
+    let r3 = y * r;
+    let a = fma(c[1], y, c[0]);
+    let b = fma(c[3], y, c[2]);
+    let p = fma(b, y2, a);
+    fma(p, r3, r * PI_HI)
+}
+
 // expm1's Pade near-zero branch (see src/lib.rs's expm1), |x| < 0.5. The
 // shipped constants (-2, -120, -12, 60, -120) look like an exact closed-
 // form Pade approximant to e^x rather than an empirical lolremez fit
@@ -1730,6 +1751,22 @@ fn main() {
         }
         let init = [-0.16666660, 8.3330662e-3, -1.9809603e-4, 2.6057806e-6];
         tune("sinf_poly", &sinf_poly_c, &|x| x.sin(), &grid, &init);
+    }
+    if which.contains("sinpipoly") {
+        // idea #43: sinpi/cospi's own reduction always lands r in
+        // [-0.5, 0.5] (see sinpi's doc comment) -- seeded from a real
+        // scipy/HiGHS minimax LP fit of sin(pi*r) directly in r (not a
+        // continuous refit of the generic sinf_poly), not zero-seeded.
+        let mut grid = vec![];
+        let mut b = 0f32.to_bits();
+        let half = 0.5f32.to_bits();
+        while b < half {
+            grid.push(f32::from_bits(b));
+            grid.push(-f32::from_bits(b));
+            b += 150;
+        }
+        let init = [-5.167724609375, 2.550321102142334, -0.5996360778808594, 0.0800275132060051];
+        tune("sinpi_poly", &sinpi_poly_c, &|r| (std::f64::consts::PI * r).sin(), &grid, &init);
     }
     if which.contains("expm1") {
         // expm1's Pade branch domain, |x| < 0.5.

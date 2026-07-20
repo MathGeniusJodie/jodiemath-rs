@@ -397,6 +397,29 @@ what shipped.
   rounding to recover. But both cost a real throughput regression (sinpi
   +21.8%, cospi +28.8% cyc/elem) — sinpi fails on both axes, cospi's real
   gain comes at real cost.
+- **sinpi/cospi dedicated poly, fold π directly into the fit** (idea
+  #43, distinct mechanism from the two_prod entry above -- no added
+  ops, a same-op-count refit against `sin(pi*r)` directly instead of
+  routing through an intermediate `PI*r` value): seeded from a real
+  scipy/HiGHS minimax LP fit (idealized max abs residual ~4.2e-8 vs. an
+  f32-emulated reconstruction of the shipped route's own ~1.08e-7, only
+  a ~2.6x idealized margin -- a weaker signal than most of this
+  session's other LP fits going in), polished by tune.rs's coordinate
+  descent (barely moved, confirming the LP seed was already good on
+  that grid). Wired into new `sinpi_poly_raw`/`sinpi_poly` functions
+  (mirroring `sinf_poly_raw`/`sinf_poly`'s copysign split) and real-
+  fuzzed: a clear regression, not the hoped-for win. `sinpi` alone
+  (simplest case, no other confound) got worse on *both* axes -- avg
+  ulp 0.1969→0.2065, max 2→3. `cospi`'s avg also got worse
+  (0.1079→0.1105); its already-huge near-x=-0.5 max-ulp outlier (a
+  known "near a true zero of the function, ulp isn't meaningful"
+  artifact, not a bug -- x≈-0.5 is exactly `cospi`'s zero) happened to
+  shrink from ~3.3M to ~103k on this run, but that's still catastrophic
+  either way and not attributable to a real precision fix. Reverted --
+  the weak ~2.6x idealized margin didn't survive contact with the real
+  f32 construction, the same "isolated fit doesn't predict real
+  magnitude" lesson as several other entries in this file.
+  `examples/tune.rs`'s `sinpi_poly_c` scaffold kept for reference.
 - **sind/cosd: same two_prod trick for d·DEG_TO_RAD_SMALL**: zero
   measurable accuracy improvement on both (sind ~unchanged, cosd
   bit-for-bit identical), real throughput cost both (+27%/+27.9%).
@@ -1330,12 +1353,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### sin / cos family
 
-43. **sinpi/cospi dedicated poly — fold π into sinf_poly's
-    coefficients** (fit sin(πr) in r over [−0.5,0.5]): deletes the π·r
-    multiply and its rounding at zero added ops; leading πr term via
-    `fma(r, PI_HI, …)` with the PI_LO·r residual absorbed into the fit.
-    Mechanism differs from the rejected two_prod correction (which
-    *added* ops for the same rounding). Targets cospi's avg 0.281.
 44. **sind/cosd/tand: same fold for DEG_TO_RAD_SMALL** — deletes the
     d·c multiply and captures the accuracy the rejected HI/LO split
     found (sind avg −45%) at *negative* op cost instead of +11%.
