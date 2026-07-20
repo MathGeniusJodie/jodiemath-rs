@@ -1508,21 +1508,28 @@ fn exp_pos_neg(x: f32) -> (f32, f32) {
     (p_pos * t1 * t2, p_neg * t1n * t2n)
 }
 
-// sinh(x) = x + x^3/6 + x^5/120 + x^7/5040 + O(x^9), the odd Taylor series
-// (exact rational coefficients, not a numerical fit -- sinh is entire, so
-// this converges everywhere, and truncation error at the |x|<0.5 select
-// boundary below is dominated by the next (dropped) term, x^9/362880 ~
-// 5.4e-9 at x=0.5, ~0.1 ulp of sinh(0.5) -- comfortable margin under
-// budget for all four kept terms). Same role as expm1's Pade "a" branch:
-// a cheap, cancellation-free small-x numerator.
+// sinh(x) ~ x * P(x^2), a two-fma odd approximation on |x| < 0.5. The
+// leading coefficient is pinned to exactly 1.0 (tiny x returns x, its
+// correctly-rounded sinh). c1/c2 are NOT the odd Taylor coefficients
+// (1/6, 1/120): this is a degree-2 fit of sinh(x)/x over [0,0.5], one term
+// shorter than the natural Taylor truncation. Dropping that term saves one
+// fma on every sinh/sinh_throughput/sinh_checked call (all three evaluate
+// this branch unconditionally, branchless-select) for a real ~6% throughput
+// win; the cost is contained because sinh's worst case lives in the
+// |x| >= 0.5 exp_pos_neg branch, not here -- this branch's max stays 3 ulp,
+// under sinh's overall max, so the headline accuracy is unchanged (avg ulp
+// rises slightly). c1/c2 are a least-squares fit (minimizes the branch's
+// average ulp given that max headroom), not minimax. See IDEAS.md
+// §hyperbolics for the same-degree refit that was rejected as a no-op first.
+// Same role as expm1's Pade "a" branch: a cheap, cancellation-free small-x
+// numerator.
 #[inline(always)]
 fn sinh_small(x: f32) -> f32 {
     let x2 = x * x;
     let c0 = 1.0f32;
-    let c1 = 1.0 / 6.0f32;
-    let c2 = 1.0 / 120.0f32;
-    let c3 = 1.0 / 5040.0f32;
-    let p = fma(fma(fma(c3, x2, c2), x2, c1), x2, c0);
+    let c1 = 0.1666623055934906f32;
+    let c2 = 0.00839646439999342f32;
+    let p = fma(fma(c2, x2, c1), x2, c0);
     x * p
 }
 
@@ -1530,7 +1537,7 @@ fn sinh_small(x: f32) -> f32 {
 /// reduction, see its own doc comment), except for |x| < 0.5 where exp(x)
 /// and exp(-x) are both ~1 and the subtraction cancels almost all
 /// precision (the same class of bug log1p/tanh had, see IDEAS.md) --
-/// there, use the Taylor form above instead, same branchless-select
+/// there, use the small-x poly form above instead, same branchless-select
 /// pattern as expm1's Pade/exp split. See exp's doc comment for the
 /// inherited unchecked-exp2 domain limit (only relevant on the `b` side,
 /// unconditionally evaluated but only selected for |x| >= 0.5). cosh below

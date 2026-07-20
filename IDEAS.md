@@ -548,6 +548,14 @@ what shipped.
   exact Taylor coefficients for opaque magic numbers buys zero movement in
   any reported metric. Closes the "untuned Taylor branches" lead —
   `asin_small` was the only branch of that pair with real headroom.
+  *Sequel (shipped, see lib.rs):* the opposite lever — *dropping* a term to
+  degree-2 — did land as a **speed** win. `sinh_small`'s branch max (2) sits
+  well under `sinh`'s headline max (5, in the other branch), so a shorter poly
+  can trade its spare accuracy for one fewer fma: throughput -5.6%/-6.1%/-7.2%
+  on sinh/sinh_throughput/sinh_checked, latency flat, headline max unchanged,
+  branch max 2→3, sinh avg 0.073→0.082. (This is why the same-degree refit
+  above is a no-op but the degree *drop* is a win — the branch had spare
+  accuracy to spend, just not spare fit quality to gain.)
 - **Compensated hypot** (`e=fma(r,-r,s); r+e/(2r)`): no measurable
   accuracy improvement (already near correctly-rounded) but real cost:
   latency +109%, throughput +87%.

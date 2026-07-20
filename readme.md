@@ -47,11 +47,11 @@ cbrt_accurate_unchecked (+) | 0.000 |     1     | (bit-identical to cbrt_accurat
       expm1 (in-domain) |    0.130   |     6     |  0.000  |    0
 exp_m1_over_x (in-domain)| 0.073   |     6     | (no std exp_m1_over_x)
                 exp2m1  |    0.077   |     4     | (no std exp2m1)
-       sinh (in-domain) |    0.073   |     5     |  0.000  |    1
+       sinh (in-domain) |    0.082   |     5     |  0.000  |    1
        cosh (in-domain) |    0.059   |     5     |  0.000  |    0
-sinh_throughput (in-domain)| 0.072   |     5     |  0.000  |    1
+sinh_throughput (in-domain)| 0.082   |     5     |  0.000  |    1
 cosh_throughput (in-domain)| 0.051   |     4     |  0.000  |    0
-       sinh_checked (all f32) | 0.038 |     5     |  0.000  |    1
+       sinh_checked (all f32) | 0.043 |     5     |  0.000  |    1
        cosh_checked (all f32) | 0.031 |     5     |  0.000  |    0
        tanh (in-domain) |    0.146   |     6     |  0.000  |    0
                 sigmoid |    0.093   |     4     | (no std sigmoid)
