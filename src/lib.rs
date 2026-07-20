@@ -1729,6 +1729,27 @@ pub fn sigmoid(x: f32) -> f32 {
     1.0 / (1.0 + e)
 }
 
+/// `log1p(e)` specialized for callers whose own domain already
+/// guarantees `e` in `(0, 1]` (backlog idea #120: softplus/logaddexp's
+/// own `e = exp(-something.min(87.0))`, `something >= 0`, so `e` never
+/// leaves that range) -- `u = 1+e` then always lands in `(1, 2]`, safely
+/// away from every special case `log1p`'s own wrapper exists for (never
+/// zero, negative, denormal, inf, or nan), so this skips straight to
+/// `ln_normal` + the Sterbenz correction, no wrapper, no
+/// `corr.is_finite()` guard, no `x==0.0` select. Same domain-bypass
+/// mechanism as `asinh`/`acosh`'s own `ln_normal` calls, distinct from
+/// the already-rejected "log1p small-|x| branch" (which added a poly to
+/// *every* general `log1p` call regardless of caller) -- this is a
+/// separate callee only reachable from callers whose domain already
+/// proves the skipped checks unreachable.
+#[inline(always)]
+fn log1p_unit(e: f32) -> f32 {
+    let u = 1.0 + e;
+    let c = e - (u - 1.0);
+    let corr = c / u;
+    ln_normal(u, 0.0) + corr
+}
+
 /// softplus(x) = ln(1+e^x), the smooth approximation to `max(x,0)` ML
 /// frameworks call `log1pexp`/`softplus`. Naive `(1.0+exp(x)).ln()`
 /// overflows for large `x` (`exp(x)` alone does) and loses precision for
@@ -1755,7 +1776,7 @@ pub fn sigmoid(x: f32) -> f32 {
 pub fn softplus(x: f32) -> f32 {
     let ax = x.abs();
     let e = exp(-ax.min(87.0));
-    let corr = if ax > 87.0 { 0.0 } else { log1p(e) };
+    let corr = if ax > 87.0 { 0.0 } else { log1p_unit(e) };
     let normal = x.max(0.0) + corr;
     if x.is_nan() { f32::NAN } else { normal }
 }
@@ -1780,7 +1801,7 @@ pub fn logaddexp(a: f32, b: f32) -> f32 {
     let m = a.max(b);
     let d = (a - b).abs();
     let e = exp(-d.min(87.0));
-    let corr = if d > 87.0 { 0.0 } else { log1p(e) };
+    let corr = if d > 87.0 { 0.0 } else { log1p_unit(e) };
     let normal = m + corr;
     if a.is_nan() || b.is_nan() { f32::NAN } else { normal }
 }
