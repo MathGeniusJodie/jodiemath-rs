@@ -1157,9 +1157,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     candidate, fixed-base workloads).
 77. **pown_16 tier** (|n| ≤ 65535): 16 iterations — pown_small's 8-iter
     precedent measured ~4-6x over pown.
-79. **fmod_checked**: trunc-boundary analog of remainder_checked's ±1
-    nudge (fires when r0's sign disagrees with x's or |r0| ≥ |y|) —
-    closes fmod's documented ~3e-7 off-by-a-whole-y failure.
 82. **Const-y remainder/fmod slice variant**: precompute 1/y,
     `q = round(x * (1/y))` — trades the per-element division for a
     multiply; the changed q rounding needs an accuracy screen
