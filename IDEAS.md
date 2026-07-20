@@ -178,6 +178,17 @@ what shipped.
 - **exp10 third Cody-Waite reduction word**: already tight (avg
   0.0343/max ulp 2, 2.2B+ samples) — minimal headroom for a third word to
   collect, not worth the extra fma.
+- **exp10_reduction: floor-based adjust** (backlog idea #28,
+  `a = fr.floor(); k = kr + a; f = fr - a` instead of the compare+select+
+  2 add/subs): expected bit-exact by construction (`fr.floor()` is
+  exactly `-1.0`/`0.0` on each half of `fr`'s `[-0.5,0.5]` range,
+  matching `-adjust`), but real measurement contradicted the derivation
+  on both axes -- `exp10`'s own max ulp regressed 1→2 (not bit-exact
+  after all, exact mechanism not tracked down), and `exp10_checked`'s
+  mca throughput blew up 2.736→4.389 cyc/elem (+60.4%, reproducible),
+  worse latency for both functions too. Reverted; the compare+select
+  form's own codegen is apparently better-scheduled here than a
+  seemingly-cheaper single `vroundps` would suggest.
 - **exp2_checked: k1 from bit-twiddled k instead of a second magic-round /
   pure-integer exp2int construction**: `k as i32` (Rust's saturating
   float-to-int cast) does not vectorize even though `k` is runtime-bounded
@@ -944,9 +955,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     the one lever there not yet tried.
 27. **exp10: treat LOG10_2_LO as a free fitted parameter** (end-to-end
     exp10 objective) instead of the rounded mathematical residual.
-28. **exp10_reduction: floor-based adjust**
-    (`a = fr.floor(); k = kr + a; f = fr − a`) — one vroundps instead
-    of compare+select+2 adds. Screen bit-exactness.
 29. **exp10: fold LOG2_10 into a dedicated Q(d) poly in d directly**
     (the sinpi/sind constant-folding trick) — deletes the `d*LOG2_10`
     multiply and its rounding; the floor-adjust step's units need care
