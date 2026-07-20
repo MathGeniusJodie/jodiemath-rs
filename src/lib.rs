@@ -1262,6 +1262,20 @@ pub fn log2p1(x: f32) -> f32 {
     if x == 0.0 { x } else { normal }
 }
 
+/// log10(1+x) (C23 `log10p1`), completing the C23 set next to `log2p1`
+/// above: identical Sterbenz-exact-correction structure, just converted
+/// to log10 units (`(c/u) * LOG10_E` instead of `* LOG2_E`) and calling
+/// `log10` instead of `log_2` for the dominant term.
+#[inline(always)]
+pub fn log10p1(x: f32) -> f32 {
+    let u = 1.0 + x;
+    let c = x - (u - 1.0);
+    let corr = (c / u) * std::f32::consts::LOG10_E;
+    let corr = if corr.is_finite() { corr } else { 0.0 };
+    let normal = log10(u) + corr;
+    if x == 0.0 { x } else { normal }
+}
+
 /// exp(x) via a proper Cody-Waite reduction instead of `exp2(x * LOG2_E)`.
 /// The naive form rounds `x * LOG2_E` *once* before ever calling exp2 --
 /// that rounding lands on the *argument*, and since exp2's derivative
@@ -1428,6 +1442,40 @@ pub fn exp2m1(x: f32) -> f32 {
     let p = fma(q, t1 * f, t1);
     let b = fma(p, t2, -1.0);
     if x.abs() < 0.5 { a } else { b }
+}
+
+/// 10^x - 1 (C23 `exp10m1`), completing the C23 set next to `exp2m1`
+/// above: same small-|x| Pade branch (`y = x*LN_10`, `10^x - 1 = e^{x
+/// ln10} - 1`) plus [`exp10_checked`]'s own extreme-range reduction
+/// (clamp, `exp10_reduction!`, `exp2_field_split`) for the direct branch,
+/// with the trailing `-1` fused into the last multiply exactly like
+/// `exp2m1`'s own `fma(p, t2, -1.0)`. Total over exp10_checked's full
+/// domain: `exp10m1(-inf) = -1`, `exp10m1(inf) = inf`.
+///
+/// Branch threshold is `|x| < 0.2`, not `exp2m1`'s `0.5`: the Pade
+/// approximant (shared with `expm1`/`exp2m1` via `pade_expm1_ratio!`) is
+/// only fitted/accurate for its argument `v` in `[-0.5, 0.5]` -- `expm1`
+/// feeds it `v = x` directly (so its own `|x| < 0.5` threshold matches
+/// exactly), and `exp2m1` feeds it `v = x*LN_2` (`|x| < 0.5` keeps `|v| <
+/// 0.35`, still inside). `LN_10 ≈ 2.303` is more than 6x `LN_2`, so
+/// reusing the same `0.5` threshold here would let `|v| = |x*LN_10|`
+/// reach past 1.1 -- measured hundreds of ulp off near that seam. `0.2`
+/// keeps `|v| < 0.47`, safely inside the fitted range.
+#[inline(always)]
+#[allow(clippy::approx_constant)] // g0's constant term is a fitted minimax
+// coefficient near ln(2), not ln(2) itself (bit pattern deliberately differs)
+pub fn exp10m1(x: f32) -> f32 {
+    let y = x * std::f32::consts::LN_10;
+    let a = pade_expm1_ratio!(y, mul);
+
+    let xc = x.clamp(-1000.0, 1000.0);
+    let (k, f) = exp10_reduction!(xc);
+    let k = k.clamp(-151.0, 128.0);
+    let (t1, t2) = exp2_field_split(k);
+    let q = exp2_q_poly!(f);
+    let p = fma(q, t1 * f, t1);
+    let b = fma(p, t2, -1.0);
+    if x.abs() < 0.2 { a } else { b }
 }
 
 // exp2_checked's k1/k2 exponent-field split, factored out for

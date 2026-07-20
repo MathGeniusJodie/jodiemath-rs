@@ -342,6 +342,17 @@ fn main() {
     check("log2p1(inf)", log2p1(f32::INFINITY), f32::INFINITY);
     check("log2p1(nan)", log2p1(f32::NAN), f32::NAN);
 
+    // log10p1(x) = log10(1+x), same structure as log2p1 with LOG10_E in
+    // place of LOG2_E -- same edges, pinned with exact powers of ten instead.
+    check("log10p1(0)", log10p1(0.0), 0.0);
+    check("log10p1(-0)", log10p1(-0.0), -0.0);
+    check("log10p1(-1)", log10p1(-1.0), f32::NEG_INFINITY);
+    check("log10p1(-2)", log10p1(-2.0), f32::NAN);
+    check("log10p1(9)", log10p1(9.0), 1.0);
+    check("log10p1(99)", log10p1(99.0), 2.0);
+    check("log10p1(inf)", log10p1(f32::INFINITY), f32::INFINITY);
+    check("log10p1(nan)", log10p1(f32::NAN), f32::NAN);
+
     check("exp(0)", exp(0.0), 1.0);
     // exp's Cody-Waite reduction uses round (not exp2's own floor), which
     // can push k one integer higher than floor would right at the domain
@@ -400,6 +411,18 @@ fn main() {
     check("exp2m1(-inf)", exp2m1(f32::NEG_INFINITY), -1.0);
     check("exp2m1(-151)", exp2m1(-151.0), -1.0);
     check("exp2m1(nan)", exp2m1(f32::NAN), f32::NAN);
+
+    // exp10m1(x) = 10^x - 1, same total-over-the-clamped-domain shape as
+    // exp2m1 above (exp10_checked's own [-1000,1000] pre-clamp + [-151,128)
+    // k-clamp), just base 10.
+    check("exp10m1(0)", exp10m1(0.0), 0.0);
+    check("exp10m1(-0)", exp10m1(-0.0), -0.0);
+    check("exp10m1(1)", exp10m1(1.0), 9.0);
+    check("exp10m1(-1)", exp10m1(-1.0), -0.9);
+    check("exp10m1(inf)", exp10m1(f32::INFINITY), f32::INFINITY);
+    check("exp10m1(-inf)", exp10m1(f32::NEG_INFINITY), -1.0);
+    check("exp10m1(-1000)", exp10m1(-1000.0), -1.0);
+    check("exp10m1(nan)", exp10m1(f32::NAN), f32::NAN);
 
     check("sinh(0)", sinh(0.0), 0.0);
     check("cosh(0)", cosh(0.0), 1.0);

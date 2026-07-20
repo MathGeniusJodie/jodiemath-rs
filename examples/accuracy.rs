@@ -773,6 +773,13 @@ fn main() {
         let s = measure!(everywhere, log2p1, log2p1_ref);
         report("log2p1", &s, t0);
     }
+    if run("log10p1") {
+        // Same cancellation-safe log1p_u10 reference as log2p1 above, just
+        // divided by ln(10) instead of ln(2).
+        let log10p1_ref = |v: F64xN| log1p_u10(v) / F64xN::splat(std::f64::consts::LN_10);
+        let s = measure!(everywhere, log10p1, log10p1_ref);
+        report("log10p1", &s, t0);
+    }
     if run("expm1") {
         // expm1's large-|x| branch (and exp itself) calls exp2, only
         // accurate while x*log2(e) stays inside exp2's unchecked domain
@@ -818,6 +825,14 @@ fn main() {
         let exp2m1_ref = |v: F64xN| expm1_u10(v * F64xN::splat(std::f64::consts::LN_2));
         let s = measure!(everywhere, exp2m1, exp2m1_ref);
         report("exp2m1", &s, t0);
+    }
+    if run("exp10m1") {
+        // Same expm1_u10-via-change-of-base reference as exp2m1 above, and
+        // likewise total over exp10_checked's own clamped domain, so no
+        // domain restriction needed.
+        let exp10m1_ref = |v: F64xN| expm1_u10(v * F64xN::splat(std::f64::consts::LN_10));
+        let s = measure!(everywhere, exp10m1, exp10m1_ref);
+        report("exp10m1", &s, t0);
     }
     if run("sinh") {
         // sinh/cosh use both exp(x) and exp(-x): restrict to where both
