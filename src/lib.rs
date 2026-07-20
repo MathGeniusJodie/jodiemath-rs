@@ -2165,18 +2165,20 @@ fn asin_small(x: f32) -> f32 {
 /// cancellation, which is what the small branch exists to avoid). Sign
 /// restored via `mulsign` (asin is odd). The poly is a dedicated
 /// `asin_poly`, decoupled from acos's coefficients -- see its doc
-/// comment. The 0.25 crossover is near where the two branches' error
-/// curves cross. Current: max ulp 7, avg 0.020 (exhaustive); the worst
-/// case sits just above the crossover, in the acos-based branch. An
-/// earlier three-branch design with a rational
-/// mid-branch was strictly worse -- see IDEAS.md §asin/acos for that
-/// history and the rejected refit variants.
+/// comment. The crossover sits at 0.27, not 0.25 (asin_small's own fit
+/// domain) -- after asin_small's minimax refit tightened its branch, the
+/// worst case moved to just above the old 0.25 boundary, still inside
+/// asin_small's error curve at that point, so shifting the boundary
+/// (coefficients untouched) covers it with the small branch instead.
+/// Current: max ulp 6, avg 0.020 (exhaustive). An earlier three-branch
+/// design with a rational mid-branch was strictly worse -- see IDEAS.md
+/// §asin/acos for that history and the rejected refit variants.
 #[inline(always)]
 pub fn asin(x: f32) -> f32 {
     let a = x.abs();
     let small = asin_small(x);
     let big = mulsign(FRAC_PI_2 - (1.0 - a).sqrt() * asin_poly(a), x);
-    if a < 0.25 { small } else { big }
+    if a < 0.27 { small } else { big }
 }
 
 // 3/3 Pade-style rational approximation of atan on [0,1], seeded from a

@@ -451,10 +451,6 @@ what shipped.
   movement (<1%, coefficients matched shipped to 6+ digits). A separate
   numerator-only refit predicted 11-15x but the real result was only
   ~0.9% with max ulp unmoved at the identical worst-case x.
-- **Retune asin's 0.25 crossover after acos_poly changes**: true crossover
-  sits around 0.26, but the reported max-ulp point sits inside
-  asin_small's own domain regardless of threshold placement. 0.25 already
-  close enough.
 - **asin_small: one more Taylor term**: real accuracy improvement
   confirmed after re-verification (max ulp 9→7, avg 0.0251→0.0202, ~20%
   better — a stale prior "tied co-bottleneck" finding no longer held after
@@ -1127,10 +1123,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### asin / acos / atan
 
-58. **asin: joint crossover-shift + both-sides refit** (e.g. 0.2 with
-    asin_poly refit over [0.2,1)) — the prior crossover retune held
-    coefficients fixed; the added refit dimension makes it a different
-    search.
 60. **atan2_latency tier**: atan_latency-based atan2 — atan2 currently
     stacks atan_poly's division on top of its own y/x division.
 61. **atan_bounded tier** (|x| ≤ 1 contract): skips the 1/a division
@@ -1358,10 +1350,6 @@ an idea revisits a rejection, the differing mechanism is stated.
      first rounds to exactly 0/2 — if it's meaningfully inside |x|=10,
      a tighter clamp shrinks the rational's required fit domain and
      frees headroom.
-141. **Sequencing note**: asin_small's minimax refit shipped (max ulp
-     9→7, moving asin's worst case just above the 0.25 crossover into the
-     acos-based branch), so the crossover search (#58) is now worth
-     re-running — the two interact, and the seam balance just shifted.
 142. **acos max 5 as an explicit real-chain-refit (#1) target** — its
      coordinate descent is exhausted, which is exactly the case #1
      exists for.
