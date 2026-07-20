@@ -88,7 +88,21 @@ what shipped.
   refit) for `sinh` (0.5), `tanh` (0.25), `expm1` (0.5), `asin` (0.25),
   `erf` (0.28): all five thresholds already sit almost exactly where the
   two branches' own independently-measured error curves cross; neither an
-  earlier nor later cutoff helps in any case.
+  earlier nor later cutoff helps in any case. `asin`'s 0.25 later *did*
+  become worth revisiting after `asin_small`'s own minimax refit shifted
+  its branch's error curve (shipped, see the 0.25→0.27 crossover-shift
+  entry elsewhere in this file) — this entry's finding for `asin` was
+  genuinely stale by the time it was re-checked, not a false alarm.
+  **Re-checked `sinh`'s 0.5 for the same reason** (2026-07-20, after
+  `sinh_small`'s own later degree-3→2 drop, a different but also
+  real change to that branch): unlike `asin`, this one's premise still
+  holds — `sinh`/`sinh_throughput`/`sinh_checked`'s real fuzz worst-case
+  points sit at x≈3.16/0.85/-7.32 respectively, all deep inside the
+  `|x|>=0.5` `exp_pos_neg` branch, nowhere near the 0.5 boundary the way
+  `asin`'s worst case sat right at its own crossover. No threshold sweep
+  run — the worst-case-location evidence alone already rules out a
+  boundary-shift fix here, the same screening step that made `asin`'s
+  fix findable in the first place.
 - **ulp-weighted Chebyshev LP refit for `log_2`'s poly** (real scipy,
   properly row-normalized to avoid HiGHS ill-conditioning): idealized
   metric looked dramatic (max weighted residual 8.4x tighter) but a real
