@@ -1160,12 +1160,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 79. **fmod_checked**: trunc-boundary analog of remainder_checked's ±1
     nudge (fires when r0's sign disagrees with x's or |r0| ≥ |y|) —
     closes fmod's documented ~3e-7 off-by-a-whole-y failure.
-80. **remainder_wide exact-tie sign-flip fix**:
-    `adj = (r0/ys).round_ties_even()` — at the documented failure
-    r0/ys is exactly ±0.5, which ties-even resolves to 0, killing the
-    spurious double-correction; genuine multi-integer gaps (|adj| ≥ 1)
-    unaffected. Also cheaper per remainder_ieee's own vroundps finding.
-    Then re-include the excluded tie domain in the standing test.
 81. **remainder_wide denormal-x corner**: gate the 0.125 rescale on |x|
     too (q0 is always 0 in that corner) — closes the other documented
     few-ulp exception.
