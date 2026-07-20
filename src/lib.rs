@@ -2087,7 +2087,7 @@ pub fn atanh(x: f32) -> f32 {
 // `std::f32::consts::FRAC_PI_2` (0x3fc90fdb) -- `1.5707963` is one digit
 // short of round-trip precision and parses one ulp LOW, which alone cost
 // acos most of its average error before being caught. Current: acos max
-// ulp 5, avg 0.432 (dense [-1,1] sweep, scored as the whole formula).
+// ulp 5, avg 0.0650 (exhaustive, scored as the whole formula).
 #[inline(always)]
 fn acos_poly(x: f32) -> f32 {
     let u = 2.2960447e-3f32;
