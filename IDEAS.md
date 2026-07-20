@@ -1101,10 +1101,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### asin / acos / atan
 
-57. **asin_small: minimax refit at the same degree over [0,0.25]** —
-    Taylor is optimal at 0, not over the interval, and the truncation
-    at the 0.25 edge is exactly where asin's max 9 lives. Zero op cost,
-    unlike the rejected extra-Taylor-term attack (+7.9% throughput).
 58. **asin: joint crossover-shift + both-sides refit** (e.g. 0.2 with
     asin_poly refit over [0.2,1)) — the prior crossover retune held
     coefficients fixed; the added refit dimension makes it a different
@@ -1336,8 +1332,10 @@ an idea revisits a rejection, the differing mechanism is stated.
      first rounds to exactly 0/2 — if it's meaningfully inside |x|=10,
      a tighter clamp shrinks the rational's required fit domain and
      frees headroom.
-141. **Sequencing note**: if asin_small's minimax refit (#57) lands,
-     re-run the crossover search (#58) — the two interact.
+141. **Sequencing note**: asin_small's minimax refit shipped (max ulp
+     9→7, moving asin's worst case just above the 0.25 crossover into the
+     acos-based branch), so the crossover search (#58) is now worth
+     re-running — the two interact, and the seam balance just shifted.
 142. **acos max 5 as an explicit real-chain-refit (#1) target** — its
      coordinate descent is exhausted, which is exactly the case #1
      exists for.
