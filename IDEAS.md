@@ -407,6 +407,23 @@ what shipped.
   benefit — avg ulp exactly unchanged (0.0675), max ulp *regressed* 3→4
   right at the a=1 fold boundary. Severe mca cost: atan throughput
   1.491→**4.196** cyc/elem (+181%), atan2 +57%.
+- **atan2: dual up-front divisions** (backlog idea #19, `z=y/x` and
+  `q=x/y` both computed independently instead of atan's internal serial
+  `1/(y/x)`): verified correct via edgecheck (every zero/sign/inf/nan
+  combination still passes) and a genuine, real accuracy improvement
+  confirmed on a 99M-sample same-seed old-vs-new comparison (avg ulp
+  0.068735→0.068683, max ulp unchanged at 4 both) -- the predicted
+  "one less rounding" effect is real, just tiny (atan_poly's own fit
+  error still dominates the budget). But the predicted *latency* win
+  never materialized: mca showed latency flat (61.28→61.22 cyc, noise)
+  and a real throughput *regression* (1.662→1.729 cyc/elem, +4.0%,
+  reproducible) -- a second division doubles the shared divider port's
+  pressure across a vectorized throughput run even though it removes a
+  dependency from any single call's critical path, the same "helps
+  latency, costs throughput" tradeoff already documented for
+  atan_latency's own division-free design, just the opposite direction
+  here (adding a division instead of removing one). Reverted -- real
+  but negligible accuracy gain isn't worth a real throughput cost.
 - **acos_accurate opt-in tier** (Df32 pi/2 + two-product sqrt(1-a)*poly
   combine): measured zero improvement — extra precision doesn't survive
   collapsing back to f32 without a downstream user. (While investigating,
@@ -947,11 +964,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     the critical path, saves no latency") but it's still 3 ops of port
     pressure; verify with the exhaustive sweep like the other
     downgrades.
-19. **atan2: compute both y/x and x/y up front** (two independent,
-    parallel divisions) instead of atan's internal serial `1/(y/x)` —
-    cuts a whole division's latency off atan2's critical path and
-    removes one rounding (x/y is singly-rounded where 1/(y/x) rounds
-    twice).
 21. **Standing codegen_check harness**: auto-grep every public fn's
     emitted asm for scalar-fallback signatures (cvttss2si class,
     kshift-assembled masks) — automates the manual rule that caught two
