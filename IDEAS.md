@@ -1070,9 +1070,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 62. **erfc_accurate opt-in tier** bundling the verified-but-rejected-on-
     cost fixes (two_prod exponent: max 109→93; compensated Horner: avg
     −14%) — the "no perf penalty" bar doesn't apply to an opt-in tier.
-63. **erfcx_checked**: the already-verified asymptotic tail for x>10
-    (fixes the documented unbounded freeze; the +17.7% cost was only
-    rejected as a *default*).
 64. **erfc_rational degree 5/5 bump — sequenced after an exponent fix**:
     the current root cause is the exponent, so a tighter fit alone was
     predicted useless; inside tier #62 the rational becomes the next
