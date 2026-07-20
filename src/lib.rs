@@ -2067,17 +2067,42 @@ pub fn acosh(x: f32) -> f32 {
     if x < 1.0 { f32::NAN } else { combined }
 }
 
-/// atanh(x) = 0.5*ln((1+x)/(1-x)) = 0.5*(log1p(x) - log1p(-x)), reusing
-/// log1p's already-correct small-x handling instead of forming
-/// (1+x)/(1-x) directly, which rounds to exactly 1.0 for tiny |x| (so
-/// ln(...) came out exactly 0 instead of the correct tiny nonzero answer)
-/// -- same fix shape as tanh reusing expm1 above. Domain x in [-1, 1]
-/// falls out for free: log1p(-x) is -inf at x=1 and log1p(x) is -inf at
-/// x=-1 (log1p's own domain edge), giving +-inf; |x|>1 makes one of the
-/// two arguments < -1, where log1p is already NaN.
+// atanh(x) ~ x*(1 + x^2/3 + x^4/5 + x^6/7 + ...), a degree-7 minimax
+// refit of the odd Taylor series over |x| < 0.25 (idea #69): the
+// leading coefficient is pinned to exactly 1.0 (same convention as
+// asin_small/sinh_small), and only 3 non-leading terms are needed to
+// stay near f32 precision over this narrow domain -- a fitted LP found
+// the next two odd terms (x^8, x^10) converge to exactly 0, so this is
+// cheaper than the idea's own "~5 odd terms" guess. Same role as
+// asin_small/sinh_small: a cheap, cancellation-free small-x numerator
+// for the branch below.
+#[inline(always)]
+fn atanh_small(x: f32) -> f32 {
+    let x2 = x * x;
+    let c0 = 0.3333338f32;
+    let c1 = 0.19981473f32;
+    let c2 = 0.15260197f32;
+    let p = fma(fma(c2, x2, c1), x2, c0);
+    fma(x * x2, p, x)
+}
+
+/// atanh(x) = 0.5*ln((1+x)/(1-x)), two branches (idea #69): a dedicated
+/// small-x poly above for `|x| < 0.25`, and `0.5*log1p(2a/(1-a))` (a
+/// single `log1p` call) for the rest, sign restored via `mulsign` --
+/// half the `log1p` calls of a naive `0.5*(log1p(x)-log1p(-x))` form,
+/// a real throughput win. See IDEAS.md idea #69 for why the single-
+/// log1p form needs the dedicated small-x branch to be accurate (its
+/// own worst case, un-split, lands inside `|x| < 0.25`). Domain `x` in
+/// `[-1, 1]` falls out for free: `2a/(1-a)` is `+inf` at `a=1`
+/// (`log1p(inf)=inf`, matching `atanh(+-1)=+-inf`), and is `< -1` for
+/// any `a>1` (`log1p` already `NaN` there, matching `atanh`'s domain
+/// edge). Current: avg/max ulp 0.0037/2 (exhaustive).
 #[inline(always)]
 pub fn atanh(x: f32) -> f32 {
-    0.5 * (log1p(x) - log1p(-x))
+    let a = x.abs();
+    let small = atanh_small(x);
+    let big = mulsign(0.5 * log1p(2.0 * a / (1.0 - a)), x);
+    if a < 0.25 { small } else { big }
 }
 
 // degree-6 minimax poly (Horner via fma), fitted for acos's sqrt(1-|x|)

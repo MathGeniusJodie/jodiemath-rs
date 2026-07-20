@@ -1435,6 +1435,7 @@ fn main() {
     check_seam("tanh seam", tanh, 0.25);
     check_seam("asin seam", asin, 0.27);
     check_seam("erf seam", erf, 0.28);
+    check_seam("atanh seam", atanh, 0.25);
 }
 
 /// f64-computed exact reference for a single spot-check triple, used only

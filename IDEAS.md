@@ -883,7 +883,12 @@ what shipped.
   failure mode of the signed-x version (max ulp only 3→4, not 3→31303),
   but still a real net accuracy loss (avg 0.0313→0.0352, max 3→4) with a
   mixed perf result (throughput -29% better, latency +2.9% worse) — not a
-  clean win on either axis.
+  clean win on either axis. **Superseded (shipped, see lib.rs)**: idea
+  #69 found this variant's own worst case lands at `x~0.111`, inside
+  `|x|<0.25` -- adding a dedicated small-x poly branch there (this
+  variant alone, un-split) fixes exactly the loss this entry measured,
+  landing a real win on every axis (avg/max ulp 0.0313/3→0.0037/2,
+  throughput -25.5%) at a modest latency cost (+5.9%).
 - **Dedicated sinh/cosh kernels via reassociation**: real latency win for
   both (~11-12%) but throughput split by function (sinh better, cosh
   worse) and accuracy split the other way (cosh fine, sinh regressed ~12x
@@ -1613,11 +1618,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     composites for API breadth.
 #### hyperbolics / activations
 
-69. **atanh restructure**: small-|x| odd-poly branch (|x|<0.25, ~5 odd
-    terms) + single-log1p-on-|x| form (`0.5·log1p(2a/(1−a))` +
-    mulsign) for the rest — halves the two-log1p cost. The rejected
-    single-log1p variants lacked the small branch; verify that's where
-    their accuracy loss actually lived before fitting.
 71. **logit(p)** (sigmoid's inverse) via cancellation-safe log1p forms.
 72. **compound(x, n) = (1+x)^n** (financial kernel): n·log1p-based
     route avoiding pown-on-(1+x)'s tiny-x precision loss.
