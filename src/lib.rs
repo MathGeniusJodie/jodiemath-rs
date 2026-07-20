@@ -785,14 +785,17 @@ fn reduce_pi(x: f32, qh: f32, ql: f32) -> f32 {
     // plain subtract (edge cases at the qh = 0/+-1 boundary confirmed
     // clean by the exhaustive sweep).
     let s0 = x - p1;
-    // e1's and p3t's merges use quick_two_sum: both violate the |a|>=|b|
+    // All three merges use quick_two_sum, each violating the |a|>=|b|
     // ordering assumption somewhere in the domain, but that bounded error
-    // measured harmless (see quick_two_sum's comment). p2's merge stays
-    // on full two_sum: it's not on the ql-dependent critical path (p2
-    // only needs qh), so downgrading it saves no latency, only risks
-    // accuracy for nothing.
+    // measured harmless in every case (see quick_two_sum's comment). p2's
+    // merge isn't on the ql-dependent critical path (p2 only needs qh),
+    // so downgrading it from full two_sum saves no latency -- but it's
+    // still 3 fewer ops of port pressure, and mca confirmed a real
+    // throughput win from exactly that (sin_checked -4.2%, cos_checked
+    // -18.8%, both callers' latency unchanged, exhaustively bit-identical
+    // avg/max ulp per domain bucket).
     let (s1, e1b) = quick_two_sum(s0, -e1);
-    let (s2, e2b) = two_sum(s1, -p2);
+    let (s2, e2b) = quick_two_sum(s1, -p2);
     let (s3, e3b) = quick_two_sum(s2, -p3t);
     // flat left-to-right; a depth-2 rebalance measured *worse* latency at
     // identical throughput (scheduling side effects), see IDEAS.md

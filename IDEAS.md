@@ -1119,11 +1119,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     mulsign-reassociation also measured worse — see rejected section —
     so per-site mca is required, not assumed, for each remaining site
     here too.)
-18. **reduce_pi: downgrade p2's full two_sum to quick_two_sum for
-    throughput** — the documented keep-reason was latency-only ("not on
-    the critical path, saves no latency") but it's still 3 ops of port
-    pressure; verify with the exhaustive sweep like the other
-    downgrades.
 21. **Standing codegen_check harness**: auto-grep every public fn's
     emitted asm for scalar-fallback signatures (cvttss2si class,
     kshift-assembled masks) — automates the manual rule that caught two
