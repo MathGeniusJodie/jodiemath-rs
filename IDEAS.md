@@ -1135,10 +1135,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     mulsign-reassociation also measured worse — see rejected section —
     so per-site mca is required, not assumed, for each remaining site
     here too.)
-21. **Standing codegen_check harness**: auto-grep every public fn's
-    emitted asm for scalar-fallback signatures (cvttss2si class,
-    kshift-assembled masks) — automates the manual rule that caught two
-    past de-vectorizations.
 22. **Toolchain-bump re-screen list**: tag the rejections that were pure
     scheduling artifacts (pre_offset dead-add removal, ln/log10
     trailing-fma fuse +1cyc, reduce_pi depth-2 rebalance) and re-measure
