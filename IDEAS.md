@@ -464,6 +464,24 @@ what shipped.
   exactly 0.0 (useless). Re-seeded with a real scipy fit found real
   headroom (acos avg/max 0.496/4→0.490/3) but asin was unmoved and mca
   cost was real (+7-11% both functions) — not worth it at this magnitude.
+- **acos max 5 as a real-chain-refit target** (idea #142, re-running
+  tune.rs's existing degree-6 coordinate descent against its own already-
+  fairly-dense ~106k-point grid, on the theory that "exhausted" was a
+  stale/coarse-grid artifact): the descent did move on this grid (avg
+  0.14045→0.12982, max unchanged at 4 there), so not literally a zero-
+  move local optimum on the grid itself. Wired the "improved"
+  coefficients into the real `acos_poly`: a first pass compared only
+  100M-sample quick fuzz on each side and looked like a regression (max
+  4→5) — but re-checking both sides on the full exhaustive 2^32 sweep
+  (the shipped baseline's *own* true max turned out to be 5, not 4;
+  quick fuzz had simply never sampled that rare point either way) showed
+  the real comparison is avg ulp 0.0650→0.0649 (noise) with max
+  unchanged at 5 both ways. Reverted (no reason to carry different
+  literals for zero real movement) — this reconfirms rather than
+  overturns the original "already exhausted" finding. Caught by this
+  session's own "always get a same-precision baseline before comparing"
+  discipline: a quick-fuzz-vs-quick-fuzz comparison on a function whose
+  worst case is this rare very nearly produced a false regression.
 - **acos_poly Df32 leading-term split, pi/2 hi+lo**: dramatic acos avg
   improvement (0.496→0.068) but acos max ulp regressed (4→5) and asin got
   worse on both axes (max 9→12). Retuning recovered asin but acos max
@@ -1515,9 +1533,6 @@ an idea revisits a rejection, the differing mechanism is stated.
      rational machinery.
 139. **erfc_inv / probit (normal quantile)** alongside #66's erfinv —
      completes the sampling stack.
-142. **acos max 5 as an explicit real-chain-refit (#1) target** — its
-     coordinate descent is exhausted, which is exactly the case #1
-     exists for.
 143. **atan2_pos: [0, 2π) variant** via a branchless +2π fold —
      geo/graphics convention ask.
 
