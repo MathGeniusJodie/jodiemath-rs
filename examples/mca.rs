@@ -187,6 +187,8 @@ fn main() {
         "fmod",
         "fmod_checked",
         "fmod_unchecked",
+        "rem_euclid",
+        "div_euclid",
     ];
 
     println!();

@@ -449,6 +449,18 @@ throughput_fn!(thr_fmod_unchecked, "fmod_unchecked_throughput", {
     move |x: f32| fmod_unchecked(x, y)
 });
 
+// rem_euclid/div_euclid: same short-body-over-fmod shape as
+// fmod/fmod_checked above, so throughput deliberately NOT wired up
+// either, same branch-specialization reasoning.
+latency_fn!(lat_rem_euclid, "rem_euclid_latency", {
+    let y = black_box(3.0);
+    move |x: f32| rem_euclid(x, y)
+});
+latency_fn!(lat_div_euclid, "div_euclid_latency", {
+    let y = black_box(3.0);
+    move |x: f32| div_euclid(x, y)
+});
+
 fn main() {
     // smoke test only: exercises every marked function once so `cargo run
     // --release --example mca_target` succeeds on its own. The interesting
@@ -552,5 +564,7 @@ fn main() {
     black_box(lat_remainder_ieee(black_box(1.234)));
     black_box(lat_fmod(black_box(1.234)));
     black_box(lat_fmod_checked(black_box(1.234)));
+    black_box(lat_rem_euclid(black_box(1.234)));
+    black_box(lat_div_euclid(black_box(1.234)));
     black_box(&arr_out);
 }

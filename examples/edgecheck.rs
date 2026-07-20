@@ -1276,6 +1276,28 @@ fn main() {
     check("fmod_checked(-7.871735e-1,1.574347e-3)", fmod_checked(-7.871735e-1, 1.574347e-3), -1.5743424e-3);
     check("fmod_checked(2.4304448e2,-9.241235e-1)", fmod_checked(2.4304448e2, -9.241235e-1), 9.2411566e-1);
     check("fmod_checked(9.885632e-22,2.4062233e-23)", fmod_checked(9.885632e-22, 2.4062233e-23), 2.0116773e-24);
+
+    // rem_euclid/div_euclid: Rust-native std semantics, verified against
+    // f32::rem_euclid/f32::div_euclid directly (idea #152).
+    check("rem_euclid(5,3)", rem_euclid(5.0, 3.0), 5.0f32.rem_euclid(3.0));
+    check("rem_euclid(-5,3)", rem_euclid(-5.0, 3.0), (-5.0f32).rem_euclid(3.0));
+    check("rem_euclid(5,-3)", rem_euclid(5.0, -3.0), 5.0f32.rem_euclid(-3.0));
+    check("rem_euclid(-5,-3)", rem_euclid(-5.0, -3.0), (-5.0f32).rem_euclid(-3.0));
+    check("rem_euclid(0,3)", rem_euclid(0.0, 3.0), 0.0f32.rem_euclid(3.0));
+    check("rem_euclid(-0,3)", rem_euclid(-0.0, 3.0), (-0.0f32).rem_euclid(3.0));
+    check("rem_euclid(-6,3)", rem_euclid(-6.0, 3.0), (-6.0f32).rem_euclid(3.0));
+    check("rem_euclid(5,0)", rem_euclid(5.0, 0.0), 5.0f32.rem_euclid(0.0));
+    check("rem_euclid(inf,3)", rem_euclid(f32::INFINITY, 3.0), f32::INFINITY.rem_euclid(3.0));
+    check("rem_euclid(5,inf)", rem_euclid(5.0, f32::INFINITY), 5.0f32.rem_euclid(f32::INFINITY));
+    check("rem_euclid(nan,3)", rem_euclid(f32::NAN, 3.0), f32::NAN.rem_euclid(3.0));
+    check("div_euclid(5,3)", div_euclid(5.0, 3.0), 5.0f32.div_euclid(3.0));
+    check("div_euclid(-5,3)", div_euclid(-5.0, 3.0), (-5.0f32).div_euclid(3.0));
+    check("div_euclid(5,-3)", div_euclid(5.0, -3.0), 5.0f32.div_euclid(-3.0));
+    check("div_euclid(-5,-3)", div_euclid(-5.0, -3.0), (-5.0f32).div_euclid(-3.0));
+    check("div_euclid(5,0)", div_euclid(5.0, 0.0), 5.0f32.div_euclid(0.0));
+    check("div_euclid(inf,3)", div_euclid(f32::INFINITY, 3.0), f32::INFINITY.div_euclid(3.0));
+    check("div_euclid(5,inf)", div_euclid(5.0, f32::INFINITY), 5.0f32.div_euclid(f32::INFINITY));
+    check("div_euclid(nan,3)", div_euclid(f32::NAN, 3.0), f32::NAN.div_euclid(3.0));
 }
 
 /// f64-computed exact reference for a single spot-check triple, used only
