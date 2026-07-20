@@ -874,6 +874,20 @@ what shipped.
   sinh_checked's, which has sinh's own extra small-x branch on top and
   still came out faster). Reverted — cosh_checked's regression is too
   large to accept for sinh_checked's smaller win.
+- **exp_pos_neg: return halves pre-scaled by 0.5 for plain sinh/cosh
+  too** (idea #32, the *plain-multiply* relocation `exp_pos_neg_checked_half`
+  already ships -- not the rejected bit-trick variant above): lower risk
+  than it first looked, since the plain-multiply form is already proven
+  safe in the checked sibling. Implemented and real-tested anyway
+  rather than assumed: accuracy unchanged (noise-level, as expected for
+  a pure reassociation -- sinh avg 0.0822→0.0821, cosh identical, both
+  max 5 unchanged). But mca showed a real tradeoff for *both* functions,
+  not the checked_half entry's asymmetric-by-caller split: latency
+  improved for both (sinh 56.00→54.00 cyc -3.6%, cosh 55.00→54.00 -1.8%)
+  while throughput *regressed* for both (sinh 1.971→2.061 +4.6%, cosh
+  1.754→1.778 +1.4%) -- a genuine latency/throughput tradeoff, not a
+  clean win on the throughput axis this crate's own `exp_pos_neg` doc
+  comment names as the priority. Reverted.
 - **Newton-free correction for rsqrt** (`e=fma(r,r*x,-1)`,
   `r_new=fma(-0.5*r,e,r)`): real accuracy win (avg ulp 0.2599→0.1226, ~2x
   tighter, max unchanged at 1) at a real modest cost (latency +43.0%,
@@ -1480,9 +1494,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     t2 instead, or pre-scale p): the rejected version's accuracy win
     (max 3→2, cascading to expm1/sinh/cosh/tanh) was fully real — only
     fma/mul port contention killed it.
-32. **exp_pos_neg: return halves pre-scaled by 0.5 for plain sinh/cosh
-    too** (like checked_half already does) — deletes the caller-side
-    `0.5*(ep±en)` multiply.
 33. **Public `sinhcosh` pair function**: exp_pos_neg already computes
     both — callers needing both pay one reduction instead of two.
 36. **rlibm-style discrete rounding-interval LP extended to ln/log10**
