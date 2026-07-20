@@ -523,6 +523,26 @@ what shipped.
   0.820→0.834 cyc/elem, +1.7%) — a provably-safe reassociation still needs
   an actual mca measurement, "replaces select with sign-bit arithmetic"
   doesn't automatically transfer from atan_latency's own successful case.
+- **Sign-algebra select→xor audit, remaining sites** (idea #16, `erf`'s
+  `mulsign(1 − exp2(...), x)` combine and `powf_sign_combine`'s 6-select
+  tree): investigated rather than implemented. `erf`'s own site already
+  uses `mulsign` (bit-based XOR, not a naive select) for the one sign
+  operation in its combine -- there's no remaining select there to
+  convert; the actual branch choice (`if xa < 0.28 {a} else {b}`) is a
+  domain-branch select, not a sign-algebra one, and out of scope for
+  this idea. `powf_sign_combine`'s 6-select tree is a much larger
+  target, but every one of its selects encodes a distinct, individually-
+  documented IEEE754/C99 special case (`y` odd/even, `x`'s sign bit vs.
+  value, `y` infinite, `x==1`, `x==-1 && y` infinite, `y==0`) -- a bit-
+  mask consolidation risks silently breaking one of these rare-but-
+  load-bearing cases for a speed-only payoff (powf's own accuracy is
+  already documented `>=312` max ulp, nowhere near a target this could
+  move). Given this exact idea class (mulsign/select reassociation) is
+  already 0-for-2 on closely related constructs in this file (acos's
+  trailing correction, atan's port of atan_latency's own technique --
+  both entries directly above/nearby), and neither remaining site offers
+  a clear, low-risk target, not pursued further without a more specific
+  mechanism than "audit for a bit-mask form."
 - **acos_poly Horner→Estrin**: real latency win, but fma reassociation
   regressed asin max ulp 9→12, acos 4→5 (retuning made it worse, →6).
   acos's accuracy is a protected invariant.
@@ -1315,13 +1335,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     vplzcntd, AVX-512CD): replace the compare+select 2^24 rescale in the
     log family/cbrt/hypot_checked with an exact shift-based normalize.
     codegen_check that scalar leading_zeros autovectorizes here.
-16. **Sign-algebra select→xor audit**: screen erf's
-    `mulsign(1 − exp2(...), x)` combine and powf_sign_combine's
-    6-select tree for a bit-mask classify form. (acos's analog measured
-    slightly *worse*, and plain `atan`'s port of atan_latency's own
-    mulsign-reassociation also measured worse — see rejected section —
-    so per-site mca is required, not assumed, for each remaining site
-    here too.)
 22. **Toolchain-bump re-screen list**: tag the rejections that were pure
     scheduling artifacts (pre_offset dead-add removal, ln/log10
     trailing-fma fuse +1cyc, reduce_pi depth-2 rebalance) and re-measure
