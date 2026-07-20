@@ -673,6 +673,36 @@ what shipped.
   is the real remaining bottleneck; a genuine degree bump (the rest of
   idea #64) is the more promising untried lever, not compensated
   evaluation of the existing fit.
+  **The degree bump itself, tried next (idea #64's remaining half)**:
+  degree 5/5 rational (one extra fma per chain), seeded from a real
+  scipy/HiGHS minimax LP fit against `erfcx(xa)` (the rational's own
+  target, `erfc(xa)=exp(-xa^2)*erfc_rational(xa)`; residual is linear in
+  the 10 coefficients since there's no p*q cross term, so a true
+  Chebyshev LP applies directly, no L2-vs-minimax tradeoff needed) and
+  polished by `tune.rs`'s coordinate descent (new `erfc_c5` target, kept
+  in tune.rs). Real, consistent avg-ulp win across all five
+  `erfc_rational` consumers on the full exhaustive `|xa|<=10` sweep
+  (erfc 0.3055→0.2486, erfc_accurate 0.2452→0.1948, erfcx 0.3768→0.3280,
+  erfcx_accurate/erfcx_checked 0.3263→0.2775/0.2779, all ~13-20% better)
+  but failed on both of the bar's other axes: max ulp stayed flat for
+  four of the five and *regressed* on `erfc_accurate` specifically
+  (13→14) — the exact function idea #64 was sequenced to target — and
+  mca showed a real, broad cost: throughput +3.9% to +6.5% on all five
+  (two extra fma, as expected), plus latency costs that didn't scale
+  with op count the way throughput did (erfcx/erfcx_accurate +10%,
+  `erfcx_checked` +46.9% (41.00→60.22 cyc) with erfc/erfc_accurate's
+  own latency flat) -- the extra denominator term (where the LP put
+  nearly all the freedom; the numerator's 5th-degree coefficient
+  converged to ~1e-8, effectively unused) lands on each caller's
+  critical path differently depending on what else that caller's own
+  branch does around the shared `erfc_rational` call, the same
+  per-caller-rescheduling class of surprise already documented for
+  `exp_pos_neg_checked_half`'s fold. Reverted (`git checkout --
+  src/lib.rs`); a real avg-only win with a real max-ulp regression on
+  the targeted function and broad mca cost doesn't clear this session's
+  bar. `examples/tune.rs`'s `erfc_c5` scaffold is kept for any future
+  attempt (e.g. a denominator-only degree bump, or dropping the
+  near-zero numerator term to claw back one of the two fmas).
 - **erf joint boundary+coefficients refit**: cheap proxy sweep (8
   threshold candidates against unrefit coefficients) found a flat plateau
   around the current 0.28 boundary — no headroom, matching separate
@@ -1131,13 +1161,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### erf family
 
-64. **erfc_rational degree 5/5 bump — sequenced after `erfc_accurate`'s
-    exponent fix** (shipped, see lib.rs): the old root cause was the
-    exponent, so a tighter fit alone was predicted useless there — but
-    `erfc_accurate`'s `exp2_checked_df` route already closed most of
-    that gap (max ulp 105→~12), so the rational (still the same
-    plain-f32 fit) is now plausibly the next binding constraint on
-    `erfc_accurate` specifically, not `erfc` itself.
 66. **erfinv** (Giles-style poly in w = ln(1−x²), two-poly branchless
     select, fully fma-based) — sampling/ML staple, vectorizes cleanly.
 67. **norm_cdf/norm_pdf pair** (Φ via 0.5·erfc(−x/√2)) — thin

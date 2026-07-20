@@ -678,6 +678,29 @@ fn erfc_c(x: f32, c: &[f32]) -> f32 {
     fma(y, z, w)
 }
 
+// idea #64: degree 5/5 bump of erfc_c's rational (10 named coefficients:
+// 5 for n, 5 for d, same "+1.0" fixed leading term convention). One extra
+// fma per chain over erfc_c.
+#[inline(always)]
+fn erfc_c5(x: f32, c: &[f32]) -> f32 {
+    let z = if x < 0.0 { -1.0 } else { 1.0 };
+    let w = if x < 0.0 { 2.0 } else { 0.0 };
+    let xa = x.abs().min(10.0);
+    let n = fma(c[0], xa, c[1]);
+    let n = fma(n, xa, c[2]);
+    let n = fma(n, xa, c[3]);
+    let n = fma(n, xa, c[4]);
+    let n = fma(n, xa, 1.0);
+    let d = fma(c[5], xa, c[6]);
+    let d = fma(d, xa, c[7]);
+    let d = fma(d, xa, c[8]);
+    let d = fma(d, xa, c[9]);
+    let d = fma(d, xa, 1.0);
+    let rat = n / d;
+    let y = (-(xa * xa) * std::f32::consts::LOG2_E).exp2() * rat;
+    fma(y, z, w)
+}
+
 // erfc_c's exact shape, but only ever evaluated/tuned for xa in [0,2] --
 // IDEAS.md's "erfc domain split" idea: a separate, domain-specific
 // rational per half should each need much less dynamic range to cover
@@ -1519,6 +1542,28 @@ fn main() {
             0.15177123248577118, 0.7851238250732422, 1.8210692405700684, 2.1067135334014893,
         ];
         tune("erfc", &erfc_c, &erfc_ref, &grid, &init);
+    }
+    if which == "erfc5" {
+        // idea #64: degree 5/5 bump. Seed from a real scipy/HiGHS minimax
+        // (Chebyshev) LP fit of the rational to erfcx(xa) over [0,10]
+        // (relative-residual objective, linear in the 10 coefficients
+        // since there's no p*q cross term) -- not zero-seeded, see this
+        // file's own zero-seed-trap lesson. The LP's numerator 5th-degree
+        // term converged to ~0 (headroom lives in the denominator), but
+        // both are left free here for tune()'s coordinate descent to
+        // confirm/exploit against the real scored objective.
+        let mut grid = vec![];
+        let mut b = 0.0f32.to_bits();
+        while b < 10.0f32.to_bits() {
+            grid.push(f32::from_bits(b));
+            grid.push(-f32::from_bits(b));
+            b += 3000;
+        }
+        let init = [
+            -1.2645128e-8, 0.038198419, 0.25173876, 0.7754892, 1.2765400, 0.067703754, 0.44622305,
+            1.4079921, 2.4890938, 2.4049246,
+        ];
+        tune("erfc5", &erfc_c5, &erfc_ref, &grid, &init);
     }
     if which == "erfcsplit" {
         // scipy-derived seeds (least_squares fit of erfc(xa)*exp(xa^2)
