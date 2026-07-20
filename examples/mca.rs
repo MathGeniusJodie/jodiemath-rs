@@ -164,6 +164,7 @@ fn main() {
         "tan",
         "erf",
         "erfc",
+        "erfc_accurate",
         "erfcx",
         "erfcx_checked",
         "hypot",

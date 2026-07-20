@@ -916,6 +916,8 @@ fn main() {
         let erfc_domain = |x: f32| x.abs() <= 10.0;
         let s = measure!(erfc_domain, erfc, erfc_u15);
         report("erfc", &s, t0);
+        let s = measure!(erfc_domain, erfc_accurate, erfc_u15);
+        report("erfc_accurate", &s, t0);
         // erfcx_ref: no sleef erfcx bucket, so compose exp(x^2)*erfc_u15(x)
         // directly in f64 -- safe over this domain (x^2 <= 100 is nowhere
         // near f64's own ~709 exp overflow point) and multiplication

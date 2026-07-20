@@ -2316,6 +2316,29 @@ pub fn erfc(x: f32) -> f32 {
     fma(y, z, w)
 }
 
+/// Full-precision-exponent sibling of [`erfc`]: `erfc`'s own exponent
+/// term (`-xa*xa*LOG2_E`) rounds `xa*xa` to a single f32 before ever
+/// multiplying by `LOG2_E`, discarding exactly the low bits `exp2_checked`
+/// could otherwise use -- the same double-rounding class of error `exp`'s
+/// own doc comment describes for the naive `exp2(x*LOG2_E)`. Fixed by
+/// keeping `xa*xa` as a `Df32` (exact via `Df32::from_mul`, a
+/// two-product) through the multiply by `-LOG2_E` and into
+/// `exp2_checked_df` (already used by `powf_checked` for the analogous
+/// `log2(x)*y` amplification problem, reused verbatim here). Real
+/// accuracy win but not a full fix (max ulp still nowhere near "single
+/// digits") -- an opt-in tier over the default `erfc`, matching
+/// `erfcx`/`erfcx_checked`'s own split (the "no perf penalty" bar
+/// doesn't apply here; `erfc` itself is untouched and pays nothing).
+#[inline(always)]
+pub fn erfc_accurate(x: f32) -> f32 {
+    let z = if x < 0.0 { -1.0 } else { 1.0 };
+    let w = 1.0 - z;
+    let xa = x.abs();
+    let exponent = Df32::from_mul(xa, xa) * (-LOG2_E);
+    let y = exp2_checked_df(exponent) * erfc_rational(xa);
+    fma(y, z, w)
+}
+
 /// erfcx(x) = e^(x^2)*erfc(x), the "scaled complementary error
 /// function". For x >= 0, this collapses to
 /// exactly `erfc_rational(x)` alone with *no exponential at all*: erfc's

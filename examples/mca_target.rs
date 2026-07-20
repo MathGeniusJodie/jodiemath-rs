@@ -263,6 +263,9 @@ throughput_fn!(thr_erf, "erf_throughput", erf);
 latency_fn!(lat_erfc, "erfc_latency", erfc);
 throughput_fn!(thr_erfc, "erfc_throughput", erfc);
 
+latency_fn!(lat_erfc_accurate, "erfc_accurate_latency", erfc_accurate);
+throughput_fn!(thr_erfc_accurate, "erfc_accurate_throughput", erfc_accurate);
+
 latency_fn!(lat_erfcx, "erfcx_latency", erfcx);
 throughput_fn!(thr_erfcx, "erfcx_throughput", erfcx);
 
@@ -492,6 +495,7 @@ fn main() {
         lat_tan, thr_tan;
         lat_erf, thr_erf;
         lat_erfc, thr_erfc;
+        lat_erfc_accurate, thr_erfc_accurate;
         lat_erfcx, thr_erfcx;
         lat_erfcx_checked, thr_erfcx_checked;
         lat_hypot, thr_hypot;

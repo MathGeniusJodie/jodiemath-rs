@@ -661,6 +661,18 @@ fn main() {
     check_range("erfc(-9.5)", erfc(-9.5), 0.0, 2.0);
     check_range("erfc(-10)", erfc(-10.0), 0.0, 2.0);
 
+    // erfc_accurate: full-precision-exponent sibling of erfc (idea #62),
+    // same special-value/domain behavior, just a tighter fit within it.
+    check("erfc_accurate(0)", erfc_accurate(0.0), 1.0);
+    check("erfc_accurate(-0)", erfc_accurate(-0.0), 1.0);
+    check("erfc_accurate(inf)", erfc_accurate(f32::INFINITY), 0.0);
+    check("erfc_accurate(-inf)", erfc_accurate(f32::NEG_INFINITY), 2.0);
+    check("erfc_accurate(nan)", erfc_accurate(f32::NAN), f32::NAN);
+    check_range("erfc_accurate(9.5)", erfc_accurate(9.5), 0.0, 2.0);
+    check_range("erfc_accurate(10)", erfc_accurate(10.0), 0.0, 2.0);
+    check_range("erfc_accurate(-9.5)", erfc_accurate(-9.5), 0.0, 2.0);
+    check_range("erfc_accurate(-10)", erfc_accurate(-10.0), 0.0, 2.0);
+
     // erfcx(x) = e^(x^2)*erfc(x), backlog idea #51. For x>=0 the
     // exponentials cancel exactly (see its doc comment), so erfcx(0)
     // reduces to the same trivial case erfc(0) does.
