@@ -1121,12 +1121,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     candidate, fixed-base workloads).
 77. **pown_16 tier** (|n| ≤ 65535): 16 iterations — pown_small's 8-iter
     precedent measured ~4-6x over pown.
-78. **pown_small_accurate**: Df32-mantissa-only compensated squaring at
-    8 iterations — NOT the rejected WideFloat (that was 32 iters +
-    exponent tracking for the large-|n| overflow, 11-30x cost);
-    |n|≤255 avoids the overflow regime entirely, so plain Df32
-    suffices and the multiple should be far smaller. Targets
-    pown_small's max 304.
 79. **fmod_checked**: trunc-boundary analog of remainder_checked's ±1
     nudge (fires when r0's sign disagrees with x's or |r0| ≥ |y|) —
     closes fmod's documented ~3e-7 off-by-a-whole-y failure.
