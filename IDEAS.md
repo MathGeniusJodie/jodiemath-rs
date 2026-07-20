@@ -1281,6 +1281,23 @@ what shipped.
   already-rejected `koff-free unchecked-log fast path` and `atan2`'s
   bothzero/hpisignx entries above. Reverted (zero benefit, no reason to
   carry the less-obvious source form).
+- **log_family_wrapper: cheaper special-case classify** (idea #37):
+  considered, not implemented. `spec = if x==0.0 {-inf} else {NaN}`
+  and the outer `if x<=0.0 {spec} else {r}` aren't redundant computation
+  of the same condition -- they answer two different questions (what
+  value should the special case be, vs. whether to use it at all), so
+  there's no obvious single-compare consolidation the way the
+  `wrapping_sub` entry above found for a genuine OR-of-two-comparisons-
+  on-one-variable pattern. Declined given the accumulated evidence this
+  session that (a) LLVM's InstCombine already canonicalizes the classes
+  of compound-comparison pattern that genuinely are redundant (the
+  `wrapping_sub` entry, `koff-free unchecked-log`, `atan2`'s bothzero/
+  hpisignx, all confirmed byte-for-byte no-ops), and (b) hand-deriving a
+  *new* bit-domain reformulation here carries real risk of getting it
+  subtly wrong (see this session's own near-misses: the falsified naive
+  attempt at idea #12, and idea #50's reciprocal-overflow NaN bug) for
+  an idea explicitly labeled "audit-grade micro" -- low expected payoff
+  even if executed correctly.
 - **Literal-transcription standing test** (idea #109, "assert every
   decimal literal against its intended bit pattern"): investigated
   rather than built. Grepped for every other hand-typed decimal literal
@@ -1531,8 +1548,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     both — callers needing both pay one reduction instead of two.
 36. **rlibm-style discrete rounding-interval LP extended to ln/log10**
     (same 2^23 reduced-input multiplicity as the existing log_2 entry).
-37. **log_family_wrapper: cheaper special-case classify** — derive both
-    spec selects from one bits-domain compare pair; audit-grade micro.
 38. **softplus fused kernel**: one fitted poly for ln(1+2^-t) over the
     k/f-reduced domain, replacing exp (full poly) → log1p (division +
     deg-9 ln poly). Big throughput candidate.
