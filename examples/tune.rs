@@ -831,6 +831,22 @@ fn exp_r_c(r: f32, c: &[f32]) -> f32 {
     fma(l2, r4, r0)
 }
 
+// idea #25: exp_r_c's degree 5->6 bump (one more coefficient, one more
+// fma at the end of the Estrin chain -- see exp_r_c's own doc comment
+// for the fixed-c0/c1 convention this preserves).
+#[inline(always)]
+fn exp_r_c6(r: f32, c: &[f32]) -> f32 {
+    let r2 = r * r;
+    let r4 = r2 * r2;
+    let r6 = r4 * r2;
+    let l0 = r + 1.0;
+    let l1 = fma(c[1], r, c[0]);
+    let l2 = fma(c[3], r, c[2]);
+    let r0 = fma(l1, r2, l0);
+    let r1 = fma(l2, r4, r0);
+    fma(c[4], r6, r1)
+}
+
 // Scratch: sinh/cosh's shared exp(r)/exp(-r) even/odd split (see
 // src/lib.rs's exp_pos_neg). e(u)=1+c0*u+c2*u^2, o(u)=1+c1*u+c3*u^2,
 // p(r)=e+r*o. Same grid as exp_r (symmetric in r), so tuning this one
@@ -1926,6 +1942,19 @@ fn main() {
         // values exp's own doc comment says were superseded).
         let init = [4.9999300e-1, 1.6667245e-1, 4.1883811e-2, 8.3009899e-3];
         tune("exp_r (c0=c1=1 forced)", &exp_r_c, &|x| x.exp(), &grid, &init);
+        // idea #25: degree 5->6 bump, seeded from a real scipy/HiGHS
+        // minimax LP fit (idealized margin ~33x over an f32-emulated
+        // reconstruction of the shipped degree-5 form -- much stronger
+        // than the exp_pos_neg degree-bump screen that killed idea #26),
+        // not zero-seeded.
+        let init6 = [
+            0.5000000596046448,
+            0.16666492819786072,
+            0.041665248572826385,
+            0.00837147980928421,
+            0.0013992299791425467,
+        ];
+        tune("exp_r6 (c0=c1=1 forced)", &exp_r_c6, &|x| x.exp(), &grid, &init6);
         // current shipped exp_pos_neg coefficients (src/lib.rs), not the
         // pre-retuning starting point above -- check for headroom from
         // where the crate actually is now (idea #7's sinh/cosh round-off

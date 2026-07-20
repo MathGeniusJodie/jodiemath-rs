@@ -152,6 +152,30 @@ what shipped.
 - **expm1 round-off budget audit**: at the worst point, rounding (2.946
   ulp) and truncation/coefficient error (2.579 ulp) are roughly balanced —
   no single dominant term to attack, unlike `exp`'s Cody-Waite fix.
+- **exp_r_poly degree 5→6** (idea #25): unlike the `exp_pos_neg` degree
+  bump above (rejected on conflicting evidence without a full
+  implementation), this one's premise held up on every screen -- the
+  audit above shows real, non-dominated truncation error to attack (not
+  a "near precision floor" diagnosis), and a real scipy/HiGHS minimax LP
+  fit found a genuinely strong ~33x idealized margin (comparable to
+  cbrt's own degree-4 bump, the strongest-margin case this session).
+  `exp_r_poly!` is a macro, not a function, shared inline by `exp`,
+  `exp_checked`, `expm1`, `exp_m1_over_x`, and `sigmoid` -- wiring the
+  bump in touches all five at once. Real quick-fuzz result: a genuine,
+  substantial, consistent win on every one of them -- avg ulp improved
+  9-37% (exp 0.0744→0.0473, exp_checked 0.0389→0.0246, expm1
+  0.1304→0.1189, exp_m1_over_x 0.0729→0.0626, sigmoid 0.0925→0.0835) and
+  max ulp improved on four of five (exp 3→2, exp_checked 3→2, expm1
+  6→4, exp_m1_over_x 6→5; sigmoid unchanged at 4). But mca showed the
+  same real, broad cost this session's other two degree bumps
+  (erfc_rational, cbrt) already established as the pattern: latency
+  +4-5 cyc (+6-9.5%) and throughput +5-23% on all five, `sigmoid`
+  hit hardest (throughput +23.2%). Reverted (`git checkout --
+  src/lib.rs`) -- a third same-shape confirmation that this crate's
+  degree-bump lever reliably buys real accuracy at a real, unavoidable
+  cost spread across every caller of the shared poly, never a clean win
+  under this session's no-penalty bar (see the degree-bump-costs-real
+  memory). `examples/tune.rs`'s `exp_r_c6` scaffold kept for reference.
 - **sinh round-off budget audit**: rounding dominates truncation (3.055 vs
   1.670 ulp) but traces to the poly's own ~1.3e-7 relative fit error
   (already near f32's precision floor) amplified ~8x by the exponent-field
@@ -1410,8 +1434,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     t2 instead, or pre-scale p): the rejected version's accuracy win
     (max 3→2, cascading to expm1/sinh/cosh/tanh) was fully real — only
     fma/mul port contention killed it.
-25. **exp_r_poly degree 5→6**: attacks expm1's direct-branch max 6;
-    cost one fma at already-amortized Estrin depth.
 27. **exp10: treat LOG10_2_LO as a free fitted parameter** (end-to-end
     exp10 objective) instead of the rounded mathematical residual.
 29. **exp10: fold LOG2_10 into a dedicated Q(d) poly in d directly**
