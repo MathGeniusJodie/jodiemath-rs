@@ -1334,7 +1334,25 @@ an idea revisits a rejection, the differing mechanism is stated.
 15. **lzcnt-based denormal normalization** (`u32::leading_zeros` →
     vplzcntd, AVX-512CD): replace the compare+select 2^24 rescale in the
     log family/cbrt/hypot_checked with an exact shift-based normalize.
-    codegen_check that scalar leading_zeros autovectorizes here.
+    **codegen screen done** (2026-07-20): a standalone `--emit=asm` probe
+    (`u32::leading_zeros()` over a `[u32;16]` array loop) confirms this
+    target really does lower `leading_zeros` to packed `vplzcntd`
+    (`ymm`, two lanes of 8), not a scalar fallback -- the risk the idea
+    itself flagged doesn't materialize, so this is a live option, not a
+    dead end. Full implementation (an exact per-lane shift + exponent-
+    field reconstruction to replace the current `denormal_rescale!`
+    macro's plain "×2^24 unconditionally, if denormal" multiply) not
+    attempted yet: unlike the multiply-based rescale, which is already
+    just 1 compare + 1 multiply + 2 selects and needs no per-input shift
+    amount (the ×2^24 constant works uniformly across the whole denormal
+    range), an exact-shift version needs strictly more ops (lzcnt +
+    shift + OR to reconstruct + still a compare to gate it) -- any win
+    would have to come from moving work off a contended FP-multiply port
+    onto less-contended integer ALU ports (the idea #12 theme), not from
+    a lower op count, so it needs a real per-caller mca measurement
+    before it's clear this is even a net win in principle, let alone
+    worth the implementation risk (this exact code path has a documented
+    bug history, see the "log_2 denormal path" rejected entry).
 22. **Toolchain-bump re-screen list**: tag the rejections that were pure
     scheduling artifacts (pre_offset dead-add removal, ln/log10
     trailing-fma fuse +1cyc, reduce_pi depth-2 rebalance) and re-measure
