@@ -538,6 +538,14 @@ what shipped.
   form isn't a safe drop-in replacement for a plain division when the
   input range includes values near over/underflow, regardless of its
   accuracy benefit at ordinary magnitudes.
+- **Backlog ideas #129/#130 dropped as moot**: both were explicit
+  follow-ups conditioned on their prerequisite ideas shipping (#129 on
+  #43's sinpi/cospi poly fold, #130 on #44's sind/cosd poly fold) --
+  both prerequisites were tried and rejected this session (real
+  regressions, see the dedicated-poly entries above), so the follow-up
+  questions ("does the fold change which op erases -0.0's sign", "can
+  the clamp move earlier after the fold") no longer have anything to
+  apply to. Not investigated independently of the fold.
 - **sind/cosd: same two_prod trick for d·DEG_TO_RAD_SMALL**: zero
   measurable accuracy improvement on both (sind ~unchanged, cosd
   bit-for-bit identical), real throughput cost both (+27%/+27.9%).
@@ -1752,10 +1760,6 @@ an idea revisits a rejection, the differing mechanism is stated.
      *inexact reduction* near poles; tanpi/tand have *exact* reductions,
      which removes precisely that documented blocker. Targets the
      sinpi/cospi division and the near-pole ulp blowup.
-129. **sinpi: re-screen the x==0 guard after the poly fold (#43)** —
-     the fold changes which op erases the sign of zero.
-130. **sind/cosd: clamp on d instead of the radian product after #44**
-     (|d| ≤ 90 exact-domain form) — cheaper/earlier bound.
 131. **sinc_unnormalized** (sin(x)/x in radians, x=0 → 1) — DSP/physics
      sibling of the existing normalized sinc.
 
