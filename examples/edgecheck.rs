@@ -536,6 +536,40 @@ fn main() {
     check("logaddexp(nan,1)", logaddexp(f32::NAN, 1.0), f32::NAN);
     check("logaddexp(1,nan)", logaddexp(1.0, f32::NAN), f32::NAN);
 
+    // gelu(x) = x*Phi(x) = x*0.5*erfc(-x/sqrt2) (backlog idea #70). The
+    // structural pins (gelu(3)/gelu(-3)) confirm the normal path really is
+    // that composition, bit for bit -- accuracy vs a real reference is the
+    // accuracy.rs harness's job. The special-value pins guard the explicit
+    // x==-inf override: 0.0*(-inf) alone is NaN, but the true limit is 0.
+    check("gelu(0)", gelu(0.0), 0.0);
+    check("gelu(-0)", gelu(-0.0), -0.0);
+    check("gelu(3)==3*.5*erfc(-3/sqrt2)", gelu(3.0), 3.0 * 0.5 * erfc(-3.0 * std::f32::consts::FRAC_1_SQRT_2));
+    check("gelu(-3)==-3*.5*erfc(3/sqrt2)", gelu(-3.0), -3.0 * 0.5 * erfc(3.0 * std::f32::consts::FRAC_1_SQRT_2));
+    check("gelu(inf)", gelu(f32::INFINITY), f32::INFINITY);
+    check("gelu(-inf)", gelu(f32::NEG_INFINITY), 0.0);
+    check("gelu(nan)", gelu(f32::NAN), f32::NAN);
+
+    // silu(x) = x*sigmoid(x) (backlog idea #70). Same x==-inf 0*(-inf)
+    // override as gelu (sigmoid(-inf)=0, but -inf*0 alone is NaN).
+    check("silu(0)", silu(0.0), 0.0);
+    check("silu(-0)", silu(-0.0), -0.0);
+    check("silu(2)==2*sigmoid(2)", silu(2.0), 2.0 * sigmoid(2.0));
+    check("silu(-2)==-2*sigmoid(-2)", silu(-2.0), -2.0 * sigmoid(-2.0));
+    check("silu(inf)", silu(f32::INFINITY), f32::INFINITY);
+    check("silu(-inf)", silu(f32::NEG_INFINITY), 0.0);
+    check("silu(nan)", silu(f32::NAN), f32::NAN);
+
+    // softsign(x) = x/(1+|x|) (backlog idea #70). 0.5/0.75 are exact here
+    // (1/(1+1), 3/(1+3)). The +-inf override guards inf/inf -> +-1.
+    check("softsign(0)", softsign(0.0), 0.0);
+    check("softsign(-0)", softsign(-0.0), -0.0);
+    check("softsign(1)", softsign(1.0), 0.5);
+    check("softsign(-1)", softsign(-1.0), -0.5);
+    check("softsign(3)", softsign(3.0), 0.75);
+    check("softsign(inf)", softsign(f32::INFINITY), 1.0);
+    check("softsign(-inf)", softsign(f32::NEG_INFINITY), -1.0);
+    check("softsign(nan)", softsign(f32::NAN), f32::NAN);
+
     // sqrt1pm1: rationalized sqrt(1+x)-1 (backlog idea #132), values
     // confirmed against a rationalized f64 reference before pinning.
     check("sqrt1pm1(0)", sqrt1pm1(0.0), 0.0);

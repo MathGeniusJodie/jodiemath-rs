@@ -926,6 +926,44 @@ fn main() {
         let s = fuzz2(TWOARG_SAMPLES, logaddexp_domain, logaddexp, logaddexp_ref);
         report("logaddexp (|a|,|b|<80)", &s, t0);
     }
+    if run("gelu") {
+        // x * Phi(x) via erfc_u15 (see gelu's own doc comment for why not
+        // erf_u10 -- 1+erf(z) cancels toward 0 for negative x). Same
+        // |erfc's argument|<=10 domain restriction as erfc's own block
+        // above, translated through gelu's `-x/sqrt2` argument (so
+        // |x|<=10*sqrt2); outside it, gelu still returns a sane saturated
+        // value via erfc's own saturation (see gelu's doc comment), just
+        // not one this fuzz screen claims ulp accuracy for.
+        let gelu_domain = |x: f32| x.abs() <= 10.0 * std::f32::consts::SQRT_2;
+        let gelu_ref = |v: F64xN| {
+            v * F64xN::splat(0.5) * erfc_u15(-v * F64xN::splat(std::f64::consts::FRAC_1_SQRT_2))
+        };
+        let s = measure!(gelu_domain, gelu, gelu_ref);
+        report("gelu", &s, t0);
+    }
+    if run("silu") {
+        // x * sigmoid(x), same sigmoid_ref/domain as sigmoid's own block
+        // above (this crate's sigmoid is only calibrated accurate inside
+        // that exp(-x)-doesn't-overflow range; outside it, silu still
+        // returns a sane saturated value via sigmoid's own clamp, just not
+        // one this fuzz screen claims ulp accuracy for).
+        let silu_domain = |x: f32| {
+            let e = x * std::f32::consts::LOG2_E;
+            e > -126.0 && e < 126.0
+        };
+        let silu_ref = |v: F64xN| v / (F64xN::splat(1.0) + exp_u10(-v));
+        let s = measure!(silu_domain, silu, silu_ref);
+        report("silu", &s, t0);
+    }
+    if run("softsign") {
+        // `x = +-inf` excluded: same reference-side `inf/inf` indeterminate
+        // form as gelu's `-inf` case above (softsign itself special-cases
+        // it; edgecheck.rs pins the actual behavior).
+        let finite = |x: f32| x.is_finite();
+        let softsign_ref = |v: F64xN| v / (F64xN::splat(1.0) + v.abs());
+        let s = measure!(finite, softsign, softsign_ref);
+        report("softsign", &s, t0);
+    }
     if run("asinh") {
         let s = measure!(everywhere, asinh, asinh_u10);
         report("asinh", &s, t0);

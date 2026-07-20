@@ -236,6 +236,15 @@ throughput_fn!(thr_softplus, "softplus_throughput", softplus);
 latency_fn!(lat_logaddexp, "logaddexp_latency", |x: f32| logaddexp(x, 0.0));
 throughput_fn!(thr_logaddexp, "logaddexp_throughput", |x: f32| logaddexp(x, 0.0));
 
+latency_fn!(lat_gelu, "gelu_latency", gelu);
+throughput_fn!(thr_gelu, "gelu_throughput", gelu);
+
+latency_fn!(lat_silu, "silu_latency", silu);
+throughput_fn!(thr_silu, "silu_throughput", silu);
+
+latency_fn!(lat_softsign, "softsign_latency", softsign);
+throughput_fn!(thr_softsign, "softsign_throughput", softsign);
+
 latency_fn!(lat_sqrt1pm1, "sqrt1pm1_latency", sqrt1pm1);
 throughput_fn!(thr_sqrt1pm1, "sqrt1pm1_throughput", sqrt1pm1);
 
@@ -569,6 +578,9 @@ fn main() {
         lat_sigmoid, thr_sigmoid;
         lat_softplus, thr_softplus;
         lat_logaddexp, thr_logaddexp;
+        lat_gelu, thr_gelu;
+        lat_silu, thr_silu;
+        lat_softsign, thr_softsign;
         lat_sqrt1pm1, thr_sqrt1pm1;
         lat_asinh, thr_asinh;
         lat_acosh, thr_acosh;

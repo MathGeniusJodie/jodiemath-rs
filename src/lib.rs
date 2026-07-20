@@ -1854,6 +1854,48 @@ pub fn logaddexp(a: f32, b: f32) -> f32 {
     if a.is_nan() || b.is_nan() { f32::NAN } else { normal }
 }
 
+/// GELU (Gaussian Error Linear Unit), the exact/erf-based form (as
+/// opposed to the tanh approximation): `x * Phi(x)` where `Phi` is the
+/// standard normal CDF. The de facto default activation in transformer
+/// architectures (backlog idea #70).
+///
+/// `Phi(x) = 0.5*erfc(-x/sqrt2)`, *not* the algebraically-equivalent
+/// `0.5*(1+erf(x/sqrt2))`: for negative `x`, `erf(x/sqrt2)` approaches
+/// `-1`, so `1+erf(x/sqrt2)` cancels toward `0` and inherits `erf`'s own
+/// small *absolute* error as a huge *relative* one (measured: >1e8 ulp
+/// once `x` is a few units negative). `erfc(-x/sqrt2)` computes that
+/// same near-zero tail value directly (its whole reason to exist, see
+/// `erfc`'s own doc comment) instead of via subtractive cancellation, so
+/// this form has no such blowup. `x = -inf` is the one input the
+/// formula alone still mishandles: `erfc` saturates cleanly to `0.0`
+/// there, but `0.0` times the *literal* `x = -inf` is an indeterminate
+/// `0*inf`, even though the true limit (`x*Phi(x)` as `x -> -inf`) is
+/// `0` -- same shape as `sqrt1pm1`'s own `x == inf` override below.
+#[inline(always)]
+pub fn gelu(x: f32) -> f32 {
+    let normal = x * 0.5 * erfc(-x * std::f32::consts::FRAC_1_SQRT_2);
+    if x == f32::NEG_INFINITY { 0.0 } else { normal }
+}
+
+/// SiLU / Swish: `x * sigmoid(x)` (backlog idea #70). Same `x = -inf`
+/// `0*inf` indeterminate-form fix as `gelu` above (`sigmoid(-inf) = 0`
+/// exactly, but `-inf * 0.0` alone is `NaN`, not the true limit `0`).
+#[inline(always)]
+pub fn silu(x: f32) -> f32 {
+    let normal = x * sigmoid(x);
+    if x == f32::NEG_INFINITY { 0.0 } else { normal }
+}
+
+/// Softsign: `x / (1 + |x|)` (backlog idea #70). `x = +-inf` is the one
+/// input the formula alone mishandles (`inf/(inf+1)` is an
+/// indeterminate `inf/inf`, even though the true limit is `+-1`) --
+/// same shape as `sqrt1pm1`'s own `x == inf` override below.
+#[inline(always)]
+pub fn softsign(x: f32) -> f32 {
+    let normal = x / (1.0 + x.abs());
+    if x.is_infinite() { x.signum() } else { normal }
+}
+
 /// `sqrt(1+x) - 1`, the rationalized form that avoids the catastrophic
 /// cancellation a caller writing `(1.0+x).sqrt() - 1.0` directly would
 /// hit for small `|x|` (`1.0+x` rounds to exactly `1.0` well before `x`
