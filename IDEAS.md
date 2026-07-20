@@ -1161,9 +1161,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### New functions / API breadth
 
-83. **exp10m1 + log10p1**: completes the C23 set next to
-    exp2m1/log2p1 — both reuse existing kernels (exp10's reduction
-    with the −1 fuse; log1p's Sterbenz trick in log10 units).
 84. **xlogy / xlog1py** (entropy kernels, 0·log(0)=0 convention via
     select).
 85. **atanpi/atan2pi/asinpi/acospi** (C23 half-turn inverses): NOT
