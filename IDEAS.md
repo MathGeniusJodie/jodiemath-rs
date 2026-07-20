@@ -420,6 +420,30 @@ what shipped.
   f32 construction, the same "isolated fit doesn't predict real
   magnitude" lesson as several other entries in this file.
   `examples/tune.rs`'s `sinpi_poly_c` scaffold kept for reference.
+- **sind/cosd dedicated poly, fold DEG_TO_RAD_SMALL directly into the
+  fit** (idea #44, same mechanism as #43 above, applied to sind/cosd's
+  own `d in [-90,90]` reduction instead of sinpi/cospi's `r in
+  [-0.5,0.5]`): screened with the idealized LP margin check *before*
+  full implementation, learning from #43 -- this one's margin (~4.9x,
+  column-scaled LP to fix a HiGHS conditioning failure from `d^9`'s
+  ~3.9e17 raw magnitude) was moderately stronger than #43's weak 2.6x,
+  but still not the order-of-magnitude-plus margin that reliably
+  predicted a real signal elsewhere this session (cbrt, erfc). Given the
+  extra risk signal of it being the *same mechanism* that had just
+  failed outright for sinpi, implemented and tested anyway rather than
+  guessing from the margin alone (the setup effort was mostly shared
+  with #43's already-built infrastructure). Same result: a clear
+  regression on every axis. New `sind_poly_raw`/`sind_poly` functions
+  (mirroring `sinf_poly_raw`/`sinf_poly`, with `POLY_SAFE_BOUND`
+  converted to `d`-units for the equivalent clamp) wired into `sind`/
+  `cosd` (`tand` inherits via composition): sind avg ulp
+  0.1236→0.1453 (+17.6%), cosd avg ulp 0.0725→**0.1297** (+79%!), cosd
+  max 2→3. Reverted. Two same-mechanism failures now (#43, #44) confirm
+  this isn't just a margin-strength fluke -- folding an irrational
+  scaling constant directly into a degree-9-in-the-unscaled-variable
+  poly doesn't survive contact with real f32 rounding for this crate's
+  trig functions, regardless of how strong the idealized fit looks.
+  `examples/tune.rs`'s `sind_poly_c` scaffold kept for reference.
 - **sind/cosd: same two_prod trick for d·DEG_TO_RAD_SMALL**: zero
   measurable accuracy improvement on both (sind ~unchanged, cosd
   bit-for-bit identical), real throughput cost both (+27%/+27.9%).
@@ -1353,9 +1377,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### sin / cos family
 
-44. **sind/cosd/tand: same fold for DEG_TO_RAD_SMALL** — deletes the
-    d·c multiply and captures the accuracy the rejected HI/LO split
-    found (sind avg −45%) at *negative* op cost instead of +11%.
 46. **parity(qh) bit-derivation**: |p0| < 2^22 → magic bits; p0 ≥ 2^24
     → deterministically even (every f32 there is an even integer); only
     the 2^22..2^24 window needs a select. Screen vs the floor-based

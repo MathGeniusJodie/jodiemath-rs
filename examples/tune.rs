@@ -665,6 +665,22 @@ fn sinpi_poly_c(r: f32, c: &[f32]) -> f32 {
     fma(p, r3, r * PI_HI)
 }
 
+// idea #44: same fold mechanism as #43 above (sinpi_poly_c), applied to
+// sind/cosd's own reduction: fit sin(d*pi/180) directly in d (d in
+// [-90,90]) instead of routing d through the intermediate `d *
+// DEG_TO_RAD_SMALL` rounding step before calling the generic sinf_poly.
+#[inline(always)]
+fn sind_poly_c(d: f32, c: &[f32]) -> f32 {
+    const DEG_TO_RAD_SMALL: f32 = std::f32::consts::PI / 180.0;
+    let y = d * d;
+    let y2 = y * y;
+    let d3 = y * d;
+    let a = fma(c[1], y, c[0]);
+    let b = fma(c[3], y, c[2]);
+    let p = fma(b, y2, a);
+    fma(p, d3, d * DEG_TO_RAD_SMALL)
+}
+
 // expm1's Pade near-zero branch (see src/lib.rs's expm1), |x| < 0.5. The
 // shipped constants (-2, -120, -12, 60, -120) look like an exact closed-
 // form Pade approximant to e^x rather than an empirical lolremez fit
@@ -1767,6 +1783,23 @@ fn main() {
         }
         let init = [-5.167724609375, 2.550321102142334, -0.5996360778808594, 0.0800275132060051];
         tune("sinpi_poly", &sinpi_poly_c, &|r| (std::f64::consts::PI * r).sin(), &grid, &init);
+    }
+    if which.contains("sindpoly") {
+        // idea #44: sind/cosd's own reduction always lands d in [-90,90]
+        // (see sind's doc comment) -- seeded from a real scipy/HiGHS
+        // minimax LP fit of sin(d*pi/180) directly in d, column-scaled
+        // for HiGHS conditioning (d^9 up to ~3.9e17 unscaled), not
+        // zero-seeded.
+        let mut grid = vec![];
+        let mut b = 0f32.to_bits();
+        let ninety = 90.0f32.to_bits();
+        while b < ninety {
+            grid.push(f32::from_bits(b));
+            grid.push(-f32::from_bits(b));
+            b += 27000;
+        }
+        let init = [-8.860945968081069e-7, 1.3494975102668061e-11, -9.762676095181961e-17, 3.8616159998020477e-22];
+        tune("sind_poly", &sind_poly_c, &|d| (std::f64::consts::PI / 180.0 * d).sin(), &grid, &init);
     }
     if which.contains("expm1") {
         // expm1's Pade branch domain, |x| < 0.5.
