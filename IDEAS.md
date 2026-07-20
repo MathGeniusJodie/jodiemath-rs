@@ -513,6 +513,31 @@ what shipped.
   poly doesn't survive contact with real f32 rounding for this crate's
   trig functions, regardless of how strong the idealized fit looks.
   `examples/tune.rs`'s `sind_poly_c` scaffold kept for reference.
+- **sinc: attribute the max-4 error and screen a division correction**
+  (idea #50): attributed first via a direct probe at three real fuzz
+  worst-case points (not the near-a-true-zero-of-sin artifact class a
+  cruder wide scan hit initially, screened out separately): the
+  division itself contributes a real, consistent ~2 ulp of error even
+  against a hypothetically *perfect* `sinpi` value, with `sinpi`'s own
+  ~1-2 ulp error adding on top -- a genuine mixed contribution, not
+  purely division-bound but not negligible either, worth the screen the
+  idea asked for. Implemented a compensated division (`rcp = 1.0/denom;
+  q = s*rcp; r = fma(-q,denom,s); fma(r,rcp,q)`, reusing the one
+  reciprocal instead of a second division) and ran it through mca
+  first: real cost (latency +1.9%, throughput +12.3%). But fuzzing it
+  found something worse than a cost/benefit tradeoff -- a genuine
+  correctness regression: max ulp came back as the NaN-mismatch
+  sentinel (`u64::MAX`) at `x` near the denormal floor. Root cause:
+  forming `1.0/denom` as its own intermediate can overflow to `+-inf`
+  for tiny `x` (`denom = PI*x` underflows further), and `tiny_s *
+  inf` is an indeterminate `0*inf` that resolves to `NaN` -- exactly
+  the failure class this crate is normally careful to avoid, introduced
+  here by *not* going through the original direct `s/denom` division,
+  which never forms a standalone reciprocal and has no such edge case.
+  Reverted immediately (`git checkout -- src/lib.rs`) -- the compensated
+  form isn't a safe drop-in replacement for a plain division when the
+  input range includes values near over/underflow, regardless of its
+  accuracy benefit at ordinary magnitudes.
 - **sind/cosd: same two_prod trick for d·DEG_TO_RAD_SMALL**: zero
   measurable accuracy improvement on both (sind ~unchanged, cosd
   bit-for-bit identical), real throughput cost both (+27%/+27.9%).
@@ -1533,8 +1558,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 49. **sinf_poly real-chain refit** (#1's method) scoring sin_checked +
     cos_checked's actual reductions jointly — the rejected LPs used
     continuous grids that mis-weighted the caller split.
-50. **sinc: attribute the max-4 error** (division vs sinpi) and screen
-    an fma-residual correction on the division if division-bound.
 51. **tan/tand/tanpi cross-inline CSE audit**: each pays two full
     reductions differing only in the q offset — asm-diff whether LLVM
     shares the common work; hand-share at composition level if not.
