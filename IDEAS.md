@@ -1069,6 +1069,25 @@ what shipped.
   real fuzz showed it was actually a regression (avg 0.961 vs shipped
   0.496, nearly double). Same max-first tuple bias as cbrt_throughput's
   own finding.
+  **Idea #101's fix, tested (2026-07-20)**: built `tune_basin_hop_avg_first`
+  -- same annealing mechanism, but every comparison uses a `better()`
+  function instead of the default `(max, sum)` tuple ordering: candidates
+  that would regress max beyond the un-hopped starting point are always
+  rejected, and among candidates that hold the cap, lower avg wins. Fix
+  verified mechanically correct on the same acos_poly coarse grid the
+  original bug was found on: max held at 4 (matching the cap) with avg
+  0.14447→0.12758, vs. the old max-first version's max 2→**avg 1.878**
+  (the exact bias, reproduced fresh for comparison). But wiring the
+  avg-first result into the real `acos_poly` and exhaustively verifying
+  found only noise-level movement (avg 0.0650→0.0647, max unchanged at
+  5) -- acos_poly's coordinate-descent optimum (already reconfirmed
+  separately this session, see the "acos max 5 as a real-chain-refit
+  target" entry above) holds up even against basin-hopping once its
+  known bias is fixed; there just isn't more headroom here for *any*
+  local-search variant to find. Reverted the `lib.rs` coefficient swap
+  (no real benefit); kept `tune_basin_hop_avg_first` in `examples/
+  tune.rs` as working, bias-free infrastructure for future basin-hop
+  attempts on functions that might actually have exploitable headroom.
 - **asin: a*a-a → fma(a,a,-a)**: bit-identical, but throughput worse
   (latency unchanged).
 - **Small-poly Estrin audit, asin_small/sinh_small**: not bit-exact,
@@ -1548,9 +1567,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### Batch 2 (same session): fitting & search, continued
 
-101. **Avg-first, max-capped simulated annealing** over coefficient ulp
-     space — the rejected basin-hop failed on its max-first tuple
-     objective (documented bias), not on the annealing mechanism itself.
 102. **LLL/lattice reduction over the coefficient quantization step**:
      finds good *simultaneous* f32 roundings of a whole coefficient set
      — the cheap cousin of the MIP idea (#2).

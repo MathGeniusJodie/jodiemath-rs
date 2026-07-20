@@ -960,7 +960,95 @@ fn tune_basin_hop(
         }
     }
     println!(
-        "{name}: basin-hopped ({restarts} restarts) max {} avg {:.5}  coeffs: {:?}",
+        "{name}: basin-hopped ({restarts} restarts, max-first) max {} avg {:.5}  coeffs: {:?}",
+        best.0,
+        best.1 as f64 / grid.len() as f64,
+        c.iter().map(|v| format!("{v:e}")).collect::<Vec<_>>()
+    );
+}
+
+// idea #101: avg-first, max-capped basin-hopping -- the mechanism above
+// is unchanged (single-axis descent, then random 2-3-coefficient
+// perturbation + re-descend), but every comparison here uses `better()`
+// instead of the default (max, sum) tuple ordering: a candidate whose
+// max ulp exceeds `cap` (the un-hopped single-axis descent's own max,
+// i.e. basin-hopping is never allowed to regress the max at all) is
+// always worse than one that meets the cap; among candidates that meet
+// the cap, lower sum (avg) wins. This directly targets the documented
+// bias (`tune_basin_hop`'s own doc comment: "happily wrecks the average
+// to shave the worst case") from the other direction -- here the worst
+// case can only ever tie or improve, never trade away, so a real avg
+// win (if found) can't be an illusion from the tuple ordering.
+fn tune_basin_hop_avg_first(
+    name: &str,
+    f: &dyn Fn(f32, &[f32]) -> f32,
+    reference: &dyn Fn(f64) -> f64,
+    grid: &[f32],
+    init: &[f32],
+    restarts: usize,
+) {
+    fn better(candidate: (u64, u64), current: (u64, u64), cap: u64) -> bool {
+        let cand_ok = candidate.0 <= cap;
+        let cur_ok = current.0 <= cap;
+        match (cand_ok, cur_ok) {
+            (true, false) => true,
+            (false, true) => false,
+            _ => candidate.1 < current.1,
+        }
+    }
+
+    fn descend_capped(
+        f: &dyn Fn(f32, &[f32]) -> f32,
+        reference: &dyn Fn(f64) -> f64,
+        grid: &[f32],
+        start: &[f32],
+        cap: u64,
+    ) -> (Vec<f32>, (u64, u64)) {
+        let mut c = start.to_vec();
+        let mut best = score(f, reference, grid, &c);
+        let mut improved = true;
+        while improved {
+            improved = false;
+            for i in 0..c.len() {
+                for delta in [1i32, -1, 2, -2, 4, -4, 8, -8, 16, -16] {
+                    let mut trial = c.clone();
+                    trial[i] = f32::from_bits((trial[i].to_bits() as i32 + delta) as u32);
+                    let s = score(f, reference, grid, &trial);
+                    if better(s, best, cap) {
+                        best = s;
+                        c = trial;
+                        improved = true;
+                    }
+                }
+            }
+        }
+        (c, best)
+    }
+
+    let mut c: Vec<f32> = init.to_vec();
+    let start = score(f, reference, grid, &c);
+    let cap = start.0; // basin-hopping may never regress max beyond the un-hopped starting point
+    let mut best = start;
+    println!("{name}: start max {} avg {:.5}", best.0, best.1 as f64 / grid.len() as f64);
+
+    use rand::RngExt;
+    let mut rng = rand::rng();
+    for _ in 0..restarts {
+        let mut trial_start = c.clone();
+        let n_perturb = 2 + (rng.random::<u8>() % 2) as usize;
+        for _ in 0..n_perturb {
+            let idx = (rng.random::<u32>() as usize) % trial_start.len();
+            let delta = (rng.random::<i32>() % 64) - 32;
+            trial_start[idx] = f32::from_bits((trial_start[idx].to_bits() as i32 + delta) as u32);
+        }
+        let (c_trial, s_trial) = descend_capped(f, reference, grid, &trial_start, cap);
+        if better(s_trial, best, cap) {
+            best = s_trial;
+            c = c_trial;
+        }
+    }
+    println!(
+        "{name}: basin-hopped ({restarts} restarts, avg-first max-capped at {cap}) max {} avg {:.5}  coeffs: {:?}",
         best.0,
         best.1 as f64 / grid.len() as f64,
         c.iter().map(|v| format!("{v:e}")).collect::<Vec<_>>()
@@ -1354,6 +1442,12 @@ fn main() {
             b += 1_000_000;
         }
         tune_basin_hop("acos_poly_bh", &acos_poly_c, &|x| x.acos(), &coarse_grid, &init, 50);
+        // idea #101: same coarse grid and restart count, but avg-first
+        // max-capped instead of the default max-first tuple ordering --
+        // re-checks whether the documented bias (not the annealing
+        // mechanism itself) was really the reason the plain basin-hop
+        // result reversed on the real fuzz.
+        tune_basin_hop_avg_first("acos_poly_bh_avgfirst", &acos_poly_c, &|x| x.acos(), &coarse_grid, &init, 50);
     }
     if which.contains("asinpoly") {
         // Decoupled asin-only fit (backlog idea #34) -- grid restricted to
