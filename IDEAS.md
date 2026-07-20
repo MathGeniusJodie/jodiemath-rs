@@ -199,6 +199,24 @@ what shipped.
   or stronger margins, see the sin/cos family section). Not implemented
   given this converging evidence; idea #26's own premise doesn't survive
   scrutiny against the audit it claims to be extending.
+- **exp10/exp2m1: fold the reduction's scaling constant directly into a
+  dedicated poly/Pade** (ideas #29/#30, "the sinpi/sind constant-folding
+  trick" applied to `exp2_q_poly!`/`pade_expm1_ratio!`): rejected on
+  inspection, not full implementation, given the direct precedent this
+  exact mechanism already set twice this session -- `sinpi`/`cospi`
+  (idealized margin 2.6x) and `sind`/`cosd` (4.9x) both real-regressed
+  outright when their intermediate-rounding step was folded away this
+  same way. Screened idea #30 (`exp2m1`'s Pade, absorbing `LN_2` into
+  the rational directly instead of rounding `y=x*LN_2` first) with the
+  same idealized-margin check before committing to a verdict: only
+  ~5.6x, squarely in the same weak-to-moderate band that already failed
+  twice, not the order-of-magnitude+ margin that held up for cbrt/
+  erfc/exp_r_poly. Given `exp2_q_poly!`/`pade_expm1_ratio!` are each
+  shared by several downstream functions (broadening the blast radius
+  further), not implemented -- the pattern is now strong enough that a
+  third confirming failure adds little beyond what's already known,
+  and a weak-margin case is exactly where this mechanism has
+  consistently gone wrong.
 - **tanh direct rational P(x²)/Q(x²) over full domain**: needs 13 free
   coefficients to converge — far more than any poly in the crate; a
   2-domain split needs 14, likely more work than the current expm1-based
@@ -1462,13 +1480,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     t2 instead, or pre-scale p): the rejected version's accuracy win
     (max 3→2, cascading to expm1/sinh/cosh/tanh) was fully real — only
     fma/mul port contention killed it.
-29. **exp10: fold LOG2_10 into a dedicated Q(d) poly in d directly**
-    (the sinpi/sind constant-folding trick) — deletes the `d*LOG2_10`
-    multiply and its rounding; the floor-adjust step's units need care
-    (speculative).
-30. **exp2m1: refit the Pade directly in x** (absorb ln2 into the
-    coefficients) — deletes the `y = x*LN_2` multiply and its rounding
-    from the seam-owning branch.
 32. **exp_pos_neg: return halves pre-scaled by 0.5 for plain sinh/cosh
     too** (like checked_half already does) — deletes the caller-side
     `0.5*(ep±en)` multiply.
