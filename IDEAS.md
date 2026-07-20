@@ -1378,9 +1378,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### Batch 2: powf / pown / remainder
 
-151. **signed_pow(x, y) = mulsign(|x|^y, x)** — graphics
-     gamma-on-signed convention; deletes powf's negative-base NaN
-     semantics for callers who explicitly don't want them.
 152. **rem_euclid / div_euclid f32 pair** (always-nonnegative remainder,
      Rust-native semantics) — vectorizable, API breadth.
 153. **pown_const standing asm test**: its own doc comment says "verify
