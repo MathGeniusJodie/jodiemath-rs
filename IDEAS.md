@@ -1325,8 +1325,6 @@ an idea revisits a rejection, the differing mechanism is stated.
      correctly-rounded ops, always beats powf; also a docs pointer so
      users stop calling powf for these.
 134. **rnorm4 / quaternion normalize** — companion to hypot3 (#55).
-135. **cross2 / diff_of_products** (Kahan's two_prod determinant,
-     exact-ish ad−bc) — geometry-predicate primitive, vectorizes.
 136. **normalize2/normalize3 slice kernels** (rhypot + scales — the
      operation users actually want hypot for).
 137. **cbrt_throughput status decision**: document it as the approx-tier
