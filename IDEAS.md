@@ -1033,7 +1033,26 @@ an idea revisits a rejection, the differing mechanism is stated.
     float-add/shift chain with vpaddd/vpslld on less-contended ports.
     Sites: exp10/exp10_checked, exp_r_singlefield (tanh/sigmoid),
     exp2_field_split. Verify negative-k two's-complement wrap;
-    codegen_check.
+    codegen_check. **Naive first attempt tried and rejected 2026-07-20**:
+    collapsing `exp2_field_split`'s own `k1b = fma(k,0.5,ROUND_MAGIC) -
+    (ROUND_MAGIC-383.0)` into one `fma(k, 0.5, ROUND_MAGIC-383.0)` (using
+    a pre-offset magic constant to skip the de-bias subtract) is simply
+    *wrong*, confirmed by a direct scalar bit-comparison probe: 9999993/
+    10000001 mismatches over a wide integer-k sweep, diverging as early
+    as k=272 within the documented usage range. Root cause: the magic
+    constant's own raw bits (`fma(...)` before de-biasing) live at the
+    magic-round's ~2^23 magnitude scale, but the exponent-field-
+    extraction trick (`.to_bits() << 8 & EXPONENT_MASK`) needs its input
+    at *ordinary* magnitude (a plain small float like `383.0±126`) — the
+    de-bias subtract isn't redundant scaffolding, it's what moves the
+    value between two different bit-trick magnitude regimes, and the two
+    tricks' shift amounts (8 vs. this idea's own `<<23`) reflect that
+    they aren't interchangeable representations of the same bits. This
+    only falsifies the naive single-fma merge, not the idea's actual
+    `<<23`-based construction (never implemented/verified) — that would
+    need a from-scratch derivation of what `kb_bits + C` actually encodes
+    before trusting it, not an assumption that it's "the same k, just
+    with fewer steps."
 13. **`core::hint::assert_unchecked` range hints after clamps** so LLVM
     can prove bounds it currently can't — directly targets the rejected
     "k1 from bit-twiddled k" (killed only because LLVM couldn't prove
