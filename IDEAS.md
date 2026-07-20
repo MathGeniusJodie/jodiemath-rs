@@ -1064,6 +1064,25 @@ what shipped.
   against -- only the narrow "well-known named constant, hand-typed as
   decimal" sub-case has a ground truth at all, and that sub-case is
   already covered.
+- **NaN-propagating min/max audit** (idea #196, "the IEEE maxNum
+  NaN-discard trap has now bitten softplus, hypot_checked, and
+  logaddexp separately"): investigated rather than built. Grepped every
+  `.max(`/`.min(` call in `src/lib.rs` (7 total) and checked each one's
+  actual NaN safety: `softplus`/`logaddexp`'s four sites (`x.max(0.0)`,
+  `a.max(b)`, two `.min(87.0)` clamps) are all covered by each
+  function's own trailing `is_nan()` override, which makes any
+  intermediate NaN-discard moot regardless of what it computes; `atan`/
+  `atan_latency`'s `a.min(1.0/a)` are safe by construction, not by a
+  guard -- a NaN `a` makes `1.0/a` NaN too, so `min` sees NaN on *both*
+  sides and correctly returns NaN (no non-NaN operand to wrongly
+  prefer); `hypot_checked`'s `ax.max(ay)` is the already-fixed instance
+  idea #196 itself cites, with its own doc comment explaining exactly
+  why the narrower `is_zero` check downstream doesn't reintroduce the
+  discard. Zero unguarded/unsafe sites found -- no 4th bug of this class
+  currently exists to fix. The idea's other half (a shared
+  `max_nan_prop` helper) wouldn't fix anything live, only reduce
+  duplication across three different already-correct mechanisms; not
+  pursued given nothing is actually broken.
 
 ## Untried backlog
 
@@ -1718,9 +1737,6 @@ core::simd tier exists; each replaces multi-op scalar idioms)
      combine Z ulp, from the round-off audits (several exist ad hoc for
      expm1/sinh/tanh/erfc) — makes attack selection data-driven instead
      of re-derived each session.
-196. **NaN-propagating min/max helpers** (`max_nan_prop`) + audit — the
-     IEEE maxNum NaN-discard trap has now bitten softplus,
-     hypot_checked, and logaddexp separately.
 197. **Seam continuity standing test**: value + one-sided-slope jump
      measured at every branch seam (expm1/exp2m1/sinh's 0.5, asin's
      0.25, erf's 0.28) — a seam regression detector for future refits.
