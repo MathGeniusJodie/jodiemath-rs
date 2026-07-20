@@ -1097,6 +1097,26 @@ what shipped.
 - **atan_poly Horner→Estrin**: measured backwards on every axis — fuzz
   accuracy worse (avg 0.068→0.072, max 3→5), mca throughput much worse
   (+156%).
+- **Clenshaw/Chebyshev-basis evaluation screen** (idea #108), both named
+  targets: killed on paper before implementation, for two different
+  reasons per site. `atan_latency`'s own entire reason for existing is
+  minimizing critical-path *depth* (it trades away atan_poly's division
+  specifically for more, shallower fma parallelism -- see its own doc
+  comment) -- its current Estrin split evaluates the degree-17 poly in
+  ~5 dependency-chain-deep steps by sharing `r2`/`r4`/`r8` across two
+  parallel Horner groups. Clenshaw's recurrence is inherently serial
+  (each term needs the previous *two*, `b_k = 2r*b_{k+1} - b_{k+2} +
+  a_k`), so evaluating a degree-17 series this way needs ~17 sequential
+  steps -- directly destroying the ~5-deep parallelism this specific
+  tier is built around, for a function whose whole point is a shallow
+  critical path. `erfc_rational`'s n/d is already plain (already-serial)
+  Horner, so it wouldn't lose parallelism the same way, but it's only
+  degree 4/4 -- Clenshaw's real numerical-conditioning advantage over
+  power-basis mainly shows up at much higher degrees, where the power
+  basis's coefficient magnitudes span many orders of size; a degree-4
+  fit's coefficients don't have that problem (confirmed already-fine
+  ranges in this session's own `erfc_c5` degree-5 LP fit). Neither site
+  looks like a good match; not implemented.
 - **Rational (P/Q) refits for log_2/acos_poly**: log_2 ruled out by
   analogy (needs a division in the same fatal critical-path position as an
   already-rejected idea). acos_poly's fit failed to converge within 60s at
@@ -1626,9 +1646,6 @@ an idea revisits a rejection, the differing mechanism is stated.
      re-search each word's trailing-zero budget jointly with downstream
      error — distinct from the rejected word-*dropping* attempts (3-word
      chain, fitted 3.5-word split), which reduced total precision.
-108. **Clenshaw/Chebyshev-basis evaluation screen** for the worst-
-     conditioned polys (erfc_rational's n/d, atan_latency's deg-17) —
-     different rounding structure at comparable op count.
 110. **±few-ulp exhaustive scan of every non-poly literal** (clamp
      bounds, seed constants, magic offsets, branch thresholds) scored on
      the real fuzz — #3's sibling for non-coefficient constants.
