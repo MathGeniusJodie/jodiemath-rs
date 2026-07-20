@@ -1264,13 +1264,6 @@ an idea revisits a rejection, the differing mechanism is stated.
      exponent extraction. Distinct from the rejected log1p small-|x|
      *branch* (which added a poly to every general log1p call); this is
      a separate callee for callers whose domain guarantees k=0.
-121. **asinh/acosh single-ln restructure**: both currently evaluate two
-     full ln cores per call (log1p_finite's ln(u) *plus* the
-     `ln(ax)+LN_2` overflow fallback, both unconditional in branchless
-     style). ln_normal already has a koff hook: select the *argument*
-     (u vs ax) and koff (0 vs +1, since ln(2ax) = ln(ax)+ln2) into one
-     ln_normal call — deletes an entire deg-9 poly + wrapper per call.
-     Verify the two-ln suspicion via asm first.
 
 #### Batch 2: trig
 
