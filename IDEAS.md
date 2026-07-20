@@ -1503,8 +1503,25 @@ an idea revisits a rejection, the differing mechanism is stated.
      not chased further given the cost side already killed it). mca
      showed a real, consistent cost: both atan and atan2 latency
      +4.0 cyc (61.09→65.09 / 61.28→65.28, +6.5%), throughput +3.2%/
-     +11.9%. Reverted. The other three sites (acos/atan2/asin) remain
-     untried.
+     +11.9%. Reverted.
+     **asin's big-branch slice also tried and rejected** (same session):
+     unlike atan, this one looked genuinely promising on paper first —
+     `asin_poly`'s own real-domain contribution is much smaller
+     (asin's overall avg ulp 0.0199-0.0202 vs atan's 0.068), so
+     `FRAC_PI_2`'s ~0.2-ulp own bias isn't obviously swamped by the
+     poly's fit error the way it was for atan. Real measurement
+     disagreed anyway: adding `+ FRAC_PI_2_LO` to `asin`'s
+     `FRAC_PI_2 - sqrt(1-a)*asin_poly(a)` combine regressed *both* axes,
+     avg ulp 0.0199→0.0227 (+14%) and max ulp 6→7 — not the "no
+     movement" of the atan case, a real accuracy loss. Reverted before
+     even checking mca. Consistent with the already-rejected "acos_poly
+     Df32 leading-term split, pi/2 hi+lo" entry elsewhere in this file,
+     which found the same construction shape (`FRAC_PI_2 -
+     sqrt(1-a)*poly(a)`) fragile to precision changes near this combine
+     for `asin` specifically, via a different mechanism (Df32 poly-
+     internal split vs. this plain additive correction) — two different
+     techniques, same real regression, on the same site. `acos`'s `+PI`
+     and `atan2`'s correction remain untried.
 125. **Integer-domain parity pipeline end-to-end** for
      sin_checked/cos_checked (parities as bits, XOR combine, direct
      sign mask) — composes #45/#46; deletes the float compare+select
