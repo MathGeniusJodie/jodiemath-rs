@@ -156,6 +156,25 @@ what shipped.
   1.670 ulp) but traces to the poly's own ~1.3e-7 relative fit error
   (already near f32's precision floor) amplified ~8x by the exponent-field
   reconstruction, not a fixable single rounding step.
+  **Idea #26 ("exp_pos_neg even/odd poly degree bump: degree is the one
+  lever there not yet tried") directly contradicts this audit's own
+  diagnosis** — re-checked rather than assumed correct either way:
+  a real scipy/HiGHS minimax LP fit of a degree-7 even/odd split (one
+  more term each side) against `e^r` over the reduction's real `|r| <=
+  ln2/2` range found only a ~5.9x idealized margin over an f32-emulated
+  reconstruction of the shipped degree-5 form, and the odd side's own
+  extra coefficient converged to exactly 0 (no freedom needed there,
+  matching cbrt's earlier degree-bump finding where only one of two
+  "branches" used the added freedom). A ~5.9x margin sits below the
+  order-of-magnitude-plus threshold that reliably predicted a real
+  signal elsewhere this session (see the LP-margin-strength memory), and
+  the *pre-existing, independent* round-off audit already explicitly
+  diagnosed this exact poly as rounding-dominated, not fit-dominated --
+  the same diagnosis class that sank the sinpi/cospi and sind/cosd
+  dedicated-poly refits outright (both real regressions despite similar
+  or stronger margins, see the sin/cos family section). Not implemented
+  given this converging evidence; idea #26's own premise doesn't survive
+  scrutiny against the audit it claims to be extending.
 - **tanh direct rational P(x²)/Q(x²) over full domain**: needs 13 free
   coefficients to converge — far more than any poly in the crate; a
   2-domain split needs 14, likely more work than the current expm1-based
@@ -1393,9 +1412,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     fma/mul port contention killed it.
 25. **exp_r_poly degree 5→6**: attacks expm1's direct-branch max 6;
     cost one fma at already-amortized Estrin depth.
-26. **exp_pos_neg even/odd poly degree bump**: sinh/cosh's round-off
-    audit traced max 5 to the poly's own ~1.3e-7 fit error — degree is
-    the one lever there not yet tried.
 27. **exp10: treat LOG10_2_LO as a free fitted parameter** (end-to-end
     exp10 objective) instead of the rounded mathematical residual.
 29. **exp10: fold LOG2_10 into a dedicated Q(d) poly in d directly**
