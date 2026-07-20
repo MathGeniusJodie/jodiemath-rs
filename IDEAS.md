@@ -260,6 +260,22 @@ what shipped.
   wiring into the real 100M-sample fuzz showed a genuine regression
   instead: log1p avg 0.0966→0.1085, max 4→7. The coarse grid doesn't
   sample densely enough near the real fuzz's actual worst region.
+- **log1p: `corr = c * (1.0/u)` with the division issued right after
+  `u`** (idea #35, the same division→reciprocal-multiply reordering
+  already shown to win latency at a real accuracy/throughput cost for
+  `exp_m1_over_x`): opposite result here, worse on every axis measured,
+  not just the two `exp_m1_over_x` traded off. mca: latency +1.7%
+  (52.19→53.09 cyc), throughput +1.6% (2.337→2.374 cyc/elem) — even
+  latency regressed this time, unlike `exp_m1_over_x`'s real -9.6% win.
+  Real fuzz: avg ulp 0.0966→0.0969 (noise), max unchanged at 4. Likely
+  cause: `ln(u)`'s own poly evaluation is a much longer, more complex
+  chain than `exp_m1_over_x`'s reduction, already giving the scheduler
+  plenty of slack to hide the division regardless of source-order
+  hints — so early-issuing the reciprocal has nothing extra to overlap
+  with, leaving only the reciprocal-plus-multiply's extra rounding as
+  pure cost. Reverted. Same mechanism, different site, opposite verdict
+  — a reminder that "shown to win elsewhere" still needs its own
+  measurement, not just "same technique."
 - **log_2 denormal path: fold ×2^24 rescale into the wrapping_sub magic**:
   killed on paper, not just measurement — the exponent bit-trick relies on
   every input being IEEE754 *normal* (fixed relationship between bit
@@ -1164,9 +1180,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 34. **log1p/log2p1: two_sum the `ln(u) + corr` combine** (targets log1p
     max 4, log2p1 max 3); ship as `_accurate` twins if the mca cost is
     real.
-35. **log1p: `corr = c * (1.0/u)` with the division issued right after
-    u** (one add in) — overlaps the whole ln evaluation; one extra
-    rounding on the correction only; screen.
 36. **rlibm-style discrete rounding-interval LP extended to ln/log10**
     (same 2^23 reduced-input multiplicity as the existing log_2 entry).
 37. **log_family_wrapper: cheaper special-case classify** — derive both
