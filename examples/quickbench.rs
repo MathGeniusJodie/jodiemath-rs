@@ -222,6 +222,7 @@ fn main() {
         let n = black_box(5);
         bench!("pown", |x: f32| pown(x, n));
         bench!("pown_small", |x: f32| pown_small(x, n));
+        bench!("pown_small_accurate", |x: f32| pown_small_accurate(x, n));
     }
     // N baked in at compile time (not black_box'd -- that's the whole
     // point of pown_const, unlike pown/pown_small above).

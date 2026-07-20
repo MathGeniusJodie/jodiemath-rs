@@ -1054,6 +1054,13 @@ fn main() {
         pown_sweep(&pown_small, -8, 8, "pown_small (|n|<=8)");
         pown_sweep(&pown_small, -64, 64, "pown_small (|n|<=64)");
         pown_sweep(&pown_small, -255, 255, "pown_small (|n|<=255)");
+        // pown_small_accurate: Df32-compensated squaring chain (see its
+        // own doc comment), same |n|<=255 contract as pown_small -- real
+        // improvement expected (avg/max ulp roughly halved on the
+        // dense-|n| bucket), not a full fix.
+        pown_sweep(&pown_small_accurate, -8, 8, "pown_small_accurate (|n|<=8)");
+        pown_sweep(&pown_small_accurate, -64, 64, "pown_small_accurate (|n|<=64)");
+        pown_sweep(&pown_small_accurate, -255, 255, "pown_small_accurate (|n|<=255)");
     }
     if run("powf") {
         // x != 0 (x == 0 is its own exact case, not a fuzz-density target)

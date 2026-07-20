@@ -2751,6 +2751,63 @@ pub fn pown_small(x: f32, n: i32) -> f32 {
     pown_body!(x, n, 8u32)
 }
 
+/// `pown_small`, but with `base`'s own repeated-squaring chain carried in
+/// `Df32` (compensated, mantissa-only) instead of plain `f32`: each
+/// squaring's rounding error is exactly recovered instead of silently
+/// discarded, so it doesn't compound across up to 8 squarings the way
+/// `pown_small`'s plain form does. NOT the already-rejected `WideFloat`
+/// approach (Df32 mantissa *and* tracked exponent, needed there only to
+/// fix `pown`'s large-`|n|` *overflow* bug near `i32::MIN`-scale
+/// exponents, 32 iterations deep) -- `|n| <= 255` never approaches that
+/// specific *bug's* regime (a finite true answer computed via an
+/// intermediate that overflows), so plain Df32 mantissa compensation is
+/// sufficient here, no exponent tracking needed. `result` itself stays a
+/// single f32 (no general `Df32*Df32` multiply exists in this crate, and
+/// none is needed): each multiply-in step uses `base`'s full `.0+.1`
+/// precision via one compensated `fma` (`result*base.0 + result*base.1`),
+/// recovering the accuracy `base`'s own squaring chain would otherwise
+/// have lost, without carrying `result`'s own multiplies in double
+/// precision too.
+///
+/// `base` genuinely does overflow to `+-inf` partway through the loop
+/// for `|x| > 1` once enough squarings have piled up (same as
+/// `pown_small`'s own plain-f32 `base`) -- harmless there (`inf*inf=inf`
+/// stays correctly infinite), but `Df32::square`'s error term
+/// (`fma(inf,inf,-inf)`) is a genuine `inf-inf` NaN, which would
+/// silently poison every later iteration once folded into `result` via
+/// the compensated `fma` above (`fma(result, NaN, ...)` is NaN). Fixed
+/// by collapsing `base` back to a plain (zero-error-term) `Df32` the
+/// moment its high word stops being finite, discarding only the
+/// already-meaningless low word, not the (still correct) `+-inf`/value
+/// itself.
+///
+/// A second, subtler overflow interaction survives that fix: once
+/// `result` itself has already overflowed to `+-inf` from an earlier
+/// iteration's plain `result*base.0` (matching `pown_small`'s own
+/// behavior exactly -- not a bug on its own), the *next* iteration's
+/// compensation term `result*base.1` becomes `inf*0.0` (`base.1` being
+/// exactly the placeholder above) -- a genuine indeterminate-form NaN,
+/// this time from `result`'s side rather than `base`'s. Guarded by
+/// skipping the compensated `fma` (using plain `result*base.0` instead)
+/// whenever `base.1` is exactly `0.0`; the branchless `if` here is a
+/// select, not an arithmetic combine, so the discarded (potentially NaN)
+/// `fma` branch never reaches `result`.
+#[inline(always)]
+pub fn pown_small_accurate(x: f32, n: i32) -> f32 {
+    let mut base = if n < 0 { Df32::from_f32(1.0 / x) } else { Df32::from_f32(x) };
+    let un = n.unsigned_abs();
+    let mut result = 1.0f32;
+    for i in 0..8u32 {
+        let bit_set = (un >> i) & 1 == 1;
+        let plain = result * base.0;
+        let multiplied = if base.1 == 0.0 { plain } else { fma(result, base.1, plain) };
+        result = if bit_set { multiplied } else { result };
+        let squared = base.square();
+        base = if squared.0.is_finite() { squared } else { Df32::from_f32(squared.0) };
+    }
+    result
+}
+
 /// `pown` with a compile-time-known exponent: same algorithm as `pown`,
 /// but with `N` as a const generic instead of a runtime `i32`, so
 /// `N.unsigned_abs()` and `N < 0` are compile-time constants and the

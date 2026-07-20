@@ -820,6 +820,44 @@ fn main() {
     check("pown_small(2,255)", pown_small(2.0, 255), pown(2.0, 255));
     check("pown_small(2,-255)", pown_small(2.0, -255), pown(2.0, -255));
 
+    // pown_small_accurate: Df32-compensated squaring chain (idea #78),
+    // same |n| <= 255 contract and same special-value behavior as
+    // pown_small (verified against it directly for every case its own
+    // fuzz found risky: zero, +-0, nan, inf, negative base, and the
+    // overflow-through-squaring path that motivated its own base.1==0.0
+    // guard, see its doc comment).
+    check("pown_small_accurate(2,3)", pown_small_accurate(2.0, 3), 8.0);
+    check("pown_small_accurate(2,0)", pown_small_accurate(2.0, 0), 1.0);
+    check("pown_small_accurate(0,0)", pown_small_accurate(0.0, 0), 1.0);
+    check("pown_small_accurate(0,5)", pown_small_accurate(0.0, 5), 0.0);
+    check("pown_small_accurate(0,-3)", pown_small_accurate(0.0, -3), f32::INFINITY);
+    check("pown_small_accurate(-0,3)", pown_small_accurate(-0.0, 3), -0.0);
+    check("pown_small_accurate(-0,-3)", pown_small_accurate(-0.0, -3), f32::NEG_INFINITY);
+    check("pown_small_accurate(-2,3)", pown_small_accurate(-2.0, 3), -8.0);
+    check("pown_small_accurate(-2,4)", pown_small_accurate(-2.0, 4), 16.0);
+    check("pown_small_accurate(2,-1)", pown_small_accurate(2.0, -1), 0.5);
+    check("pown_small_accurate(nan,2)", pown_small_accurate(f32::NAN, 2), f32::NAN);
+    check("pown_small_accurate(inf,2)", pown_small_accurate(f32::INFINITY, 2), f32::INFINITY);
+    check("pown_small_accurate(inf,-2)", pown_small_accurate(f32::INFINITY, -2), 0.0);
+    check("pown_small_accurate(-inf,3)", pown_small_accurate(f32::NEG_INFINITY, 3), f32::NEG_INFINITY);
+    check("pown_small_accurate(-inf,-3)", pown_small_accurate(f32::NEG_INFINITY, -3), -0.0);
+    // The overflow-through-squaring path (idea #78's own doc comment):
+    // |x|>1 raised through 255 forces base to genuinely overflow to +-inf
+    // partway through the loop, and result itself overflows too for a
+    // large enough n -- both must stay exactly the pown/pown_small answer,
+    // not NaN.
+    check("pown_small_accurate(2,255)", pown_small_accurate(2.0, 255), pown(2.0, 255));
+    check("pown_small_accurate(2,-255)", pown_small_accurate(2.0, -255), pown(2.0, -255));
+    check("pown_small_accurate(-2.82e14,7)", pown_small_accurate(-2.82e14, 7), pown(-2.82e14, 7));
+    check("pown_small_accurate(3.0,200)", pown_small_accurate(3.0, 200), pown(3.0, 200));
+    // Not bit-identical to pown_small here (it's a different approximation,
+    // more accurate on *average*, not at every single point -- this one
+    // happens to land 75 ulp off the true answer where pown_small itself
+    // is only 12 off, well within both functions' normal error range, see
+    // IDEAS.md idea #78's own writeup). Just confirm no NaN/overflow
+    // garbage from the base.1==0.0 guard at this magnitude.
+    check_finite("pown_small_accurate(0.9,-255)", pown_small_accurate(0.9, -255));
+
     // pown_const<N>: same representative cases as pown, N as a const
     // generic instead of a runtime argument -- must match pown exactly
     // for every N, including the full i32::MIN/i32::MAX extremes (no
