@@ -958,6 +958,26 @@ what shipped.
   already-rejected `koff-free unchecked-log fast path` and `atan2`'s
   bothzero/hpisignx entries above. Reverted (zero benefit, no reason to
   carry the less-obvious source form).
+- **Literal-transcription standing test** (idea #109, "assert every
+  decimal literal against its intended bit pattern"): investigated
+  rather than built. Grepped for every other hand-typed decimal literal
+  matching a well-known mathematical constant (pi, pi/2, ln2, sqrt2,
+  log2(e), log10(e), 1/pi, etc.) anywhere in `src/lib.rs` -- found none
+  besides `acos_poly`'s own leading term, and that one specific bug is
+  *already* fixed and already has a standing regression pin
+  (`edgecheck.rs`'s `acos(0)`/`acos(-0)` checks against
+  `std::f32::consts::FRAC_PI_2`, with the bug's history documented right
+  above them). The two other "bit-identical to this literal" comments
+  in the file (`LOG2_COEFFS`'s leading term, `log10`'s analogous entry)
+  aren't at risk the same way -- they use the named `std::f32::consts::*`
+  constant directly, not a hand-transcribed decimal, so there's nothing
+  to transcribe wrong. The fully generic version of this idea (checking
+  *every* decimal literal in the file) isn't really buildable: the vast
+  majority of this crate's literals are minimax-fitted polynomial
+  coefficients with no independently-known "intended" value to check
+  against -- only the narrow "well-known named constant, hand-typed as
+  decimal" sub-case has a ground truth at all, and that sub-case is
+  already covered.
 
 ## Untried backlog
 
@@ -1369,9 +1389,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 108. **Clenshaw/Chebyshev-basis evaluation screen** for the worst-
      conditioned polys (erfc_rational's n/d, atan_latency's deg-17) —
      different rounding structure at comparable op count.
-109. **Literal-transcription standing test**: assert every decimal
-     literal against its intended bit pattern — the acos_poly 1.5707963
-     one-ulp transcription bug was found by luck, not by a test.
 110. **±few-ulp exhaustive scan of every non-poly literal** (clamp
      bounds, seed constants, magic offsets, branch thresholds) scored on
      the real fuzz — #3's sibling for non-coefficient constants.
