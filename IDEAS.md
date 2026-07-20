@@ -1160,9 +1160,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 79. **fmod_checked**: trunc-boundary analog of remainder_checked's ±1
     nudge (fires when r0's sign disagrees with x's or |r0| ≥ |y|) —
     closes fmod's documented ~3e-7 off-by-a-whole-y failure.
-81. **remainder_wide denormal-x corner**: gate the 0.125 rescale on |x|
-    too (q0 is always 0 in that corner) — closes the other documented
-    few-ulp exception.
 82. **Const-y remainder/fmod slice variant**: precompute 1/y,
     `q = round(x * (1/y))` — trades the per-element division for a
     multiply; the changed q rounding needs an accuracy screen
