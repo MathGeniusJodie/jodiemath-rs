@@ -530,6 +530,24 @@ what shipped.
 
 ### hyperbolics / sigmoid
 
+- **sinh_small minimax refit** (the untuned-Taylor lever that shipped for
+  `asin_small`, applied to `sinh`'s `|x|<0.5` branch): refit the three
+  non-leading coefficients (`1/6`, `1/120`, `1/5040`) as an equal-degree
+  minimax fit over `[0,0.5]`, `c0` pinned to 1.0. Zero perf cost by
+  construction (same op count, bit-identical codegen), but the premise
+  that carried `asin_small` doesn't transfer. The idealized fit signal is
+  already sub-0.1 ulp (max ulp-equiv 0.087→0.009): `sinh` is *entire* and
+  its Taylor series converges fast, so the truncation error over `[0,0.5]`
+  is negligible and the branch is rounding-chain-dominated, unlike
+  `asin_small` whose `[0,0.25]` truncation error is genuinely ~4 ulp (asin's
+  sqrt singularity at |x|=1). Real exhaustive `[0,0.5)` sweep: avg ulp
+  0.02952→0.02951 (noise), in-branch max ulp 2→1 — but `sinh`'s *headline*
+  max (4-5) lives entirely in the `|x|>=0.5` `exp_pos_neg` reconstruction
+  (worst x 4.67 / -0.828), untouched, and its avg is unchanged, so the
+  2→1 is an invisible sub-region move. Rejected: swapping self-documenting
+  exact Taylor coefficients for opaque magic numbers buys zero movement in
+  any reported metric. Closes the "untuned Taylor branches" lead —
+  `asin_small` was the only branch of that pair with real headroom.
 - **Compensated hypot** (`e=fma(r,-r,s); r+e/(2r)`): no measurable
   accuracy improvement (already near correctly-rounded) but real cost:
   latency +109%, throughput +87%.
