@@ -1839,8 +1839,31 @@ pub fn asinh(x: f32) -> f32 {
     let sq = if small { direct_sq } else { rescaled_sq };
     let sm1 = if small { ax2 / (sq + 1.0) } else { sq - 1.0 };
     let d = ax + sm1;
-    let r = if d.is_finite() { log1p_finite(d) } else { ln(ax) + LN_2 };
-    mulsign(r, x)
+    // `log1p_finite(d)` and the overflow fallback `ln(ax) + LN_2` each
+    // pay their own full `ln`-family poly + wrapper, unconditionally
+    // (branchless), for every call -- but `ln(2*ax) = ln(ax) + ln(2)` is
+    // exactly `ln_normal`'s own `koff` hook (it adds directly into the
+    // pre-combine exponent field `k`, not as a post-hoc add onto an
+    // already-rounded `ln(ax)`), so both branches reduce to one shared
+    // `ln_normal` call on a selected (argument, koff) pair. `u = 1+d` is
+    // always `>= 1` (finite-d branch, `d = ax+sm1 >= 0`) and `ax` is
+    // always a genuine positive value here too, so neither ever needs
+    // `log_family_wrapper!`'s zero/negative/denormal handling -- only
+    // its inf/nan handling, which the trailing overrides below restore
+    // (the raw `_normal` core doesn't propagate either, see its own doc
+    // comment: `ax` is `NaN`/`+inf` exactly when `x` is, since `d`'s own
+    // non-finiteness routes here).
+    let finite_d = d.is_finite();
+    let u = 1.0 + d;
+    let c = d - (u - 1.0);
+    let corr = c / u;
+    let arg = if finite_d { u } else { ax };
+    let koff = if finite_d { 0.0 } else { 1.0 };
+    let shared = ln_normal(arg, koff);
+    let combined = if finite_d { shared + corr } else { shared };
+    let combined = if x.is_infinite() { f32::INFINITY } else { combined };
+    let combined = if x.is_nan() { f32::NAN } else { combined };
+    mulsign(combined, x)
 }
 
 /// ln(x + sqrt(x^2-1)), domain x >= 1 (NaN elsewhere). Four fixes over
