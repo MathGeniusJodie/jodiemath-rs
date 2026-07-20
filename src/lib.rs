@@ -1262,25 +1262,6 @@ pub fn log2p1(x: f32) -> f32 {
     if x == 0.0 { x } else { normal }
 }
 
-/// log1p without the `corr.is_finite()` guard: valid whenever `x` is
-/// finite and `x != -1.0` (i.e. `u = 1+x` is itself finite and nonzero,
-/// the two edges the guard exists to suppress -- see log1p's own doc
-/// comment). `asinh`/`acosh` both already check `d.is_finite()` before
-/// calling log1p at all, and by construction (their own doc comments) the
-/// value they pass is never `-1.0` on the path where it matters (asinh:
-/// `d = ax + sm1` with both terms `>= 0`; acosh: `d = (x-1.0) + s` with
-/// `s >= 0` over the valid `x >= 1` domain) -- so the guard is
-/// unreachable for either caller and this drops one redundant select from
-/// two hot composites.
-#[inline(always)]
-fn log1p_finite(x: f32) -> f32 {
-    let u = 1.0 + x;
-    let c = x - (u - 1.0);
-    let corr = c / u;
-    let normal = ln(u) + corr;
-    if x == 0.0 { x } else { normal }
-}
-
 /// exp(x) via a proper Cody-Waite reduction instead of `exp2(x * LOG2_E)`.
 /// The naive form rounds `x * LOG2_E` *once* before ever calling exp2 --
 /// that rounding lands on the *argument*, and since exp2's derivative
@@ -1921,8 +1902,26 @@ pub fn acosh(x: f32) -> f32 {
     let rescaled = x * fma(-inv_x2, 1.0, 1.0).sqrt();
     let s = if x < 2048.0 { direct } else { rescaled };
     let d = (x - 1.0) + s;
-    let r = if d.is_finite() { log1p_finite(d) } else { ln(x) + LN_2 };
-    if x < 1.0 { f32::NAN } else { r }
+    // Same shared-ln_normal merge as asinh (see its own doc comment for
+    // the full mechanism): `log1p_finite(d)` and the `ln(x) + LN_2`
+    // overflow fallback each paid a full ln-family poly + wrapper,
+    // unconditionally, every call. `x` itself (not `ax`: acosh's domain
+    // is `x >= 1`, no sign to strip) and `u = 1+d` are both always
+    // positive here, so only inf/nan need restoring after the raw
+    // `ln_normal` core -- `x < 1.0` (false for NaN) already runs last
+    // and independently supplies the out-of-domain NaN, so the trailing
+    // overrides only need to cover the in-domain `x >= 1` inf/nan cases.
+    let finite_d = d.is_finite();
+    let u = 1.0 + d;
+    let c = d - (u - 1.0);
+    let corr = c / u;
+    let arg = if finite_d { u } else { x };
+    let koff = if finite_d { 0.0 } else { 1.0 };
+    let shared = ln_normal(arg, koff);
+    let combined = if finite_d { shared + corr } else { shared };
+    let combined = if x.is_infinite() { f32::INFINITY } else { combined };
+    let combined = if x.is_nan() { f32::NAN } else { combined };
+    if x < 1.0 { f32::NAN } else { combined }
 }
 
 /// atanh(x) = 0.5*ln((1+x)/(1-x)) = 0.5*(log1p(x) - log1p(-x)), reusing
