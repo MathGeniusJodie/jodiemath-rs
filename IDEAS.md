@@ -1135,8 +1135,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     mulsign) for the rest — halves the two-log1p cost. The rejected
     single-log1p variants lacked the small branch; verify that's where
     their accuracy loss actually lived before fitting.
-70. **ML activation pack**: gelu (via erf), silu (x·sigmoid),
-    softsign — trivial composites of existing kernels, all vectorize.
 71. **logit(p)** (sigmoid's inverse) via cancellation-safe log1p forms.
 72. **compound(x, n) = (1+x)^n** (financial kernel): n·log1p-based
     route avoiding pown-on-(1+x)'s tiny-x precision loss.
