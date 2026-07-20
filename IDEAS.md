@@ -498,6 +498,23 @@ what shipped.
 - **atan_latency's poly LP refit**: isolated fit predicted a modest 6%
   improvement — too weak a signal, found nothing real (avg ulp 0.0516 vs
   0.0517, statistically identical).
+- **atan_poly 4/4 Pade bump, properly seeded** (backlog idea #59):
+  scipy `least_squares` (plain L2, multi-start, and an IRLS-style
+  max-reweighted approximation to minimax, three separate attempts)
+  all converged to excellent *continuous*-math fits (max abs error
+  ~5e-11 to ~1e-10 over [0,1]) but none beat the existing 3/3 fit once
+  actually wired through the real fma-chain and scored on a 200M-sample
+  real f32 fuzz: best attempt tied the existing max ulp (3) but still
+  lost on avg (0.0688 vs 0.0678, ~1.6% worse); the other two attempts
+  lost on both axes (avg ~0.069, max 4). Same "isolated fit doesn't
+  predict real magnitude" lesson as several entries above, one level
+  further -- here the isolated fit didn't even predict the right
+  *sign* of the comparison. The existing 3/3 coefficients are
+  documented as coordinate-descent-tuned on top of their own
+  least-squares seed; matching or beating that with a naive one-shot
+  refit at a higher degree needs the same discipline (or a proper
+  weighted-LP/minimax tool), not just a bigger scipy fit. Not pursued
+  further this session.
 - **Plain atan: port atan_latency's own adopted mulsign-reassociation**
   (backlog idea #16's atan slice): apply `mulsign` to the poly result and
   `FRAC_PI_2` individually, then select/subtract, instead of selecting
@@ -1092,9 +1109,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     asin_poly refit over [0.2,1)) — the prior crossover retune held
     coefficients fixed; the added refit dimension makes it a different
     search.
-59. **atan_poly 4/4 Pade bump, properly seeded**: the 2/2→3/3 bump cut
-    max 18→4 for ~7% cost; a 4/4 could reach ≤2 on the crate's
-    cheapest still-over-budget function.
 60. **atan2_latency tier**: atan_latency-based atan2 — atan2 currently
     stacks atan_poly's division on top of its own y/x division.
 61. **atan_bounded tier** (|x| ≤ 1 contract): skips the 1/a division
