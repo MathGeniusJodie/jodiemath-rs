@@ -48,6 +48,47 @@ fn check_range(name: &str, got: f32, lo: f32, hi: f32) {
     );
 }
 
+fn ulp_diff(a: f32, b: f32) -> u64 {
+    fn ord(x: f32) -> i64 {
+        let b = x.to_bits();
+        if b & 0x8000_0000 != 0 { -((b & 0x7fff_ffff) as i64) } else { b as i64 }
+    }
+    if a.is_nan() || b.is_nan() {
+        return if a.is_nan() == b.is_nan() { 0 } else { u64::MAX };
+    }
+    (ord(a) - ord(b)).unsigned_abs()
+}
+
+/// idea #197: seam continuity standing test -- every branchless function
+/// in this crate always computes *both* branches and selects at a fixed
+/// threshold, so the two independently-fitted approximations aren't
+/// required to agree exactly right at the seam (only the *true*
+/// mathematical function is continuous there), but a well-placed
+/// crossover should still leave them close. Prints the value gap (in
+/// ulp, evaluated at the threshold's immediate f32 neighbors on each
+/// side) and a one-sided-slope estimate from a step 1000x wider, as a
+/// regression detector for future coefficient/threshold refits -- not a
+/// correctness assertion (a healthy seam can have a real few-ulp gap
+/// from each branch's own independent fit error), just a generous bound
+/// (500 ulp) wide enough to catch an actual wrong-branch/sign-flip bug
+/// without false-failing on ordinary approximation disagreement.
+fn check_seam(name: &str, f: impl Fn(f32) -> f32, threshold: f32) {
+    let below = f32::from_bits(threshold.to_bits() - 1);
+    let above = f32::from_bits(threshold.to_bits() + 1);
+    let v_below = f(below);
+    let v_above = f(above);
+    let gap = ulp_diff(v_below, v_above);
+    let step = threshold * 1e-3;
+    let slope_below = (f(threshold) - f(threshold - step)) / step;
+    let slope_above = (f(threshold + step) - f(threshold)) / step;
+    let ok = gap < 500;
+    println!(
+        "{} {:30} value gap {gap} ulp at threshold {threshold:e}, one-sided slopes {slope_below:e} / {slope_above:e}",
+        if ok { "ok  " } else { "FAIL" },
+        name
+    );
+}
+
 fn main() {
     // log_2
     check("log_2(0)", log_2(0.0), f32::NEG_INFINITY);
@@ -1381,6 +1422,19 @@ fn main() {
     check("div_euclid(inf,3)", div_euclid(f32::INFINITY, 3.0), f32::INFINITY.div_euclid(3.0));
     check("div_euclid(5,inf)", div_euclid(5.0, f32::INFINITY), 5.0f32.div_euclid(f32::INFINITY));
     check("div_euclid(nan,3)", div_euclid(f32::NAN, 3.0), f32::NAN.div_euclid(3.0));
+
+    // idea #197: seam continuity standing test, informational regression
+    // detector for future coefficient/threshold refits (see check_seam's
+    // own doc comment) -- every threshold here must match the real
+    // shipped branch condition exactly, not the function's own doc
+    // comment (which can drift, e.g. asin's was 0.25 before idea #58's
+    // 2026-07-20 crossover shift to 0.27).
+    check_seam("expm1 seam", expm1, 0.5);
+    check_seam("exp2m1 seam", exp2m1, 0.5);
+    check_seam("sinh seam", sinh, 0.5);
+    check_seam("tanh seam", tanh, 0.25);
+    check_seam("asin seam", asin, 0.27);
+    check_seam("erf seam", erf, 0.28);
 }
 
 /// f64-computed exact reference for a single spot-check triple, used only

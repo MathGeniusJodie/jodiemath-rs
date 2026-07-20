@@ -1892,9 +1892,6 @@ core::simd tier exists; each replaces multi-op scalar idioms)
      combine Z ulp, from the round-off audits (several exist ad hoc for
      expm1/sinh/tanh/erfc) — makes attack selection data-driven instead
      of re-derived each session.
-197. **Seam continuity standing test**: value + one-sided-slope jump
-     measured at every branch seam (expm1/exp2m1/sinh's 0.5, asin's
-     0.25, erf's 0.28) — a seam regression detector for future refits.
 198. **Fix the mca latency harness's mix() sign blindness**: mix()
      erases the sign bit each chain hop, so sign-dependent work
      (cbrt, sin_checked's flips, erfcx's branch) is silently deleted
