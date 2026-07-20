@@ -358,6 +358,31 @@ what shipped.
   1 coefficient (not "hard" as backlog claimed), and real op count is
   ~25% *more*, not less, once both polys are evaluated unconditionally.
   Killed by op-count reasoning alone.
+- **sin_checked/cos_checked: ql via magic-round, parity from the low
+  mantissa bit** (backlog idea #45): the premise ("rem is small, so the
+  magic add is exact") is false — `round_x_over_pi`'s `rem` is
+  `(p0-qh) + lo`, and `lo` includes `x*RPI_LO`/`x*RPI_TINY`, which grow
+  linearly with `x`, not a bounded double-double correction. A direct
+  probe (scalar Rust, exact f32 semantics) found `|rem|` reaching
+  ~9.4e30 near `f32::MAX`, ~24 orders of magnitude past the magic
+  trick's ~2^22 exact-rounding range. Implemented anyway to confirm via
+  real fuzz (bit-exact per-branch reasoning suggested it might still
+  work by accident at that scale): catastrophic failure, not a
+  precision nit — `sin_checked`/`cos_checked` over `[1e15,1e16)` came
+  back avg ulp ~7.3e8/1.0e9, max ulp 2130706432 (both), and the full
+  `(all f32)` sweep was avg ~3.3e8 both functions, same max. Root cause:
+  once `|rem|` swamps `ROUND_MAGIC` (1.5·2^23), `rem + ROUND_MAGIC`
+  rounds back to plain `rem` (the magic constant vanishes in the sum),
+  so the extracted "parity bit" is just bit 0 of `rem`'s own float
+  encoding at that magnitude — unrelated to true integer parity, unlike
+  the existing floor-based `parity()`, which stays correct (if
+  trivially "always even") at any magnitude since it's a real mod-2
+  computation, not a mantissa-alignment trick. This is a genuine wrong-
+  *sign* bug, the same class already fixed once for this pair (see the
+  sin_checked range-invariant entry in git log) — reverted immediately,
+  `git checkout -- src/lib.rs`. Any future attempt at this idea needs
+  the same large-magnitude fallback idea #46 already plans for `qh`,
+  applied to `ql`/`rem` too, not a magic-round-everywhere assumption.
 
 ### asin / acos / atan / atan2
 
@@ -1110,14 +1135,14 @@ an idea revisits a rejection, the differing mechanism is stated.
 44. **sind/cosd/tand: same fold for DEG_TO_RAD_SMALL** — deletes the
     d·c multiply and captures the accuracy the rejected HI/LO split
     found (sind avg −45%) at *negative* op cost instead of +11%.
-45. **sin_checked/cos_checked: ql via magic-round** (rem is small, so
-    the magic add is exact) and read parity(ql) from the low mantissa
-    bit — deletes one parity() (floor+fma) per call; the fast tier
-    already proves the bit-parity pattern.
 46. **parity(qh) bit-derivation**: |p0| < 2^22 → magic bits; p0 ≥ 2^24
     → deterministically even (every f32 there is an even integer); only
     the 2^22..2^24 window needs a select. Screen vs the floor-based
-    parity.
+    parity. **Applies equally to `ql`, not just `qh`** — see the
+    rejected `ql`-via-magic-round entry below: `rem` (what `ql` rounds)
+    is *not* bounded the way its name suggests, so any bit-derivation
+    scheme needs the same large-magnitude fallback this idea already
+    plans for `qh`, on both words.
 47. **Fast-tier reduction upgrade via two_prod**: replace the bounded-q
     PI_A..D 4-fma chain with one two_prod(q, PI_HI) + a PI_LO word —
     exact at any q, could push the fast tier's ~1.3e7 cliff far out at
