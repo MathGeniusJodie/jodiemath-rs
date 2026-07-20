@@ -153,6 +153,7 @@ fn main() {
         "sigmoid",
         "softplus",
         "logaddexp",
+        "sqrt1pm1",
         "asinh",
         "acosh",
         "atanh",

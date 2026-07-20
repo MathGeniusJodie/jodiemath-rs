@@ -513,6 +513,18 @@ fn main() {
     check("logaddexp(nan,1)", logaddexp(f32::NAN, 1.0), f32::NAN);
     check("logaddexp(1,nan)", logaddexp(1.0, f32::NAN), f32::NAN);
 
+    // sqrt1pm1: rationalized sqrt(1+x)-1 (backlog idea #132), values
+    // confirmed against a rationalized f64 reference before pinning.
+    check("sqrt1pm1(0)", sqrt1pm1(0.0), 0.0);
+    check("sqrt1pm1(-0)", sqrt1pm1(-0.0), -0.0);
+    check("sqrt1pm1(-1)", sqrt1pm1(-1.0), -1.0);
+    check("sqrt1pm1(-2)", sqrt1pm1(-2.0), f32::NAN);
+    check("sqrt1pm1(inf)", sqrt1pm1(f32::INFINITY), f32::INFINITY);
+    check("sqrt1pm1(nan)", sqrt1pm1(f32::NAN), f32::NAN);
+    check("sqrt1pm1(3)", sqrt1pm1(3.0), 1.0);
+    check("sqrt1pm1(1e-10)", sqrt1pm1(1e-10), 5e-11);
+    check("sqrt1pm1(-1e-10)", sqrt1pm1(-1e-10), -5e-11);
+
     check("asinh(0)", asinh(0.0), 0.0);
     // small-x cancellation (see asinh's doc comment) is fixed: asinh(x) ~ x
     // for tiny x, no longer collapses to exactly 0.
