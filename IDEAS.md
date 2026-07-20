@@ -1402,11 +1402,28 @@ an idea revisits a rejection, the differing mechanism is stated.
      multiply — thin but discoverable API with the exactness documented.
 123. **asind/acosd/atand/atan2d**: fold 180/π into the poly/combine
      constants (#85's mechanism) — 90.0/45.0 are exact where π/2 wasn't.
-124. **π-constant hi/lo splits in the inverse-trig combines**: atan's
-     `FRAC_PI_2 − y` fold (its max 4 sits at the fold boundary), acos's
+124. **π-constant hi/lo splits in the inverse-trig combines**: acos's
      `+PI`, atan2's correction, asin's big branch — distinct from the
      rejected 1/a *division*-rounding fix (different rounding source at
-     the same location).
+     the same location). **atan's own `FRAC_PI_2 − y` fold slice tried
+     and rejected** (2026-07-20): `(FRAC_PI_2 - y) + FRAC_PI_2_LO` where
+     `FRAC_PI_2_LO = PI_LO/2` (exact halving of this file's own PI_HI/
+     PI_LO Cody-Waite split, verified `PI_HI/2` is bit-identical to
+     `FRAC_PI_2` first). Predictable in hindsight: `FRAC_PI_2`'s own
+     rounding error vs. true pi/2 is only ~4.37e-8, under 0.2 ulp at this
+     magnitude -- already below atan_poly's own ~0.068-avg-ulp fit-error
+     floor, the same "constant precision doesn't matter, poly fit error
+     already dominates" pattern as several already-rejected LP-refit
+     entries elsewhere in this file. Real measurement confirmed the
+     prediction: atan avg ulp 0.0675→0.0673 (noise), max unchanged at 3
+     (the reported worst case sits in the *other* branch, `a<1`, never
+     touched by this fold at all); atan2 avg slightly worse
+     (0.0681→0.0683) with max possibly 3→4 (small 10M-sample signal,
+     not chased further given the cost side already killed it). mca
+     showed a real, consistent cost: both atan and atan2 latency
+     +4.0 cyc (61.09→65.09 / 61.28→65.28, +6.5%), throughput +3.2%/
+     +11.9%. Reverted. The other three sites (acos/atan2/asin) remain
+     untried.
 125. **Integer-domain parity pipeline end-to-end** for
      sin_checked/cos_checked (parities as bits, XOR combine, direct
      sign mask) — composes #45/#46; deletes the float compare+select
