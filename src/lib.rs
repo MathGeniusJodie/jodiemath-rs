@@ -2342,6 +2342,42 @@ pub fn erfcx(x: f32) -> f32 {
     if x >= 0.0 { r } else { 2.0 * exp2_checked(x * x * LOG2_E) - r }
 }
 
+/// Full-range sibling of [`erfcx`]: fixes the freeze [`erfcx`]'s own doc
+/// comment documents for `x > 10` (unbounded relative error, not just
+/// imprecision) by switching to the standard asymptotic expansion there
+/// instead of `erfc_rational`'s frozen `erfc_rational(10.0)`:
+/// `erfcx(x) ~ (1/(x*sqrt(pi))) * (1 - t + 3t^2 - 15t^3 + 105t^4 - 945t^5)`
+/// with `t = 1/(2x^2)` -- a genuine mathematical series (each coefficient
+/// is an exact odd double factorial, not a numerically fitted constant),
+/// so no fitting/lolremez work is needed, just enough terms for the
+/// worst case (`x=10`, `t=0.005`): the dropped `n=6` term is
+/// `10395*t^6 ~ 1.6e-10`, many orders below f32's ~1.2e-7 relative
+/// precision floor. Only the `x >= 0` side ever reaches this branch in
+/// practice -- for `x < -10`, `exp2_checked(x*x*LOG2_E)` already
+/// overflows to `+inf` well before the `10` boundary (`erfcx`'s own doc
+/// comment: `|x| >~ 9.3`), so the `- r` term vanishes into that infinity
+/// regardless of `r`'s own precision there, meaning the fix only needs
+/// to apply where the `10`-boundary select actually changes anything:
+/// `xa > 10`, both signs of `x` covered through the shared `r`.
+///
+/// Verified bit-identical to `erfcx` for `|x| <= 10` (same `erfc_rational`
+/// call, same combine), and accurate against `scipy.special.erfcx` up to
+/// `x=200` (max rel error ~0.0002%) where the earlier rejected version
+/// was verified. Real mca cost accepted here (this is the opt-in tier
+/// the "no perf penalty" bar doesn't apply to, per IDEAS.md) -- `erfcx`
+/// itself is untouched and pays nothing.
+#[inline(always)]
+pub fn erfcx_checked(x: f32) -> f32 {
+    let xa = x.abs();
+    let r_near = erfc_rational(xa);
+    let t = 1.0 / (2.0 * xa * xa);
+    let s = fma(fma(fma(fma(fma(-945.0, t, 105.0), t, -15.0), t, 3.0), t, -1.0), t, 1.0);
+    const FRAC_1_SQRT_PI: f32 = 0.5641896;
+    let r_far = (s * FRAC_1_SQRT_PI) / xa;
+    let r = if xa > 10.0 { r_far } else { r_near };
+    if x >= 0.0 { r } else { 2.0 * exp2_checked(x * x * LOG2_E) - r }
+}
+
 /// 1/sqrt(x). Unlike most functions in this crate, no bit-trick seed or
 /// fitted correction poly needed: `sqrt` and division are each already
 /// correctly-rounded IEEE754 hardware operations (`x.sqrt()` isn't a

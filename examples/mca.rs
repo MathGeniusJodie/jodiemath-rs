@@ -165,6 +165,7 @@ fn main() {
         "erf",
         "erfc",
         "erfcx",
+        "erfcx_checked",
         "hypot",
         "hypot_checked",
         "rhypot",

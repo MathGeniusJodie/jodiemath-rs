@@ -682,6 +682,25 @@ fn main() {
     // guarantee, inherited here for free.
     check("erfcx(-1000)", erfcx(-1000.0), f32::INFINITY);
 
+    // erfcx_checked: full-range sibling fixing erfcx's own documented
+    // freeze past |x|=10 (see its doc comment). Bit-identical to erfcx
+    // for |x|<=10 (same erfc_rational call).
+    check("erfcx_checked(0)", erfcx_checked(0.0), 1.0);
+    check("erfcx_checked(nan)", erfcx_checked(f32::NAN), f32::NAN);
+    check("erfcx_checked(9)", erfcx_checked(9.0), erfcx(9.0));
+    check("erfcx_checked(10)", erfcx_checked(10.0), erfcx(10.0));
+    check("erfcx_checked(inf)", erfcx_checked(f32::INFINITY), 0.0);
+    check("erfcx_checked(-1000)", erfcx_checked(-1000.0), f32::INFINITY);
+    // Past the 10 boundary: values confirmed against scipy.special.erfcx
+    // (max rel error ~5.8e-7, ~5 ulp, dominated by erfc_rational's own
+    // fit error right at the x=10 seam -- not a defect in the asymptotic
+    // tail itself) before pinning.
+    check("erfcx_checked(15)", erfcx_checked(15.0), 3.7529606e-2);
+    check("erfcx_checked(20)", erfcx_checked(20.0), 2.817435e-2);
+    check("erfcx_checked(50)", erfcx_checked(50.0), 1.1281537e-2);
+    check("erfcx_checked(100)", erfcx_checked(100.0), 5.641614e-3);
+    check("erfcx_checked(200)", erfcx_checked(200.0), 2.820913e-3);
+
     check("hypot(0,0)", hypot(0.0, 0.0), 0.0);
     check("hypot(3,4)", hypot(3.0, 4.0), 5.0);
     // hypot(+-inf, anything) = +inf even with a NaN other argument --

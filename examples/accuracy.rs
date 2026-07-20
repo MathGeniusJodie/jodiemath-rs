@@ -925,6 +925,18 @@ fn main() {
         let erfcx_ref = |v: F64xN| exp_u10(v * v) * erfc_u15(v);
         let s = measure!(erfc_domain, erfcx, erfcx_ref);
         report("erfcx", &s, t0);
+        // erfcx_checked's own wider domain, extended past erfcx's |x|<=10
+        // fit boundary (see its doc comment) -- still safely inside where
+        // erfcx_ref's f64 `exp_u10(v*v)` doesn't itself overflow (v*v <=
+        // 400, nowhere near f64's ~709 exp overflow point), so the same
+        // reference stays trustworthy this far out; the asymptotic tail's
+        // own verified range (up to x=200, see erfcx_checked's doc
+        // comment) was checked separately against scipy.special.erfcx
+        // since sleef has no f64 exp headroom left to compose a reference
+        // that far.
+        let erfcx_checked_domain = |x: f32| x.abs() <= 20.0;
+        let s = measure!(erfcx_checked_domain, erfcx_checked, erfcx_ref);
+        report("erfcx_checked", &s, t0);
     }
 
     // two-argument functions: fuzz-only (exhaustive over 2^64 pairs isn't
