@@ -1676,8 +1676,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     remainder: structured lattices near known-hard manifolds (e.g.
     y·log2(x) near integers) — better worst-case discovery than
     uniform sampling.
-94. **Differential testing against sleef/rlibm-built references** for
-    functions with no std twin (erfcx, sind, exp10, sinpi, …).
 95. **accuracy.rs per-branch attribution mode**: report which select
     arm produced each worst case — speeds every future refit's
     diagnosis step.
