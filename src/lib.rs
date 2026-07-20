@@ -2171,7 +2171,14 @@ fn erf_poly(x: f32, x2: f32) -> f32 {
 /// `exp2(erf_poly(|x|))` gave `erf(50) = -1.02e17` and `erf(+-inf) =
 /// NaN` instead of +-1. The bound 10 matches erfc's clamp, comfortably
 /// past where erf has saturated (erf_poly(10) = -83.8, safely negative);
-/// `exp2_checked` is cheap extra insurance on top.
+/// `erf_poly`'s output over that whole clamped domain stays inside
+/// `[-92, 0]` (never approaching `exp2`'s unchecked `[-126, 128)` bound,
+/// let alone leaving it), so the extra `exp2_checked` insurance was never
+/// reachable: `exp2` suffices. The one input that bypasses the `xa_bounded`
+/// clamp is NaN itself (`NaN > 10.0` is false), but that propagates to NaN
+/// through `erf_poly` before `exp2` ever sees it, and `exp2`'s bit-twiddled
+/// exponent field only feeds a NaN-tainted multiply/fma from there, so the
+/// result stays NaN regardless of that field's garbage value.
 #[inline(always)]
 pub fn erf(x: f32) -> f32 {
     let xa = x.abs();
@@ -2188,7 +2195,7 @@ pub fn erf(x: f32) -> f32 {
     let numer = x * fma(f32::from_bits(0x3f174f6e), x2, f32::from_bits(0x3f906ebb));
     let denom = fma(fma(f32::from_bits(0x3e3e2be3), x2, f32::from_bits(0x3f5b6db7)), x2, 1.0);
     let a = numer / denom;
-    let b = mulsign(1.0 - exp2_checked(erf_poly(xa_bounded, x2)), x);
+    let b = mulsign(1.0 - exp2(erf_poly(xa_bounded, x2)), x);
     if xa < 0.28 { a } else { b }
 }
 
