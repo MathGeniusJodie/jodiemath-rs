@@ -3096,25 +3096,31 @@ pub fn remainder_checked(x: f32, y: f32) -> f32 {
 /// enough. Substantial mca cost over `remainder_checked` -- a separate
 /// opt-in tier so callers who don't need the range don't pay.
 ///
-/// Two known, accepted exceptions vs `remainder_checked` in its own
-/// `|x/y| < 2^24` domain (bit-identical everywhere else):
-/// 1. When `max(|x|,|y|) > f32::MAX/4` triggers the rescale below AND
-///    `|x|` is already near/below the denormal boundary, the
-///    unconditional `* 0.125` pushes `x` into the denormal range where
-///    low mantissa bits are unrepresentable; the round trip isn't
-///    lossless, so this can differ by a handful of ulp (up to ~4) where
-///    `remainder_checked` returns `x` bit-exact. Narrow and small, not
-///    chased.
-/// 2. When `x/y` lands on an *exact* half-integer, this can return the
-///    *wrong sign*: `q0` already correctly resolves the tie (ties away
-///    from zero), landing `r0` on exactly `+-ys/2` -- but `adj`'s blind
-///    `.round()` treats that already-resolved tie as "one more whole `y`
-///    to remove", and the final stage's strict `>` comparison doesn't
-///    correct an *equal* magnitude, so the flip ships. Extremely narrow
-///    (needs a genuine exact mathematical tie; ~3 hits in 292M uniform
-///    samples) but real; unfixed because `adj`'s blind rounding is
-///    load-bearing for its actual job (multi-integer quantization gaps),
-///    and excluded from `examples/unchecked_parity.rs`'s domain instead.
+/// One known, accepted exception vs `remainder_checked` in its own
+/// `|x/y| < 2^24` domain (bit-identical everywhere else): when
+/// `max(|x|,|y|) > f32::MAX/4` triggers the rescale below AND `|x|` is
+/// already near/below the denormal boundary, the unconditional `* 0.125`
+/// pushes `x` into the denormal range where low mantissa bits are
+/// unrepresentable; the round trip isn't lossless, so this can differ by
+/// a handful of ulp (up to ~4) where `remainder_checked` returns `x`
+/// bit-exact. Narrow and small, not chased.
+///
+/// A second exception used to exist here too: when `x/y` landed on an
+/// *exact* half-integer, `adj`'s blind `.round()` (ties away from zero)
+/// treated the already-correctly-resolved tie (`q0` itself resolves
+/// ties away from zero, landing `r0` on exactly `+-ys/2`) as "one more
+/// whole `y` to remove", flipping the sign -- fixed by switching `adj`
+/// to `.round_ties_even()`: an exact `+-0.5` now rounds to `0` (no
+/// spurious correction) while every non-tie multi-integer-quantization
+/// gap `adj` exists to recover (`|adj| >= 1`, nowhere near a `.5`
+/// boundary) rounds identically either way. Verified zero mismatches
+/// against `remainder_checked` over 351M in-domain samples with the tie
+/// exclusion removed (previously ~4 in that many, all exact ties, none
+/// otherwise) -- re-included in `examples/unchecked_parity.rs`'s
+/// standing test now that it's fixed. Also faster, same finding
+/// `remainder_ieee`'s own `q` already made: `round_ties_even` lowers to
+/// a single native `vroundps` where `.round()`'s ties-away needs extra
+/// emulation.
 ///
 /// The rescale guard: `Df32::from_mul(q0, y)` rounds the intermediate
 /// product to a single f32 before pairing it with its error term --
@@ -3135,7 +3141,7 @@ pub fn remainder_wide(x: f32, y: f32) -> f32 {
     let q0 = (xs / ys).round();
     let r0_df = Df32::from_f32(xs) - Df32::from_mul(q0, ys);
     let r0 = r0_df.to_f32();
-    let adj = (r0 / ys).round();
+    let adj = (r0 / ys).round_ties_even();
     let r1_df = r0_df - Df32::from_mul(adj, ys);
     let r1 = r1_df.to_f32();
     let adj2 = if (r1 > 0.0) == (ys > 0.0) { 1.0 } else { -1.0 };
