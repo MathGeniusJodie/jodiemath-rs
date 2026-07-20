@@ -729,6 +729,20 @@ what shipped.
   help.
 - **Centered-variable refit for erfc's xa**: confirmed the exp2-centering
   finding transfers — centering measured ~73x worse.
+- **erfc saturation-threshold tightening screen** (idea #140): checked
+  numerically (scipy bisection on the true `erfc`, not a build) where
+  each side actually rounds to its saturated f32 output. Positive `x`
+  (where the real bottleneck, max ulp 109, lives) doesn't hit exact
+  `0.0` until `x≈10.05` — barely past the crate's own `10.0` clamp, no
+  meaningful headroom to shrink from there without cutting off real
+  nonzero output. Negative `x` rounds to exact `2.0` much earlier
+  (`x≈3.83`), a real ~6.2-wide "wasted" slice of the shared rational's
+  fit domain — but that's the *already-smaller*, non-binding side (see
+  the negative-side accuracy survey entry above: x<0 avg 0.1397/max 6
+  vs x>=0 avg 0.4815/max 109), so narrowing there wouldn't move the
+  reported max ulp at all. No implementation attempted — the premise's
+  own "if it's meaningfully inside |x|=10" condition is false for the
+  side that would need to benefit.
 - **Compensated-Horner accuracy tier for erfc**: double-float evaluation
   improved avg ulp modestly (~14%) but left max ulp flat. Root cause:
   erfc's own exponent expression has up to 87 ulp of error in plain f32
@@ -1501,10 +1515,6 @@ an idea revisits a rejection, the differing mechanism is stated.
      rational machinery.
 139. **erfc_inv / probit (normal quantile)** alongside #66's erfinv —
      completes the sampling stack.
-140. **erfc saturation-threshold tightening screen**: find where erfc
-     first rounds to exactly 0/2 — if it's meaningfully inside |x|=10,
-     a tighter clamp shrinks the rational's required fit domain and
-     frees headroom.
 142. **acos max 5 as an explicit real-chain-refit (#1) target** — its
      coordinate descent is exhausted, which is exactly the case #1
      exists for.
