@@ -609,6 +609,28 @@ fn cbrt_throughput_c(x: f32, c: &[f32]) -> f32 {
     r * r * x
 }
 
+// idea #52: cbrt_normal_c's degree-4 correction poly (5 coefficients
+// instead of shipped's 4) -- one more fma than shipped, one fewer than
+// the previously-tried (and rejected on cost) degree-5.
+#[inline(always)]
+fn cbrt_normal_c5(x: f32, c: &[f32]) -> f32 {
+    const SIGN_MASK: u32 = 0x8000_0000;
+    let ax = x.to_bits() & !SIGN_MASK;
+    let a = f32::from_bits(ax);
+    let rcp = 1.0 / a;
+    let s = f32::from_bits(ax / 3 + 0x2a509a07u32);
+    let s2 = s * s;
+    let d = fma(s2, s, -a);
+    let r = d * rcp;
+    let r2 = r * r;
+    let a1 = fma(c[1], r, c[0]);
+    let b1 = fma(fma(c[4], r, c[3]), r, c[2]);
+    let p = fma(b1, r2, a1);
+    let ss = f32::from_bits(s.to_bits() | (x.to_bits() & SIGN_MASK));
+    let sr = ss * r;
+    fma(sr, p, ss)
+}
+
 // sinf_poly (see src/lib.rs): sin(x) ~= x + x^3*P(x^2) on [-pi/2, pi/2],
 // the shared poly behind sin/cos/sin_checked/cos_checked.
 #[inline(always)]
@@ -1644,6 +1666,20 @@ fn main() {
             0.14823665,
         ];
         tune("cbrt_normal_joint", &cbrt_normal_joint_c, &|x| x.cbrt(), &grid2, &init_joint);
+
+        // idea #52: degree-4 correction poly (5 coeffs), seeded from a
+        // real scipy/HiGHS minimax LP fit of p(r) = ((1+r)^(-1/3)-1)/r
+        // against the seed's real r-range (probed directly: [-0.0998,
+        // 0.0893] over one octave), not zero-seeded.
+        let mut grid5 = vec![];
+        let mut b = 1.0f32.to_bits();
+        while b < 2.0f32.to_bits() {
+            grid5.push(f32::from_bits(b));
+            grid5.push(-f32::from_bits(b));
+            b += 5;
+        }
+        let init5 = [-0.33333338, 0.22221859, -0.17280712, 0.14543792, -0.12951847];
+        tune("cbrt_normal_c5", &cbrt_normal_c5, &|x| x.cbrt(), &grid5, &init5);
     }
     if which.contains("cbrtshift") {
         // coarser grid for a fast first-pass screen of the shift-multiply

@@ -762,6 +762,32 @@ what shipped.
   forms are already deep in f32's rounding-noise floor, and the extra
   division sits after the seed on the critical path with nothing to
   overlap (latency +28.5%, avg ulp regressed slightly).
+- **cbrt degree-4 correction poly** (idea #52, the untried midpoint
+  between shipped degree-3 and the previously-rejected degree-5): seeded
+  from a real scipy/HiGHS minimax LP fit of `p(r) = ((1+r)^(-1/3)-1)/r`
+  against the seed's real probed r-range (`[-0.0998,0.0893]` over one
+  representative octave, matching `cbrt_normal`'s own documented
+  octave-repeating error), polished via a new `cbrt_normal_c5` tune.rs
+  target. This is a genuine, real win, not an idealized-only signal --
+  confirmed on the full exhaustive 2^32 sweep (learning from this exact
+  function's own prior "clean on a spot-check, reversed at the
+  denormal-rescale boundary" trap, see the coordinate-descent entry
+  below): `cbrt` avg ulp 0.28→0.0884, max ulp 3→**1**, `cbrt_unchecked`
+  the same (0.28→0.0887, 3→1) -- comfortably inside the documented
+  avg<=1/max<=2 budget for the first time (`cbrt_accurate` unaffected,
+  already 0 either way). But mca showed a real, consistent cost across
+  all five affected functions: latency +4.00 cyc everywhere (cbrt
+  35.06→39.06, cbrt_unchecked same delta, cbrt_accurate(_unchecked)
+  59.06→63.08, rcbrt 46.30→50.30, +7-11%), throughput +2.6% to +19.6%
+  (cbrt_unchecked hit hardest proportionally, from the lowest baseline).
+  Reverted (`git checkout -- src/lib.rs`) -- a real cost on every
+  caller, even for closing a *documented* budget overage, doesn't clear
+  this session's no-penalty bar the way the degree-3-over-degree-5
+  choice was itself explicitly made for speed. `examples/tune.rs`'s
+  `cbrt_normal_c5` scaffold is kept (coefficients:
+  `-3.3333338e-1, 2.2221813e-1, -1.7280723e-1, 1.4543797e-1,
+  -1.295184e-1` for `c1..c5`) in case the budget is ever judged worth
+  the cost.
 - **cbrt_accurate via Halley from a cheaper seed**: accuracy parity with
   the shipped Newton-based form was fully achieved (bit-for-bit, after
   fixing two overflow-ordering bugs in the correction term and lowering the
@@ -1182,9 +1208,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### cbrt / sqrt / hypot
 
-52. **cbrt degree-4 correction poly**: deg-3 and deg-5 were both
-    measured, the midpoint never — +1 fma for possibly max 3→2,
-    bringing cbrt inside the 2-max budget.
 53. **rcbrt direct seed**: negated-exponent bit trick + refit of the
     same deg-3 correction shape — deletes rcbrt's trailing division
     entirely (its own doc explicitly defers this as "real fitting
