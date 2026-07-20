@@ -500,6 +500,34 @@ what shipped.
   improvement (0.496→0.068) but acos max ulp regressed (4→5) and asin got
   worse on both axes (max 9→12). Retuning recovered asin but acos max
   still regressed (4→6), plus a real mca cost.
+- **π-constant hi/lo splits in the other inverse-trig combines** (idea
+  #124, a plain additive `+ FRAC_PI_2_LO`/`+ PI_LO` correction after each
+  combine's existing subtraction/addition, distinct from the Df32-split
+  entry above): tested all four named sites. `atan`'s `FRAC_PI_2 - y`
+  fold: no real movement either way (avg 0.0675→0.0673, noise; max
+  unchanged at 3 -- the real worst case lives in the untouched `a<1`
+  branch) but a real mca cost (latency +4.0 cyc / +6.5% on both atan and
+  atan2, throughput +3.2%/+11.9%). `asin`'s big branch (`FRAC_PI_2 -
+  sqrt(1-a)*asin_poly(a)`): a real regression, avg ulp 0.0199→0.0227
+  (+14%), max 6→7 -- confirms the Df32-split entry's "this specific
+  combine shape is fragile near asin" finding via an unrelated
+  mechanism. `acos`'s `+PI`: by far the worst result of the four --
+  avg ulp 0.0650→**0.2722** (~4.2x worse) on the real fuzz, worst point
+  at an ordinary interior x (-0.046), not a degenerate edge case; root
+  cause not fully traced (the correction term's own arithmetic looked
+  sound on paper) but the measured regression is large and unambiguous.
+  `atan2`'s correction (`mulsign(FRAC_PI_2 - hpisignx, y)`): the one
+  site that *looked* like a small real win on a single quick-fuzz run
+  (avg 0.0683→0.0681, max 4→3) -- caught as sampling noise, not a real
+  effect, only by re-running both the modified *and* unmodified versions
+  three times each: baseline itself swings between max 3 and max 4 run
+  to run on this function's 10M-sample (not exhaustive, 2-arg domain)
+  harness, and the modified version's avg sits inside the same noise
+  band as baseline's own run-to-run variance. Net: 1 real cost-only
+  no-op, 2 real regressions, 1 near-miss that would have been
+  misreported as a win without the repeat-run check. All four reverted;
+  none of this idea's four sites are worth revisiting with this
+  technique.
 - **acos_poly joint LP, both acos+asin max ulp capped** (two attempts):
   attempt 1 let the pi/2 constant drift onto a worse f32 value, corrupting
   near-zero calls (acos avg 0.496→1.905). Attempt 2 forced the constant
@@ -1483,45 +1511,6 @@ an idea revisits a rejection, the differing mechanism is stated.
      multiply — thin but discoverable API with the exactness documented.
 123. **asind/acosd/atand/atan2d**: fold 180/π into the poly/combine
      constants (#85's mechanism) — 90.0/45.0 are exact where π/2 wasn't.
-124. **π-constant hi/lo splits in the inverse-trig combines**: acos's
-     `+PI`, atan2's correction, asin's big branch — distinct from the
-     rejected 1/a *division*-rounding fix (different rounding source at
-     the same location). **atan's own `FRAC_PI_2 − y` fold slice tried
-     and rejected** (2026-07-20): `(FRAC_PI_2 - y) + FRAC_PI_2_LO` where
-     `FRAC_PI_2_LO = PI_LO/2` (exact halving of this file's own PI_HI/
-     PI_LO Cody-Waite split, verified `PI_HI/2` is bit-identical to
-     `FRAC_PI_2` first). Predictable in hindsight: `FRAC_PI_2`'s own
-     rounding error vs. true pi/2 is only ~4.37e-8, under 0.2 ulp at this
-     magnitude -- already below atan_poly's own ~0.068-avg-ulp fit-error
-     floor, the same "constant precision doesn't matter, poly fit error
-     already dominates" pattern as several already-rejected LP-refit
-     entries elsewhere in this file. Real measurement confirmed the
-     prediction: atan avg ulp 0.0675→0.0673 (noise), max unchanged at 3
-     (the reported worst case sits in the *other* branch, `a<1`, never
-     touched by this fold at all); atan2 avg slightly worse
-     (0.0681→0.0683) with max possibly 3→4 (small 10M-sample signal,
-     not chased further given the cost side already killed it). mca
-     showed a real, consistent cost: both atan and atan2 latency
-     +4.0 cyc (61.09→65.09 / 61.28→65.28, +6.5%), throughput +3.2%/
-     +11.9%. Reverted.
-     **asin's big-branch slice also tried and rejected** (same session):
-     unlike atan, this one looked genuinely promising on paper first —
-     `asin_poly`'s own real-domain contribution is much smaller
-     (asin's overall avg ulp 0.0199-0.0202 vs atan's 0.068), so
-     `FRAC_PI_2`'s ~0.2-ulp own bias isn't obviously swamped by the
-     poly's fit error the way it was for atan. Real measurement
-     disagreed anyway: adding `+ FRAC_PI_2_LO` to `asin`'s
-     `FRAC_PI_2 - sqrt(1-a)*asin_poly(a)` combine regressed *both* axes,
-     avg ulp 0.0199→0.0227 (+14%) and max ulp 6→7 — not the "no
-     movement" of the atan case, a real accuracy loss. Reverted before
-     even checking mca. Consistent with the already-rejected "acos_poly
-     Df32 leading-term split, pi/2 hi+lo" entry elsewhere in this file,
-     which found the same construction shape (`FRAC_PI_2 -
-     sqrt(1-a)*poly(a)`) fragile to precision changes near this combine
-     for `asin` specifically, via a different mechanism (Df32 poly-
-     internal split vs. this plain additive correction) — two different
-     techniques, same real regression, on the same site. `acos`'s `+PI`
-     and `atan2`'s correction remain untried.
 125. **Integer-domain parity pipeline end-to-end** for
      sin_checked/cos_checked (parities as bits, XOR combine, direct
      sign mask) — composes #45/#46; deletes the float compare+select
