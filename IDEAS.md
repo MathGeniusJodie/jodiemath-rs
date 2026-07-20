@@ -1064,10 +1064,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     the current root cause is the exponent, so a tighter fit alone was
     predicted useless; inside tier #62 the rational becomes the next
     binding constraint.
-65. **erf tail: plain exp2 instead of exp2_checked** — the input is
-    provably in [−83.8, ~0), inside exp2's own domain; the checked swap
-    was "cheap extra insurance." Measure what the insurance costs;
-    edgecheck first.
 66. **erfinv** (Giles-style poly in w = ln(1−x²), two-poly branchless
     select, fully fma-based) — sampling/ML staple, vectorizes cleanly.
 67. **norm_cdf/norm_pdf pair** (Φ via 0.5·erfc(−x/√2)) — thin
