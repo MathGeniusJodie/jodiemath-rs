@@ -2420,12 +2420,21 @@ pub fn erfcx_accurate(x: f32) -> f32 {
 /// to apply where the `10`-boundary select actually changes anything:
 /// `xa > 10`, both signs of `x` covered through the shared `r`.
 ///
-/// Verified bit-identical to `erfcx` for `|x| <= 10` (same `erfc_rational`
-/// call, same combine), and accurate against `scipy.special.erfcx` up to
-/// `x=200` (max rel error ~0.0002%) where the earlier rejected version
-/// was verified. Real mca cost accepted here (this is the opt-in tier
-/// the "no perf penalty" bar doesn't apply to, per IDEAS.md) -- `erfcx`
-/// itself is untouched and pays nothing.
+/// Accurate against `scipy.special.erfcx` up to `x=200` (max rel error
+/// ~0.0002%) where the earlier rejected version was verified. Real mca
+/// cost accepted here (this is the opt-in tier the "no perf penalty"
+/// bar doesn't apply to, per IDEAS.md) -- `erfcx` itself is untouched
+/// and pays nothing.
+///
+/// The `x < 0` combine also gets `erfcx_accurate`'s own Df32-precision
+/// exponent fix (see its doc comment): the same rounding hole exists
+/// here for `xa` in `(0, 10]` (this tier's asymptotic branch only
+/// changes anything for `xa > 10`, so the negative side's own
+/// `erfc_rational`-driven combine below that bound is otherwise
+/// identical to plain `erfcx`'s, worst case at the same `x ~ -9.2`), so
+/// no longer bit-identical to `erfcx` for negative `x` in that range
+/// (still bit-identical for `x >= 0`, same `erfc_rational` call and
+/// selection).
 #[inline(always)]
 pub fn erfcx_checked(x: f32) -> f32 {
     let xa = x.abs();
@@ -2435,7 +2444,7 @@ pub fn erfcx_checked(x: f32) -> f32 {
     const FRAC_1_SQRT_PI: f32 = 0.5641896;
     let r_far = (s * FRAC_1_SQRT_PI) / xa;
     let r = if xa > 10.0 { r_far } else { r_near };
-    if x >= 0.0 { r } else { 2.0 * exp2_checked(x * x * LOG2_E) - r }
+    if x >= 0.0 { r } else { 2.0 * exp2_checked_df(Df32::from_mul(x, x) * LOG2_E) - r }
 }
 
 /// 1/sqrt(x). Unlike most functions in this crate, no bit-trick seed or
