@@ -1261,11 +1261,6 @@ an idea revisits a rejection, the differing mechanism is stated.
      split for free — softmax/normalization building block.
 118. **logsigmoid(x) = −softplus(−x)** as a thin public function (loss
      kernels); rides the fused-softplus idea (#38) if that lands.
-120. **log1p_unit: specialized log1p for u ∈ [1,2)** (k = 0 always) for
-     softplus/logaddexp's `log1p(e)` with e ∈ (0,1] — skips the whole
-     exponent extraction. Distinct from the rejected log1p small-|x|
-     *branch* (which added a poly to every general log1p call); this is
-     a separate callee for callers whose domain guarantees k=0.
 
 #### Batch 2: trig
 
