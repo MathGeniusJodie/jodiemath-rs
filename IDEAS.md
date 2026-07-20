@@ -194,6 +194,14 @@ what shipped.
   max ulp 463/avg 232 after full convergence, three orders of magnitude
   worse than shipped (max 2/avg 0.203), nowhere close to exp2's
   essentially-zero headroom.
+- **exp_m1_over_x: trailing `/x` → `* (1.0/x)` issued at entry** (backlog
+  idea #31, divider idle so the reciprocal was meant to overlap the
+  reduction+poly chain instead of sitting fully exposed after it): real
+  latency win (83.00→75.00 cyc, -9.6%, reproducible) but a real mixed
+  result on every other axis — throughput regressed (1.798→1.842
+  cyc/elem, +2.4%) and the extra rounding cost real accuracy too (avg
+  ulp 0.0729→0.0757, max 6→7). Not a clean win on either non-latency
+  axis; reverted.
 
 ### log family
 
@@ -946,9 +954,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 30. **exp2m1: refit the Pade directly in x** (absorb ln2 into the
     coefficients) — deletes the `y = x*LN_2` multiply and its rounding
     from the seam-owning branch.
-31. **exp_m1_over_x: trailing `/x` → `* (1.0/x)` issued at entry**
-    (divider idle, division fully overlapped by reduction+poly). Costs
-    one extra rounding — accuracy screen.
 32. **exp_pos_neg: return halves pre-scaled by 0.5 for plain sinh/cosh
     too** (like checked_half already does) — deletes the caller-side
     `0.5*(ep±en)` multiply.
