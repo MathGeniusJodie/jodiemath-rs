@@ -173,6 +173,7 @@ fn main() {
         "rhypot",
         "rsqrt",
         "powf",
+        "powf_pos",
         "powf_unchecked",
         "pown",
         "powf_checked",

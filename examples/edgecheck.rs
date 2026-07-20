@@ -975,6 +975,24 @@ fn main() {
     check("powf(-1,inf)", powf(-1.0, f32::INFINITY), 1.0);
     check("powf(-1,-inf)", powf(-1.0, f32::NEG_INFINITY), 1.0);
     check("powf(-1,nan)", powf(-1.0, f32::NAN), f32::NAN);
+    // powf_pos: x>0.0 (or exactly +0.0) domain (backlog idea #74),
+    // bit-identical to powf throughout it, including every x>=0 special
+    // case above -- except x==-0.0 specifically, documented as a known
+    // gap in its own doc comment (sign not preserved for odd-integer y,
+    // unlike powf's own (-0.0).powf(3.0)==-0.0).
+    check("powf_pos(2,3)", powf_pos(2.0, 3.0), 8.0);
+    check("powf_pos(0,0)", powf_pos(0.0, 0.0), 1.0);
+    check("powf_pos(-0,0)", powf_pos(-0.0, 0.0), 1.0);
+    check("powf_pos(nan,0)", powf_pos(f32::NAN, 0.0), 1.0);
+    check_known_1ulp("powf_pos(-0,3) [-0.0 sign not preserved, see doc comment]", powf_pos(-0.0, 3.0), -0.0);
+    check_known_1ulp("powf_pos(-0,-1) [-0.0 sign not preserved, see doc comment]", powf_pos(-0.0, -1.0), f32::NEG_INFINITY);
+    check("powf_pos(1,inf)", powf_pos(1.0, f32::INFINITY), 1.0);
+    check("powf_pos(1,-inf)", powf_pos(1.0, f32::NEG_INFINITY), 1.0);
+    check("powf_pos(1,nan)", powf_pos(1.0, f32::NAN), 1.0);
+    check("powf_pos(inf,5)", powf_pos(f32::INFINITY, 5.0), f32::INFINITY);
+    check("powf_pos(inf,-5)", powf_pos(f32::INFINITY, -5.0), 0.0);
+    check("powf_pos(2,inf)", powf_pos(2.0, f32::INFINITY), f32::INFINITY);
+    check("powf_pos(0.5,inf)", powf_pos(0.5, f32::INFINITY), 0.0);
     // powf_checked shares powf's special-case handling on top of its
     // double-float-precision magnitude for large |y| -- same edge cases
     // should hold identically, plus a couple more that exercise the

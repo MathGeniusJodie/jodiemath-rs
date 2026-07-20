@@ -2724,6 +2724,50 @@ pub fn powf(x: f32, y: f32) -> f32 {
     powf_sign_combine!(x, y, mag)
 }
 
+/// `powf` restricted to `x > 0.0`, or `x` exactly `+0.0` (contract, not
+/// asserted -- see below for the one value this excludes and why): drops
+/// `powf_sign_combine!`'s entire negative-base tree (`y_int`/`y_odd`/
+/// `parity`/`neg_signed`/`neg_result`/the `x.is_sign_negative()` select/
+/// the `x == -1.0 && y.is_infinite()` case) -- none of it is reachable
+/// once `x` can't be negative, so this keeps only the two overrides that
+/// still apply for any `x >= 0.0`: `y == 0.0 -> 1.0` (the `log_2(x)*0`
+/// route degrades to a `0*inf`/`0*NaN` indeterminate form for
+/// `y = +-inf`/`NaN`, so this can't be derived from the formula) and
+/// `x == 1.0 -> 1.0` (same reasoning, `log_2(1)*y` is `0*y`, degenerate
+/// for `y = +-inf`).
+///
+/// `x == -0.0` is the one `x >= 0.0`-*valued* input this doesn't handle
+/// (despite `-0.0 >= 0.0` being true): `powf(-0.0, y)` preserves `-0.0`'s
+/// sign for odd-integer `y` (`(-0.0).powf(3.0) == -0.0`,
+/// `(-0.0).powf(-1.0) == -inf`), and that sign restoration is exactly
+/// the `y_odd`/`parity` machinery this function exists to skip -- adding
+/// it back just for `-0.0` would cost the same `parity` call on *every*
+/// call this function is meant to avoid, defeating the point. Documented
+/// out rather than silently wrong: `powf_pos(-0.0, y)` gives the
+/// same *magnitude* as `powf` but always with `+0.0`'s sign, not `-0.0`'s
+/// (verified: this is the only real behavioral gap versus `powf` over
+/// `x >= 0.0`, confirmed by a 300M-sample fuzz with `-0.0` itself
+/// excluded and two edgecheck pins documenting the gap directly).
+///
+/// This is deliberately *not* C23 `powr`/IEEE754-2008 `powr`, despite
+/// computing the same thing for finite, non-edge-case inputs: `powr`'s
+/// own special-case table is stricter than `pow`'s (e.g. IEEE754 defines
+/// `powr(1, NaN) = NaN` and `powr(0, 0) = NaN`, both matching the
+/// "totally connected exp(y*log(x))" composition literally, where this
+/// function -- matching `powf`'s own C99 `pow` conventions instead --
+/// gives `1.0` for both, same as `powf` does for `x >= 0`). Named for
+/// what it verifiably does, not for a standard it doesn't fully
+/// implement. Behavior for `x < 0.0` (true negatives, not `-0.0`) is
+/// unspecified (not `NaN`-guaranteed like `powf`'s own domain error --
+/// whatever `log_2(x)`'s own `x <= 0` branch and the two overrides above
+/// happen to produce).
+#[inline(always)]
+pub fn powf_pos(x: f32, y: f32) -> f32 {
+    let mag = exp2_checked(log_2(x) * y);
+    let r = if x == 1.0 { 1.0 } else { mag };
+    if y == 0.0 { 1.0 } else { r }
+}
+
 /// powf without domain/sign checks: valid for `x` positive, normal, and
 /// finite (the same domain [`log_2_unchecked`] requires) and `y != 0.0`.
 /// No handling for negative/zero/denormal/inf/nan `x`, no `y == 0.0`

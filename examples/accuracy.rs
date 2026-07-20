@@ -1080,6 +1080,15 @@ fn main() {
         let s = fuzz2(TWOARG_SAMPLES, pow_domain, |x: f32, y: f32| x.powf(y), pow_u10);
         report("std powf", &s, t0);
     }
+    if run("powf_pos") {
+        // powf_pos's own contract: x >= 0.0 (see its doc comment for the
+        // one excluded value, x == -0.0, negligible density in a random
+        // fuzz). Same exponent-range restriction as powf's own sweep.
+        let pow_domain =
+            |x: f32, y: f32| x >= 0.0 && (-126.0..128.0).contains(&(x.log2() * y));
+        let s = fuzz2(TWOARG_SAMPLES, pow_domain, powf_pos, pow_u10);
+        report("powf_pos", &s, t0);
+    }
     if run("powf_unchecked") {
         // powf_unchecked's own contract: x positive/normal/finite (same as
         // log_2_unchecked), y != 0.0. Narrower than powf's own domain above
