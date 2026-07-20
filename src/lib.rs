@@ -3067,6 +3067,20 @@ pub fn powf_checked_unchecked(x: f32, y: f32) -> f32 {
 macro_rules! remainder_style_combine {
     ($x:expr, $y:expr, $q:expr) => {{
         let normal = fma(-$q, $y, $x);
+        // IEEE754 defines the sign of an exact-zero remainder/fmod
+        // result to match x's sign (also fmod's own C99 "same sign as
+        // x" contract) -- but when x is a nonzero exact multiple of y,
+        // `-q*y` exactly cancels x, and IEEE754 subtraction of two
+        // equal-magnitude values always gives *positive* zero regardless
+        // of the "intended" sign, silently dropping it (same class of
+        // bug as sinf_poly's own -0.0 note, one level further out: here
+        // the cancellation is real, not a q that happens to be zero).
+        // Confirmed against libm (Python's math.remainder/math.fmod, a
+        // real C library, not a hand-derived assumption) for every
+        // exact-multiple case checked. Guarded here instead of only at
+        // the `x == 0.0` case below, which only protects x itself being
+        // zero, not the computed result rounding to zero.
+        let normal = if normal == 0.0 { normal.copysign($x) } else { normal };
         let r = if $x == 0.0 && !normal.is_nan() { $x } else { normal };
         if $y.is_infinite() && $x.is_finite() { $x } else { r }
     }};
@@ -3103,6 +3117,14 @@ pub fn remainder_ieee(x: f32, y: f32) -> f32 {
 /// doc comment describes (the `x == 0.0` sign-preservation guard and the
 /// `y` infinite/`x` finite no-reduction case). Mirrors this crate's other
 /// `_unchecked` cores; see [`remainder`] for the full-domain-safe version.
+///
+/// One more gap than that list implies: also skips [`remainder`]'s
+/// exact-cancellation sign fix (see `remainder_style_combine!`'s own
+/// comment) -- for nonzero `x` an exact multiple of `y`, this returns
+/// `+0.0` unconditionally rather than `x`-signed zero, since the
+/// `-q*y` cancellation loses the sign IEEE754 always drops on an exact
+/// zero result unless something restores it. A nonzero-`x` counterpart
+/// to the `x == 0.0` gap already documented above, not a new mechanism.
 #[inline(always)]
 pub fn remainder_unchecked(x: f32, y: f32) -> f32 {
     let q = (x / y).round();
@@ -3135,6 +3157,11 @@ pub fn remainder_checked(x: f32, y: f32) -> f32 {
     let adj = if (r0 > 0.0) == (y > 0.0) { 1.0 } else { -1.0 };
     let r1 = fma(-adj, y, r0);
     let normal = if r0.abs() > y.abs() * 0.5 { r1 } else { r0 };
+    // Same exact-cancellation sign bug as remainder_style_combine! (see
+    // its own comment): a nonzero x that's an exact multiple of y
+    // exactly cancels to +0.0 regardless of x's sign, silently dropping
+    // it. IEEE754 defines an exact-zero remainder's sign to match x's.
+    let normal = if normal == 0.0 { normal.copysign(x) } else { normal };
     let r = if x == 0.0 && !normal.is_nan() { x } else { normal };
     if y.is_infinite() && x.is_finite() { x } else { r }
 }
@@ -3220,6 +3247,11 @@ pub fn remainder_wide(x: f32, y: f32) -> f32 {
     let r2 = fma(-adj2, ys, r1);
     let normal = if r1.abs() > ys.abs() * 0.5 { r2 } else { r1 };
     let normal = normal * (1.0 / scale);
+    // Same exact-cancellation sign bug as remainder_style_combine! (see
+    // its own comment): a nonzero x that's an exact multiple of y
+    // exactly cancels to +0.0 regardless of x's sign, silently dropping
+    // it. IEEE754 defines an exact-zero remainder's sign to match x's.
+    let normal = if normal == 0.0 { normal.copysign(x) } else { normal };
     let r = if x == 0.0 && !normal.is_nan() { x } else { normal };
     if y.is_infinite() && x.is_finite() { x } else { r }
 }
@@ -3279,6 +3311,14 @@ pub fn fmod_checked(x: f32, y: f32) -> f32 {
     let r1 = fma(-adj, y, r0);
     let needs_fix = wrong_sign || r0.abs() >= y.abs();
     let normal = if needs_fix { r1 } else { r0 };
+    // Same exact-cancellation sign bug as remainder_style_combine! (see
+    // its own comment): a nonzero x that's an exact multiple of y
+    // exactly cancels to +0.0 regardless of x's sign, silently dropping
+    // it. IEEE754/C99 define an exact-zero fmod result's sign to match
+    // x's. `wrong_sign` above deliberately excludes `r0 == 0.0` (it's
+    // testing for a *nonzero* sign disagreement to detect the off-by-
+    // one case), so this exact-zero case reaches here unflagged.
+    let normal = if normal == 0.0 { normal.copysign(x) } else { normal };
     let r = if x == 0.0 && !normal.is_nan() { x } else { normal };
     if y.is_infinite() && x.is_finite() { x } else { r }
 }

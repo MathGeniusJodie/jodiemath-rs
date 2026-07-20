@@ -172,7 +172,17 @@ fn main() {
     let atan2_domain = |x: f32, y: f32| x != 0.0 && !(x.is_infinite() && y.is_infinite());
     ok &= check2("atan2 / atan2_unchecked", N, atan2_domain, atan2, atan2_unchecked);
 
-    let rem_domain = |x: f32, y: f32| x != 0.0 && y.is_finite();
+    // fmod/remainder correct an exact-cancellation sign bug their own
+    // _unchecked twins don't (see remainder_style_combine!'s own
+    // comment): when nonzero x is an exact multiple of y, `-q*y` exactly
+    // cancels x, and IEEE754 exact-cancellation always gives +0.0
+    // regardless of the "should be x's sign" convention -- fmod/
+    // remainder patch this with an explicit copysign, but the
+    // _unchecked twins skip it (same class of omission their own doc
+    // comments already document for x==0.0 itself, just one case wider:
+    // a nonzero x whose *result* happens to land on exactly zero).
+    let exact_multiple = |x: f32, y: f32| (-(x / y).round()).mul_add(y, x) == 0.0;
+    let rem_domain = |x: f32, y: f32| x != 0.0 && y.is_finite() && !exact_multiple(x, y);
     ok &= check2("fmod / fmod_unchecked", N, rem_domain, fmod, fmod_unchecked);
     ok &= check2("remainder / remainder_unchecked", N, rem_domain, remainder, remainder_unchecked);
 

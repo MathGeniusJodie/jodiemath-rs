@@ -1084,6 +1084,20 @@ fn main() {
     // was already correct).
     check("remainder(-0,3)", remainder(-0.0, 3.0), -0.0);
     check("remainder(0,3)", remainder(0.0, 3.0), 0.0);
+    // A second, narrower -0.0 gap survived that fix: unlike the general
+    // case above (which correctly doesn't track x's sign), IEEE754 does
+    // specifically define an *exact-zero* remainder/fmod result's sign
+    // to match x's -- and for nonzero x an exact multiple of y, `-q*y`
+    // exactly cancels x the same way, dropping the sign the same way.
+    // Not a contradiction of the "blanket copysign isn't valid" note
+    // above: this fix only fires when the *computed result* is exactly
+    // zero (`remainder_style_combine!`'s own `if normal == 0.0 {
+    // normal.copysign(x) }`), not for every nonzero x. Confirmed against
+    // libm (Python's math.remainder/math.fmod) before pinning.
+    check("remainder(-6,3)", remainder(-6.0, 3.0), -0.0);
+    check("remainder(-9,3)", remainder(-9.0, 3.0), -0.0);
+    check("remainder(6,3)", remainder(6.0, 3.0), 0.0);
+    check("remainder(6,-3)", remainder(6.0, -3.0), 0.0);
     // remainder(0,0)/remainder(0,nan) used to come out 0 instead of NaN
     // (backlog idea #85's own follow-up, 2026-07-09, found via the same
     // systematic special-case matrix technique that caught atan2's NaN
@@ -1110,6 +1124,10 @@ fn main() {
     // edge cases should hold identically.
     check("remainder_checked(5,3)", remainder_checked(5.0, 3.0), -1.0);
     check("remainder_checked(4,2)", remainder_checked(4.0, 2.0), 0.0);
+    // Exact-cancellation sign fix, same as remainder's own -- see its pin
+    // comment above for the mechanism.
+    check("remainder_checked(-6,3)", remainder_checked(-6.0, 3.0), -0.0);
+    check("remainder_checked(6,3)", remainder_checked(6.0, 3.0), 0.0);
     check("remainder_checked(-0,3)", remainder_checked(-0.0, 3.0), -0.0);
     check("remainder_checked(0,3)", remainder_checked(0.0, 3.0), 0.0);
     check("remainder_checked(0,0)", remainder_checked(0.0, 0.0), f32::NAN);
@@ -1129,6 +1147,10 @@ fn main() {
     // remainder; at an exact tie (x/y = 2.5, an odd/even boundary) it
     // must disagree with remainder's own ties-away answer.
     check("remainder_ieee(4,2)", remainder_ieee(4.0, 2.0), 0.0);
+    // Exact-cancellation sign fix, same as remainder's own -- see its pin
+    // comment above for the mechanism.
+    check("remainder_ieee(-6,3)", remainder_ieee(-6.0, 3.0), -0.0);
+    check("remainder_ieee(6,3)", remainder_ieee(6.0, 3.0), 0.0);
     check("remainder_ieee(-0,3)", remainder_ieee(-0.0, 3.0), -0.0);
     check("remainder_ieee(0,3)", remainder_ieee(0.0, 3.0), 0.0);
     check("remainder_ieee(0,0)", remainder_ieee(0.0, 0.0), f32::NAN);
@@ -1149,6 +1171,10 @@ fn main() {
     // near-tie behavior, still holding in its own already-correct domain.
     check("remainder_wide(5,3)", remainder_wide(5.0, 3.0), -1.0);
     check("remainder_wide(4,2)", remainder_wide(4.0, 2.0), 0.0);
+    // Exact-cancellation sign fix, same as remainder's own -- see its pin
+    // comment above for the mechanism.
+    check("remainder_wide(-6,3)", remainder_wide(-6.0, 3.0), -0.0);
+    check("remainder_wide(6,3)", remainder_wide(6.0, 3.0), 0.0);
     check("remainder_wide(-0,3)", remainder_wide(-0.0, 3.0), -0.0);
     check("remainder_wide(0,3)", remainder_wide(0.0, 3.0), 0.0);
     check("remainder_wide(0,0)", remainder_wide(0.0, 0.0), f32::NAN);
@@ -1203,6 +1229,15 @@ fn main() {
     check("fmod(-5,-3)", fmod(-5.0, -3.0), -5.0f32 % -3.0);
     check("fmod(0,3)", fmod(0.0, 3.0), 0.0);
     check("fmod(-0,3)", fmod(-0.0, 3.0), -0.0);
+    // Exact-multiple case: `%`'s own reference already gets this right
+    // (-0.0), but fmod itself used to drop the sign via IEEE754 exact
+    // cancellation (see remainder_style_combine!'s own comment) -- this
+    // is the case that pin coverage above (5,3 not being an exact
+    // multiple of 3) never exercised.
+    check("fmod(-6,3)", fmod(-6.0, 3.0), -6.0f32 % 3.0);
+    check("fmod(-9,3)", fmod(-9.0, 3.0), -9.0f32 % 3.0);
+    check("fmod(6,3)", fmod(6.0, 3.0), 6.0f32 % 3.0);
+    check("fmod(6,-3)", fmod(6.0, -3.0), 6.0f32 % -3.0);
     check("fmod(3,inf)", fmod(3.0, f32::INFINITY), 3.0);
     check("fmod(-3,inf)", fmod(-3.0, f32::INFINITY), -3.0);
     check("fmod(inf,3)", fmod(f32::INFINITY, 3.0), f32::NAN);
@@ -1223,6 +1258,10 @@ fn main() {
     check("fmod_checked(-5,-3)", fmod_checked(-5.0, -3.0), -5.0f32 % -3.0);
     check("fmod_checked(0,3)", fmod_checked(0.0, 3.0), 0.0);
     check("fmod_checked(-0,3)", fmod_checked(-0.0, 3.0), -0.0);
+    // Exact-cancellation sign fix, same as fmod's own -- see its pin
+    // comment above for the mechanism.
+    check("fmod_checked(-6,3)", fmod_checked(-6.0, 3.0), -6.0f32 % 3.0);
+    check("fmod_checked(6,3)", fmod_checked(6.0, 3.0), 6.0f32 % 3.0);
     check("fmod_checked(3,inf)", fmod_checked(3.0, f32::INFINITY), 3.0);
     check("fmod_checked(-3,inf)", fmod_checked(-3.0, f32::INFINITY), -3.0);
     check("fmod_checked(inf,3)", fmod_checked(f32::INFINITY, 3.0), f32::NAN);
