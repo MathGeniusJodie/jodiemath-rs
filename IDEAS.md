@@ -276,6 +276,18 @@ what shipped.
   pure cost. Reverted. Same mechanism, different site, opposite verdict
   — a reminder that "shown to win elsewhere" still needs its own
   measurement, not just "same technique."
+- **log1p/log2p1: two_sum the `ln(u) + corr` combine** (idea #34):
+  rejected on inspection, same proof as the softplus/logaddexp two_sum
+  entry (idea #40, §exp/exp2 family above) — `two_sum(a,b)`'s `s` component is
+  bit-identical to plain `a+b` by construction, and the idea never uses
+  the auxiliary error term for anything, so swapping the final
+  `ln(u)+corr` for `two_sum(ln(u), corr).0` cannot change a single output
+  bit. Salvaging the idea for real would need `ln(u)` itself computed at
+  more than single-f32 precision (a genuine double-float `ln`, the "ship
+  as `_accurate` twins" half of the idea's own framing) so there's an
+  actual low-order error term worth preserving through the combine —
+  that's a much bigger undertaking than a one-line `two_sum` swap, not
+  attempted here.
 - **log_2 denormal path: fold ×2^24 rescale into the wrapping_sub magic**:
   killed on paper, not just measurement — the exponent bit-trick relies on
   every input being IEEE754 *normal* (fixed relationship between bit
@@ -1193,9 +1205,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     `0.5*(ep±en)` multiply.
 33. **Public `sinhcosh` pair function**: exp_pos_neg already computes
     both — callers needing both pay one reduction instead of two.
-34. **log1p/log2p1: two_sum the `ln(u) + corr` combine** (targets log1p
-    max 4, log2p1 max 3); ship as `_accurate` twins if the mca cost is
-    real.
 36. **rlibm-style discrete rounding-interval LP extended to ln/log10**
     (same 2^23 reduced-input multiplicity as the existing log_2 entry).
 37. **log_family_wrapper: cheaper special-case classify** — derive both
