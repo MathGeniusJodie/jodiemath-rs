@@ -1089,9 +1089,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     select, fully fma-based) — sampling/ML staple, vectorizes cleanly.
 67. **norm_cdf/norm_pdf pair** (Φ via 0.5·erfc(−x/√2)) — thin
     composites for API breadth.
-68. **erfcx negative branch: x²·LOG2_E exponent** has the same rounding
-    hole as erfc's — include in tier #62's scope.
-
 #### hyperbolics / activations
 
 69. **atanh restructure**: small-|x| odd-poly branch (|x|<0.25, ~5 odd
