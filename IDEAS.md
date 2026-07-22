@@ -1552,8 +1552,8 @@ an idea revisits a rejection, the differing mechanism is stated.
 6. **Joint threshold+coefficient coordinate descent** in tune.rs
    (crossover as a continuous search parameter) — automates the asin
    fix-5 lesson instead of retuning thresholds against frozen polys.
-7. **Seam retunes not yet done**: softplus/logaddexp's 87.0 cutoff,
-   asinh/acosh's 2048 rescale threshold. (The 5-function crossover audit
+7. **Seam retunes not yet done**: asinh/acosh's 2048 rescale threshold.
+   (The 5-function crossover audit
    covered sinh/tanh/expm1/asin/erf only. `exp2m1`'s own 0.5 -- also
    originally listed here -- shipped as a real win, see lib.rs/git log:
    0.5→0.65, avg ulp 0.0769→0.0766, max unchanged at 4, zero mca cost.
@@ -1579,7 +1579,22 @@ an idea revisits a rejection, the differing mechanism is stated.
    (0.3/0.4: avg 0.0429→0.0439/0.0431, max 5→7; 0.6/0.7: avg
    0.0429→0.0509/0.1019, max 5→**28**/**124**, the direct branch's
    cancellation blowing up sharply as the threshold shrinks below
-   `sinh_small`'s own safe range). No headroom, no mca work needed.)
+   `sinh_small`'s own safe range). No headroom, no mca work needed.
+   `softplus`/`logaddexp`'s own `87.0` is a different *kind* of seam,
+   not a genuine crossover between two competing approximations like the
+   others -- it's a "the true correction term has become negligible"
+   cutoff, and the accuracy harness's own `softplus_domain` explicitly
+   restricts testing to `|x|<80` specifically *because* comparing ulp
+   right at `87` is documented as a "sub-denormal-scale difference
+   reporting as millions of ulp" artifact, not a real error (same class
+   as cospi's near-zero ulp artifact). Any retuning of `87.0` within a
+   reasonable range wouldn't be visible in the harness's own `|x|<80`
+   domain at all (the correction is already in its normal-computed
+   regime well below either candidate cutoff), and probing *into* the
+   seam itself would only remeasure the same known-meaningless artifact,
+   not a real accuracy question. Not actionable via this crate's own
+   accuracy methodology -- no measurement to optimize against, unlike
+   the other four seams in this entry.)
 8. **atan_poly joint numerator+denominator nonlinear refit** (scipy
    least_squares on the true rational) — only separate num-only/
    denom-only LPs were tried; the max-4 worst point was diagnosed as
