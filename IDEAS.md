@@ -1552,13 +1552,27 @@ an idea revisits a rejection, the differing mechanism is stated.
 6. **Joint threshold+coefficient coordinate descent** in tune.rs
    (crossover as a continuous search parameter) — automates the asin
    fix-5 lesson instead of retuning thresholds against frozen polys.
-7. **Seam retunes not yet done**: exp_m1_over_x's 0.5, sinh_checked/
-   cosh_checked's 0.5 (post-checked-half construction), softplus/
-   logaddexp's 87.0 cutoff, asinh/acosh's 2048 rescale threshold. (The
-   5-function crossover audit covered sinh/tanh/expm1/asin/erf only.
-   `exp2m1`'s own 0.5 -- also originally listed here -- shipped as a real
-   win, see lib.rs/git log: 0.5→0.65, avg ulp 0.0769→0.0766, max
-   unchanged at 4, zero mca cost.)
+7. **Seam retunes not yet done**: sinh_checked/cosh_checked's 0.5
+   (post-checked-half construction), softplus/logaddexp's 87.0 cutoff,
+   asinh/acosh's 2048 rescale threshold. (The 5-function crossover audit
+   covered sinh/tanh/expm1/asin/erf only. `exp2m1`'s own 0.5 -- also
+   originally listed here -- shipped as a real win, see lib.rs/git log:
+   0.5→0.65, avg ulp 0.0769→0.0766, max unchanged at 4, zero mca cost.
+   `exp_m1_over_x`'s own 0.5 -- checked directly against the real
+   exhaustive sweep, same method -- found near-optimal, unlike
+   `exp2m1`'s: 0.3/0.4/0.6/0.7 all clearly worse (avg ulp up to
+   0.0729→0.0850, max up to 19), confirming this seam has essentially no
+   headroom the way the other 5 audited functions didn't either. A
+   narrow window (0.52-0.55) *did* find a genuinely reproducible,
+   exhaustive tiny avg improvement (0.0729→0.0728, max unchanged at 6)
+   but real mca showed it isn't free here (unlike `exp2m1`'s identical-
+   mechanism change): throughput 1.798→1.822 cyc/elem (+1.3%,
+   reproducible at both 0.52 and 0.55) -- some functions' branchless
+   select apparently *does* cost more to move off its exact literal even
+   though the op count is unchanged, so "same op count" isn't a
+   guarantee of zero mca cost the way it was for `exp2m1`. Not adopted:
+   a ~0.14% avg win isn't worth a real, if small, throughput cost. `0.5`
+   stays.)
 8. **atan_poly joint numerator+denominator nonlinear refit** (scipy
    least_squares on the true rational) — only separate num-only/
    denom-only LPs were tried; the max-4 worst point was diagnosed as
