@@ -795,6 +795,15 @@ fn main() {
     check("atan2_unchecked(inf,1)", atan2_unchecked(f32::INFINITY, 1.0), atan2(f32::INFINITY, 1.0));
     check("tan(0)", tan(0.0), 0.0);
 
+    // tan_checked (idea #48): plain sin_checked(x)/cos_checked(x)
+    // composition, mirroring tanpi/tand's own pattern.
+    check("tan_checked(0)", tan_checked(0.0), 0.0);
+    check("tan_checked(-0)", tan_checked(-0.0), -0.0);
+    check("tan_checked(nan)", tan_checked(f32::NAN), f32::NAN);
+    check("tan_checked(inf)", tan_checked(f32::INFINITY), f32::NAN);
+    check("tan_checked(-inf)", tan_checked(f32::NEG_INFINITY), f32::NAN);
+    check_finite("tan_checked(1e15)", tan_checked(1.0e15));
+
     check("erf(0)", erf(0.0), 0.0);
     // erf_poly used to be evaluated unbounded: its own unboundedness (not
     // an exp2 domain issue) made erf(50)/(100)/(+-inf) wrong (see doc

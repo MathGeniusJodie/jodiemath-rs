@@ -199,6 +199,7 @@ fn main() {
     bench!("std atan2", move |x: f32| x.atan2(atan2_x2));
     bench!("atan2_unchecked", move |x: f32| atan2_unchecked(x, atan2_x2));
     bench!("tan", tan);
+    bench!("tan_checked", tan_checked);
     bench!("std tan", |x: f32| x.tan());
     bench!("erf", erf);
     bench!("erfc", erfc);

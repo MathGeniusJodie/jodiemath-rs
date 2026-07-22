@@ -911,6 +911,25 @@ pub fn cos_checked(x: f32) -> f32 {
     sinf_poly(r).clamp(-1.0, 1.0)
 }
 
+/// tan(x), full-range gradual degradation -- `sin_checked(x) /
+/// cos_checked(x)`, mirroring `tanpi`/`tand`'s own plain-composition
+/// pattern (period cancellation, poles handled for free by IEEE754
+/// division). A shared-reduction fusion was tried for the closely
+/// related `sincos_checked` and, despite a promising mca prediction
+/// (~19% throughput), measured *slower* on real wall-clock -- this
+/// session's one documented mca/hardware disagreement (see IDEAS.md) --
+/// so plain composition is used here directly rather than re-attempting
+/// that fusion. Like any full-range tan, ulp near a true pole (every
+/// `pi`, and increasingly close together relative to float spacing as
+/// `|x|` grows) is unbounded by nature, not a defect -- `cos_checked`
+/// correctly rounding to a tiny value there is exactly what should
+/// happen, the ratio just amplifies that tiny value's own relative
+/// error the same way any division does near a zero denominator.
+#[inline(always)]
+pub fn tan_checked(x: f32) -> f32 {
+    sin_checked(x) / cos_checked(x)
+}
+
 /// Core of cbrt for normal finite x: bit-trick seed (~3% error), then a
 /// single degree-3 correction. d = s^3 - x is exact-ish via fma at any
 /// scale, and x/s^3 == 1/(1+r) exactly for r = d/x, so

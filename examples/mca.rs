@@ -170,6 +170,7 @@ fn main() {
         "atan_latency",
         "atan2",
         "tan",
+        "tan_checked",
         "erf",
         "erfc",
         "erfc_accurate",

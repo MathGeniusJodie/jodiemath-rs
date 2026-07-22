@@ -1769,9 +1769,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     similar op count. Concrete design for the backlog's "intermediate
     tier" (distinct from the rejected *word-dropping* 3-word/3.5-word
     attempts, which reduced precision; this adds none of that risk).
-48. **tan_checked**: sin_checked/cos_checked composition (the
-    shared-reduction fusion already measured slower wall-clock; plain
-    composition mirrors tanpi/tand).
 49. **sinf_poly real-chain refit** (#1's method) scoring sin_checked +
     cos_checked's actual reductions jointly — the rejected LPs used
     continuous grids that mis-weighted the caller split.

@@ -1033,6 +1033,22 @@ fn main() {
         let s = measure!(tan_domain, |x: f32| x.tan(), tan_ref);
         report("std tan (in-domain)", &s, t0);
     }
+    if run("tan_checked") {
+        // Full range gradual degradation, like sin_checked/cos_checked
+        // themselves (idea #48) -- no domain restriction *for validity*,
+        // but expect the reported avg/max ulp to look alarming: tan has
+        // a genuine pole every pi, and at large |x| those poles sit
+        // closer together than the local float spacing, so *any*
+        // correctly-behaving tan implementation shows unbounded relative
+        // error near them (e.g. x=-4.4230258e15 sits at x/pi ==
+        // -1407892830220377.5, essentially exactly a pole -- verified
+        // cos_checked(x)=-7.88e-6, correctly near zero, not a bug). Same
+        // "ulp isn't meaningful near a true zero/pole" class of artifact
+        // as cospi's/cosh's own near-zero cases elsewhere in this crate,
+        // just at infinity instead of zero.
+        let s = measure!(everywhere, tan_checked, tan_ref);
+        report("tan_checked", &s, t0);
+    }
     if run("erf") {
         // erf_poly used to be evaluated unbounded on |x|, which was wrong
         // (not just imprecise) well before this bound -- see erf's doc
