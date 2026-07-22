@@ -18,6 +18,11 @@ include!("support/mca_common.rs");
 const MCA_ITERATIONS: u32 = 100;
 
 fn main() {
+    // Both this process and the `cargo rustc`/`llvm-mca` children it spawns
+    // below inherit this niceness (nice values survive fork/exec) -- llvm-mca
+    // itself is the real CPU/memory hog here, easily pegging a full core for
+    // over a minute on this crate's larger assembly files.
+    nice_self();
     // Unlike quickbench, this used to silently ignore any argument (no
     // env::args() call at all) -- `./mca powf` looked like it filtered but
     // actually always printed the full ~52-row table. Real filter support:

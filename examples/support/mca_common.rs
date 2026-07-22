@@ -15,3 +15,22 @@ pub const ARR_LEN: usize = 16;
 pub fn mix(y: f32) -> f32 {
     f32::from_bits((y.to_bits() & 0x007f_ffff) | 0x4000_0000)
 }
+
+/// Lowers this process's scheduling priority so a benchmark run doesn't
+/// compete with foreground work on whatever machine it's run on -- mirrors
+/// accuracy.rs's own `nice_self`. Nice values are inherited across
+/// fork/exec, so calling this before mca.rs spawns `cargo rustc`/`llvm-mca`
+/// nices those children too, not just mca.rs's own (otherwise idle) process
+/// -- llvm-mca itself is the real CPU/memory hog in that pipeline.
+#[cfg(unix)]
+#[allow(dead_code)] // mca_target.rs includes this file but never runs standalone
+pub fn nice_self() {
+    // SAFETY: setpriority(PRIO_PROCESS, 0, _) only ever affects the calling
+    // process's own niceness; failure just leaves the default priority.
+    if unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, 19) } != 0 {
+        eprintln!("couldn't lower process priority (continuing anyway)");
+    }
+}
+#[cfg(not(unix))]
+#[allow(dead_code)]
+pub fn nice_self() {}

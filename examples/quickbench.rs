@@ -82,6 +82,9 @@ fn bench_throughput(name: &str, f: impl Fn(f32) -> f32) {
 }
 
 fn main() {
+    // Real wall-clock benchmarking, same contention concern as accuracy.rs's
+    // own nice_self -- lower priority before any real work runs.
+    nice_self();
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(|s| s.as_str()) == Some("latencyn") {
         // idea #78 spot-check: single-chain vs 4-independent-chain latency
