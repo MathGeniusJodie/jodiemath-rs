@@ -847,6 +847,15 @@ fn main() {
     check("atan2(inf,-inf)", atan2(f32::INFINITY, f32::NEG_INFINITY), 3.0 * std::f32::consts::FRAC_PI_4);
     check("atan2(-inf,inf)", atan2(f32::NEG_INFINITY, f32::INFINITY), -std::f32::consts::FRAC_PI_4);
     check("atan2(-inf,-inf)", atan2(f32::NEG_INFINITY, f32::NEG_INFINITY), -3.0 * std::f32::consts::FRAC_PI_4);
+
+    // atan2_pos: [0, 2*pi) fold (backlog idea #143).
+    check("atan2_pos(0,1)", atan2_pos(0.0, 1.0), 0.0);
+    check("atan2_pos(1,0)", atan2_pos(1.0, 0.0), std::f32::consts::FRAC_PI_2);
+    check("atan2_pos(0,-1)", atan2_pos(0.0, -1.0), std::f32::consts::PI);
+    check("atan2_pos(-1,0)", atan2_pos(-1.0, 0.0), 3.0 * std::f32::consts::FRAC_PI_2);
+    check("atan2_pos(-1,-1)", atan2_pos(-1.0, -1.0), 5.0 * std::f32::consts::FRAC_PI_4);
+    check("atan2_pos(nan,1)", atan2_pos(f32::NAN, 1.0), f32::NAN);
+    check_range("atan2_pos(1,1)", atan2_pos(1.0, 1.0), 0.0, std::f32::consts::TAU);
     // atan2(NaN, 0.0)/atan2(NaN, -0.0) used to come out +-FRAC_PI_2 instead
     // of NaN (backlog idea #85, found building a systematic C99
     // special-case matrix against std): the x==0 branch bypasses

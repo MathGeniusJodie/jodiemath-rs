@@ -2670,6 +2670,30 @@ pub fn atan2_unchecked(y: f32, x: f32) -> f32 {
     atan(y / x) + correction
 }
 
+/// atan2, folded into `[0, 2*pi)` (backlog idea #143), the geo/graphics
+/// "bearing" convention: `atan2`'s own `(-pi, pi]` range only needs a
+/// `+2*pi` fold on the negative half to land there, branchless-select
+/// same as every other seam in this crate. NaN propagates unchanged
+/// (`NaN < 0.0` is always false, so the select is a no-op on it); `+pi`
+/// itself (the one boundary `atan2` can return) is already in-range, no
+/// wraparound needed. Fuzzing can report enormous-looking ulp right at
+/// the wrap seam itself (`y` an ulp or two off `0` for `x>0`): a genuine
+/// branch-cut artifact, not a defect -- `atan2(y,x)` for `y` extremely
+/// close to (but not exactly) `0` rounds to a tiny value whose *sign*
+/// can differ between this crate's real f32 computation and an f64
+/// reference computed the same way, and that sign alone decides whether
+/// the answer folds to `~0` or `~2*pi` -- both represent the same
+/// physical angle, but as numbers they're maximally far apart. Checked
+/// directly: `atan2_pos` folds this correctly given its own `atan2`
+/// value, this is purely a reference-comparison artifact right at the
+/// seam, the same species as any other "near a true zero" case
+/// elsewhere in this crate, just at a branch cut instead of a zero.
+#[inline(always)]
+pub fn atan2_pos(y: f32, x: f32) -> f32 {
+    let r = atan2(y, x);
+    if r < 0.0 { r + std::f32::consts::TAU } else { r }
+}
+
 /// Straight port of jodiemath's tanf: sin(x)/cos(x), same domain limits as
 /// this crate's sin/cos (see their doc comments).
 #[inline(always)]

@@ -177,6 +177,7 @@ fn main() {
         "atan_latency",
         "atan_bounded",
         "atan2",
+        "atan2_pos",
         "tan",
         "tan_checked",
         "erf",

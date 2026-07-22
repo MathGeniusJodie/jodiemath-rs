@@ -1950,8 +1950,6 @@ an idea revisits a rejection, the differing mechanism is stated.
      rational machinery.
 139. **erfc_inv / probit (normal quantile)** alongside #66's erfinv —
      completes the sampling stack.
-143. **atan2_pos: [0, 2π) variant** via a branchless +2π fold —
-     geo/graphics convention ask.
 
 #### Batch 2: hyperbolics / ML / graphics
 
