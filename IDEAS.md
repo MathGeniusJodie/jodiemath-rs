@@ -2108,3 +2108,14 @@ core::simd tier exists; each replaces multi-op scalar idioms)
      coordinate descent (LP-seeded) on every poly and files a PR when a
      real fuzz-verified improvement appears — automates the crate's
      single most-repeated manual win pattern.
+201. **expm1_narrow/exp_m1_over_x_narrow/sinh_narrow/cosh_narrow**:
+     `exp_narrow`'s own mechanism (see lib.rs/git log, ideas #23/#112)
+     generalizes directly -- `expm1`/`exp_m1_over_x`'s direct branch and
+     `sinh`/`cosh`'s `exp_pos_neg` core all inherit `exp`'s exact same
+     `[-87.3,88.7)`-ish domain limit and all pay for `exp2_field_split`
+     for the same reason `exp` used to (round can push `k` to 128 right
+     at the edge) -- a narrow single-field tier should work identically
+     for each, same boundary constants where the reduction is
+     `k=round(x*log2e)`-based. Noted, not implemented this session
+     (discovered as a generalization while shipping `exp_narrow`, not
+     itself a screened backlog item).
