@@ -977,6 +977,21 @@ fn main() {
         report("tanh", &s, t0);
         let s = measure!(tanh_domain, |x: f32| x.tanh(), tanh_u35);
         report("std tanh", &s, t0);
+        // tanh_grad (backlog idea #150): `1 - tanh_u35(v)^2` in f64 was
+        // tried first and rejected as a *reference* bug, not a
+        // tanh_grad bug -- tanh_u35 itself correctly rounds to exactly
+        // 1.0 in f64 well before this domain's edge, so the subtraction
+        // silently gives a wrong 0.0 reference over a wide band (same
+        // "pushed out to a larger |x| in f64" trap as sigmoid_ref's own
+        // doc comment below). The stable `4q/(1+q)^2` form (`q =
+        // exp(-2|x|)`, tanh_grad's own doc comment derives it) has no
+        // such cancellation at any scale.
+        let tanh_grad_ref = |v: F64xN| {
+            let q = exp_u10(v.abs() * F64xN::splat(-2.0));
+            F64xN::splat(4.0) * q / ((F64xN::splat(1.0) + q) * (F64xN::splat(1.0) + q))
+        };
+        let s = measure!(tanh_domain, tanh_grad, tanh_grad_ref);
+        report("tanh_grad", &s, t0);
     }
     if run("sigmoid") {
         // Domain matches sigmoid's own exp(-x) clamp (see its doc
@@ -997,6 +1012,19 @@ fn main() {
         };
         let s = measure!(sigmoid_domain, sigmoid, sigmoid_ref);
         report("sigmoid", &s, t0);
+        // sigmoid_grad (backlog idea #150): `sigmoid_ref(v)*(1-sigmoid_ref(v))`
+        // was tried first and rejected as a *reference* bug (same "pushed
+        // out to a larger |x| in f64" trap as sigmoid_ref's own doc
+        // comment above) -- sigmoid_ref itself rounds to exactly 1.0 in
+        // f64 well before this domain's edge, silently giving a wrong 0.0
+        // reference. The stable `e/(1+e)^2` form (sigmoid_grad's own doc
+        // comment derives it) has no such cancellation.
+        let sigmoid_grad_ref = |v: F64xN| {
+            let e = exp_u10(-v);
+            e / ((F64xN::splat(1.0) + e) * (F64xN::splat(1.0) + e))
+        };
+        let s = measure!(sigmoid_domain, sigmoid_grad, sigmoid_grad_ref);
+        report("sigmoid_grad", &s, t0);
     }
     if run("softplus") {
         // Restricted to |x|<80: softplus's own correction-term cutoff

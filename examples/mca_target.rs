@@ -296,8 +296,14 @@ throughput_fn!(thr_coshm1, "coshm1_throughput", coshm1);
 latency_fn!(lat_tanh, "tanh_latency", tanh);
 throughput_fn!(thr_tanh, "tanh_throughput", tanh);
 
+latency_fn!(lat_tanh_grad, "tanh_grad_latency", tanh_grad);
+throughput_fn!(thr_tanh_grad, "tanh_grad_throughput", tanh_grad);
+
 latency_fn!(lat_sigmoid, "sigmoid_latency", sigmoid);
 throughput_fn!(thr_sigmoid, "sigmoid_throughput", sigmoid);
+
+latency_fn!(lat_sigmoid_grad, "sigmoid_grad_latency", sigmoid_grad);
+throughput_fn!(thr_sigmoid_grad, "sigmoid_grad_throughput", sigmoid_grad);
 
 latency_fn!(lat_softplus, "softplus_latency", softplus);
 throughput_fn!(thr_softplus, "softplus_throughput", softplus);
@@ -729,7 +735,9 @@ fn main() {
         lat_cosh_checked, thr_cosh_checked;
         lat_coshm1, thr_coshm1;
         lat_tanh, thr_tanh;
+        lat_tanh_grad, thr_tanh_grad;
         lat_sigmoid, thr_sigmoid;
+        lat_sigmoid_grad, thr_sigmoid_grad;
         lat_softplus, thr_softplus;
         lat_logsigmoid, thr_logsigmoid;
         lat_logaddexp, thr_logaddexp;

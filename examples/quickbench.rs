@@ -185,7 +185,9 @@ fn main() {
     bench!("coshm1", coshm1);
     bench!("tanh", tanh);
     bench!("std tanh", |x: f32| x.tanh());
+    bench!("tanh_grad", tanh_grad);
     bench!("sigmoid", sigmoid);
+    bench!("sigmoid_grad", sigmoid_grad);
     bench!("softplus", softplus);
     bench!("logsigmoid", logsigmoid);
     bench!("logaddexp", |x: f32| logaddexp(x, 0.0));

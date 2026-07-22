@@ -2026,6 +2026,32 @@ pub fn tanh(x: f32) -> f32 {
     e / (e + 2.0)
 }
 
+/// tanh'(x) = 1 - tanh(x)^2 (backlog idea #150), the gradient ML
+/// backprop through a tanh activation needs. The obvious `1.0 -
+/// tanh(x)*tanh(x)` composite was tried first and rejected as a real bug
+/// (found by exhaustive fuzzing, not inspection): `tanh(x)` correctly
+/// rounds to exactly `1.0f32` once `|x|` exceeds roughly `8.66` (`1 -
+/// tanh(x)^2`'s true value there, `~2.5e-8`, is smaller than a whole ulp
+/// of `tanh`'s own result near `1.0`, `~1.19e-7`), so the subtraction
+/// cancels to exactly `0.0` for a wide band of `x` where the true
+/// gradient, while small, is still many orders of magnitude away from
+/// underflow -- max ulp in the billions, not a benign "near a true zero"
+/// artifact.
+///
+/// Fixed with the standard stable form instead: `1 - tanh(x)^2 =
+/// 4q/(1+q)^2` where `q = exp(-2|x|)` (derived from `tanh(x) =
+/// (1-q)/(1+q)` for `x>=0`; squaring removes the sign, so using `|x|`
+/// is exact, not an approximation, and this needs no clamp at all since
+/// `-2|x| <= 0` always keeps `exp_checked`'s argument in its own
+/// well-behaved, never-overflowing range). No cancellation anywhere: `q`
+/// itself is the actual small quantity being tracked, never subtracted
+/// from a same-magnitude value the way `1 - tanh(x)^2` is.
+#[inline(always)]
+pub fn tanh_grad(x: f32) -> f32 {
+    let q = exp_checked(-2.0 * x.abs());
+    4.0 * q / ((1.0 + q) * (1.0 + q))
+}
+
 /// logistic sigmoid, `1/(1+exp(-x))`, computed directly. The
 /// algebraically-exact identity `sigmoid(x) = 0.5 + 0.5*tanh(x/2)` was
 /// tried and rejected as a real bug: around `x = -17.3`, `tanh(x/2)`
@@ -2080,6 +2106,32 @@ pub fn sigmoid(x: f32) -> f32 {
     let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
     let e = p * exp2int;
     1.0 / (1.0 + e)
+}
+
+/// sigmoid'(x) = sigmoid(x) * (1 - sigmoid(x)) (backlog idea #150), the
+/// gradient ML backprop through a sigmoid activation needs. Same class of
+/// real cancellation bug as `tanh_grad`'s own doc comment, found the same
+/// way: `sigmoid(x)` correctly rounds to exactly `1.0f32` once `x`
+/// exceeds roughly `16.6`, so `1.0 - sigmoid(x)` (the true gradient's own
+/// dominant factor there) cancels to exactly `0.0` -- max ulp in the
+/// hundreds of millions, not underflow.
+///
+/// Fixed with `sigmoid(x)*(1-sigmoid(x)) = e/(1+e)^2`, `e = exp(-x)` --
+/// but naively using `e = exp_checked(-x)` directly traded that bug for a
+/// different one: for very negative `x`, `e` grows huge (not just up to
+/// `sigmoid`'s own saturation point but arbitrarily large), and `(1+e)^2`
+/// overflows to `inf` while `e` is still finite, silently giving `0.0`
+/// for inputs whose true answer (e.g. `x=-44.36`, true value `~5.4e-20`)
+/// is nowhere near underflow -- a real loss, not `atanh`'s "near a true
+/// zero" class of benign artifact. Fixed like `tanh_grad`: this is an
+/// even function (`sigmoid(-x)*(1-sigmoid(-x)) == sigmoid(x)*(1-
+/// sigmoid(x))`, swap `s -> 1-s`), so folding onto `|x|` keeps `e` always
+/// in `(0,1]`, never large enough for the square to overflow, no branch
+/// needed at all.
+#[inline(always)]
+pub fn sigmoid_grad(x: f32) -> f32 {
+    let e = exp_checked(-x.abs());
+    e / ((1.0 + e) * (1.0 + e))
 }
 
 /// `log1p(e)` specialized for callers whose own domain already

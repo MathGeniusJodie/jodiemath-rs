@@ -1958,10 +1958,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 148. **Softmax / logsumexp / normalize slice reductions** (max-pass +
      exp-pass + sum + scale in one fused traversal) — slice-tier
      flagship, plus a rotate2d(sincos) demo kernel.
-150. **sigmoid_grad / tanh_grad fused pairs** (s·(1−s) reusing the
-     already-computed e) — screen whether fusion beats the caller's own
-     two ops before building.
-
 #### Batch 2: powf / pown / remainder
 
 154. **Const-arg slice family generalization**: const-y remainder

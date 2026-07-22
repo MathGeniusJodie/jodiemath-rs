@@ -624,6 +624,25 @@ fn main() {
     check("tanh(-inf)", tanh(f32::NEG_INFINITY), -1.0);
     check("tanh(nan)", tanh(f32::NAN), f32::NAN);
 
+    // tanh_grad (backlog idea #150): the naive 1-tanh(x)^2 composite was
+    // rejected as a real cancellation bug (see its own doc comment) --
+    // these pins in particular exercise the |x|~8.66 region and the
+    // large-|x| extremes where that bug showed up.
+    check("tanh_grad(0)", tanh_grad(0.0), 1.0);
+    check("tanh_grad(-0)", tanh_grad(-0.0), 1.0);
+    // True value here is a legitimate tiny denormal (~4*exp(-100),
+    // 1.49e-43), not exactly 0.0 -- this fix's whole point is computing
+    // that correctly instead of prematurely saturating, so pin the real
+    // (denormal) output, not a rounder-looking but wrong 0.0.
+    check("tanh_grad(50)", tanh_grad(50.0), f32::from_bits(0x0000006c));
+    check("tanh_grad(-50)", tanh_grad(-50.0), f32::from_bits(0x0000006c));
+    check("tanh_grad(f32::MAX)", tanh_grad(f32::MAX), 0.0);
+    check("tanh_grad(-f32::MAX)", tanh_grad(-f32::MAX), 0.0);
+    check("tanh_grad(inf)", tanh_grad(f32::INFINITY), 0.0);
+    check("tanh_grad(-inf)", tanh_grad(f32::NEG_INFINITY), 0.0);
+    check("tanh_grad(8.66)==tanh_grad(-8.66)", tanh_grad(8.66), tanh_grad(-8.66));
+    check("tanh_grad(nan)", tanh_grad(f32::NAN), f32::NAN);
+
     check("sigmoid(0)", sigmoid(0.0), 0.5);
     check("sigmoid(-0)", sigmoid(-0.0), 0.5);
     // Regression pin for the cancellation bug found while implementing this
@@ -651,6 +670,23 @@ fn main() {
     // boundary itself.
     check("sigmoid(-88)", sigmoid(-88.0), 6.054601e-39);
     check("sigmoid(nan)", sigmoid(f32::NAN), f32::NAN);
+
+    // sigmoid_grad (backlog idea #150): the naive sigmoid(x)*(1-sigmoid(x))
+    // composite was rejected as a real cancellation bug, and a first fix
+    // attempt (exp_checked(-x)/(1+exp_checked(-x))^2, no |x| fold) traded
+    // it for a different real bug (overflow in the square for very
+    // negative x) -- see its own doc comment. These pins exercise both
+    // extremes and the evenness the final fix relies on.
+    check("sigmoid_grad(0)", sigmoid_grad(0.0), 0.25);
+    check("sigmoid_grad(-0)", sigmoid_grad(-0.0), 0.25);
+    check("sigmoid_grad(1000)", sigmoid_grad(1000.0), 0.0);
+    check("sigmoid_grad(-1000)", sigmoid_grad(-1000.0), 0.0);
+    check("sigmoid_grad(f32::MAX)", sigmoid_grad(f32::MAX), 0.0);
+    check("sigmoid_grad(-f32::MAX)", sigmoid_grad(-f32::MAX), 0.0);
+    check("sigmoid_grad(inf)", sigmoid_grad(f32::INFINITY), 0.0);
+    check("sigmoid_grad(-inf)", sigmoid_grad(f32::NEG_INFINITY), 0.0);
+    check("sigmoid_grad(44.36)==sigmoid_grad(-44.36)", sigmoid_grad(44.36), sigmoid_grad(-44.36));
+    check("sigmoid_grad(nan)", sigmoid_grad(f32::NAN), f32::NAN);
 
     // softplus(x) = ln(1+e^x). ln(2) at 0 (ln(1+e^0)=ln(2)); saturates to
     // x itself for large positive x, to exactly 0 for large negative x
