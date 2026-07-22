@@ -1552,8 +1552,7 @@ an idea revisits a rejection, the differing mechanism is stated.
 6. **Joint threshold+coefficient coordinate descent** in tune.rs
    (crossover as a continuous search parameter) — automates the asin
    fix-5 lesson instead of retuning thresholds against frozen polys.
-7. **Seam retunes not yet done**: sinh_checked/cosh_checked's 0.5
-   (post-checked-half construction), softplus/logaddexp's 87.0 cutoff,
+7. **Seam retunes not yet done**: softplus/logaddexp's 87.0 cutoff,
    asinh/acosh's 2048 rescale threshold. (The 5-function crossover audit
    covered sinh/tanh/expm1/asin/erf only. `exp2m1`'s own 0.5 -- also
    originally listed here -- shipped as a real win, see lib.rs/git log:
@@ -1572,7 +1571,15 @@ an idea revisits a rejection, the differing mechanism is stated.
    though the op count is unchanged, so "same op count" isn't a
    guarantee of zero mca cost the way it was for `exp2m1`. Not adopted:
    a ~0.14% avg win isn't worth a real, if small, throughput cost. `0.5`
-   stays.)
+   stays. `sinh_checked`'s own `0.5` (`cosh_checked` has no such branch
+   at all -- `ep+en` has no cancellation near 0, unlike `sinh_checked`'s
+   `ep-en`, so only `sinh_checked` actually has this seam) checked the
+   same way: confirmed already optimal, consistent with plain `sinh`'s
+   own already-audited `0.5` -- every alternative tried is clearly worse
+   (0.3/0.4: avg 0.0429→0.0439/0.0431, max 5→7; 0.6/0.7: avg
+   0.0429→0.0509/0.1019, max 5→**28**/**124**, the direct branch's
+   cancellation blowing up sharply as the threshold shrinks below
+   `sinh_small`'s own safe range). No headroom, no mca work needed.)
 8. **atan_poly joint numerator+denominator nonlinear refit** (scipy
    least_squares on the true rational) — only separate num-only/
    denom-only LPs were tried; the max-4 worst point was diagnosed as
