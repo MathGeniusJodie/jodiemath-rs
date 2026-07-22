@@ -1409,21 +1409,33 @@ pub fn exp_m1_over_x(x: f32) -> f32 {
 /// close to 1 whenever x is close to 0, so computing 2^x first and
 /// subtracting 1 loses low bits) and the same fix: `expm1`'s own Pade
 /// approximant for e^y-1 is reused directly via the substitution
-/// `y = x*LN_2` (2^x - 1 = e^{x ln2} - 1), valid because the Pade branch
-/// only ever runs for `|x| < 0.5`, so `|y| < 0.5*ln2 ≈ 0.347` stays
-/// comfortably inside the domain that approximant was fitted over -- no
-/// new coefficients needed. This substitution would *not* be safe for the
-/// direct branch: reducing through `exp2_checked(x*LOG2_E)` the way exp's
-/// own doc comment warns against would reintroduce that exact bug for
-/// large x, so the direct branch below instead duplicates
+/// `y = x*LN_2` (2^x - 1 = e^{x ln2} - 1). This substitution would *not*
+/// be safe for the direct branch: reducing through `exp2_checked(x*LOG2_E)`
+/// the way exp's own doc comment warns against would reintroduce that
+/// exact bug for large x, so the direct branch below instead duplicates
 /// `exp2_checked`'s own k/f reduction and Q(f) poly verbatim (not routed
 /// through the public `exp2_checked`, same reasoning as `expm1`'s own
 /// standalone copy of `exp`'s reduction) and fuses the trailing `-1` into
 /// the last multiply (`fma(p, t2, -1.0)`, one rounding instead of two).
-/// Avg ulp 0.077, max 4 (exhaustive), no seam discontinuity at the
-/// `|x|<0.5` threshold. Inherits `exp2_checked`'s full `[-151, 128)`
-/// clamp, so is total (never NaN/inf-producing outside its true
-/// asymptotes): `exp2m1(-inf) = -1`, `exp2m1(inf) = inf`. The
+///
+/// Branch threshold is `|x| < 0.65` (backlog idea #7's "seam retunes not
+/// yet done" list), not `expm1`'s own already-audited `0.5` -- checked
+/// directly against the real exhaustive sweep (not just a refit), same
+/// methodology as the crossover audit that shifted `asin`'s: `0.5` gives
+/// avg ulp 0.0769, and every threshold tried between `0.55` and `0.75`
+/// improves on that (avg bottoms out around `0.0766`-`0.0767` in
+/// `0.65`-`0.7`) before `0.8`+ makes it worse again as the Pade branch's
+/// own domain gets stretched. `0.65` keeps `|y| < 0.65*ln2 ≈ 0.4505`,
+/// still comfortably inside the `|y|<0.5` domain `expm1` itself already
+/// trusts this same approximant over -- no new coefficients, no new
+/// domain risk, just using more of the already-valid range. Max ulp is
+/// unaffected either way (4, exhaustive) -- the real worst point
+/// (`x≈-0.3991`) sits well inside the Pade branch regardless of where
+/// this threshold falls, so this is a pure avg-ulp win with no seam
+/// discontinuity and no throughput/latency cost (branchless select, same
+/// op count regardless of the literal). Inherits `exp2_checked`'s full
+/// `[-151, 128)` clamp, so is total (never NaN/inf-producing outside its
+/// true asymptotes): `exp2m1(-inf) = -1`, `exp2m1(inf) = inf`. The
 /// round-domain Q(f) refit was tried and rejected here too (see IDEAS.md
 /// §exp/exp2).
 #[inline(always)]
@@ -1444,7 +1456,7 @@ pub fn exp2m1(x: f32) -> f32 {
     let q = exp2_q_poly!(f);
     let p = fma(q, t1 * f, t1);
     let b = fma(p, t2, -1.0);
-    if x.abs() < 0.5 { a } else { b }
+    if x.abs() < 0.65 { a } else { b }
 }
 
 /// 10^x - 1 (C23 `exp10m1`), completing the C23 set next to `exp2m1`

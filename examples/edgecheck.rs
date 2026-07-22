@@ -1430,7 +1430,7 @@ fn main() {
     // comment (which can drift, e.g. asin's was 0.25 before idea #58's
     // 2026-07-20 crossover shift to 0.27).
     check_seam("expm1 seam", expm1, 0.5);
-    check_seam("exp2m1 seam", exp2m1, 0.5);
+    check_seam("exp2m1 seam", exp2m1, 0.65);
     check_seam("sinh seam", sinh, 0.5);
     check_seam("tanh seam", tanh, 0.25);
     check_seam("asin seam", asin, 0.27);
