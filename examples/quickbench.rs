@@ -212,6 +212,7 @@ fn main() {
     bench!("erfc", erfc);
     bench!("norm_cdf", norm_cdf);
     bench!("norm_pdf", norm_pdf);
+    bench!("logit", logit);
     bench!("erfcx", erfcx);
     // black_box'd 2nd arg, same reasoning as atan2 above.
     let hypot_y = std::hint::black_box(1.0);

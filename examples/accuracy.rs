@@ -1146,6 +1146,15 @@ fn main() {
         let s = measure!(everywhere, norm_pdf, norm_pdf_ref);
         report("norm_pdf", &s, t0);
     }
+    if run("logit") {
+        // Domain (0,1) (backlog idea #71) -- log1p_u10(-v) is
+        // cancellation-safe for v near 1 the same way the real
+        // implementation is.
+        let unit_open = |x: f32| x > 0.0 && x < 1.0;
+        let logit_ref = |v: F64xN| log_u35(v) - log1p_u10(-v);
+        let s = measure!(unit_open, logit, logit_ref);
+        report("logit", &s, t0);
+    }
     if run("srgb") {
         // Standard sRGB channel range (backlog idea #146); powf_pos's
         // own x>=0 contract.

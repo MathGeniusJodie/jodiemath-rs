@@ -1792,7 +1792,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     select, fully fma-based) — sampling/ML staple, vectorizes cleanly.
 #### hyperbolics / activations
 
-71. **logit(p)** (sigmoid's inverse) via cancellation-safe log1p forms.
 72. **compound(x, n) = (1+x)^n** (financial kernel): n·log1p-based
     route avoiding pown-on-(1+x)'s tiny-x precision loss.
 

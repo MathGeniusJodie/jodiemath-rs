@@ -182,6 +182,7 @@ fn main() {
         "erfc",
         "norm_cdf",
         "norm_pdf",
+        "logit",
         "erfc_accurate",
         "erfcx",
         "erfcx_accurate",

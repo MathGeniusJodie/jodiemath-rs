@@ -910,6 +910,15 @@ fn main() {
     check("norm_pdf(-inf)", norm_pdf(f32::NEG_INFINITY), 0.0);
     check("norm_pdf(nan)", norm_pdf(f32::NAN), f32::NAN);
 
+    // logit(p) = ln(p/(1-p)), sigmoid's inverse (backlog idea #71).
+    check("logit(0.5)", logit(0.5), 0.0);
+    check("logit(0)", logit(0.0), f32::NEG_INFINITY);
+    check("logit(1)", logit(1.0), f32::INFINITY);
+    check("logit(-0.1)", logit(-0.1), f32::NAN);
+    check("logit(1.1)", logit(1.1), f32::NAN);
+    check("logit(nan)", logit(f32::NAN), f32::NAN);
+    check("sigmoid(logit(0.7))", sigmoid(logit(0.7)), 0.70000005);
+
     // erfcx(x) = e^(x^2)*erfc(x), backlog idea #51. For x>=0 the
     // exponentials cancel exactly (see its doc comment), so erfcx(0)
     // reduces to the same trivial case erfc(0) does.

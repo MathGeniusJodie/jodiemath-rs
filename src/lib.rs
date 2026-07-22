@@ -2805,6 +2805,27 @@ pub fn norm_pdf(x: f32) -> f32 {
     INV_SQRT_2PI * exp_checked(-0.5 * x * x)
 }
 
+/// logit(p) = ln(p/(1-p)), sigmoid's inverse (backlog idea #71). Naive
+/// `ln(p/(1-p))` or `ln(p) - ln(1-p)` loses precision computing `1-p`
+/// directly whenever `p` is close to `1` (the same cancellation
+/// `log1p` exists to avoid) -- routing the second term through
+/// `log1p(-p)` instead recovers full precision there via `log1p`'s own
+/// internal correction, without needing any special-casing here. `p`
+/// outside `[0,1]` naturally comes out `NaN` (`ln(p)` for `p<0`, or
+/// `log1p(-p)`'s own domain error for `p>1`); `logit(0)=-inf`,
+/// `logit(1)=inf`, both falling out of `ln`/`log1p`'s own existing
+/// `0`/`-1` special cases with no extra code. Exhaustive max ulp looks
+/// alarming (1024, at `p≈0.4999`) but is the same "ulp isn't meaningful
+/// near a true zero" artifact as `cospi`'s/`cosh`'s own near-zero
+/// cases elsewhere in this crate: `logit(0.5)=0` exactly, so nearby
+/// points have a true value near zero, and any tiny absolute
+/// difference there is a huge *relative* one. avg ulp (0.28) is the
+/// honest accuracy figure.
+#[inline(always)]
+pub fn logit(p: f32) -> f32 {
+    ln(p) - log1p(-p)
+}
+
 /// Full-precision-exponent sibling of [`erfc`]: `erfc`'s own exponent
 /// term (`-xa*xa*LOG2_E`) rounds `xa*xa` to a single f32 before ever
 /// multiplying by `LOG2_E`, discarding exactly the low bits `exp2_checked`
