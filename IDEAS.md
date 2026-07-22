@@ -953,6 +953,20 @@ what shipped.
   this route needs `exp_pos_neg` to evaluate *two* full polynomials where
   tanh's existing expm1(2x) route evaluates one. Real regression: latency
   +2.7%, throughput +25.8%.
+- **tanh division-residual correction on `e/(e+2)`** (idea #42, round-off
+  audit found error splits ~evenly poly/combine, targeting the combine
+  half): the idea's own caution ("atan's analogous division fix measured
+  zero benefit at +181% throughput — mca screen before any fitting
+  work") held here too. Compensated-division combine (`rcp=1/denom;
+  q=e*rcp; r=fma(-q,denom,e); fma(r,rcp,q)`) mca-screened before any
+  accuracy fitting: real, decisive regression -- latency 82.72→94.36 cyc
+  (+14.1%), throughput 1.859→2.329 cyc/elem (+25.3%). Reverted
+  (`git checkout -- src/lib.rs`) without ever measuring accuracy --
+  matches this session's now-repeated finding (atan, atan2, sinc) that
+  compensated-division corrections cost real throughput in this crate
+  regardless of the accuracy payoff, since the extra reciprocal/residual
+  ops land on the same contended ports a plain division already uses
+  lightly.
 - **atanh via single log1p on |x| + mulsign**: sidesteps the catastrophic
   failure mode of the signed-x version (max ulp only 3→4, not 3→31303),
   but still a real net accuracy loss (avg 0.0313→0.0352, max 3→4) with a
@@ -1738,10 +1752,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 39. **logaddexp: same fused kernel** on |a−b|.
 41. **logaddexp2** (base-2 sibling, ML/audio) — near-free variant of
     whatever #39 lands on.
-42. **tanh division-residual correction on e/(e+2)** (round-off audit:
-    error splits ~evenly poly/combine, so this targets the combine
-    half). Caution: atan's analogous division fix measured zero benefit
-    at +181% throughput — mca screen before any fitting work.
 
 #### sin / cos family
 
