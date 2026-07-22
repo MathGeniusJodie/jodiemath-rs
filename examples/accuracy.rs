@@ -823,6 +823,11 @@ fn main() {
         };
         let s = measure!(exp_domain, exp_m1_over_x, exp_m1_over_x_ref);
         report("exp_m1_over_x", &s, t0);
+        // exp_m1_over_x_narrow's own documented domain (backlog idea
+        // #201, same mechanism as exp_narrow/expm1_narrow).
+        let exp_narrow_domain = |x: f32| (-87.68311..=88.37627).contains(&x);
+        let s = measure!(exp_narrow_domain, exp_m1_over_x_narrow, exp_m1_over_x_ref);
+        report("exp_m1_over_x_narrow", &s, t0);
     }
     if run("exp2m1") {
         // 2^x - 1 via expm1_u10(x*ln2), not naive exp2_u35(v)-1.0: same

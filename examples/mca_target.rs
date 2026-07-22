@@ -204,6 +204,17 @@ throughput_fn!(thr_expm1_narrow, "expm1_narrow_throughput", expm1_narrow);
 latency_fn!(lat_exp_m1_over_x, "exp_m1_over_x_latency", exp_m1_over_x);
 throughput_fn!(thr_exp_m1_over_x, "exp_m1_over_x_throughput", exp_m1_over_x);
 
+latency_fn!(
+    lat_exp_m1_over_x_narrow,
+    "exp_m1_over_x_narrow_latency",
+    exp_m1_over_x_narrow
+);
+throughput_fn!(
+    thr_exp_m1_over_x_narrow,
+    "exp_m1_over_x_narrow_throughput",
+    exp_m1_over_x_narrow
+);
+
 latency_fn!(lat_exp2m1, "exp2m1_latency", exp2m1);
 throughput_fn!(thr_exp2m1, "exp2m1_throughput", exp2m1);
 
@@ -584,6 +595,7 @@ fn main() {
         lat_expm1, thr_expm1;
         lat_expm1_narrow, thr_expm1_narrow;
         lat_exp_m1_over_x, thr_exp_m1_over_x;
+        lat_exp_m1_over_x_narrow, thr_exp_m1_over_x_narrow;
         lat_exp2m1, thr_exp2m1;
         lat_exp10m1, thr_exp10m1;
         lat_sinh, thr_sinh;

@@ -455,6 +455,22 @@ fn main() {
     check("exp_m1_over_x(-0)", exp_m1_over_x(-0.0), 1.0);
     check_known_1ulp("exp_m1_over_x(1)", exp_m1_over_x(1.0), (1.0f64.exp_m1()) as f32);
     check_finite("exp_m1_over_x(80)", exp_m1_over_x(80.0));
+
+    // exp_m1_over_x_narrow (backlog idea #201): same single-field
+    // mechanism/domain as exp_narrow/expm1_narrow.
+    check("exp_m1_over_x_narrow(0)", exp_m1_over_x_narrow(0.0), 1.0);
+    check_finite("exp_m1_over_x_narrow(88.37627)", exp_m1_over_x_narrow(88.37627));
+    check_finite("exp_m1_over_x_narrow(-87.68311)", exp_m1_over_x_narrow(-87.68311));
+    check(
+        "exp_m1_over_x_narrow(1)==exp_m1_over_x(1)",
+        exp_m1_over_x_narrow(1.0),
+        exp_m1_over_x(1.0),
+    );
+    check(
+        "exp_m1_over_x_narrow(60)==exp_m1_over_x(60)",
+        exp_m1_over_x_narrow(60.0),
+        exp_m1_over_x(60.0),
+    );
     check("exp_m1_over_x(-80)", exp_m1_over_x(-80.0), 0.0125);
 
     // exp2m1(x) = 2^x - 1. Total (inherits exp2_checked's own full

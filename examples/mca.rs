@@ -145,6 +145,7 @@ fn main() {
         "expm1",
         "expm1_narrow",
         "exp_m1_over_x",
+        "exp_m1_over_x_narrow",
         "exp2m1",
         "exp10m1",
         "sinh",
