@@ -118,6 +118,23 @@ fn sinc_ref(v: F64xN) -> F64xN {
         is_zero.select(F64xN::splat(1.0), normal)
     })
 }
+// sinc_unnormalized(x) = sin(x)/x, radians (backlog idea #131). Unlike
+// sinc_ref (which routes through sinpi_ref's own exact round(x)
+// reduction, never handing sin_u35 an extreme argument directly), there
+// is no analogous exact-reduction trick for plain radians -- sleef's
+// sin_u35 itself panics (internal table index out of bounds) on a
+// sufficiently huge finite argument, so this also has to guard *large*
+// |v|, not just non-finite v the way trig_safe does. Fine here: the
+// accuracy.rs `sinc_domain` restriction (|x|<1e6) already excludes
+// these from scoring, this is purely about not crashing the *call*
+// on the unrestricted lanes "thorough" mode still feeds through.
+fn sinc_unnormalized_ref(v: F64xN) -> F64xN {
+    let safe = v.abs().simd_lt(F64xN::splat(1e15)) & v.is_finite();
+    let safe_v = safe.select(v, F64xN::splat(1.0));
+    let normal = sin_u35(safe_v) / safe_v;
+    let is_zero = v.simd_eq(F64xN::splat(0.0));
+    is_zero.select(F64xN::splat(1.0), safe.select(normal, F64xN::splat(f64::NAN)))
+}
 // tanpi/tand's own references: same ratio construction as the real
 // functions (see their doc comments) -- reuses sinpi_ref/cospi_ref
 // (resp. sind_ref/cosd_ref below) directly rather than a naive
@@ -722,6 +739,10 @@ fn main() {
         let sinc_domain = |x: f32| x.abs() < 1e6;
         let s = measure!(sinc_domain, sinc, sinc_ref);
         report("sinc (|x|<1e6)", &s, t0);
+        // sinc_unnormalized (backlog idea #131): same near-zero-crossing
+        // caveat as sinc itself, same |x|<1e6 restriction.
+        let s = measure!(sinc_domain, sinc_unnormalized, sinc_unnormalized_ref);
+        report("sinc_unnormalized (|x|<1e6)", &s, t0);
     }
     if run("sind") {
         // sind/cosd's own exact-reduction range is ~4.7e7 (see their doc

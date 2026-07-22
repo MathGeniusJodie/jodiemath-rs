@@ -1934,8 +1934,6 @@ an idea revisits a rejection, the differing mechanism is stated.
      *inexact reduction* near poles; tanpi/tand have *exact* reductions,
      which removes precisely that documented blocker. Targets the
      sinpi/cospi division and the near-pole ulp blowup.
-131. **sinc_unnormalized** (sin(x)/x in radians, x=0 → 1) — DSP/physics
-     sibling of the existing normalized sinc.
 
 #### Batch 2: roots / hypot / geometry
 

@@ -306,6 +306,24 @@ fn main() {
     // implicit consequence of sinpi's own correctness.
     check_bounded("sinc(f32::MAX)", sinc(f32::MAX), 1.0);
 
+    // sinc_unnormalized(x) = sin(x)/x, radians (backlog idea #131).
+    check("sinc_unnormalized(0)", sinc_unnormalized(0.0), 1.0);
+    check("sinc_unnormalized(-0)", sinc_unnormalized(-0.0), 1.0);
+    check(
+        "sinc_unnormalized(pi/2)",
+        sinc_unnormalized(std::f32::consts::FRAC_PI_2),
+        std::f32::consts::FRAC_2_PI,
+    );
+    check("sinc_unnormalized(nan)", sinc_unnormalized(f32::NAN), f32::NAN);
+    check("sinc_unnormalized(inf)", sinc_unnormalized(f32::INFINITY), f32::NAN);
+    check("sinc_unnormalized(-inf)", sinc_unnormalized(f32::NEG_INFINITY), f32::NAN);
+    check(
+        "sinc_unnormalized(-1)==sinc_unnormalized(1)",
+        sinc_unnormalized(-1.0),
+        sinc_unnormalized(1.0),
+    );
+    check_bounded("sinc_unnormalized(f32::MAX)", sinc_unnormalized(f32::MAX), 1.0);
+
     // sind/cosd: argument in degrees. Exact reduction only up to ~4.7e7
     // (180.0's own trailing-zero-bit limit, see sind's doc comment) --
     // unlike sinpi/cospi, not the entire f32 range -- but still

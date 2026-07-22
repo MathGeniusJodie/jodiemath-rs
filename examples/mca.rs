@@ -133,6 +133,7 @@ fn main() {
         "cospi",
         "tanpi",
         "sinc",
+        "sinc_unnormalized",
         "sind",
         "cosd",
         "tand",

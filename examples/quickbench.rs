@@ -141,6 +141,7 @@ fn main() {
     bench!("cospi", cospi);
     bench!("tanpi", tanpi);
     bench!("sinc", sinc);
+    bench!("sinc_unnormalized", sinc_unnormalized);
     bench!("sind", sind);
     bench!("cosd", cosd);
     bench!("tand", tand);

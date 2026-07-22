@@ -591,6 +591,20 @@ pub fn sinc(x: f32) -> f32 {
     if x == 0.0 { 1.0 } else { normal }
 }
 
+/// The unnormalized sinc function, `sin(x)/x` in radians (backlog idea
+/// #131), the DSP/physics sibling of [`sinc`]'s own half-turn
+/// convention. Built on `sin_checked` (not the unchecked `sin`) for the
+/// same full-range reasoning `sinc` uses `sinpi`'s own exact reduction
+/// for -- accurate across the whole domain, not just where the fast
+/// tier's magic-round trick stays exact. Same removable-singularity and
+/// no-cancellation-risk reasoning as `sinc` applies here too (`sin(t) ~
+/// t` near 0, so the ratio stays well-conditioned all the way to `x=0`).
+#[inline(always)]
+pub fn sinc_unnormalized(x: f32) -> f32 {
+    let normal = sin_checked(x) / x;
+    if x == 0.0 { 1.0 } else { normal }
+}
+
 /// tan(pi*x), argument in half-turns, built directly from
 /// `sinpi`/`cospi`'s own ratio: `tan` has period 1 in
 /// half-turns (unlike `sin`/`cos` individually, which flip sign every
