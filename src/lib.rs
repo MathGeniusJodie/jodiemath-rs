@@ -1345,6 +1345,32 @@ pub fn exp(x: f32) -> f32 {
     p * t1 * t2
 }
 
+/// exp(x), single-exponent-field tier (backlog ideas #23/#112): same
+/// reduction and poly as [`exp`] (residual range unchanged, no refit
+/// needed), but skips `exp2_field_split` entirely -- valid only while
+/// `k=round(x*log2(e))` stays in `[-126,127]`, a single field's own
+/// range, i.e. `x` in `[-87.68311, 88.37627]` (found by stepping one ulp
+/// at a time through the real reduction to the exact boundary, same
+/// method as `exp10_checked`'s clamp consolidation). Slightly narrower
+/// than plain `exp`'s own unchecked `[-87.3, 88.7)` domain -- `exp`
+/// needs the split specifically because `round` (unlike `floor`) can
+/// push `k` one integer past a single field's valid range right at the
+/// domain edge (see `exp`'s own doc comment); this tier's domain is
+/// exactly small enough that `k` never reaches that edge in the first
+/// place. No clamp: unchecked, like `exp` itself -- garbage outside the
+/// documented domain, not saturated.
+#[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
+#[inline(always)]
+pub fn exp_narrow(x: f32) -> f32 {
+    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+    let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
+    let r = fma(-k, LN2_HI, x);
+    let r = fma(-k, LN2_LO, r);
+    let p = exp_r_poly!(r);
+    let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
+    p * exp2int
+}
+
 /// Full-range sibling of [`exp`]: `exp` already uses the k1/k2 split, so
 /// the only change is clamping `x` *before* the reduction starts so `k`
 /// never leaves the split's safe `[-151,128)` range, matching

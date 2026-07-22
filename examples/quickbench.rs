@@ -152,6 +152,7 @@ fn main() {
     bench!("log2p1", log2p1);
     bench!("exp", exp);
     bench!("std exp", |x: f32| x.exp());
+    bench!("exp_narrow", exp_narrow);
     bench!("exp_checked", exp_checked);
     bench!("expm1", expm1);
     bench!("std expm1", |x: f32| x.exp_m1());

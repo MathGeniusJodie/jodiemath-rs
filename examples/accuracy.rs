@@ -789,6 +789,12 @@ fn main() {
         report("exp", &s, t0);
         let s = measure!(exp_domain, |x: f32| x.exp(), exp_u10);
         report("std exp", &s, t0);
+        // exp_narrow's own documented domain (backlog ideas #23/#112):
+        // k=round(x*log2(e)) in [-126,127], a single exponent field's own
+        // range -- slightly narrower than exp_domain above.
+        let exp_narrow_domain = |x: f32| (-87.68311..=88.37627).contains(&x);
+        let s = measure!(exp_narrow_domain, exp_narrow, exp_u10);
+        report("exp_narrow", &s, t0);
         let s = measure!(exp_domain, expm1, expm1_u10);
         report("expm1", &s, t0);
         let s = measure!(exp_domain, |x: f32| x.exp_m1(), expm1_u10);

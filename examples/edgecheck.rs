@@ -405,6 +405,15 @@ fn main() {
     // pinned here so it can't silently come back.
     check_finite("exp(88.37628)", exp(88.37628));
 
+    // exp_narrow (backlog ideas #23/#112): same reduction/poly as exp,
+    // single exponent field instead of the split, valid only up to
+    // 88.37627 (one ulp below the k=128 edge above) -- pinned at its own
+    // documented boundary, not exp's.
+    check("exp_narrow(0)", exp_narrow(0.0), 1.0);
+    check_finite("exp_narrow(88.37627)", exp_narrow(88.37627));
+    check_finite("exp_narrow(-87.68311)", exp_narrow(-87.68311));
+    check("exp_narrow(1)==exp(1)", exp_narrow(1.0), exp(1.0));
+
     // exp_checked: full range (backlog idea #18) -- x clamped before the
     // reduction so k never leaves the k1/k2 split's own safe [-151,128)
     // range, matching exp2_checked/exp10_checked's own saturation
