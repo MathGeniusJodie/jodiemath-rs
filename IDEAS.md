@@ -1790,8 +1790,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 66. **erfinv** (Giles-style poly in w = ln(1−x²), two-poly branchless
     select, fully fma-based) — sampling/ML staple, vectorizes cleanly.
-67. **norm_cdf/norm_pdf pair** (Φ via 0.5·erfc(−x/√2)) — thin
-    composites for API breadth.
 #### hyperbolics / activations
 
 71. **logit(p)** (sigmoid's inverse) via cancellation-safe log1p forms.

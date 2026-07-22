@@ -176,6 +176,8 @@ fn main() {
         "tan_checked",
         "erf",
         "erfc",
+        "norm_cdf",
+        "norm_pdf",
         "erfc_accurate",
         "erfcx",
         "erfcx_accurate",

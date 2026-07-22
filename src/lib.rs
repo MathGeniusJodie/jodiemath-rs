@@ -2677,6 +2677,35 @@ pub fn erfc(x: f32) -> f32 {
     fma(y, z, w)
 }
 
+/// Standard normal CDF, `Φ(x) = 0.5*erfc(-x/sqrt(2))` (backlog idea
+/// #67): a thin composite over the already-correctly-rounded, full-range
+/// `erfc` (itself saturating cleanly to `0`/`2` well before `x=+-inf`),
+/// so this inherits `0`/`1` saturation for free at both tails with no
+/// extra special-casing. Also inherits `erfc`'s own documented tail
+/// accuracy as-is (exhaustive max ulp 295, worst `x≈-12.79` -- maps to
+/// `erfc`'s own argument near its `9`-ish region, the same weaker-tail
+/// behavior `erfc`'s own doc/IDEAS.md history already documents): a thin
+/// composite for API convenience, not a new, independently-tuned fit.
+#[inline(always)]
+pub fn norm_cdf(x: f32) -> f32 {
+    0.5 * erfc(-x * std::f32::consts::FRAC_1_SQRT_2)
+}
+
+/// Standard normal PDF, `φ(x) = exp(-x^2/2)/sqrt(2*pi)` (backlog idea
+/// #67): routes through `exp_checked` (not the unchecked `exp`) since
+/// `-x^2/2` easily leaves `exp`'s own `[-87.3,88.7)` domain for
+/// perfectly ordinary `x` (e.g. `|x|>=14` already overflows it) --
+/// `exp_checked` saturates correctly to exactly `0.0` in the tails
+/// instead of returning garbage. Exhaustive max ulp 67 (worst `x≈13.04`)
+/// sits in `exp_checked`'s own underflow-adjacent region, the same
+/// class of tail-relative-error growth any exponential shows approaching
+/// zero -- inherited, not a new defect from this composite.
+#[inline(always)]
+pub fn norm_pdf(x: f32) -> f32 {
+    const INV_SQRT_2PI: f32 = 0.3989422804014327;
+    INV_SQRT_2PI * exp_checked(-0.5 * x * x)
+}
+
 /// Full-precision-exponent sibling of [`erfc`]: `erfc`'s own exponent
 /// term (`-xa*xa*LOG2_E`) rounds `xa*xa` to a single f32 before ever
 /// multiplying by `LOG2_E`, discarding exactly the low bits `exp2_checked`

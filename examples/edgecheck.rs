@@ -860,6 +860,18 @@ fn main() {
     check_range("erfc_accurate(-9.5)", erfc_accurate(-9.5), 0.0, 2.0);
     check_range("erfc_accurate(-10)", erfc_accurate(-10.0), 0.0, 2.0);
 
+    // norm_cdf/norm_pdf (backlog idea #67): thin composites over erfc/
+    // exp_checked.
+    check("norm_cdf(0)", norm_cdf(0.0), 0.5);
+    check("norm_cdf(-0)", norm_cdf(-0.0), 0.5);
+    check("norm_cdf(inf)", norm_cdf(f32::INFINITY), 1.0);
+    check("norm_cdf(-inf)", norm_cdf(f32::NEG_INFINITY), 0.0);
+    check("norm_cdf(nan)", norm_cdf(f32::NAN), f32::NAN);
+    check("norm_pdf(0)", norm_pdf(0.0), 0.3989422804014327);
+    check("norm_pdf(inf)", norm_pdf(f32::INFINITY), 0.0);
+    check("norm_pdf(-inf)", norm_pdf(f32::NEG_INFINITY), 0.0);
+    check("norm_pdf(nan)", norm_pdf(f32::NAN), f32::NAN);
+
     // erfcx(x) = e^(x^2)*erfc(x), backlog idea #51. For x>=0 the
     // exponentials cancel exactly (see its doc comment), so erfcx(0)
     // reduces to the same trivial case erfc(0) does.

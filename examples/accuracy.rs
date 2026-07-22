@@ -1108,6 +1108,19 @@ fn main() {
         let s = measure!(erfcx_checked_domain, erfcx_checked, erfcx_ref);
         report("erfcx_checked", &s, t0);
     }
+    if run("norm_cdf") {
+        // Both compose already-full-range primitives (erfc/exp_checked),
+        // so no domain restriction needed (backlog idea #67).
+        let norm_cdf_ref = |v: F64xN| {
+            F64xN::splat(0.5) * erfc_u15(-v * F64xN::splat(std::f64::consts::FRAC_1_SQRT_2))
+        };
+        let s = measure!(everywhere, norm_cdf, norm_cdf_ref);
+        report("norm_cdf", &s, t0);
+        let norm_pdf_ref =
+            |v: F64xN| exp_u10(v * v * F64xN::splat(-0.5)) * F64xN::splat(0.3989422804014326779399460599);
+        let s = measure!(everywhere, norm_pdf, norm_pdf_ref);
+        report("norm_pdf", &s, t0);
+    }
 
     // two-argument functions: fuzz-only (exhaustive over 2^64 pairs isn't
     // feasible), smaller sample count since each trial needs two RNG draws.
