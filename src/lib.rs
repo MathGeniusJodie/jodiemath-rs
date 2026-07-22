@@ -2509,6 +2509,16 @@ pub fn acos(x: f32) -> f32 {
     mulsign(y, x + 0.0) + if x < 0.0 { PI } else { 0.0 }
 }
 
+/// acos(x) in degrees (backlog idea #123): plain composite, same
+/// finding as `asind`'s own doc comment -- a rescaled-coefficient fold
+/// was tried for `asin` and measured *worse* (real max ulp 16 vs the
+/// naive composite's 11), so not attempted again here without new
+/// evidence it would fare differently.
+#[inline(always)]
+pub fn acosd(x: f32) -> f32 {
+    acos(x) * (180.0 / std::f32::consts::PI)
+}
+
 // Odd approximation asin(x) ~ x * P(x^2), degree 3 in x^2, on |x| < 0.25.
 // The leading coefficient is pinned to exactly 1.0 so tiny x returns x
 // (its correctly-rounded asin). The other three are a minimax refit over
@@ -2555,6 +2565,27 @@ pub fn asin(x: f32) -> f32 {
     if a < 0.27 { small } else { big }
 }
 
+/// asin(x) in degrees (backlog idea #123 as originally proposed --
+/// "fold 180/pi into the poly/combine constants" -- was tried and
+/// rejected: rescaling every one of `asin_small`/`asin_poly`'s own
+/// coefficients by `RAD_TO_DEG` is a pure *linear* operation on the
+/// combine (unlike sinpi/sind's own rejected folds, which changed the
+/// poly's *input* reduction domain shape, a fundamentally different and
+/// already-failed mechanism), so in principle it should be at worst
+/// neutral versus a post-multiply. Measured instead of assumed: real
+/// exhaustive fuzz found the opposite of the idea's own "90.0/45.0 are
+/// exact" framing actually pays off -- folded gives avg ulp 0.3376/max
+/// 16 versus the plain `asin(x)*RAD_TO_DEG` composite's 0.3387/max
+/// **11**, i.e. folding is a wash on average and *worse* on max ulp.
+/// Larger-magnitude degree-space coefficients apparently accumulate
+/// more absolute rounding per fma step than one final multiply costs,
+/// despite the "removes an irrational-constant rounding" reasoning
+/// being sound on paper. Ships as the simple composite instead.
+#[inline(always)]
+pub fn asind(x: f32) -> f32 {
+    asin(x) * (180.0 / std::f32::consts::PI)
+}
+
 // 3/3 Pade-style rational approximation of atan on [0,1], seeded from a
 // least-squares fit and coordinate-descent tuned. Current: atan avg/max
 // ulp 0.068/4, atan2 0.069/3 (exhaustive). Numerator and denominator
@@ -2591,6 +2622,14 @@ pub fn atan(x: f32) -> f32 {
     let y = atan_poly(y);
     let y = if a < 1.0 { y } else { FRAC_PI_2 - y };
     mulsign(y, x)
+}
+
+/// atan(x) in degrees (backlog idea #123): plain composite -- see
+/// `asind`'s own doc comment for why a rescaled-coefficient fold isn't
+/// attempted here either.
+#[inline(always)]
+pub fn atand(x: f32) -> f32 {
+    atan(x) * (180.0 / std::f32::consts::PI)
 }
 
 /// atan(x), `|x| <= 1` contract (backlog idea #61): `atan_poly` alone is
@@ -2693,6 +2732,14 @@ pub fn atan2(y: f32, x: f32) -> f32 {
     let bothinf = x.is_infinite() && y.is_infinite();
     let inf_result = mulsign(if x.is_sign_negative() { 3.0 * FRAC_PI_4 } else { FRAC_PI_4 }, y);
     if bothinf { inf_result } else { r }
+}
+
+/// atan2(y,x) in degrees (backlog idea #123): plain composite -- see
+/// `asind`'s own doc comment for why a rescaled-coefficient fold isn't
+/// attempted here either.
+#[inline(always)]
+pub fn atan2d(y: f32, x: f32) -> f32 {
+    atan2(y, x) * (180.0 / std::f32::consts::PI)
 }
 
 /// atan2 without the x==0/both-zero/both-infinite special cases: contract

@@ -722,6 +722,21 @@ what shipped.
 - **acos_poly Horner→Estrin**: real latency win, but fma reassociation
   regressed asin max ulp 9→12, acos 4→5 (retuning made it worse, →6).
   acos's accuracy is a protected invariant.
+- **asind: fold RAD_TO_DEG into asin_small/asin_poly's own coefficients**
+  (idea #123, distinct mechanism from the rejected sinpi/sind folds --
+  those changed the poly's *input* reduction domain shape; this instead
+  rescales an *output*-side poly's coefficients by a constant, a pure
+  linear operation that should be at worst neutral versus a
+  post-multiply `asin(x)*RAD_TO_DEG` on paper): measured instead of
+  assumed, and the idea's own "90.0/45.0 are exact" framing didn't pay
+  off in practice -- real exhaustive fuzz found the fold a wash on
+  average (0.3376 vs the naive composite's 0.3387) and *worse* on max
+  ulp (16 vs 11). Larger-magnitude degree-space coefficients apparently
+  accumulate more absolute rounding per fma step than the post-multiply
+  costs, even though the transformation is linear and touches no domain
+  shape. Shipped `asind`/`acosd`/`atand`/`atan2d` as the plain composite
+  instead (see lib.rs/git log) -- not attempting the fold for the other
+  three without new evidence it would fare differently for them.
 - **erfc's n/d rational Horner→Estrin**: small theoretical win, measured
   as a wash on speed plus a real accuracy cost (avg +2.7%).
 - **erf's near-zero Padé branch refit / tail branch (erf_poly) refit**:
@@ -1913,8 +1928,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### Batch 2: trig
 
-123. **asind/acosd/atand/atan2d**: fold 180/π into the poly/combine
-     constants (#85's mechanism) — 90.0/45.0 are exact where π/2 wasn't.
 125. **Integer-domain parity pipeline end-to-end** for
      sin_checked/cos_checked (parities as bits, XOR combine, direct
      sign mask) — composes #45/#46; deletes the float compare+select

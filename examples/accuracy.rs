@@ -1090,12 +1090,23 @@ fn main() {
         report("asin", &s, t0);
         let s = measure!(everywhere, |x: f32| x.asin(), asin_u35);
         report("std asin", &s, t0);
+        // asind (backlog idea #123): plain composite -- a rescaled-
+        // coefficient fold was tried and measured worse, see its own
+        // doc comment.
+        let rad_to_deg = 180.0 / std::f64::consts::PI;
+        let asind_ref = |v: F64xN| asin_u35(v) * F64xN::splat(rad_to_deg);
+        let s = measure!(everywhere, asind, asind_ref);
+        report("asind", &s, t0);
     }
     if run("acos") {
         let s = measure!(everywhere, acos, acos_u35);
         report("acos", &s, t0);
         let s = measure!(everywhere, |x: f32| x.acos(), acos_u35);
         report("std acos", &s, t0);
+        let rad_to_deg = 180.0 / std::f64::consts::PI;
+        let acosd_ref = |v: F64xN| acos_u35(v) * F64xN::splat(rad_to_deg);
+        let s = measure!(everywhere, acosd, acosd_ref);
+        report("acosd", &s, t0);
     }
     if run("atan") {
         let s = measure!(everywhere, atan, atan_u35);
@@ -1108,6 +1119,10 @@ fn main() {
         let bounded_domain = |x: f32| x.abs() <= 1.0;
         let s = measure!(bounded_domain, atan_bounded, atan_u35);
         report("atan_bounded", &s, t0);
+        let rad_to_deg = 180.0 / std::f64::consts::PI;
+        let atand_ref = |v: F64xN| atan_u35(v) * F64xN::splat(rad_to_deg);
+        let s = measure!(everywhere, atand, atand_ref);
+        report("atand", &s, t0);
     }
     if run("tan") {
         let tan_domain = |x: f32| x.abs() < (1u32 << 22) as f32 * std::f32::consts::PI;
@@ -1239,6 +1254,11 @@ fn main() {
         };
         let s = fuzz2(TWOARG_SAMPLES, |_, _| true, atan2_pos, atan2_pos_ref);
         report("atan2_pos", &s, t0);
+        // atan2d (backlog idea #123): plain composite.
+        let atan2d_ref =
+            |y: F64xN, x: F64xN| atan2_u35(y, x) * F64xN::splat(180.0 / std::f64::consts::PI);
+        let s = fuzz2(TWOARG_SAMPLES, |_, _| true, atan2d, atan2d_ref);
+        report("atan2d", &s, t0);
     }
     if run("compound") {
         // Domain x > -1 (backlog idea #72), log1p's own real-domain

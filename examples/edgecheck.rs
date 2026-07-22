@@ -803,6 +803,22 @@ fn main() {
     check("asin(1)", asin(1.0), std::f32::consts::FRAC_PI_2);
     check("asin(-1)", asin(-1.0), -std::f32::consts::FRAC_PI_2);
     check("asin(2)", asin(2.0), f32::NAN);
+
+    // asind (backlog idea #123): plain asin(x)*RAD_TO_DEG composite --
+    // a rescaled-coefficient fold was tried and measured worse (see its
+    // own doc comment).
+    check("asind(0)", asind(0.0), 0.0);
+    check("asind(-0)", asind(-0.0), -0.0);
+    check("asind(1)", asind(1.0), 90.0);
+    check("asind(-1)", asind(-1.0), -90.0);
+    check("asind(0.5)", asind(0.5), 30.0);
+    check("asind(nan)", asind(f32::NAN), f32::NAN);
+
+    check("acosd(1)", acosd(1.0), 0.0);
+    check("acosd(-1)", acosd(-1.0), 180.0);
+    check("acosd(0)", acosd(0.0), 90.0);
+    check("acosd(nan)", acosd(f32::NAN), f32::NAN);
+
     check("acos(1)", acos(1.0), 0.0);
     check("acos(-1)", acos(-1.0), std::f32::consts::PI);
     check("acos(2)", acos(2.0), f32::NAN);
@@ -837,6 +853,12 @@ fn main() {
     check("atan_latency(-inf)", atan_latency(f32::NEG_INFINITY), -std::f32::consts::FRAC_PI_2);
     check("atan_latency(nan)", atan_latency(f32::NAN), f32::NAN);
     check("atan_latency(1)", atan_latency(1.0), atan(1.0));
+
+    check("atand(1)", atand(1.0), 45.0);
+    check("atand(-1)", atand(-1.0), -45.0);
+    check("atand(0)", atand(0.0), 0.0);
+    check("atand(nan)", atand(f32::NAN), f32::NAN);
+
     check("atan2(1,0)", atan2(1.0, 0.0), std::f32::consts::FRAC_PI_2);
     check("atan2(-1,0)", atan2(-1.0, 0.0), -std::f32::consts::FRAC_PI_2);
     // atan2(-0.0, +0.0) used to lose its sign (IEEE754's "+0 + -0 = +0"
@@ -869,6 +891,12 @@ fn main() {
     check("atan2_pos(-1,-1)", atan2_pos(-1.0, -1.0), 5.0 * std::f32::consts::FRAC_PI_4);
     check("atan2_pos(nan,1)", atan2_pos(f32::NAN, 1.0), f32::NAN);
     check_range("atan2_pos(1,1)", atan2_pos(1.0, 1.0), 0.0, std::f32::consts::TAU);
+
+    // atan2d (backlog idea #123): plain composite.
+    check("atan2d(1,0)", atan2d(1.0, 0.0), 90.0);
+    check("atan2d(0,1)", atan2d(0.0, 1.0), 0.0);
+    check("atan2d(-1,0)", atan2d(-1.0, 0.0), -90.0);
+    check("atan2d(nan,1)", atan2d(f32::NAN, 1.0), f32::NAN);
     // atan2(NaN, 0.0)/atan2(NaN, -0.0) used to come out +-FRAC_PI_2 instead
     // of NaN (backlog idea #85, found building a systematic C99
     // special-case matrix against std): the x==0 branch bypasses

@@ -192,13 +192,16 @@ fn main() {
     bench!("atanh", atanh);
     bench!("std atanh", |x: f32| x.atanh());
     bench!("asin", asin);
+    bench!("asind", asind);
     bench!("std asin", |x: f32| x.asin());
     bench!("acos", acos);
     bench!("std acos", |x: f32| x.acos());
+    bench!("acosd", acosd);
     bench!("atan", atan);
     bench!("std atan", |x: f32| x.atan());
     bench!("atan_latency", atan_latency);
     bench!("atan_bounded", atan_bounded);
+    bench!("atand", atand);
     // black_box'd 2nd arg (not a literal 1.0): a compile-time-constant 2nd
     // arg lets LLVM fold away atan2's own special-case branches entirely,
     // silently hiding their real cost -- this matters here specifically
@@ -210,6 +213,7 @@ fn main() {
     bench!("std atan2", move |x: f32| x.atan2(atan2_x2));
     bench!("atan2_unchecked", move |x: f32| atan2_unchecked(x, atan2_x2));
     bench!("atan2_pos", move |x: f32| atan2_pos(x, atan2_x2));
+    bench!("atan2d", move |x: f32| atan2d(x, atan2_x2));
     bench!("tan", tan);
     bench!("tan_checked", tan_checked);
     bench!("std tan", |x: f32| x.tan());
