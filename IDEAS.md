@@ -575,6 +575,32 @@ what shipped.
   fixing two bench-shape artifacts) found it ~1.4% *slower*. The one case
   this session where mca and real hardware disagreed in direction, not
   just magnitude.
+- **tan/tand/tanpi cross-inline CSE audit** (idea #51, "each pays two
+  full reductions differing only in the q offset — asm-diff whether
+  LLVM shares the common work"): the premise-check half confirmed via
+  real mca, not asm-diff -- `tan`'s throughput (2.532 cyc/elem) lands
+  almost exactly at `sin`'s (1.151) plus `cos`'s (1.406) combined
+  (2.557), meaning LLVM shares essentially nothing between the two
+  reductions when `tan = sin(x)/cos(x)` inlines, confirming the idea's
+  premise. But this isn't actually CSE-able in the first place: `sin`'s
+  `qb = fma(x, FRAC_1_PI, ROUND_MAGIC)` and `cos`'s `kb = fma(x,
+  FRAC_1_PI, -0.5) + ROUND_MAGIC` are two *different* fma instructions
+  (different third operand) computing `x*FRAC_1_PI` fused with two
+  different adds -- there's no shared *intermediate* value for any
+  compiler to find, since the multiply never exists as a standalone SSA
+  value in either fma. The idea's own fallback ("hand-share at
+  composition level") means literally the same mechanism as the
+  directly-adjacent `sincos_checked, shared reduction` entry directly
+  above -- a bit-exact hand-shared reduction verified exhaustively but
+  regressing wall-clock ~1.4% despite mca predicting a ~19% win, this
+  session's *one* documented mca/hardware disagreement. Given `tan`/
+  `tand`/`tanpi` would need the exact same class of restructuring
+  (deriving one trig function's reduction from the other's, needing
+  careful q/k tie-case analysis exactly like the tanpi/tand parity-fusion
+  idea found fragile earlier this session) for a mechanism already shown
+  to fool mca in the *closest* related case, not pursued further without
+  a real quickbench wall-clock result in hand first -- mca alone
+  wouldn't be trustworthy evidence either way here.
 - **tan via mod-pi/2 reduction + dedicated poly**: premise (division near
   a pole amplifies error) was wrong — spot-checks showed the old
   sin(x)/cos(x) form was already 0-1 ulp at the actual poles; the real
@@ -1712,9 +1738,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 49. **sinf_poly real-chain refit** (#1's method) scoring sin_checked +
     cos_checked's actual reductions jointly — the rejected LPs used
     continuous grids that mis-weighted the caller split.
-51. **tan/tand/tanpi cross-inline CSE audit**: each pays two full
-    reductions differing only in the q offset — asm-diff whether LLVM
-    shares the common work; hand-share at composition level if not.
 
 #### cbrt / sqrt / hypot
 
