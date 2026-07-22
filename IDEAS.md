@@ -1944,10 +1944,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### Batch 2: roots / hypot / geometry
 
-133. **Half/third-power composition family**: x^(3/2) = x·sqrt(x),
-     x^(2/3) = cbrt(x)² (or cbrt(x·x)) as provided functions — each 1-2
-     correctly-rounded ops, always beats powf; also a docs pointer so
-     users stop calling powf for these.
 134. **rnorm4 / quaternion normalize** — companion to hypot3 (#55).
 136. **normalize2/normalize3 slice kernels** (rhypot + scales — the
      operation users actually want hypot for).

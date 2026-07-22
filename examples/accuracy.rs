@@ -541,6 +541,20 @@ fn main() {
         let s = measure!(everywhere, rcbrt, rcbrt_ref);
         report("rcbrt", &s, t0);
     }
+    if run("pow_3_2") {
+        let pos = |x: f32| x >= 0.0;
+        let pow_3_2_ref = |v: F64xN| v * v.sqrt();
+        let s = measure!(pos, pow_3_2, pow_3_2_ref);
+        report("pow_3_2", &s, t0);
+    }
+    if run("pow_2_3") {
+        let pow_2_3_ref = |v: F64xN| {
+            let c = cbrt_u35(v);
+            c * c
+        };
+        let s = measure!(everywhere, pow_2_3, pow_2_3_ref);
+        report("pow_2_3", &s, t0);
+    }
     if run("log") {
         let s = measure!(everywhere, log_2, log2_u35);
         report("log_2", &s, t0);

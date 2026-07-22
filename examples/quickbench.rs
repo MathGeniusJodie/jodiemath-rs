@@ -119,6 +119,8 @@ fn main() {
     bench!("cbrt_throughput", cbrt_throughput);
     bench!("cbrt_fast", cbrt_fast);
     bench!("rcbrt", rcbrt);
+    bench!("pow_3_2", pow_3_2);
+    bench!("pow_2_3", pow_2_3);
     bench!("exp2", exp2);
     bench!("exp2_checked", exp2_checked);
     bench!("std exp2", |x: f32| x.exp2());

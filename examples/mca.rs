@@ -115,6 +115,8 @@ fn main() {
         "cbrt_throughput_fn",
         "cbrt_fast",
         "rcbrt",
+        "pow_3_2",
+        "pow_2_3",
         "exp2",
         "exp2_checked",
         "exp10",

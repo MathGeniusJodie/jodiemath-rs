@@ -2099,6 +2099,31 @@ pub fn sqrt1pm1(x: f32) -> f32 {
     if x.is_infinite() { x } else { normal }
 }
 
+/// x^(3/2) (backlog idea #133): `x * sqrt(x)`, two correctly-rounded
+/// hardware ops, always more accurate and faster than routing through
+/// `powf`. Domain `x >= 0` (matching the real-valued convention);
+/// `sqrt` alone already supplies every special case for free: `x=0`
+/// gives `0*0=0`, `x=inf` gives `inf*inf=inf`, `x<0`/`NaN` give `NaN`
+/// (IEEE `sqrt` of a negative number).
+#[inline(always)]
+pub fn pow_3_2(x: f32) -> f32 {
+    x * x.sqrt()
+}
+
+/// x^(2/3) (backlog idea #133): `cbrt(x)^2`, not `cbrt(x*x)` -- squaring
+/// *after* the cube root avoids `x*x` overflowing for large `|x|` before
+/// `cbrt` ever gets a chance to shrink it back down, and is cheaper
+/// besides (one multiply on `cbrt`'s already-small output instead of one
+/// on the original, possibly-huge input). `cbrt` is odd and total, so
+/// this is defined and correctly signed-then-squared (non-negative) for
+/// every real `x`, including negative `x` (the standard real-valued
+/// extension of a rational power via the odd root), unlike `pow_3_2`.
+#[inline(always)]
+pub fn pow_2_3(x: f32) -> f32 {
+    let c = cbrt(x);
+    c * c
+}
+
 /// asinh(x) = ln(x + sqrt(x^2+1)), with two fixes over the naive form:
 ///
 /// 1. Small-x cliff: for |x| below ~6e-8, `x*x` is already too small to

@@ -670,6 +670,19 @@ fn main() {
     check("sqrt1pm1(1e-10)", sqrt1pm1(1e-10), 5e-11);
     check("sqrt1pm1(-1e-10)", sqrt1pm1(-1e-10), -5e-11);
 
+    // pow_3_2/pow_2_3 (backlog idea #133): plain sqrt/cbrt compositions.
+    check("pow_3_2(4)", pow_3_2(4.0), 8.0);
+    check("pow_3_2(0)", pow_3_2(0.0), 0.0);
+    check("pow_3_2(-1)", pow_3_2(-1.0), f32::NAN);
+    check("pow_3_2(inf)", pow_3_2(f32::INFINITY), f32::INFINITY);
+    check("pow_3_2(nan)", pow_3_2(f32::NAN), f32::NAN);
+    check("pow_2_3(8)", pow_2_3(8.0), 4.0);
+    check("pow_2_3(-8)", pow_2_3(-8.0), 4.0);
+    check("pow_2_3(0)", pow_2_3(0.0), 0.0);
+    check("pow_2_3(inf)", pow_2_3(f32::INFINITY), f32::INFINITY);
+    check("pow_2_3(-inf)", pow_2_3(f32::NEG_INFINITY), f32::INFINITY);
+    check("pow_2_3(nan)", pow_2_3(f32::NAN), f32::NAN);
+
     check("asinh(0)", asinh(0.0), 0.0);
     // small-x cancellation (see asinh's doc comment) is fixed: asinh(x) ~ x
     // for tiny x, no longer collapses to exactly 0.
