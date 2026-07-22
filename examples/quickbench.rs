@@ -204,6 +204,7 @@ fn main() {
     bench!("atan_latency", atan_latency);
     bench!("atan_bounded", atan_bounded);
     bench!("atand", atand);
+    bench!("atanpi", atanpi);
     // black_box'd 2nd arg (not a literal 1.0): a compile-time-constant 2nd
     // arg lets LLVM fold away atan2's own special-case branches entirely,
     // silently hiding their real cost -- this matters here specifically

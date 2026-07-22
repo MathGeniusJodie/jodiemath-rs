@@ -1144,6 +1144,12 @@ fn main() {
         let atand_ref = |v: F64xN| atan_u35(v) * F64xN::splat(rad_to_deg);
         let s = measure!(everywhere, atand, atand_ref);
         report("atand", &s, t0);
+        // atanpi (backlog idea #85): plain composite -- see its own doc
+        // comment for why a rescaled-coefficient fold isn't kept here.
+        let inv_pi = 1.0 / std::f64::consts::PI;
+        let atanpi_ref = |v: F64xN| atan_u35(v) * F64xN::splat(inv_pi);
+        let s = measure!(everywhere, atanpi, atanpi_ref);
+        report("atanpi", &s, t0);
     }
     if run("tan") {
         let tan_domain = |x: f32| x.abs() < (1u32 << 22) as f32 * std::f32::consts::PI;

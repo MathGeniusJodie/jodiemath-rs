@@ -877,6 +877,16 @@ fn main() {
     check("atand(0)", atand(0.0), 0.0);
     check("atand(nan)", atand(f32::NAN), f32::NAN);
 
+    // atanpi (backlog idea #85): folded dedicated coefficients (a real
+    // win here, same verdict as asinpi/acospi -- see its own doc comment).
+    check("atanpi(0)", atanpi(0.0), 0.0);
+    check("atanpi(-0)", atanpi(-0.0), -0.0);
+    check("atanpi(1)", atanpi(1.0), 0.25);
+    check("atanpi(-1)", atanpi(-1.0), -0.25);
+    check("atanpi(inf)", atanpi(f32::INFINITY), 0.5);
+    check("atanpi(-inf)", atanpi(f32::NEG_INFINITY), -0.5);
+    check("atanpi(nan)", atanpi(f32::NAN), f32::NAN);
+
     check("atan2(1,0)", atan2(1.0, 0.0), std::f32::consts::FRAC_PI_2);
     check("atan2(-1,0)", atan2(-1.0, 0.0), -std::f32::consts::FRAC_PI_2);
     // atan2(-0.0, +0.0) used to lose its sign (IEEE754's "+0 + -0 = +0"

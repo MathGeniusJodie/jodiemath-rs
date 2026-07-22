@@ -2709,6 +2709,23 @@ pub fn atand(x: f32) -> f32 {
     atan(x) * (180.0 / std::f32::consts::PI)
 }
 
+/// atan(x)/pi (backlog idea #85): plain composite. A rescaled-coefficient
+/// fold (per asinpi/acospi's own precedent) was tried and measured a real
+/// accuracy win (avg/max ulp 0.2432/4 vs this composite's 0.2782/4) but
+/// also a real throughput cost (1.612 cyc/elem vs this composite's 1.554,
+/// worse even than the naive extra multiply it was meant to replace) --
+/// `atan_poly` is a Pade rational whose numerator and denominator happen
+/// to share the exact same unscaled trailing `+1.0` constant (so normally
+/// one broadcast serves both), and folding 1/pi into only the numerator's
+/// copy breaks that sharing, forcing a second broadcast. Unlike
+/// asinpi/acospi's plain Horner polys (a single trailing constant, so the
+/// fold is genuinely free), atan_poly's shared-constant structure makes
+/// this fold a net loss. Not attempted again without new evidence.
+#[inline(always)]
+pub fn atanpi(x: f32) -> f32 {
+    atan(x) * (1.0 / std::f32::consts::PI)
+}
+
 /// atan(x), `|x| <= 1` contract (backlog idea #61): `atan_poly` alone is
 /// already the whole answer over that domain (it's fitted directly
 /// against atan on `[0,1]`), so this skips `atan`'s own `1/a`

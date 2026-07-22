@@ -184,6 +184,7 @@ fn main() {
         "atan_latency",
         "atan_bounded",
         "atand",
+        "atanpi",
         "atan2",
         "atan2_pos",
         "atan2d",
