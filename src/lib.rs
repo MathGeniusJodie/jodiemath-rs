@@ -331,6 +331,20 @@ pub fn exp2_checked(x: f32) -> f32 {
 /// can pull `t1*t2 = 2^128`'s product back *under* `f32::MAX`, giving
 /// `exp10_checked(inf)` a finite result -- a contract violation only
 /// edgecheck.rs's special-value pins caught. See IDEAS.md §exp/exp2.
+///
+/// The leading `x` clamp bound is `[-45.154503, 38.53184]` (backlog idea
+/// #113), not an arbitrarily-wide safety net: these are the exact bit-
+/// level boundary floats (found by stepping one ulp at a time through
+/// the real reduction above) where `k` first reaches `-151`/`128`
+/// respectively -- clamping `x` *to* one of these literals forces `k` to
+/// land exactly on that same boundary value by construction, making the
+/// separate trailing `k.clamp(-151.0, 128.0)` provably redundant over
+/// the *entire* domain (every in-range `x` was already producing `k` in
+/// `[-151,128]` on its own; every out-of-range `x` now clamps straight
+/// to a literal that reproduces the exact `k` the old wider clamp plus
+/// trailing `k`-clamp used to saturate to). Verified bit-identical
+/// across the full exhaustive sweep before adopting -- this is a pure
+/// codegen win, not a behavior change.
 // Shared by exp10/exp10_checked: the round-based reduction (`kb`/`kr`/`d`/
 // `fr`/floor-adjust to `(k, f)`) is identical between the two -- only
 // exp10_checked's own leading `x` clamp and trailing `k` clamp (needed
@@ -363,12 +377,11 @@ pub fn exp10_checked(x: f32) -> f32 {
     // Clamped before the reduction starts (matching exp2_checked's own
     // early-clamp pattern) so +-inf can't poison `d = x - kr*LOG10_2`
     // with an inf-inf NaN -- NaN itself passes through unaffected
-    // (f32::clamp preserves NaN in the receiver), and the bound is wide
-    // enough that it never touches a genuinely in-range x (exp2_checked's
-    // own clamp downstream still does the real range-limiting).
-    let x = x.clamp(-1000.0, 1000.0);
+    // (f32::clamp preserves NaN in the receiver). See this function's own
+    // doc comment for why these exact bounds make the old separate `k`
+    // clamp redundant (removed).
+    let x = x.clamp(-45.154503, 38.53184);
     let (k, f) = exp10_reduction!(x);
-    let k = k.clamp(-151.0, 128.0);
     let (t1, t2) = exp2_field_split(k);
     let q = exp2_q_poly!(f);
     let p = fma(q, t1 * f, t1);
