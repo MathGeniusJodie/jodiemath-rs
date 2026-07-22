@@ -1785,9 +1785,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 60. **atan2_latency tier**: atan_latency-based atan2 — atan2 currently
     stacks atan_poly's division on top of its own y/x division.
-61. **atan_bounded tier** (|x| ≤ 1 contract): skips the 1/a division
-    and fold select entirely; atan_poly alone is the whole answer
-    there.
 
 #### erf family
 

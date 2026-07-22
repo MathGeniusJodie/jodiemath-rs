@@ -168,6 +168,7 @@ fn main() {
         "acos",
         "atan",
         "atan_latency",
+        "atan_bounded",
         "atan2",
         "tan",
         "tan_checked",

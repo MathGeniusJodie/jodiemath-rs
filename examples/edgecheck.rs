@@ -741,6 +741,14 @@ fn main() {
     check("atan(0)", atan(0.0), 0.0);
     check("atan(inf)", atan(f32::INFINITY), std::f32::consts::FRAC_PI_2);
     check("atan(-inf)", atan(f32::NEG_INFINITY), -std::f32::consts::FRAC_PI_2);
+
+    // atan_bounded (backlog idea #61): |x|<=1 contract, atan_poly alone.
+    check("atan_bounded(0)", atan_bounded(0.0), 0.0);
+    check("atan_bounded(-0)", atan_bounded(-0.0), -0.0);
+    check("atan_bounded(nan)", atan_bounded(f32::NAN), f32::NAN);
+    check("atan_bounded(1)==atan(1)", atan_bounded(1.0), atan(1.0));
+    check("atan_bounded(-1)==atan(-1)", atan_bounded(-1.0), atan(-1.0));
+    check("atan_bounded(0.5)==atan(0.5)", atan_bounded(0.5), atan(0.5));
     check("atan_latency(0)", atan_latency(0.0), 0.0);
     check("atan_latency(-0)", atan_latency(-0.0), -0.0);
     check("atan_latency(inf)", atan_latency(f32::INFINITY), std::f32::consts::FRAC_PI_2);

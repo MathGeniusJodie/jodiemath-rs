@@ -1025,6 +1025,10 @@ fn main() {
         report("std atan", &s, t0);
         let s = measure!(everywhere, atan_latency, atan_u35);
         report("atan_latency", &s, t0);
+        // atan_bounded's own documented contract (backlog idea #61).
+        let bounded_domain = |x: f32| x.abs() <= 1.0;
+        let s = measure!(bounded_domain, atan_bounded, atan_u35);
+        report("atan_bounded", &s, t0);
     }
     if run("tan") {
         let tan_domain = |x: f32| x.abs() < (1u32 << 22) as f32 * std::f32::consts::PI;

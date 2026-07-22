@@ -2418,6 +2418,19 @@ pub fn atan(x: f32) -> f32 {
     mulsign(y, x)
 }
 
+/// atan(x), `|x| <= 1` contract (backlog idea #61): `atan_poly` alone is
+/// already the whole answer over that domain (it's fitted directly
+/// against atan on `[0,1]`), so this skips `atan`'s own `1/a`
+/// reciprocal, `min`, and `FRAC_PI_2 - y` fold entirely -- for callers
+/// who already know their input is bounded (e.g. already reduced via
+/// some other identity). Garbage outside `[-1,1]`, same "unchecked
+/// tier" convention as this crate's other `_unchecked`/narrow variants.
+#[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
+#[inline(always)]
+pub fn atan_bounded(x: f32) -> f32 {
+    mulsign(atan_poly(x.abs()), x)
+}
+
 /// Latency-tier atan: a division-free odd degree-17 poly (fit directly
 /// against atan(r) over r in `[0,1]`, not derived from atan_poly's own
 /// rational) instead of atan_poly's 3/3 Pade form. Removes the division
