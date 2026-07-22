@@ -192,6 +192,8 @@ fn main() {
         "rsqrt",
         "powf",
         "powf_pos",
+        "srgb_to_linear",
+        "linear_to_srgb",
         "signed_pow",
         "powf_unchecked",
         "pown",

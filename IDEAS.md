@@ -1960,10 +1960,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### Batch 2: hyperbolics / ML / graphics
 
-146. **srgb_to_linear / linear_to_srgb**: the piecewise-2.4-power sRGB
-     transfer pair, branchless select over the linear toe — heavy
-     real-world vectorization demand; powf composition first, dedicated
-     poly if it earns it.
 147. **smoothstep/smootherstep graphics pack** (trivial fma polys with
      exact endpoints; cheap API breadth).
 148. **Softmax / logsumexp / normalize slice reductions** (max-pass +

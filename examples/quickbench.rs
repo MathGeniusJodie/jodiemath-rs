@@ -225,6 +225,8 @@ fn main() {
     // the real branchy cost. See readme.md's own todo note on this.
     let powf_y = std::hint::black_box(2.0);
     bench!("powf", move |x: f32| powf(x, powf_y));
+    bench!("srgb_to_linear", srgb_to_linear);
+    bench!("linear_to_srgb", linear_to_srgb);
     bench!("std powf", move |x: f32| x.powf(powf_y));
     bench!("powf_unchecked", move |x: f32| powf_unchecked(x, powf_y));
     bench!("powf_checked", move |x: f32| powf_checked(x, powf_y));

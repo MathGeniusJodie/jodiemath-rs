@@ -406,6 +406,12 @@ throughput_fn!(thr_powf_pos, "powf_pos_throughput", {
     move |x: f32| powf_pos(x, y)
 });
 
+latency_fn!(lat_srgb_to_linear, "srgb_to_linear_latency", srgb_to_linear);
+throughput_fn!(thr_srgb_to_linear, "srgb_to_linear_throughput", srgb_to_linear);
+
+latency_fn!(lat_linear_to_srgb, "linear_to_srgb_latency", linear_to_srgb);
+throughput_fn!(thr_linear_to_srgb, "linear_to_srgb_throughput", linear_to_srgb);
+
 // signed_pow's mulsign is a branchless bit operation (not a runtime
 // select on x's sign), so unlike erfcx's own mix()-sign-blindness
 // caveat, this number is representative regardless of mix() erasing
@@ -675,6 +681,8 @@ fn main() {
         lat_rsqrt, thr_rsqrt;
         lat_powf, thr_powf;
         lat_powf_pos, thr_powf_pos;
+        lat_srgb_to_linear, thr_srgb_to_linear;
+        lat_linear_to_srgb, thr_linear_to_srgb;
         lat_signed_pow, thr_signed_pow;
         lat_powf_unchecked, thr_powf_unchecked;
         lat_pown, thr_pown;

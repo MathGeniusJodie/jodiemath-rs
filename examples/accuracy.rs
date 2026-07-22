@@ -1146,6 +1146,29 @@ fn main() {
         let s = measure!(everywhere, norm_pdf, norm_pdf_ref);
         report("norm_pdf", &s, t0);
     }
+    if run("srgb") {
+        // Standard sRGB channel range (backlog idea #146); powf_pos's
+        // own x>=0 contract.
+        let unit_range = |x: f32| (0.0..=1.0).contains(&x);
+        let srgb_to_linear_ref = |v: F64xN| {
+            let low = v * F64xN::splat(1.0 / 12.92);
+            let high = pow_u10(
+                (v + F64xN::splat(0.055)) * F64xN::splat(1.0 / 1.055),
+                F64xN::splat(2.4),
+            );
+            v.simd_le(F64xN::splat(0.04045)).select(low, high)
+        };
+        let s = measure!(unit_range, srgb_to_linear, srgb_to_linear_ref);
+        report("srgb_to_linear", &s, t0);
+        let linear_to_srgb_ref = |v: F64xN| {
+            let low = v * F64xN::splat(12.92);
+            let high = F64xN::splat(1.055) * pow_u10(v, F64xN::splat(1.0 / 2.4))
+                - F64xN::splat(0.055);
+            v.simd_le(F64xN::splat(0.0031308)).select(low, high)
+        };
+        let s = measure!(unit_range, linear_to_srgb, linear_to_srgb_ref);
+        report("linear_to_srgb", &s, t0);
+    }
 
     // two-argument functions: fuzz-only (exhaustive over 2^64 pairs isn't
     // feasible), smaller sample count since each trial needs two RNG draws.

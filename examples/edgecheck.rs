@@ -1228,6 +1228,25 @@ fn main() {
     check("powf_pos(inf,-5)", powf_pos(f32::INFINITY, -5.0), 0.0);
     check("powf_pos(2,inf)", powf_pos(2.0, f32::INFINITY), f32::INFINITY);
     check("powf_pos(0.5,inf)", powf_pos(0.5, f32::INFINITY), 0.0);
+
+    // srgb_to_linear/linear_to_srgb (backlog idea #146).
+    check("srgb_to_linear(0)", srgb_to_linear(0.0), 0.0);
+    check("srgb_to_linear(1)", srgb_to_linear(1.0), 1.0);
+    check("srgb_to_linear(nan)", srgb_to_linear(f32::NAN), f32::NAN);
+    check("linear_to_srgb(0)", linear_to_srgb(0.0), 0.0);
+    check_known_1ulp("linear_to_srgb(1)", linear_to_srgb(1.0), 1.0);
+    check("linear_to_srgb(nan)", linear_to_srgb(f32::NAN), f32::NAN);
+    // Round trip through the toe boundary and a mid-range value.
+    check_known_1ulp(
+        "linear_to_srgb(srgb_to_linear(0.5))",
+        linear_to_srgb(srgb_to_linear(0.5)),
+        0.5,
+    );
+    check_known_1ulp(
+        "linear_to_srgb(srgb_to_linear(0.04045))",
+        linear_to_srgb(srgb_to_linear(0.04045)),
+        0.04045,
+    );
     // signed_pow: graphics/shading "raise |x| then reapply sign"
     // convention (backlog idea #151) -- total for every finite x/y,
     // never NaN for a negative base with a non-integer y, unlike powf's

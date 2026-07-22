@@ -3308,6 +3308,33 @@ pub fn powf_unchecked(x: f32, y: f32) -> f32 {
     exp2_checked(log_2_unchecked(x) * y)
 }
 
+/// sRGB -> linear (backlog idea #146), IEC 61966-2-1's piecewise
+/// transfer function: a linear "toe" near black (avoiding the power
+/// curve's infinite slope at 0) below `0.04045`, `((c+0.055)/1.055)^2.4`
+/// above it. `powf_pos` composition (not a dedicated poly) since this
+/// crate's own `powf` family already reuses the same log2/exp2_checked
+/// machinery every other power-law composite here does; a dedicated fit
+/// is only worth it if this measures as a real hot path. Domain `c>=0`
+/// (matching `powf_pos`'s own contract) -- the standard sRGB channel
+/// range.
+#[inline(always)]
+pub fn srgb_to_linear(c: f32) -> f32 {
+    let low = c * (1.0 / 12.92);
+    let high = powf_pos((c + 0.055) * (1.0 / 1.055), 2.4);
+    if c <= 0.04045 { low } else { high }
+}
+
+/// linear -> sRGB (backlog idea #146), the inverse transfer function:
+/// linear below `0.0031308`, `1.055*l^(1/2.4) - 0.055` above it. See
+/// `srgb_to_linear`'s own doc comment for the composition rationale and
+/// domain contract (`l>=0`).
+#[inline(always)]
+pub fn linear_to_srgb(l: f32) -> f32 {
+    let low = l * 12.92;
+    let high = fma(1.055, powf_pos(l, 1.0 / 2.4), -0.055);
+    if l <= 0.0031308 { low } else { high }
+}
+
 /// x^n for integer `n` (`i32`), via exponentiation by squaring. Each
 /// step is a single correctly-rounded f32 multiply -- no poly, no log/
 /// exp composition -- so this sidesteps `powf`'s own "amplifies log_2's
