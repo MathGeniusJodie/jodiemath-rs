@@ -139,6 +139,29 @@ what shipped.
   viable, ~4900 bad points spread continuously across the domain, not
   concentrated enough for a lookup-table-style patch. `cbrt_accurate`'s
   one bad mantissa fits the bar but is an already-accepted won't-fix.
+- **Monotonicity audit** (idea #149): built a scratch checker
+  (exhaustive ulp-walk over `[-4,4]` -- properly handling that negative
+  floats' *raw bit pattern* decreases toward zero, the opposite of the
+  positive side -- plus a coarse 50M-point dense sample over each
+  function's wider documented domain) for `sigmoid`/`tanh`/`erf`/`atan`/
+  `softplus`. First pass reported alarming "violations" (e.g. sigmoid
+  apparently dropping from 0.545 to ~1.2e-7 between adjacent ulps) that
+  turned out to be a bug in the checker's own print statement (mislabeled
+  the drop *magnitude* as the neighbor's actual value) -- direct isolated
+  verification (`sigmoid(0.18189578)=0.54534906`,
+  `sigmoid(0.18189579)=0.54534894`) confirmed the real neighbor value is
+  nearly identical, not catastrophic. Fixed the checker and re-ran: all
+  five functions do have genuine local non-monotonicity, but only at the
+  1-2 ulp level (worst drops 8.9e-8 to 2.4e-7, i.e. exactly 1-2 ulp at
+  that magnitude) and confined to a small fraction of the domain
+  (0.015%-0.19% of ulp-walk steps). This is the ordinary, expected
+  behavior of any polynomial/rational approximation to a smooth function
+  evaluated in finite precision, not a coding defect -- and per the
+  idea's own "repair only if found and cheap" bar, a fix would need a
+  fundamentally different monotonicity-preserving construction (not a
+  cheap patch), so not pursued. No code changes; the scratch checker
+  (`examples/monotonicity_scratch.rs`) was deleted after use, not kept
+  as permanent harness infrastructure.
 
 ### exp / exp2 family
 
@@ -1953,9 +1976,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 148. **Softmax / logsumexp / normalize slice reductions** (max-pass +
      exp-pass + sum + scale in one fused traversal) — slice-tier
      flagship, plus a rotate2d(sincos) demo kernel.
-149. **Monotonicity audit**: sigmoid/tanh/erf/atan/softplus checked for
-     local non-monotonic ulp wiggles (breaks bisection for ML users);
-     repair only if found and cheap.
 150. **sigmoid_grad / tanh_grad fused pairs** (s·(1−s) reusing the
      already-computed e) — screen whether fusion beats the caller's own
      two ops before building.
