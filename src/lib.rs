@@ -1418,6 +1418,29 @@ pub fn expm1(x: f32) -> f32 {
     if x.abs() < 0.5 { a } else { b }
 }
 
+/// expm1(x), single-exponent-field tier (backlog idea #201, the same
+/// mechanism as [`exp_narrow`] applied here): identical Pade branch,
+/// identical reduction/poly for the direct branch, but the direct
+/// branch's combine drops straight to `fma(p, exp2int, -1.0)` (no `t1`
+/// multiply at all, not just a narrower field) since there's only one
+/// field to multiply by. Valid over the same `[-87.68311, 88.37627]`
+/// domain as `exp_narrow` (identical `k=round(x*log2(e))` reduction, so
+/// the same bit-level boundary applies). No clamp: unchecked, like
+/// `expm1` itself.
+#[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
+#[inline(always)]
+pub fn expm1_narrow(x: f32) -> f32 {
+    let a = pade_expm1_ratio!(x, mul);
+    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+    let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
+    let r = fma(-k, LN2_HI, x);
+    let r = fma(-k, LN2_LO, r);
+    let p = exp_r_poly!(r);
+    let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
+    let b = fma(p, exp2int, -1.0);
+    if x.abs() < 0.5 { a } else { b }
+}
+
 /// (e^x - 1)/x: the well-conditioned primitive behind financial
 /// (continuously-compounded-rate) and ODE (exponential-integrator)
 /// kernels, where callers otherwise write `expm1(x)/x` and hope `x`

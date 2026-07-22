@@ -439,6 +439,14 @@ fn main() {
 
     check("expm1(0)", expm1(0.0), 0.0);
 
+    // expm1_narrow (backlog idea #201): same single-field mechanism and
+    // domain as exp_narrow, applied to expm1's own direct branch.
+    check("expm1_narrow(0)", expm1_narrow(0.0), 0.0);
+    check_finite("expm1_narrow(88.37627)", expm1_narrow(88.37627));
+    check_finite("expm1_narrow(-87.68311)", expm1_narrow(-87.68311));
+    check("expm1_narrow(1)==expm1(1)", expm1_narrow(1.0), expm1(1.0));
+    check("expm1_narrow(60)==expm1(60)", expm1_narrow(60.0), expm1(60.0));
+
     // exp_m1_over_x(x) = (e^x-1)/x, with the removable singularity at 0
     // resolving to exactly 1.0 for free from the Pade branch's own
     // algebra (N(0)/D(0)=-120/-120=1.0 exactly) -- no explicit x==0.0

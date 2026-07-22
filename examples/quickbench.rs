@@ -155,6 +155,7 @@ fn main() {
     bench!("exp_narrow", exp_narrow);
     bench!("exp_checked", exp_checked);
     bench!("expm1", expm1);
+    bench!("expm1_narrow", expm1_narrow);
     bench!("std expm1", |x: f32| x.exp_m1());
     bench!("exp_m1_over_x", exp_m1_over_x);
     bench!("exp2m1", exp2m1);

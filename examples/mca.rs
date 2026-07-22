@@ -143,6 +143,7 @@ fn main() {
         "exp_narrow",
         "exp_checked",
         "expm1",
+        "expm1_narrow",
         "exp_m1_over_x",
         "exp2m1",
         "exp10m1",
