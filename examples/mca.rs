@@ -179,6 +179,7 @@ fn main() {
         "asinpi",
         "acos",
         "acosd",
+        "acospi",
         "atan",
         "atan_latency",
         "atan_bounded",

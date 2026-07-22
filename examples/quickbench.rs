@@ -198,6 +198,7 @@ fn main() {
     bench!("acos", acos);
     bench!("std acos", |x: f32| x.acos());
     bench!("acosd", acosd);
+    bench!("acospi", acospi);
     bench!("atan", atan);
     bench!("std atan", |x: f32| x.atan());
     bench!("atan_latency", atan_latency);

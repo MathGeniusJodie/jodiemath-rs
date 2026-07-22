@@ -2519,6 +2519,35 @@ pub fn acosd(x: f32) -> f32 {
     acos(x) * (180.0 / std::f32::consts::PI)
 }
 
+// acos(x)/pi, coefficients each rescaled by 1/pi (backlog idea #85,
+// tested individually per asinpi's own "neither verdict generalizes"
+// finding). acos_poly's own trailing term (1.5707964, its own fit
+// target for FRAC_PI_2) happens to rescale to exactly 0.5 in f32 --
+// the idea's own "pi/2-derived constants become exact" claim holds
+// here at least once.
+#[inline(always)]
+fn acospi_poly(x: f32) -> f32 {
+    let u = 7.308537e-4f32;
+    let u = fma(u, x, -3.5479574e-3);
+    let u = fma(u, x, 8.562644e-3);
+    let u = fma(u, x, -1.5534312e-2);
+    let u = fma(u, x, 2.8251762e-2);
+    let u = fma(u, x, -6.830476e-2);
+    fma(u, x, 5e-1)
+}
+
+/// acos(x)/pi (backlog idea #85), the C23 half-turn convenience family.
+/// Verified: folded gives avg/max ulp 0.0536/5 vs the naive
+/// `acos(x) * (1.0 / PI)` composite's 0.0595/5 -- a real win on average
+/// ulp with no mca cost (identical to plain acos), same verdict as
+/// asinpi's own 1/pi fold and the opposite of asind's RAD_TO_DEG fold.
+#[inline(always)]
+pub fn acospi(x: f32) -> f32 {
+    let a = x.abs();
+    let y = (1.0 - a).sqrt() * acospi_poly(a);
+    mulsign(y, x + 0.0) + if x < 0.0 { 1.0 } else { 0.0 }
+}
+
 // Odd approximation asin(x) ~ x * P(x^2), degree 3 in x^2, on |x| < 0.25.
 // The leading coefficient is pinned to exactly 1.0 so tiny x returns x
 // (its correctly-rounded asin). The other three are a minimax refit over

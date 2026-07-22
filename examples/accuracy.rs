@@ -1119,6 +1119,15 @@ fn main() {
         let acosd_ref = |v: F64xN| acos_u35(v) * F64xN::splat(rad_to_deg);
         let s = measure!(everywhere, acosd, acosd_ref);
         report("acosd", &s, t0);
+        // acospi (backlog idea #85): folded vs naive, tested separately
+        // per asinpi's own "each site needs its own measurement" finding.
+        let inv_pi = 1.0 / std::f64::consts::PI;
+        let acospi_ref = |v: F64xN| acos_u35(v) * F64xN::splat(inv_pi);
+        let s = measure!(everywhere, acospi, acospi_ref);
+        report("acospi", &s, t0);
+        let inv_pi_f32 = 1.0f32 / std::f32::consts::PI;
+        let s = measure!(everywhere, move |x: f32| acos(x) * inv_pi_f32, acospi_ref);
+        report("acos(x)/PI (naive)", &s, t0);
     }
     if run("atan") {
         let s = measure!(everywhere, atan, atan_u35);

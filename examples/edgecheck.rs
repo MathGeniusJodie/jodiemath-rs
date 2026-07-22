@@ -829,6 +829,14 @@ fn main() {
     check("acosd(0)", acosd(0.0), 90.0);
     check("acosd(nan)", acosd(f32::NAN), f32::NAN);
 
+    // acospi (backlog idea #85): folded dedicated coefficients (a real
+    // win here, same verdict as asinpi -- see its own doc comment).
+    check("acospi(1)", acospi(1.0), 0.0);
+    check("acospi(-1)", acospi(-1.0), 1.0);
+    check("acospi(0)", acospi(0.0), 0.5);
+    check("acospi(nan)", acospi(f32::NAN), f32::NAN);
+    check("acospi(2)", acospi(2.0), f32::NAN);
+
     check("acos(1)", acos(1.0), 0.0);
     check("acos(-1)", acos(-1.0), std::f32::consts::PI);
     check("acos(2)", acos(2.0), f32::NAN);
