@@ -353,6 +353,15 @@ throughput_fn!(thr_norm_pdf, "norm_pdf_throughput", norm_pdf);
 latency_fn!(lat_logit, "logit_latency", logit);
 throughput_fn!(thr_logit, "logit_throughput", logit);
 
+latency_fn!(lat_compound, "compound_latency", {
+    let n = black_box(5.0);
+    move |x: f32| compound(x, n)
+});
+throughput_fn!(thr_compound, "compound_throughput", {
+    let n = black_box(5.0);
+    move |x: f32| compound(x, n)
+});
+
 latency_fn!(lat_erfc_accurate, "erfc_accurate_latency", erfc_accurate);
 throughput_fn!(thr_erfc_accurate, "erfc_accurate_throughput", erfc_accurate);
 
@@ -697,6 +706,7 @@ fn main() {
         lat_norm_cdf, thr_norm_cdf;
         lat_norm_pdf, thr_norm_pdf;
         lat_logit, thr_logit;
+        lat_compound, thr_compound;
         lat_erfc_accurate, thr_erfc_accurate;
         lat_erfcx, thr_erfcx;
         lat_erfcx_accurate, thr_erfcx_accurate;

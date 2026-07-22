@@ -1792,8 +1792,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     select, fully fma-based) — sampling/ML staple, vectorizes cleanly.
 #### hyperbolics / activations
 
-72. **compound(x, n) = (1+x)^n** (financial kernel): n·log1p-based
-    route avoiding pown-on-(1+x)'s tiny-x precision loss.
 
 #### powf / pown / remainder
 

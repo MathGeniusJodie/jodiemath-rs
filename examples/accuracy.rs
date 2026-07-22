@@ -1192,6 +1192,14 @@ fn main() {
         let s = fuzz2(TWOARG_SAMPLES, atan2_domain, atan2_unchecked, atan2_u35);
         report("atan2_unchecked (+)", &s, t0);
     }
+    if run("compound") {
+        // Domain x > -1 (backlog idea #72), log1p's own real-domain
+        // limit; exp_checked handles any resulting exponent magnitude.
+        let compound_domain = |x: f32, _: f32| x > -1.0;
+        let compound_ref = |x: F64xN, n: F64xN| exp_u10(n * log1p_u10(x));
+        let s = fuzz2(TWOARG_SAMPLES, compound_domain, compound, compound_ref);
+        report("compound", &s, t0);
+    }
     if run("rsqrt") {
         // x > 0.0 only (0/negative/nan/inf are all correct "for free" via
         // plain IEEE754 semantics, see rsqrt's own doc comment -- not a

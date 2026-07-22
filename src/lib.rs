@@ -2826,6 +2826,28 @@ pub fn logit(p: f32) -> f32 {
     ln(p) - log1p(-p)
 }
 
+/// (1+x)^n (backlog idea #72), the compound-interest/growth-rate
+/// kernel: `pown((1.0+x), n)` (or `powf`) forms `1.0+x` as its own
+/// first step, losing exactly the low-order bits of a small `x` the
+/// same way a naive `exp(x)-1` loses them for `expm1` -- routing
+/// through `n*log1p(x)` instead keeps `x`'s own precision intact all
+/// the way through the exponent. `exp_checked` (not the unchecked
+/// `exp`) since `n*log1p(x)` easily leaves the unchecked domain for
+/// ordinary compounding inputs (many periods, or a large rate). Unlike
+/// `powf`'s own dedicated `y==0`/`x==1` special cases, this composition
+/// gives `NaN` for `compound(0.0, NaN)` (`log1p(0)=0`, `NaN*0=NaN`)
+/// rather than `powf`'s C99-mandated `1.0` -- a real, deliberate
+/// deviation for a thin composite, not something worth its own
+/// override here. Fuzzing can report large-looking max ulp for extreme
+/// `(x,n)` pairs that legitimately underflow to (or just past) zero --
+/// e.g. `compound(-0.0015, 1e5) ~ e^-150`, astronomically smaller than
+/// any denormal -- the same "near a true zero" artifact as `cospi`'s
+/// own near-zero case, not a real precision defect.
+#[inline(always)]
+pub fn compound(x: f32, n: f32) -> f32 {
+    exp_checked(n * log1p(x))
+}
+
 /// Full-precision-exponent sibling of [`erfc`]: `erfc`'s own exponent
 /// term (`-xa*xa*LOG2_E`) rounds `xa*xa` to a single f32 before ever
 /// multiplying by `LOG2_E`, discarding exactly the low bits `exp2_checked`

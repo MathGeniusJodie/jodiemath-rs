@@ -919,6 +919,19 @@ fn main() {
     check("logit(nan)", logit(f32::NAN), f32::NAN);
     check("sigmoid(logit(0.7))", sigmoid(logit(0.7)), 0.70000005);
 
+    // compound(x,n) = (1+x)^n (backlog idea #72).
+    check("compound(0,5)", compound(0.0, 5.0), 1.0);
+    check("compound(-1,5)", compound(-1.0, 5.0), 0.0);
+    check("compound(-2,5)", compound(-2.0, 5.0), f32::NAN);
+    check("compound(x,0)", compound(0.05, 0.0), 1.0);
+    check("compound(nan,1)", compound(f32::NAN, 1.0), f32::NAN);
+    check("compound(0,nan)", compound(0.0, f32::NAN), f32::NAN);
+    check("compound(inf,1)", compound(f32::INFINITY, 1.0), f32::INFINITY);
+    // (1+1/n)^n -> e as n grows; the whole point of routing through
+    // log1p is keeping this precise even for tiny x (1 ulp off the
+    // exact constant here, not a real discrepancy).
+    check_known_1ulp("compound(1e-8,1e8)", compound(1.0e-8, 1.0e8), std::f32::consts::E);
+
     // erfcx(x) = e^(x^2)*erfc(x), backlog idea #51. For x>=0 the
     // exponentials cancel exactly (see its doc comment), so erfcx(0)
     // reduces to the same trivial case erfc(0) does.
