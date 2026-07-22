@@ -1116,6 +1116,40 @@ what shipped.
   same class of already-established no-op as the `wrapping_sub`-combined-
   range-compares and `koff-free unchecked-log` findings above. Reverted,
   no reason to carry the less-obvious source form for zero benefit.
+- **Seam retunes not yet done** (backlog idea #7, five sub-items): all
+  five now checked directly against the real exhaustive sweep (plus mca
+  where relevant), same method as the earlier 5-function crossover audit
+  (sinh/tanh/expm1/asin/erf). `exp2m1`'s `0.5` **shipped as a real win**
+  (see lib.rs/git log): 0.5→0.65, avg ulp 0.0769→0.0766, max unchanged at
+  4, zero mca cost (branchless select, same op count). The other four
+  found no headroom: `exp_m1_over_x`'s `0.5` -- 0.3/0.4/0.6/0.7 all
+  clearly worse (avg ulp up to 0.0729→0.0850, max up to 19); a narrow
+  0.52-0.55 window did find a genuinely reproducible tiny avg
+  improvement (0.0729→0.0728, max unchanged at 6) but real mca showed it
+  isn't free here (throughput 1.798→1.822 cyc/elem, +1.3%, reproducible
+  at both 0.52 and 0.55) -- unlike `exp2m1`, "same op count" didn't mean
+  zero mca cost, so not adopted (a ~0.14% avg win isn't worth a real
+  throughput cost). `sinh_checked`'s `0.5` (`cosh_checked` has no such
+  branch at all -- `ep+en` has no cancellation near 0, unlike
+  `sinh_checked`'s `ep-en`) -- every alternative tried is clearly worse
+  (0.3/0.4: avg 0.0429→0.0439/0.0431, max 5→7; 0.6/0.7: avg
+  0.0429→0.0509/0.1019, max 5→**28**/**124**), confirming it already
+  matches plain `sinh`'s own already-audited `0.5`. `softplus`/
+  `logaddexp`'s `87.0` turned out to be a different *kind* of seam, not
+  a genuine crossover -- it's a "the true correction has become
+  negligible" cutoff, and the accuracy harness's own `softplus_domain`
+  explicitly restricts testing to `|x|<80` because comparing ulp right
+  at `87` is a documented "sub-denormal-scale difference reporting as
+  millions of ulp" artifact (same class as cospi's near-zero artifact) --
+  not actionable via this crate's accuracy methodology at all, no real
+  measurement exists to retune against. `asinh`/`acosh`'s `2048` rescale
+  threshold: swept 100 through 8000 for both functions against the real
+  exhaustive sweep -- avg/max ulp identical (to 4 decimal places) and
+  worst-x unchanged at every candidate tried, for both functions. The
+  direct/rescaled branches are equally accurate across this entire
+  range; the real worst case for both (`asinh` x≈0.0155, `acosh`
+  x≈1.031) lives entirely elsewhere, nowhere near this seam. No headroom
+  either way -- the exact threshold position simply doesn't matter here.
 - **sigmoid one-sided evaluation** (idea #199, `e = exp(+|x|)` so `k`
   never goes negative, `s = 1/(1+e)` selected directly for `x<0` or as
   `1-s` for `x>=0`): edgecheck confirmed every special-value pin still
@@ -1552,49 +1586,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 6. **Joint threshold+coefficient coordinate descent** in tune.rs
    (crossover as a continuous search parameter) — automates the asin
    fix-5 lesson instead of retuning thresholds against frozen polys.
-7. **Seam retunes not yet done**: asinh/acosh's 2048 rescale threshold.
-   (The 5-function crossover audit
-   covered sinh/tanh/expm1/asin/erf only. `exp2m1`'s own 0.5 -- also
-   originally listed here -- shipped as a real win, see lib.rs/git log:
-   0.5→0.65, avg ulp 0.0769→0.0766, max unchanged at 4, zero mca cost.
-   `exp_m1_over_x`'s own 0.5 -- checked directly against the real
-   exhaustive sweep, same method -- found near-optimal, unlike
-   `exp2m1`'s: 0.3/0.4/0.6/0.7 all clearly worse (avg ulp up to
-   0.0729→0.0850, max up to 19), confirming this seam has essentially no
-   headroom the way the other 5 audited functions didn't either. A
-   narrow window (0.52-0.55) *did* find a genuinely reproducible,
-   exhaustive tiny avg improvement (0.0729→0.0728, max unchanged at 6)
-   but real mca showed it isn't free here (unlike `exp2m1`'s identical-
-   mechanism change): throughput 1.798→1.822 cyc/elem (+1.3%,
-   reproducible at both 0.52 and 0.55) -- some functions' branchless
-   select apparently *does* cost more to move off its exact literal even
-   though the op count is unchanged, so "same op count" isn't a
-   guarantee of zero mca cost the way it was for `exp2m1`. Not adopted:
-   a ~0.14% avg win isn't worth a real, if small, throughput cost. `0.5`
-   stays. `sinh_checked`'s own `0.5` (`cosh_checked` has no such branch
-   at all -- `ep+en` has no cancellation near 0, unlike `sinh_checked`'s
-   `ep-en`, so only `sinh_checked` actually has this seam) checked the
-   same way: confirmed already optimal, consistent with plain `sinh`'s
-   own already-audited `0.5` -- every alternative tried is clearly worse
-   (0.3/0.4: avg 0.0429→0.0439/0.0431, max 5→7; 0.6/0.7: avg
-   0.0429→0.0509/0.1019, max 5→**28**/**124**, the direct branch's
-   cancellation blowing up sharply as the threshold shrinks below
-   `sinh_small`'s own safe range). No headroom, no mca work needed.
-   `softplus`/`logaddexp`'s own `87.0` is a different *kind* of seam,
-   not a genuine crossover between two competing approximations like the
-   others -- it's a "the true correction term has become negligible"
-   cutoff, and the accuracy harness's own `softplus_domain` explicitly
-   restricts testing to `|x|<80` specifically *because* comparing ulp
-   right at `87` is documented as a "sub-denormal-scale difference
-   reporting as millions of ulp" artifact, not a real error (same class
-   as cospi's near-zero ulp artifact). Any retuning of `87.0` within a
-   reasonable range wouldn't be visible in the harness's own `|x|<80`
-   domain at all (the correction is already in its normal-computed
-   regime well below either candidate cutoff), and probing *into* the
-   seam itself would only remeasure the same known-meaningless artifact,
-   not a real accuracy question. Not actionable via this crate's own
-   accuracy methodology -- no measurement to optimize against, unlike
-   the other four seams in this entry.)
 8. **atan_poly joint numerator+denominator nonlinear refit** (scipy
    least_squares on the true rational) — only separate num-only/
    denom-only LPs were tried; the max-4 worst point was diagnosed as
