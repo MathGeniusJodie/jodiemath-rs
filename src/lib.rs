@@ -2134,6 +2134,17 @@ pub fn softplus(x: f32) -> f32 {
     if x.is_nan() { f32::NAN } else { normal }
 }
 
+/// logsigmoid(x) = ln(sigmoid(x)) = -softplus(-x) (backlog idea #118), the
+/// numerically stable log-likelihood ML frameworks pair with `sigmoid`
+/// (`ln(1/(1+e^-x))`, same cancellation trap as `softplus` itself for
+/// large negative `x` -- reuses that fix directly instead of composing
+/// `sigmoid(x).ln()`, which would underflow to `ln(0.0) = -inf` far
+/// earlier than the true answer justifies).
+#[inline(always)]
+pub fn logsigmoid(x: f32) -> f32 {
+    -softplus(-x)
+}
+
 /// logaddexp(a,b) = ln(e^a+e^b), the numerically stable "log of a sum of
 /// exponentials" ML/statistics primitive (softmax/log-sum-exp's binary
 /// building block -- in fact `softplus(x) == logaddexp(x, 0.0)`).

@@ -1016,6 +1016,16 @@ fn main() {
         let s = measure!(softplus_domain, softplus, softplus_ref);
         report("softplus (|x|<80)", &s, t0);
     }
+    if run("logsigmoid") {
+        // Same |x|<80 reasoning as softplus's own doc comment (this is
+        // -softplus(-x), so the identical seam sits at the same |x|=87).
+        let logsigmoid_domain = |x: f32| x.abs() < 80.0;
+        let logsigmoid_ref = |v: F64xN| {
+            -((-v).simd_max(F64xN::splat(0.0)) + log1p_u10(exp_u10(-v.abs())))
+        };
+        let s = measure!(logsigmoid_domain, logsigmoid, logsigmoid_ref);
+        report("logsigmoid (|x|<80)", &s, t0);
+    }
     if run("logaddexp") {
         // Same |x|<80 reasoning as softplus (its own doc comment) --
         // logaddexp shares the identical correction-term cutoff shape,

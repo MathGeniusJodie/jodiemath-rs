@@ -174,6 +174,7 @@ fn main() {
         "tanh",
         "sigmoid",
         "softplus",
+        "logsigmoid",
         "logaddexp",
         "sqrt1pm1",
         "asinh",

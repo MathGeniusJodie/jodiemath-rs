@@ -302,6 +302,9 @@ throughput_fn!(thr_sigmoid, "sigmoid_throughput", sigmoid);
 latency_fn!(lat_softplus, "softplus_latency", softplus);
 throughput_fn!(thr_softplus, "softplus_throughput", softplus);
 
+latency_fn!(lat_logsigmoid, "logsigmoid_latency", logsigmoid);
+throughput_fn!(thr_logsigmoid, "logsigmoid_throughput", logsigmoid);
+
 latency_fn!(lat_logaddexp, "logaddexp_latency", |x: f32| logaddexp(x, 0.0));
 throughput_fn!(thr_logaddexp, "logaddexp_throughput", |x: f32| logaddexp(x, 0.0));
 
@@ -728,6 +731,7 @@ fn main() {
         lat_tanh, thr_tanh;
         lat_sigmoid, thr_sigmoid;
         lat_softplus, thr_softplus;
+        lat_logsigmoid, thr_logsigmoid;
         lat_logaddexp, thr_logaddexp;
         lat_gelu, thr_gelu;
         lat_silu, thr_silu;

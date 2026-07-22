@@ -666,6 +666,18 @@ fn main() {
     check("softplus(-f32::MAX)", softplus(-f32::MAX), 0.0);
     check("softplus(nan)", softplus(f32::NAN), f32::NAN);
 
+    // logsigmoid = -softplus(-x) (backlog idea #118): each pin here is
+    // softplus's own pin above, mirrored through that identity.
+    check("logsigmoid(0)", logsigmoid(0.0), -std::f32::consts::LN_2);
+    check("logsigmoid(-0)", logsigmoid(-0.0), -std::f32::consts::LN_2);
+    check("logsigmoid(1000)", logsigmoid(1000.0), -0.0);
+    check("logsigmoid(f32::MAX)", logsigmoid(f32::MAX), -0.0);
+    check("logsigmoid(inf)", logsigmoid(f32::INFINITY), -0.0);
+    check("logsigmoid(-inf)", logsigmoid(f32::NEG_INFINITY), f32::NEG_INFINITY);
+    check("logsigmoid(-1000)", logsigmoid(-1000.0), -1000.0);
+    check("logsigmoid(-f32::MAX)", logsigmoid(-f32::MAX), -f32::MAX);
+    check("logsigmoid(nan)", logsigmoid(f32::NAN), f32::NAN);
+
     // logaddexp(a,b) = ln(e^a+e^b); softplus(x) == logaddexp(x,0.0).
     check("logaddexp(0,0)", logaddexp(0.0, 0.0), std::f32::consts::LN_2);
     check("logaddexp(x,0)==softplus(x)", logaddexp(3.0, 0.0), softplus(3.0));

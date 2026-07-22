@@ -1918,9 +1918,6 @@ an idea revisits a rejection, the differing mechanism is stated.
      user custom-base kernels skip the redundant floor/frac.
 117. **exp_scaled(x, s) = e^x · 2^s** with s folded into the field
      split for free — softmax/normalization building block.
-118. **logsigmoid(x) = −softplus(−x)** as a thin public function (loss
-     kernels); rides the fused-softplus idea (#38) if that lands.
-
 #### Batch 2: trig
 
 125. **Integer-domain parity pipeline end-to-end** for
