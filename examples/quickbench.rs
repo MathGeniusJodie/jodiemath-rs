@@ -162,8 +162,10 @@ fn main() {
     bench!("exp2m1", exp2m1);
     bench!("sinh", sinh);
     bench!("std sinh", |x: f32| x.sinh());
+    bench!("sinh_narrow", sinh_narrow);
     bench!("cosh", cosh);
     bench!("std cosh", |x: f32| x.cosh());
+    bench!("cosh_narrow", cosh_narrow);
     bench!("sinh_throughput", sinh_throughput);
     bench!("cosh_throughput", cosh_throughput);
     bench!("sinh_checked", sinh_checked);

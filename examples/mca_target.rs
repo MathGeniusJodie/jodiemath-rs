@@ -224,8 +224,14 @@ throughput_fn!(thr_exp10m1, "exp10m1_throughput", exp10m1);
 latency_fn!(lat_sinh, "sinh_latency", sinh);
 throughput_fn!(thr_sinh, "sinh_throughput", sinh);
 
+latency_fn!(lat_sinh_narrow, "sinh_narrow_latency", sinh_narrow);
+throughput_fn!(thr_sinh_narrow, "sinh_narrow_throughput", sinh_narrow);
+
 latency_fn!(lat_cosh, "cosh_latency", cosh);
 throughput_fn!(thr_cosh, "cosh_throughput", cosh);
+
+latency_fn!(lat_cosh_narrow, "cosh_narrow_latency", cosh_narrow);
+throughput_fn!(thr_cosh_narrow, "cosh_narrow_throughput", cosh_narrow);
 
 // "_fn" disambiguates these region names from sinh/cosh's own "_throughput"
 // mode above, same convention already used for cbrt_throughput below.
@@ -599,7 +605,9 @@ fn main() {
         lat_exp2m1, thr_exp2m1;
         lat_exp10m1, thr_exp10m1;
         lat_sinh, thr_sinh;
+        lat_sinh_narrow, thr_sinh_narrow;
         lat_cosh, thr_cosh;
+        lat_cosh_narrow, thr_cosh_narrow;
         lat_sinh_throughput_fn, thr_sinh_throughput_fn;
         lat_cosh_throughput_fn, thr_cosh_throughput_fn;
         lat_sinh_checked, thr_sinh_checked;

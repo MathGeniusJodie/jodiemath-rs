@@ -1609,6 +1609,34 @@ fn exp_pos_neg(x: f32) -> (f32, f32) {
     (p_pos * t1 * t2, p_neg * t1n * t2n)
 }
 
+// exp_pos_neg, single-exponent-field tier (backlog idea #201, same
+// mechanism as exp_narrow et al, one level further): both `+k` and `-k`
+// must fit a single field's own valid range simultaneously here (unlike
+// exp_narrow's one-sided k), which needs a domain a hair tighter than
+// exp_narrow's own -- see sinh_narrow/cosh_narrow's own doc comment for
+// the exact (symmetric) boundary. Standalone copy of exp_pos_neg_core!'s
+// poly (not routed through the macro, which hardcodes the split) --
+// same standalone-copy precedent as expm1/exp_checked's own reductions.
+#[inline(always)]
+fn exp_pos_neg_narrow(x: f32) -> (f32, f32) {
+    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+    let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
+    let r = fma(-k, LN2_HI, x);
+    let r = fma(-k, LN2_LO, r);
+    let c: [f32; 4] = [4.99993e-1, 1.6667245e-1, 4.188372e-2, 8.300987e-3];
+    let r2 = r * r;
+    let r4 = r2 * r2;
+    let e = fma(c[2], r4, fma(c[0], r2, 1.0));
+    let o = fma(c[3], r4, fma(c[1], r2, 1.0));
+    let p_pos = fma(r, o, e);
+    let p_neg = fma(-r, o, e);
+    let t = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
+    // reciprocal via bit-subtraction, same trick exp_pos_neg_core! uses
+    // for t1n/t2n: exact for any power-of-two field.
+    let tn = f32::from_bits(0x7F00_0000u32.wrapping_sub(t.to_bits()));
+    (p_pos * t, p_neg * tn)
+}
+
 // sinh(x) ~ x * P(x^2), a two-fma odd approximation on |x| < 0.5. The
 // leading coefficient is pinned to exactly 1.0 (tiny x returns x, its
 // correctly-rounded sinh). c1/c2 are NOT the odd Taylor coefficients
@@ -1658,6 +1686,32 @@ pub fn sinh(x: f32) -> f32 {
 #[inline(always)]
 pub fn cosh(x: f32) -> f32 {
     let (ep, en) = exp_pos_neg(x);
+    0.5 * (ep + en)
+}
+
+/// sinh(x), single-exponent-field tier (backlog idea #201, same
+/// mechanism as `exp_narrow` et al, via [`exp_pos_neg_narrow`]): valid
+/// over `[-87.68311, 87.68311]` -- symmetric and a hair tighter than
+/// `exp_narrow`'s own `[-87.68311, 88.37627]`, because `exp_pos_neg`
+/// needs *both* `k` and `-k` to fit a single field's `[-126,127]` range
+/// simultaneously (found the same bit-level way: `k=126` is the last
+/// safe value, since `k=127` would need `-k=-127`, one past the single
+/// field's own lower edge).
+#[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
+#[inline(always)]
+pub fn sinh_narrow(x: f32) -> f32 {
+    let a = sinh_small(x);
+    let (ep, en) = exp_pos_neg_narrow(x);
+    let b = 0.5 * (ep - en);
+    if x.abs() < 0.5 { a } else { b }
+}
+
+/// cosh(x), single-exponent-field tier -- see `sinh_narrow`'s own doc
+/// comment for the domain and mechanism.
+#[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
+#[inline(always)]
+pub fn cosh_narrow(x: f32) -> f32 {
+    let (ep, en) = exp_pos_neg_narrow(x);
     0.5 * (ep + en)
 }
 

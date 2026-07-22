@@ -501,6 +501,20 @@ fn main() {
     check("sinh(0)", sinh(0.0), 0.0);
     check("cosh(0)", cosh(0.0), 1.0);
 
+    // sinh_narrow/cosh_narrow (backlog idea #201): single-exponent-field
+    // tier via exp_pos_neg_narrow, valid over the symmetric
+    // [-87.68311, 87.68311] (tighter than exp_narrow's own domain since
+    // both +k and -k must fit a single field at once).
+    check("sinh_narrow(0)", sinh_narrow(0.0), 0.0);
+    check("cosh_narrow(0)", cosh_narrow(0.0), 1.0);
+    check_finite("sinh_narrow(87.68311)", sinh_narrow(87.68311));
+    check_finite("sinh_narrow(-87.68311)", sinh_narrow(-87.68311));
+    check_finite("cosh_narrow(87.68311)", cosh_narrow(87.68311));
+    check("sinh_narrow(1)==sinh(1)", sinh_narrow(1.0), sinh(1.0));
+    check("cosh_narrow(1)==cosh(1)", cosh_narrow(1.0), cosh(1.0));
+    check("sinh_narrow(60)==sinh(60)", sinh_narrow(60.0), sinh(60.0));
+    check("cosh_narrow(60)==cosh(60)", cosh_narrow(60.0), cosh(60.0));
+
     // sinh_throughput/cosh_throughput (2026-07-10): distinct functions
     // from sinh/cosh (own accuracy.rs sweep entries, own reported ulp
     // numbers), but had zero edgecheck coverage at all. Same small-x

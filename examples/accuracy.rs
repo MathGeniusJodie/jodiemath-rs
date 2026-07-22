@@ -869,6 +869,14 @@ fn main() {
         report("sinh_throughput", &s, t0);
         let s = measure!(sinh_domain, cosh_throughput, cosh_u35);
         report("cosh_throughput", &s, t0);
+        // sinh_narrow/cosh_narrow (backlog idea #201): same domain
+        // concern as sinh_domain above (both +k/-k must stay in exp2's
+        // unchecked range), just tighter in x -- sinh_domain already
+        // covers it.
+        let s = measure!(sinh_domain, sinh_narrow, sinh_u35);
+        report("sinh_narrow", &s, t0);
+        let s = measure!(sinh_domain, cosh_narrow, cosh_u35);
+        report("cosh_narrow", &s, t0);
     }
     if run("sinh_checked") {
         // Full range (backlog idea #85's fifth wave): properly saturates
