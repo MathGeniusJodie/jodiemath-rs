@@ -188,6 +188,7 @@ fn main() {
         "atan2",
         "atan2_pos",
         "atan2d",
+        "atan2pi",
         "tan",
         "tan_checked",
         "erf",

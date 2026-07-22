@@ -1286,6 +1286,11 @@ fn main() {
             |y: F64xN, x: F64xN| atan2_u35(y, x) * F64xN::splat(180.0 / std::f64::consts::PI);
         let s = fuzz2(TWOARG_SAMPLES, |_, _| true, atan2d, atan2d_ref);
         report("atan2d", &s, t0);
+        // atan2pi (backlog idea #85): plain composite -- see its own doc
+        // comment for why a rescaled-coefficient fold isn't attempted.
+        let atan2pi_ref = |y: F64xN, x: F64xN| atan2_u35(y, x) * F64xN::splat(1.0 / std::f64::consts::PI);
+        let s = fuzz2(TWOARG_SAMPLES, |_, _| true, atan2pi, atan2pi_ref);
+        report("atan2pi", &s, t0);
     }
     if run("compound") {
         // Domain x > -1 (backlog idea #72), log1p's own real-domain

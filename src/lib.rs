@@ -2836,6 +2836,18 @@ pub fn atan2d(y: f32, x: f32) -> f32 {
     atan2(y, x) * (180.0 / std::f32::consts::PI)
 }
 
+/// atan2(y,x)/pi (backlog idea #85, C23 half-turn family): plain
+/// composite -- `atan2` composes the same `atan_poly` Pade rational
+/// `atanpi`'s own doc comment already rejected a fold for (numerator and
+/// denominator share one unscaled trailing constant; folding 1/pi into
+/// only the numerator's copy breaks that sharing and costs more than the
+/// naive multiply here does), so not attempted again on the larger,
+/// more branch-heavy `atan2` for the same reason.
+#[inline(always)]
+pub fn atan2pi(y: f32, x: f32) -> f32 {
+    atan2(y, x) * (1.0 / std::f32::consts::PI)
+}
+
 /// atan2 without the x==0/both-zero/both-infinite special cases: contract
 /// is x != 0.0 (and not both x and y infinite). Drops the nonzerox/
 /// nonzeroy/bothzero selects and the whole bothinf branch atan2 pays on

@@ -925,6 +925,13 @@ fn main() {
     check("atan2d(0,1)", atan2d(0.0, 1.0), 0.0);
     check("atan2d(-1,0)", atan2d(-1.0, 0.0), -90.0);
     check("atan2d(nan,1)", atan2d(f32::NAN, 1.0), f32::NAN);
+
+    // atan2pi (backlog idea #85): plain composite -- see its own doc
+    // comment for why a rescaled-coefficient fold isn't attempted.
+    check("atan2pi(1,0)", atan2pi(1.0, 0.0), 0.5);
+    check("atan2pi(0,1)", atan2pi(0.0, 1.0), 0.0);
+    check("atan2pi(-1,0)", atan2pi(-1.0, 0.0), -0.5);
+    check("atan2pi(nan,1)", atan2pi(f32::NAN, 1.0), f32::NAN);
     // atan2(NaN, 0.0)/atan2(NaN, -0.0) used to come out +-FRAC_PI_2 instead
     // of NaN (backlog idea #85, found building a systematic C99
     // special-case matrix against std): the x==0 branch bypasses

@@ -1830,26 +1830,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 84. **xlogy / xlog1py** (entropy kernels, 0·log(0)=0 convention via
     select).
-85. **atan2pi** (C23 half-turn inverse, remaining one -- `asinpi`/
-    `acospi`/`atanpi` done, see lib.rs/git log): NOT output-scaled
-    (double rounding) — fold 1/π into each poly's own coefficients; the
-    π/2-derived constants become *exact* (0.5, 0.25), so these could
-    come out *more* accurate than the radian versions for free.
-    `asinpi`'s fold measured as a real win (avg/max ulp 0.2397/7 vs the
-    naive composite's 0.2440/9, *and* cheaper mca -- no extra multiply,
-    same cost as plain `asin`); `acospi`'s fold also won (avg/max ulp
-    0.0536/5 vs naive's 0.0595/5, same mca cost as plain `acos`) --
-    both opposite of idea #123's analogous `RAD_TO_DEG` fold for
-    `asind`, which measured worse. `atanpi`'s fold measured a real
-    accuracy win too (avg/max ulp 0.2432/4 vs naive's 0.2782/4) *but*
-    a real throughput cost (1.612 cyc/elem vs naive's 1.554) -- rejected,
-    see atanpi's own doc comment for the mechanism (`atan_poly`'s Pade
-    numerator/denominator share one unscaled trailing `+1.0` constant;
-    folding 1/π into only the numerator's copy breaks that sharing and
-    forces an extra broadcast, unlike asinpi/acospi's single-constant
-    Horner polys). `atan2` composes `atan_poly` the same way `atan` does,
-    so `atan2pi`'s fold likely hits the same broken-sharing cost -- worth
-    same way, not assuming either verdict transfers.
 86. **exp2i/ldexp/frexp-style exact power-of-two utilities**
     (exp2_field_split is already the core; vcvtdq2ps-friendly).
 87. **Public Df32 module** (log2_df/exp2_checked_df/two_prod etc.) for

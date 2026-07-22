@@ -217,6 +217,7 @@ fn main() {
     bench!("atan2_unchecked", move |x: f32| atan2_unchecked(x, atan2_x2));
     bench!("atan2_pos", move |x: f32| atan2_pos(x, atan2_x2));
     bench!("atan2d", move |x: f32| atan2d(x, atan2_x2));
+    bench!("atan2pi", move |x: f32| atan2pi(x, atan2_x2));
     bench!("tan", tan);
     bench!("tan_checked", tan_checked);
     bench!("std tan", |x: f32| x.tan());
