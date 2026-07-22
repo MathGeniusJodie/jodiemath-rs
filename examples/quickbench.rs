@@ -140,6 +140,9 @@ fn main() {
     bench!("sinpi", sinpi);
     bench!("cospi", cospi);
     bench!("tanpi", tanpi);
+    bench!("sin2pi", sin2pi);
+    bench!("cos2pi", cos2pi);
+    bench!("tan2pi", tan2pi);
     bench!("sinc", sinc);
     bench!("sinc_unnormalized", sinc_unnormalized);
     bench!("sind", sind);

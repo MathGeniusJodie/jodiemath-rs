@@ -1913,9 +1913,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### Batch 2: trig
 
-122. **sin2pi/cos2pi/tan2pi** (full-turn arguments, DSP phase
-     accumulators): literally sinpi(2x) — the doubling is an exact po2
-     multiply — thin but discoverable API with the exactness documented.
 123. **asind/acosd/atand/atan2d**: fold 180/π into the poly/combine
      constants (#85's mechanism) — 90.0/45.0 are exact where π/2 wasn't.
 125. **Integer-domain parity pipeline end-to-end** for

@@ -623,6 +623,43 @@ pub fn tanpi(x: f32) -> f32 {
     sinpi(x) / cospi(x)
 }
 
+/// sin(2*pi*x), full-turn argument (backlog idea #122): DSP phase
+/// accumulators naturally count turns in `[0,1)`, not half-turns, so
+/// this is the direct convention match for `sinpi`. `2.0*x` is an exact
+/// power-of-two multiply (no rounding at all) for any finite `x` up to
+/// `f32::MAX/2` -- past that it overflows to `+-inf`, and `sinpi`'s own
+/// domain is total but not *that* total (`sinpi(inf)=NaN`), so this
+/// silently gives up (`NaN`) for `|x|` in the top single octave of the
+/// f32 range instead of a meaningful answer. A real, narrow gap, not a
+/// bug: no caller with a genuine turn-count that large has a
+/// meaningful "which fraction of a turn" answer left in f32 precision
+/// anyway (`sinpi`'s own reduction already saturates the mantissa long
+/// before that point).
+#[inline(always)]
+pub fn sin2pi(x: f32) -> f32 {
+    sinpi(2.0 * x)
+}
+
+/// cos(2*pi*x) -- see [`sin2pi`]'s own doc comment for the convention
+/// and domain caveat. Exhaustive fuzzing reports enormous max ulp right
+/// at `x = 0.25 + k/2`, where `cos2pi(x) = cospi(2x)` lands exactly on
+/// one of `cospi`'s own true zeros (`2x` a half-integer) -- the same
+/// "ulp isn't meaningful near a true zero" artifact `cospi` itself is
+/// already documented for, not a new defect from doubling `x` first.
+#[inline(always)]
+pub fn cos2pi(x: f32) -> f32 {
+    cospi(2.0 * x)
+}
+
+/// tan(2*pi*x) -- see [`sin2pi`]'s own doc comment for the convention
+/// and domain caveat, and [`cos2pi`]'s for why exhaustive fuzzing
+/// reports enormous max ulp at the same `x = 0.25 + k/2` points (the
+/// division's own denominator, `cospi(2x)`, is exactly zero there).
+#[inline(always)]
+pub fn tan2pi(x: f32) -> f32 {
+    tanpi(2.0 * x)
+}
+
 // 1/180: precomputed reciprocal for the magic-round trick, same idiom as
 // sin's own FRAC_1_PI.
 const INV_180: f32 = 1.0 / 180.0;

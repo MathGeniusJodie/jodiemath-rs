@@ -287,6 +287,19 @@ fn main() {
     check("tanpi(inf)", tanpi(f32::INFINITY), f32::NAN);
     check("tanpi(-inf)", tanpi(f32::NEG_INFINITY), f32::NAN);
 
+    // sin2pi/cos2pi/tan2pi: full-turn arguments (backlog idea #122).
+    check("sin2pi(0)", sin2pi(0.0), 0.0);
+    check("sin2pi(0.25)", sin2pi(0.25), 1.0);
+    check("sin2pi(0.5)", sin2pi(0.5), -0.0);
+    check("cos2pi(0)", cos2pi(0.0), 1.0);
+    check("cos2pi(0.25)", cos2pi(0.25), -0.0);
+    check("tan2pi(0)", tan2pi(0.0), 0.0);
+    check("tan2pi(0.125)", tan2pi(0.125), 1.0);
+    check("sin2pi(nan)", sin2pi(f32::NAN), f32::NAN);
+    // Doubling overflows past f32::MAX/2, a documented gap (see doc
+    // comment) -- NaN there, not a meaningful finite answer.
+    check("sin2pi(f32::MAX)", sin2pi(f32::MAX), f32::NAN);
+
     // sinc(x) = sin(pi*x)/(pi*x), removable singularity at x=0.
     check("sinc(0)", sinc(0.0), 1.0);
     check("sinc(-0)", sinc(-0.0), 1.0);

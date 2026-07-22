@@ -726,6 +726,25 @@ fn main() {
         let s = measure!(everywhere, tanpi, tanpi_ref);
         report("tanpi (all f32)", &s, t0);
     }
+    if run("2pi") {
+        // sin2pi/cos2pi/tan2pi (backlog idea #122): 2*v is exact in f64
+        // for any f32 v (nowhere near f64's own overflow), so the
+        // reference just doubles before sinpi_ref/etc, mirroring the
+        // real function exactly. Restricted to |x|<f32::MAX/2 -- past
+        // that the real function's own `2.0*x` overflows to +-inf, a
+        // documented gap (see sin2pi's own doc comment), not something
+        // to score here.
+        let half_max = |x: f32| x.abs() < f32::MAX / 2.0;
+        let sin2pi_ref = |v: F64xN| sinpi_ref(v * F64xN::splat(2.0));
+        let s = measure!(half_max, sin2pi, sin2pi_ref);
+        report("sin2pi", &s, t0);
+        let cos2pi_ref = |v: F64xN| cospi_ref(v * F64xN::splat(2.0));
+        let s = measure!(half_max, cos2pi, cos2pi_ref);
+        report("cos2pi", &s, t0);
+        let tan2pi_ref = |v: F64xN| tanpi_ref(v * F64xN::splat(2.0));
+        let s = measure!(half_max, tan2pi, tan2pi_ref);
+        report("tan2pi", &s, t0);
+    }
     if run("sinc") {
         // sinc(x) = sin(pi*x)/(pi*x) via sinpi, so sinc_ref reuses
         // sinpi_ref directly rather than a naive sin(pi*x)/(pi*x) (which
