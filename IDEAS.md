@@ -610,6 +610,31 @@ what shipped.
   `git checkout -- src/lib.rs`. Any future attempt at this idea needs
   the same large-magnitude fallback idea #46 already plans for `qh`,
   applied to `ql`/`rem` too, not a magic-round-everywhere assumption.
+- **tanpi/tand: fuse the two independent parity computations**: rejected
+  on inspection, no build needed -- the backlog idea's own premise
+  ("`sinpi`'s and `cospi`'s own parity/sign corrections cancel
+  algebraically in the ratio") is false as a blanket claim, confirmed by
+  direct counterexample. `sinpi(x) = raw_sin(r)*sign_sin(q)`,
+  `cospi(x) = raw_cos(rc)*sign_cos(k)` (`q=round(x)`, `k=round(x-0.5)`,
+  each sign is `±1` from its own `parity()`) -- dropping *both* signs and
+  dividing the raw poly outputs directly reproduces the true `tanpi`
+  ratio only when `q` and `k` land on *opposite* parities (roughly half
+  the domain, `x` in each unit interval's lower half), and gives the
+  exact *negative* of the true ratio when `q`/`k` share the same parity
+  (the other half, e.g. `x=0.1`: true `tan(0.1*pi)=0.3249`, raw ratio
+  `-0.3249`) -- a real, magnitude-preserving sign flip on ~50% of the
+  domain, not a rare edge case or a sign-of-zero cosmetic nit. The
+  backlog idea's *actual* proposal (share `q`/`k`'s underlying rounding
+  work via one computation instead of two independent
+  `round_ties_even` calls, still applying the *correct*, non-constant
+  sign relationship) remains structurally sound but would need careful
+  case analysis of `k`'s exact relationship to `q` (including
+  round-to-even tie boundaries) to get the sign right -- real
+  implementation work, not the shortcut this entry was screening for,
+  and the payoff (saving one hardware round instruction) looks modest
+  next to the risk given this exact function pair's own documented
+  history of sign bugs (`sin_checked` range-invariant entry above, the
+  ±0 bugs listed in Batch 2 idea #164). Not pursued further.
 
 ### asin / acos / atan / atan2
 
@@ -1479,11 +1504,6 @@ what shipped.
   both — a sincos slice API where lane pairing amortizes the reduction.
   Only viable inside a slice tier (scalar fusion attempts already failed,
   see rejected section).
-- **tanpi/tand: fuse the two independent parity computations**: currently
-  pays for both `sinpi`'s and `cospi`'s own parity computation even though
-  they cancel algebraically in the ratio; a shared reduction producing
-  both sin/cos values from one parity computation would be more invasive
-  than the current drop-in composition but could recover real throughput.
 - **Stochastic rounding harness mode**: run accuracy sweeps with the final
   fma's rounding perturbed ±1 ulp to measure how close each function sits
   to a rounding boundary — identifies which maxes are "one lucky rounding"
