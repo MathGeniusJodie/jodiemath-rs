@@ -1876,8 +1876,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 112. **exp single-field narrow tier**: contract x ≤ ~88.02 (k ≤ 127
      under round) — deletes exp2_field_split's second field for a
      slightly narrower documented domain.
-113. **exp10_checked clamp consolidation**: re-derive the x clamp bound
-     so the separate k clamp is provably redundant and deletable.
 114. **FTZ-mode minimal exp2_checked/exp_checked** (rides the MXCSR
      slice-tier idea #56): lower clamp −151→−126 and the
      denormal-rounding half of the split's job disappears; same cascade
