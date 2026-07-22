@@ -1072,6 +1072,19 @@ what shipped.
   same class of already-established no-op as the `wrapping_sub`-combined-
   range-compares and `koff-free unchecked-log` findings above. Reverted,
   no reason to carry the less-obvious source form for zero benefit.
+- **sigmoid one-sided evaluation** (idea #199, `e = exp(+|x|)` so `k`
+  never goes negative, `s = 1/(1+e)` selected directly for `x<0` or as
+  `1-s` for `x>=0`): edgecheck confirmed every special-value pin still
+  passes bit-exact (including `sigmoid(-88)`, matched to the ulp, via the
+  same fma-antisymmetry identity the shipped negation-folding already
+  uses), so the premise's own correctness held up. But mca showed a
+  real, reproducible cost on both axes before fuzzing was even reached:
+  latency 57.06→61.11 cyc (+7.1%), throughput 1.283→1.468 cyc/elem
+  (+14.4%). Reverted (`git checkout -- src/lib.rs`) without running the
+  accuracy fuzz -- removing the negative-`k` side of the exponent-field
+  construction doesn't pay for itself; the extra `abs()` plus the
+  sign-selected `1-s` combine costs more than the single-field trick
+  saves by never seeing negative `k`.
 
 ### cbrt / sqrt / hypot / powf / remainder
 
@@ -1965,11 +1978,6 @@ core::simd tier exists; each replaces multi-op scalar idioms)
      (cbrt, sin_checked's flips, erfcx's branch) is silently deleted
      from every latency number — inject alternating sign into the chain
      instead. Directly repairs a documented harness defect.
-199. **sigmoid one-sided evaluation**: compute e = exp(+|x|) ∈ [1,∞)
-     (k ≥ 0, single field trivially, no denormal side), s = 1/(1+e) ∈
-     (0, 0.5], select s or 1−s by sign — 1−s is safe here (result ≥
-     0.5, absolute error bounded by ulp(0.5)), unlike the rejected
-     0.5+0.5·tanh identity whose cancellation lived on the small side.
 200. **Auto-tune CI loop**: a scheduled job re-runs the tune.rs
      coordinate descent (LP-seeded) on every poly and files a PR when a
      real fuzz-verified improvement appears — automates the crate's
