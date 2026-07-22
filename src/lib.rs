@@ -1478,7 +1478,11 @@ pub fn exp2m1(x: f32) -> f32 {
 /// (clamp, `exp10_reduction!`, `exp2_field_split`) for the direct branch,
 /// with the trailing `-1` fused into the last multiply exactly like
 /// `exp2m1`'s own `fma(p, t2, -1.0)`. Total over exp10_checked's full
-/// domain: `exp10m1(-inf) = -1`, `exp10m1(inf) = inf`.
+/// domain: `exp10m1(-inf) = -1`, `exp10m1(inf) = inf`. Same clamp
+/// consolidation as `exp10_checked` (idea #113, see its own doc comment):
+/// the `[-45.154503, 38.53184]` bound makes a separate trailing `k`
+/// clamp redundant here too (same `exp10_reduction!`, same boundary
+/// math) -- verified bit-identical over the full exhaustive sweep.
 ///
 /// Branch threshold is `|x| < 0.2`, not `exp2m1`'s `0.5`: the Pade
 /// approximant (shared with `expm1`/`exp2m1` via `pade_expm1_ratio!`) is
@@ -1496,9 +1500,8 @@ pub fn exp10m1(x: f32) -> f32 {
     let y = x * std::f32::consts::LN_10;
     let a = pade_expm1_ratio!(y, mul);
 
-    let xc = x.clamp(-1000.0, 1000.0);
+    let xc = x.clamp(-45.154503, 38.53184);
     let (k, f) = exp10_reduction!(xc);
-    let k = k.clamp(-151.0, 128.0);
     let (t1, t2) = exp2_field_split(k);
     let q = exp2_q_poly!(f);
     let p = fma(q, t1 * f, t1);
