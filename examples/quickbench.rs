@@ -193,6 +193,7 @@ fn main() {
     bench!("std atanh", |x: f32| x.atanh());
     bench!("asin", asin);
     bench!("asind", asind);
+    bench!("asinpi", asinpi);
     bench!("std asin", |x: f32| x.asin());
     bench!("acos", acos);
     bench!("std acos", |x: f32| x.acos());

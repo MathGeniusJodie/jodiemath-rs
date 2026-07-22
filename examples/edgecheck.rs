@@ -814,6 +814,16 @@ fn main() {
     check("asind(0.5)", asind(0.5), 30.0);
     check("asind(nan)", asind(f32::NAN), f32::NAN);
 
+    // asinpi (backlog idea #85): folded dedicated coefficients (a real
+    // win here, unlike asind's rejected fold -- see its own doc
+    // comment).
+    check("asinpi(0)", asinpi(0.0), 0.0);
+    check("asinpi(-0)", asinpi(-0.0), -0.0);
+    check("asinpi(1)", asinpi(1.0), 0.5);
+    check("asinpi(-1)", asinpi(-1.0), -0.5);
+    check("asinpi(nan)", asinpi(f32::NAN), f32::NAN);
+    check("asinpi(2)", asinpi(2.0), f32::NAN);
+
     check("acosd(1)", acosd(1.0), 0.0);
     check("acosd(-1)", acosd(-1.0), 180.0);
     check("acosd(0)", acosd(0.0), 90.0);

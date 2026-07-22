@@ -176,6 +176,7 @@ fn main() {
         "atanh",
         "asin",
         "asind",
+        "asinpi",
         "acos",
         "acosd",
         "atan",

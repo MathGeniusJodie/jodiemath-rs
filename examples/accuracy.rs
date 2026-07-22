@@ -1097,6 +1097,18 @@ fn main() {
         let asind_ref = |v: F64xN| asin_u35(v) * F64xN::splat(rad_to_deg);
         let s = measure!(everywhere, asind, asind_ref);
         report("asind", &s, t0);
+        // asinpi (backlog idea #85): folded dedicated coefficients,
+        // compared directly against the naive asin(x)/PI post-multiply
+        // to see whether the fold is actually worth it here (idea #123's
+        // own RAD_TO_DEG fold measured worse for asind -- checking
+        // separately, not assuming the same verdict transfers).
+        let inv_pi = 1.0 / std::f64::consts::PI;
+        let asinpi_ref = |v: F64xN| asin_u35(v) * F64xN::splat(inv_pi);
+        let s = measure!(everywhere, asinpi, asinpi_ref);
+        report("asinpi", &s, t0);
+        let inv_pi_f32 = 1.0f32 / std::f32::consts::PI;
+        let s = measure!(everywhere, move |x: f32| asin(x) * inv_pi_f32, asinpi_ref);
+        report("asin(x)/PI (naive)", &s, t0);
     }
     if run("acos") {
         let s = measure!(everywhere, acos, acos_u35);

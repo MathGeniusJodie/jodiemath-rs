@@ -332,6 +332,9 @@ throughput_fn!(thr_asin, "asin_throughput", asin);
 latency_fn!(lat_asind, "asind_latency", asind);
 throughput_fn!(thr_asind, "asind_throughput", asind);
 
+latency_fn!(lat_asinpi, "asinpi_latency", asinpi);
+throughput_fn!(thr_asinpi, "asinpi_throughput", asinpi);
+
 latency_fn!(lat_acos, "acos_latency", acos);
 throughput_fn!(thr_acos, "acos_throughput", acos);
 
@@ -726,6 +729,7 @@ fn main() {
         lat_atanh, thr_atanh;
         lat_asin, thr_asin;
         lat_asind, thr_asind;
+        lat_asinpi, thr_asinpi;
         lat_acos, thr_acos;
         lat_acosd, thr_acosd;
         lat_atan, thr_atan;

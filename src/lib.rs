@@ -2586,6 +2586,54 @@ pub fn asind(x: f32) -> f32 {
     asin(x) * (180.0 / std::f32::consts::PI)
 }
 
+// asin(x)/pi, coefficients each rescaled by 1/pi (backlog idea #85, the
+// half-turn sibling of idea #123's degree fold): NOT assumed safe just
+// because idea #123's own RAD_TO_DEG fold measured worse for asind --
+// verified separately since it's a different constant, not just a
+// relabeling. Real exhaustive fuzz (pilot-tested here before extending
+// to acospi/atanpi/atan2pi): folded gives avg/max ulp 0.2397/7 vs the
+// plain `asin(x)/PI` composite's 0.2440/9 -- a real win on *both* axes
+// here, unlike asind's fold (worse on max ulp there). Plausible reason
+// for the opposite verdict: `1/pi` (~0.318) keeps rescaled coefficients
+// in a similar-or-smaller magnitude range, while `180/pi` (~57.3)
+// inflates them roughly 57x, apparently accumulating more absolute
+// rounding per fma step than one final multiply costs. Not a general
+// rule either way -- each site needs its own measurement.
+#[inline(always)]
+fn asinpi_small(x: f32) -> f32 {
+    let x2 = x * x;
+    let c0 = 0.31830987f32;
+    let c1 = 0.05305167f32;
+    let c2 = 0.023855051f32;
+    let c3 = 0.01509998f32;
+    let p = fma(fma(fma(c3, x2, c2), x2, c1), x2, c0);
+    x * p
+}
+
+#[inline(always)]
+fn asinpi_poly(x: f32) -> f32 {
+    let u = 0.0004181678f32;
+    let u = fma(u, x, -0.0024396966);
+    let u = fma(u, x, 0.0070038144);
+    let u = fma(u, x, -0.014429043);
+    let u = fma(u, x, 0.027837943);
+    let u = fma(u, x, -0.06822732);
+    fma(u, x, 0.4999943)
+}
+
+/// asin(x)/pi (backlog idea #85), the C23 half-turn convenience family.
+/// Rescaled dedicated coefficients (see `asinpi_small`'s own doc
+/// comment) -- unlike `asind`'s analogous fold (rejected, see IDEAS.md),
+/// this one measured as a real win, so it's used here instead of the
+/// plain composite.
+#[inline(always)]
+pub fn asinpi(x: f32) -> f32 {
+    let a = x.abs();
+    let small = asinpi_small(x);
+    let big = mulsign(0.5 - (1.0 - a).sqrt() * asinpi_poly(a), x);
+    if a < 0.27 { small } else { big }
+}
+
 // 3/3 Pade-style rational approximation of atan on [0,1], seeded from a
 // least-squares fit and coordinate-descent tuned. Current: atan avg/max
 // ulp 0.068/4, atan2 0.069/3 (exhaustive). Numerator and denominator
