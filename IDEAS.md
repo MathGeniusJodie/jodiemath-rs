@@ -1689,14 +1689,18 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### exp / log family
 
-23. **exp/exp_checked floor-domain reduction**: k = floor(x·LOG2_E)
-    (native vroundps-down), r ∈ [0, ln2), poly refit — guarantees
-    k ≤ 127 in-domain so the k1/k2 split collapses to one exp2int
-    field (~5 ops deleted). Risks: doubled poly domain may need degree
-    +1 (scipy-screen first); breaks exp_pos_neg's p(−r) even/odd reuse
-    (that caller keeps round); edgecheck x=88.37628. Note the rejected
-    round-based experiments went the *opposite* direction (round where
-    floor existed).
+23. **exp/exp_checked floor-domain reduction**: superseded by the
+    simpler idea #112 mechanism, which shipped instead (see lib.rs/git
+    log, `exp_narrow`) -- rather than switching to floor + refitting the
+    poly over a doubled/shifted `[0,ln2)` residual domain (this idea's
+    own proposal, screened via scipy: a same-shape degree-5 refit there
+    reaches only ~4.9 ulp-equivalent idealized error vs. the current
+    poly's ~2.0 on its own domain, i.e. real headroom loss unless bumped
+    to degree 6, more risk for the same destination), #112 just narrows
+    `exp`'s *existing* round-based domain a hair (to the exact point
+    where `k` still never reaches the split-requiring edge) with the
+    *same* poly, unrefit. Not pursued further given #112 reaches the
+    same single-field destination with strictly less risk.
 24. **exp t1-weave revisit with different port placement** (weave into
     t2 instead, or pre-scale p): the rejected version's accuracy win
     (max 3→2, cascading to expm1/sinh/cosh/tanh) was fully real — only
@@ -1873,9 +1877,6 @@ an idea revisits a rejection, the differing mechanism is stated.
      exponent field (the tanh/sigmoid pattern) — likely cheaper than the
      current k1/k2 split *and* total-domain, since the clamp caps k at
      127 by construction.
-112. **exp single-field narrow tier**: contract x ≤ ~88.02 (k ≤ 127
-     under round) — deletes exp2_field_split's second field for a
-     slightly narrower documented domain.
 114. **FTZ-mode minimal exp2_checked/exp_checked** (rides the MXCSR
      slice-tier idea #56): lower clamp −151→−126 and the
      denormal-rounding half of the split's job disappears; same cascade
