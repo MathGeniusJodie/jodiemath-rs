@@ -371,6 +371,18 @@ fn main() {
     // zero case).
     check("log1p(-0)", log1p(-0.0), -0.0);
 
+    // log1pmx(x) = log1p(x) - x (backlog idea #145). Mathematically
+    // <=0 everywhere in-domain (log(1+x) <= x always, equality only at
+    // x=0), so both signed zeros naturally land on -0 here, not a bug.
+    check("log1pmx(0)", log1pmx(0.0), -0.0);
+    check("log1pmx(-0)", log1pmx(-0.0), -0.0);
+    check("log1pmx(-1)", log1pmx(-1.0), f32::NEG_INFINITY);
+    check("log1pmx(-2)", log1pmx(-2.0), f32::NAN);
+    check("log1pmx(inf)", log1pmx(f32::INFINITY), f32::NEG_INFINITY);
+    check("log1pmx(nan)", log1pmx(f32::NAN), f32::NAN);
+    // Naive log1p(x)-x cancels for tiny x; log1pmx must not collapse to 0.
+    check("log1pmx(1e-6)", log1pmx(1.0e-6), -4.9999967e-13);
+
     // log2p1(x) = log2(1+x), log1p's own zero/negative/inf edges (same
     // u/corr/trailing-zero-select structure, see its doc comment) plus a
     // couple of exact powers of two to pin the LOG2_E conversion.

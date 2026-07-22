@@ -1960,9 +1960,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### Batch 2: hyperbolics / ML / graphics
 
-145. **log1pmx(x) = log1p(x) − x** — statistics primitive
-     (gamma/Poisson kernels) that needs a dedicated cancellation-safe
-     form; near 0 it's −x²/2·(1−…), a small dedicated poly.
 146. **srgb_to_linear / linear_to_srgb**: the piecewise-2.4-power sRGB
      transfer pair, branchless select over the linear toe — heavy
      real-world vectorization demand; powf composition first, dedicated

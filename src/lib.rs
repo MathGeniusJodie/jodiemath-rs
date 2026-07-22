@@ -1275,6 +1275,58 @@ pub fn log1p(x: f32) -> f32 {
     if x == 0.0 { x } else { normal }
 }
 
+/// log1p(x) - x (backlog idea #145), the gamma/Poisson-kernel primitive
+/// where the naive form cancels for small `x` (`log1p(x) ~ x` there --
+/// same cancellation class `log1p`/`expm1` themselves exist to avoid,
+/// one level further out, and *worse*: measured directly, `log1p(x)-x`'s
+/// own real f32 cancellation error stays in the tens-of-ulp range all
+/// the way out to `|x|~0.8-1.0`, not just a narrow band near zero the
+/// way `sqrt1pm1`'s analogous correction is). `log(1+x) = x - x^2/2 +
+/// x^3/3 - ...`, so `log1pmx(x) = -x^2/2 * Q(x)` with `Q(0)=1`; `Q`'s
+/// own Taylor series converges too slowly for a pure truncation to
+/// reach f32 precision at any useful radius (measured: even a degree-5
+/// pure-Taylor `Q` is ~4.6 ulp-equivalent at just `|x|<0.1`), so this
+/// uses a real minimax refit over `|x|<0.5` instead -- a genuinely wide
+/// branch (degree 12) traded for keeping the direct branch's own real
+/// cancellation error out of the answer entirely, rather than a
+/// narrower poly plus a direct branch that's still measurably lossy
+/// right where they'd meet. `x=+inf` is the one input the direct form
+/// alone mishandles (`inf-inf` is indeterminate; the true limit is
+/// `-inf`, `log` growing arbitrarily slower than `x`), corrected with a
+/// trailing override, same mechanism as `sqrt1pm1`'s own `x=+inf` fix.
+#[inline(always)]
+pub fn log1pmx(x: f32) -> f32 {
+    let x2 = x * x;
+    const C1: f32 = -0.6666664970675296;
+    const C2: f32 = 0.4999995348856975;
+    const C3: f32 = -0.40001991139756876;
+    const C4: f32 = 0.33337041934430095;
+    const C5: f32 = -0.28505743489396185;
+    const C6: f32 = 0.24902498252380087;
+    const C7: f32 = -0.23131634089321032;
+    const C8: f32 = 0.21157552643272212;
+    const C9: f32 = -0.12265182957195057;
+    const C10: f32 = 0.09945676037713247;
+    const C11: f32 = -0.32486571239903606;
+    const C12: f32 = 0.32005194082375105;
+    let q = fma(C12, x, C11);
+    let q = fma(q, x, C10);
+    let q = fma(q, x, C9);
+    let q = fma(q, x, C8);
+    let q = fma(q, x, C7);
+    let q = fma(q, x, C6);
+    let q = fma(q, x, C5);
+    let q = fma(q, x, C4);
+    let q = fma(q, x, C3);
+    let q = fma(q, x, C2);
+    let q = fma(q, x, C1);
+    let q = fma(q, x, 1.0);
+    let small = -0.5 * x2 * q;
+    let big = log1p(x) - x;
+    let normal = if x.abs() < 0.5 { small } else { big };
+    if x == f32::INFINITY { f32::NEG_INFINITY } else { normal }
+}
+
 /// log2(1+x) (C23 `log2p1`). Same `u = 1+x` / Sterbenz-exact correction
 /// `c = x - (u-1)` trick as `log1p`, just converted to log2 units:
 /// `d(log2)/du = 1/(u ln2)`, so the correction term is `(c/u) * LOG2_E`

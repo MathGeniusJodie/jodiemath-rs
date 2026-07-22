@@ -150,6 +150,7 @@ fn main() {
     bench!("log10_unchecked", log10_unchecked);
     bench!("std log10", |x: f32| x.log10());
     bench!("log1p", log1p);
+    bench!("log1pmx", log1pmx);
     bench!("std log1p", |x: f32| x.ln_1p());
     bench!("log2p1", log2p1);
     bench!("exp", exp);

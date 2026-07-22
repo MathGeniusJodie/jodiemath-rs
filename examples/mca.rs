@@ -139,6 +139,7 @@ fn main() {
         "log10",
         "log10_unchecked",
         "log1p",
+        "log1pmx",
         "log2p1",
         "log10p1",
         "exp",

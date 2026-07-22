@@ -45,7 +45,7 @@ use sleef::f64x::{
     log1p_u10, log2_u35, log_u35, pow_u10, remainder as remainder_ref, sin_u35, sinh_u35, tan_u35,
     tanh_u35,
 };
-use std::simd::cmp::SimdPartialEq;
+use std::simd::cmp::{SimdPartialEq, SimdPartialOrd};
 use std::simd::num::SimdFloat;
 use std::simd::{Select, Simd, StdFloat};
 use std::time::Instant;
@@ -771,6 +771,22 @@ fn main() {
         report("log1p", &s, t0);
         let s = measure!(everywhere, |x: f32| x.ln_1p(), log1p_u10);
         report("std log1p", &s, t0);
+        // log1pmx (backlog idea #145): direct f64 log1p_u10(v)-v cancels
+        // for tiny v the same way the naive f32 form does, just at f64's
+        // own (much smaller) precision floor -- rationalized for |v| below
+        // that floor via the leading-order term (higher Taylor terms are
+        // utterly negligible there), same "reference must itself avoid
+        // the cancellation trap" precedent as sqrt1pm1's own reference.
+        let log1pmx_ref = |v: F64xN| {
+            let tiny = v.abs().simd_lt(F64xN::splat(1e-6));
+            let small_ref = v * v * F64xN::splat(-0.5);
+            let big_ref = log1p_u10(v) - v;
+            let is_pos_inf = v.simd_eq(F64xN::splat(f64::INFINITY));
+            let normal = tiny.select(small_ref, big_ref);
+            is_pos_inf.select(F64xN::splat(f64::NEG_INFINITY), normal)
+        };
+        let s = measure!(everywhere, log1pmx, log1pmx_ref);
+        report("log1pmx", &s, t0);
     }
     if run("log2p1") {
         // log2(1+x) via log1p_u10(x)/ln(2), not the naive log2_u35(1.0+v):
