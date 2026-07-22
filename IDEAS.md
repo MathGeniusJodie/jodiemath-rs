@@ -1135,6 +1135,51 @@ what shipped.
   real regression, not a win: latency 59.06→75.16 cyc (+27.3%), throughput
   essentially a wash (+1.2%). The extra division and sign-reconstruction
   cost more than cbrt_normal's own polynomial refinement step ever did.
+- **rcbrt direct seed** (idea #53): built `rcbrt_normal`, a from-scratch
+  `x^(-1/3)` core mirroring `cbrt_normal`'s own shape exactly -- a
+  negated-exponent seed (`MAGIC - ax/3` instead of `ax/3 + MAGIC`) and,
+  provably, the *same* degree-3 correction polynomial: for any seed `y`
+  approximating `a^p` with `y/a^p = 1+e`, the correction
+  `p(r) = ((1+r)^(-p)-1)/r` only depends on `p`, not on which direction
+  the seed approximates, and defining `r = si^3*a - 1` (pure multiplies,
+  no division at all, unlike `cbrt_normal`'s own `1/a`-dependent `r`)
+  gives exactly the same shape for `p=-1/3` as `cbrt_normal`'s `r =
+  (s^3-a)/a` gives for `p=1/3`. Deletes *both* divisions the old
+  `1.0/cbrt(x)` composition paid (`cbrt_normal`'s internal `1/a` and the
+  outer `1/cbrt(x)`) down to one (an unconditionally-evaluated
+  `1.0/(x+x)` for the zero/inf/nan special case the seed's bit trick
+  can't reach on its own). Real mca win, confirmed: latency 46.30→31.50
+  cyc (-32.0%), throughput 1.666→1.511 cyc/elem (-9.3%).
+  But real fuzz caught a severe accuracy regression the mca-first,
+  fuzz-second order didn't prevent: avg ulp 8.94, max ulp **62** (vs.
+  shipped 0.418/5) at a magic constant chosen only from a `[1,2)`-octave
+  proxy plus exactness pins at `x=1,8,-1,-8`. Root cause, confirmed by a
+  full-domain per-octave sweep: `ax/3`'s truncating integer division has
+  three distinct rounding classes depending on the exponent mod 3, and
+  `x=1`/`x=8` both sit in the *same* class (`e=0` and `e=3`, both ≡0 mod
+  3) -- the exactness pins and the `[1,2)` proxy calibrate only that one
+  class, leaving the other two completely unchecked. One of them (`e≡1
+  mod 3`) pushes the residual `r` for *every* octave in that class
+  (deterministically, exactly 88.709 ulp every third octave, confirmed
+  from `e=-125` to `e=127`) outside `cbrt_normal`'s poly's fitted domain
+  (`|r|<=0.0998`) -- an extrapolation blowup, not a rare outlier.
+  Re-searched the magic constant properly, this time scoring all three
+  classes at once (3 consecutive octaves `[1,8)`, the minimum span that
+  samples each class once) across the same ~620k exactness-preserving
+  candidates: the *best* available candidate still only reaches max ulp
+  ~23.2 across the three classes -- confirming this isn't a search
+  failure but a real headroom shortfall in the *reused* poly. Reverted
+  (`git checkout -- src/lib.rs`) -- the mathematical shape-reuse insight
+  is sound and the division-elimination mechanism is real (confirmed via
+  mca), but `cbrt_normal`'s poly was fit against its own forward seed's
+  residual distribution, which apparently has enough margin across all
+  three alignment classes only for *that* construction; the inverse
+  seed's residual distribution needs its own dedicated minimax fit (not
+  a reused poly) to cover all three classes simultaneously -- confirming
+  the backlog entry's own "real fitting work" framing rather than
+  finding a shortcut around it. A future attempt should fit directly
+  against 3-octave-sampled data (not a single representative octave) to
+  avoid this exact trap from the start.
 - **Tune cbrt_throughput's magic constants**: single-octave grid looked
   like a win (max 16→12) but the function's error doesn't repeat across
   octaves like cbrt_normal's — implementing it made the real fuzz sweep
@@ -1605,10 +1650,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### cbrt / sqrt / hypot
 
-53. **rcbrt direct seed**: negated-exponent bit trick + refit of the
-    same deg-3 correction shape — deletes rcbrt's trailing division
-    entirely (its own doc explicitly defers this as "real fitting
-    work"). Targets rcbrt's 0.418/5.
 55. **hypot3/rnorm3** (3-arg vector norm): fma chain + sqrt,
     graphics/physics staple, trivially vectorizes.
 56. **Slice-tier FTZ/DAZ via MXCSR**: a slice entry point can set
