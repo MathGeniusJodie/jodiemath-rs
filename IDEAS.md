@@ -1552,11 +1552,13 @@ an idea revisits a rejection, the differing mechanism is stated.
 6. **Joint threshold+coefficient coordinate descent** in tune.rs
    (crossover as a continuous search parameter) — automates the asin
    fix-5 lesson instead of retuning thresholds against frozen polys.
-7. **Seam retunes not yet done**: exp2m1's 0.5, exp_m1_over_x's 0.5,
-   sinh_checked/cosh_checked's 0.5 (post-checked-half construction),
-   softplus/logaddexp's 87.0 cutoff, asinh/acosh's 2048 rescale
-   threshold. (The 5-function crossover audit covered sinh/tanh/expm1/
-   asin/erf only.)
+7. **Seam retunes not yet done**: exp_m1_over_x's 0.5, sinh_checked/
+   cosh_checked's 0.5 (post-checked-half construction), softplus/
+   logaddexp's 87.0 cutoff, asinh/acosh's 2048 rescale threshold. (The
+   5-function crossover audit covered sinh/tanh/expm1/asin/erf only.
+   `exp2m1`'s own 0.5 -- also originally listed here -- shipped as a real
+   win, see lib.rs/git log: 0.5→0.65, avg ulp 0.0769→0.0766, max
+   unchanged at 4, zero mca cost.)
 8. **atan_poly joint numerator+denominator nonlinear refit** (scipy
    least_squares on the true rational) — only separate num-only/
    denom-only LPs were tried; the max-4 worst point was diagnosed as
