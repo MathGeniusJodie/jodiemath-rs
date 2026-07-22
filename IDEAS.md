@@ -1960,8 +1960,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### Batch 2: hyperbolics / ML / graphics
 
-147. **smoothstep/smootherstep graphics pack** (trivial fma polys with
-     exact endpoints; cheap API breadth).
 148. **Softmax / logsumexp / normalize slice reductions** (max-pass +
      exp-pass + sum + scale in one fused traversal) — slice-tier
      flagship, plus a rotate2d(sincos) demo kernel.

@@ -117,6 +117,8 @@ fn main() {
         "rcbrt",
         "pow_3_2",
         "pow_2_3",
+        "smoothstep",
+        "smootherstep",
         "exp2",
         "exp2_checked",
         "exp10",

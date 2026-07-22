@@ -705,6 +705,22 @@ fn main() {
     check("pow_2_3(-inf)", pow_2_3(f32::NEG_INFINITY), f32::INFINITY);
     check("pow_2_3(nan)", pow_2_3(f32::NAN), f32::NAN);
 
+    // smoothstep/smootherstep (backlog idea #147): exact endpoints,
+    // clamped outside [edge0,edge1].
+    check("smoothstep(0,1,0)", smoothstep(0.0, 1.0, 0.0), 0.0);
+    check("smoothstep(0,1,1)", smoothstep(0.0, 1.0, 1.0), 1.0);
+    check("smoothstep(0,1,0.5)", smoothstep(0.0, 1.0, 0.5), 0.5);
+    check("smoothstep(0,1,-1)", smoothstep(0.0, 1.0, -1.0), 0.0);
+    check("smoothstep(0,1,2)", smoothstep(0.0, 1.0, 2.0), 1.0);
+    check("smoothstep(2,4,3)", smoothstep(2.0, 4.0, 3.0), 0.5);
+    check("smoothstep(0,1,nan)", smoothstep(0.0, 1.0, f32::NAN), f32::NAN);
+    check("smootherstep(0,1,0)", smootherstep(0.0, 1.0, 0.0), 0.0);
+    check("smootherstep(0,1,1)", smootherstep(0.0, 1.0, 1.0), 1.0);
+    check("smootherstep(0,1,0.5)", smootherstep(0.0, 1.0, 0.5), 0.5);
+    check("smootherstep(0,1,-1)", smootherstep(0.0, 1.0, -1.0), 0.0);
+    check("smootherstep(0,1,2)", smootherstep(0.0, 1.0, 2.0), 1.0);
+    check("smootherstep(0,1,nan)", smootherstep(0.0, 1.0, f32::NAN), f32::NAN);
+
     check("asinh(0)", asinh(0.0), 0.0);
     // small-x cancellation (see asinh's doc comment) is fixed: asinh(x) ~ x
     // for tiny x, no longer collapses to exactly 0.

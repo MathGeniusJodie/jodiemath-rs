@@ -2197,6 +2197,32 @@ pub fn pow_2_3(x: f32) -> f32 {
     c * c
 }
 
+/// Hermite smoothstep (backlog idea #147), GLSL's `smoothstep(edge0,
+/// edge1, x)`: `t^2*(3-2t)` on the normalized, clamped `t =
+/// (x-edge0)/(edge1-edge0)` -- exact endpoints (`0` at `t=0`, `1` at
+/// `t=1`) and zero slope at both, by construction of the Hermite basis,
+/// not by any special-casing here. `edge0==edge1` is the one input this
+/// leaves undefined (a `0/0` or `x/0`), matching every other
+/// implementation of this GLSL primitive.
+#[inline(always)]
+pub fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * fma(-2.0, t, 3.0)
+}
+
+/// Perlin's "smootherstep" (backlog idea #147): `t^3*(6t^2-15t+10)`, the
+/// degree-5 Hermite variant with zero *second* derivative at both
+/// endpoints too (not just zero first derivative like [`smoothstep`]),
+/// removing the curvature discontinuity animators call "banding" at the
+/// seams. Same `edge0`/`edge1` normalization and domain caveat as
+/// `smoothstep`.
+#[inline(always)]
+pub fn smootherstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    let p = fma(t, fma(t, 6.0, -15.0), 10.0);
+    t * t * t * p
+}
+
 /// asinh(x) = ln(x + sqrt(x^2+1)), with two fixes over the naive form:
 ///
 /// 1. Small-x cliff: for |x| below ~6e-8, `x*x` is already too small to

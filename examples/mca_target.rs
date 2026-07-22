@@ -120,6 +120,28 @@ throughput_fn!(thr_pow_3_2, "pow_3_2_throughput", pow_3_2);
 latency_fn!(lat_pow_2_3, "pow_2_3_latency", pow_2_3);
 throughput_fn!(thr_pow_2_3, "pow_2_3_throughput", pow_2_3);
 
+latency_fn!(lat_smoothstep, "smoothstep_latency", {
+    let e0 = black_box(0.0);
+    let e1 = black_box(1.0);
+    move |x: f32| smoothstep(e0, e1, x)
+});
+throughput_fn!(thr_smoothstep, "smoothstep_throughput", {
+    let e0 = black_box(0.0);
+    let e1 = black_box(1.0);
+    move |x: f32| smoothstep(e0, e1, x)
+});
+
+latency_fn!(lat_smootherstep, "smootherstep_latency", {
+    let e0 = black_box(0.0);
+    let e1 = black_box(1.0);
+    move |x: f32| smootherstep(e0, e1, x)
+});
+throughput_fn!(thr_smootherstep, "smootherstep_throughput", {
+    let e0 = black_box(0.0);
+    let e1 = black_box(1.0);
+    move |x: f32| smootherstep(e0, e1, x)
+});
+
 latency_fn!(lat_exp2, "exp2_latency", exp2);
 throughput_fn!(thr_exp2, "exp2_throughput", exp2);
 
@@ -603,6 +625,8 @@ fn main() {
         lat_rcbrt, thr_rcbrt;
         lat_pow_3_2, thr_pow_3_2;
         lat_pow_2_3, thr_pow_2_3;
+        lat_smoothstep, thr_smoothstep;
+        lat_smootherstep, thr_smootherstep;
         lat_exp2, thr_exp2;
         lat_exp2_checked, thr_exp2_checked;
         lat_exp10, thr_exp10;

@@ -121,6 +121,8 @@ fn main() {
     bench!("rcbrt", rcbrt);
     bench!("pow_3_2", pow_3_2);
     bench!("pow_2_3", pow_2_3);
+    bench!("smoothstep", move |x: f32| smoothstep(0.0, 1.0, x));
+    bench!("smootherstep", move |x: f32| smootherstep(0.0, 1.0, x));
     bench!("exp2", exp2);
     bench!("exp2_checked", exp2_checked);
     bench!("std exp2", |x: f32| x.exp2());
