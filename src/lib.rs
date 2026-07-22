@@ -1793,6 +1793,27 @@ pub fn cosh_checked(x: f32) -> f32 {
     ep + en
 }
 
+/// cosh(x) - 1 (backlog idea #144), the catenary/relativity primitive
+/// where naive `cosh(x)-1` cancels badly for small `x` (`cosh(x)` is
+/// `~1` there, the same class of cancellation `expm1`/`log1p` exist to
+/// avoid). `cosh(x)-1 = 2*sinh(x/2)^2` (half-angle identity) sidesteps
+/// it entirely -- `sinh_checked` already has its own small-`x` branch
+/// with no cancellation of its own, so squaring its (accurate, small)
+/// output never reintroduces the problem. Built on `sinh_checked` (not
+/// plain `sinh`) for the same full-range correctness reason `norm_pdf`
+/// uses `exp_checked`: `coshm1` grows as fast as `cosh` itself, so a
+/// real caller can easily reach the unchecked tier's domain edge.
+/// Squaring roughly doubles `sinh_checked`'s own relative error (avg
+/// ulp 0.0429 -> 0.0864, max 5 -> 12, exhaustive) -- expected from the
+/// identity itself, not a new defect, and still far more accurate than
+/// the naive form it replaces (which loses *all* precision, not just a
+/// factor of 2, for small `x`).
+#[inline(always)]
+pub fn coshm1(x: f32) -> f32 {
+    let s = sinh_checked(x * 0.5);
+    2.0 * s * s
+}
+
 /// Throughput-tier sinh: computes `exp(-x)` as `1.0 / exp(x)` instead of a
 /// second full exp evaluation, trading one whole poly evaluation for one
 /// division. On this CPU the FP divider is close to idle even when the

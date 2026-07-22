@@ -545,6 +545,16 @@ fn main() {
     check("cosh_checked(-inf)", cosh_checked(f32::NEG_INFINITY), f32::INFINITY);
     check("sinh_checked(nan)", sinh_checked(f32::NAN), f32::NAN);
     check("cosh_checked(nan)", cosh_checked(f32::NAN), f32::NAN);
+
+    // coshm1(x) = cosh(x)-1 = 2*sinh(x/2)^2 (backlog idea #144).
+    check("coshm1(0)", coshm1(0.0), 0.0);
+    check("coshm1(-0)", coshm1(-0.0), 0.0);
+    check("coshm1(inf)", coshm1(f32::INFINITY), f32::INFINITY);
+    check("coshm1(-inf)", coshm1(f32::NEG_INFINITY), f32::INFINITY);
+    check("coshm1(nan)", coshm1(f32::NAN), f32::NAN);
+    // Naive cosh(x)-1 cancels to exactly 0 here; coshm1 must not.
+    check("coshm1(1e-6)", coshm1(1.0e-6), 5e-13);
+
     // Boundary just below/at the true overflow threshold (x ~= 89.416,
     // where exp(x) alone would already be inf but sinh/cosh(x) is still
     // finite -- half of a not-yet-overflowed exp(x)). This is the premature-

@@ -901,6 +901,15 @@ fn main() {
         report("sinh_checked", &s, t0);
         let s = measure!(everywhere, cosh_checked, cosh_u35);
         report("cosh_checked", &s, t0);
+        // coshm1 (backlog idea #144): same half-angle identity as the
+        // reference, computed in f64 to avoid the reference itself
+        // cancelling for small x.
+        let coshm1_ref = |v: F64xN| {
+            let s = sinh_u35(v * F64xN::splat(0.5));
+            F64xN::splat(2.0) * s * s
+        };
+        let s = measure!(everywhere, coshm1, coshm1_ref);
+        report("coshm1", &s, t0);
     }
     if run("tanh") {
         // tanh uses exp(2x): same reasoning as sinh/cosh, halved.

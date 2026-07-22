@@ -253,6 +253,9 @@ throughput_fn!(thr_sinh_checked, "sinh_checked_throughput", sinh_checked);
 latency_fn!(lat_cosh_checked, "cosh_checked_latency", cosh_checked);
 throughput_fn!(thr_cosh_checked, "cosh_checked_throughput", cosh_checked);
 
+latency_fn!(lat_coshm1, "coshm1_latency", coshm1);
+throughput_fn!(thr_coshm1, "coshm1_throughput", coshm1);
+
 latency_fn!(lat_tanh, "tanh_latency", tanh);
 throughput_fn!(thr_tanh, "tanh_throughput", tanh);
 
@@ -632,6 +635,7 @@ fn main() {
         lat_cosh_throughput_fn, thr_cosh_throughput_fn;
         lat_sinh_checked, thr_sinh_checked;
         lat_cosh_checked, thr_cosh_checked;
+        lat_coshm1, thr_coshm1;
         lat_tanh, thr_tanh;
         lat_sigmoid, thr_sigmoid;
         lat_softplus, thr_softplus;

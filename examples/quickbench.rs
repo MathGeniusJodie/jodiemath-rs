@@ -172,6 +172,7 @@ fn main() {
     bench!("cosh_throughput", cosh_throughput);
     bench!("sinh_checked", sinh_checked);
     bench!("cosh_checked", cosh_checked);
+    bench!("coshm1", coshm1);
     bench!("tanh", tanh);
     bench!("std tanh", |x: f32| x.tanh());
     bench!("sigmoid", sigmoid);

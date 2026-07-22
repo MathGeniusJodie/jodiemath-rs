@@ -1960,8 +1960,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### Batch 2: hyperbolics / ML / graphics
 
-144. **coshm1(x) = 2·sinh²(x/2)** — cancellation-safe cosh−1
-     (catenary/relativity), reuses sinh_small.
 145. **log1pmx(x) = log1p(x) − x** — statistics primitive
      (gamma/Poisson kernels) that needs a dedicated cancellation-safe
      form; near 0 it's −x²/2·(1−…), a small dedicated poly.
