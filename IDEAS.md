@@ -926,6 +926,25 @@ what shipped.
   1.754→1.778 +1.4%) -- a genuine latency/throughput tradeoff, not a
   clean win on the throughput axis this crate's own `exp_pos_neg` doc
   comment names as the priority. Reverted.
+- **exp_pos_neg: p_neg from the reciprocal identity** (idea #115,
+  `p_pos*p_neg = e^2-(r*o)^2` so `p_neg = (e^2-(r*o)^2)/p_pos`, an "idle
+  divider" alternative to the plain `fma(-r,o,e)` combine): mca-screened
+  first, before any accuracy work, per this session's own mca-first
+  discipline -- and it failed immediately, not marginally. The identity
+  needs `ro=r*o` and `e*e` as separate multiplies (neither is available
+  from `p_pos`'s own fma, which never materializes `r*o`), plus the
+  division itself, replacing one cheap fma with two multiplies + one fma
+  + one division -- real, reproducible cost on both callers: `sinh`
+  latency 56.00→70.00 cyc (+25.0%), throughput 1.971→2.286 cyc/elem
+  (+16.0%); `sinh_checked` latency 58.06→72.06 cyc (+24.1%), throughput
+  2.345→2.721 (+16.0%). Unlike `cbrt`'s own early-starting reciprocal
+  (independent of the seed chain, genuinely idle), this division depends
+  on `p_pos` already being computed -- removing the parallelism the
+  current two independent one-fma combines already have (`p_pos` and
+  `p_neg` need only `r`,`o`,`e`, computable simultaneously) rather than
+  moving work off a contended port. Reverted (`git checkout --
+  src/lib.rs`) without ever reaching the accuracy fuzz -- mca alone was
+  decisive.
 - **Newton-free correction for rsqrt** (`e=fma(r,r*x,-1)`,
   `r_new=fma(-0.5*r,e,r)`): real accuracy win (avg ulp 0.2599→0.1226, ~2x
   tighter, max unchanged at 1) at a real modest cost (latency +43.0%,
@@ -1792,11 +1811,6 @@ an idea revisits a rejection, the differing mechanism is stated.
      denormal-rounding half of the split's job disappears; same cascade
      deletes denormal_rescale from the log family and cbrt — scope #56
      to capture all of it.
-115. **exp_pos_neg: p_neg from the reciprocal identity**
-     p(r)·p(−r) = e² − (r·o)²: one division (idle divider, cbrt
-     precedent) instead of the second combine — internal to
-     exp_pos_neg, distinct from the rejected tanh-via-ratio route
-     (which needed two whole polys). Accuracy screen first.
 116. **Public exp2_kf(k, f) pre-reduced primitive** — exp10, powf, and
      user custom-base kernels skip the redundant floor/frac.
 117. **exp_scaled(x, s) = e^x · 2^s** with s folded into the field
