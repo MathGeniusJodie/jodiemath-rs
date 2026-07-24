@@ -1328,7 +1328,16 @@ pub fn rcbrt(x: f32) -> f32 {
     1.0 / cbrt(x)
 }
 
-// higher throughput cbrt experiment, 5.5 ulp average error
+/// Higher-throughput `cbrt` approximation (backlog idea #137): a bit-trick
+/// seed (`0xd461ff81 - x.to_bits()/3`) refined by two Halley-style
+/// inverse-cbrt iterations. Positive, finite, normal `x` only -- no
+/// zero/negative/denormal/inf/nan handling, unlike `cbrt`/`cbrt_unchecked`.
+/// Approx tier: avg ulp 6.73, max ulp 74 (positive-normal domain) -- this
+/// function's error doesn't repeat across octaves the way `cbrt_normal`'s
+/// does, so a magic-constant retune was tried and rejected (see
+/// `tune.rs`'s own `cbrt_throughput_c` history): grid-tuning traded a
+/// lower max ulp for a much worse average instead of improving both.
+#[inline(always)]
 pub fn cbrt_throughput(x: f32) -> f32 {
     let r = f32::from_bits(0xd461ff81u32.wrapping_sub(x.to_bits() / 3));
     let r = fma(r * r, (r * r) * x, r * f32::from_bits(0x3fb6e3d7));
