@@ -228,6 +228,8 @@ macro_rules! log_family_wrapper {
     }};
 }
 
+#[doc(alias = "log2f")]
+#[doc(alias = "log2")]
 #[inline(always)]
 #[allow(clippy::neg_cmp_op_on_partial_ord)]
 pub fn log_2(x: f32) -> f32 {
@@ -282,6 +284,7 @@ pub fn log_2_unchecked(x: f32) -> f32 {
 /// exponent construction wraps around and the result is garbage (including
 /// for nan). Use exp2_checked for full-range handling; this version is
 /// ~2.7 ns faster in serial latency.
+#[doc(alias = "exp2f")]
 #[inline(always)]
 #[allow(clippy::approx_constant)] // g0's constant term is a fitted minimax
 // coefficient near ln(2), not ln(2) itself (bit pattern deliberately differs)
@@ -524,6 +527,7 @@ macro_rules! pi_reduce_and_poly {
     }};
 }
 
+#[doc(alias = "sinf")]
 #[inline(always)]
 pub fn sin(x: f32) -> f32 {
     let qb = fma(x, FRAC_1_PI, ROUND_MAGIC);
@@ -535,6 +539,7 @@ pub fn sin(x: f32) -> f32 {
 }
 /// Same domain limits as sin (see its doc comment); use cos_checked for
 /// full-range gradual degradation.
+#[doc(alias = "cosf")]
 #[inline(always)]
 pub fn cos(x: f32) -> f32 {
     // k = round(x/pi - 0.5), q = k + 0.5, r = x - q*pi in [-pi/2, pi/2]
@@ -1122,6 +1127,7 @@ pub fn cbrt_normal(x: f32) -> f32 {
     fma(sr, p, ss)
 }
 
+#[doc(alias = "cbrtf")]
 #[inline(always)]
 pub fn cbrt(x: f32) -> f32 {
     let ax = x.to_bits() & !SIGN_MASK;
@@ -1303,6 +1309,8 @@ const LOG10_2_LO: f32 = 4.605039066518657e-6;
 /// integer exponent term k, not the small poly correction), so it costs
 /// nearly a full ulp of avoidable error. Same domain behavior as log_2 (its
 /// edge handling covers zero/negative/denormal/inf/nan).
+#[doc(alias = "logf")]
+#[doc(alias = "log")]
 #[inline(always)]
 #[allow(clippy::neg_cmp_op_on_partial_ord)]
 pub fn ln(x: f32) -> f32 {
@@ -1353,6 +1361,7 @@ pub fn ln_unchecked(x: f32) -> f32 {
 /// log10(x), same Cody-Waite-combine approach as ln (see ln's own doc
 /// comment for why this avoids the naive `log_2(x) * LOG10_2`'s double
 /// rounding).
+#[doc(alias = "log10f")]
 #[inline(always)]
 #[allow(clippy::neg_cmp_op_on_partial_ord)]
 pub fn log10(x: f32) -> f32 {
@@ -1416,6 +1425,7 @@ pub fn log10_unchecked(x: f32) -> f32 {
 /// auto-vectorizing): log1p is odd and monotonic through the origin, so
 /// for every nonzero x `normal`'s sign already equals x's, making the
 /// select a no-op everywhere except the singular zero point.
+#[doc(alias = "log1pf")]
 #[inline(always)]
 pub fn log1p(x: f32) -> f32 {
     let u = 1.0 + x;
@@ -1550,6 +1560,7 @@ pub fn log10p1(x: f32) -> f32 {
 /// the hardware's round-half-to-even differs only at exact half-integer
 /// ties of `x*log2(e)`, verified zero accuracy difference on the
 /// exhaustive sweep.
+#[doc(alias = "expf")]
 #[inline(always)]
 pub fn exp(x: f32) -> f32 {
     const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
@@ -1618,6 +1629,7 @@ pub fn exp_checked(x: f32) -> f32 {
 /// the inherited unchecked-exp2 domain limit. The 5 Pade coefficients
 /// were tuned as free parameters against f64::exp_m1 over |x| < 0.5:
 /// max ulp 3, avg 0.109 on that branch.
+#[doc(alias = "expm1f")]
 #[inline(always)]
 pub fn expm1(x: f32) -> f32 {
     let a = pade_expm1_ratio!(x, mul);
@@ -1893,6 +1905,7 @@ fn sinh_small(x: f32) -> f32 {
 /// inherited unchecked-exp2 domain limit (only relevant on the `b` side,
 /// unconditionally evaluated but only selected for |x| >= 0.5). cosh below
 /// doesn't need this: it adds instead of subtracting, so it never cancels.
+#[doc(alias = "sinhf")]
 #[inline(always)]
 pub fn sinh(x: f32) -> f32 {
     let a = sinh_small(x);
@@ -1905,6 +1918,7 @@ pub fn sinh(x: f32) -> f32 {
 /// (see its own doc comment) -- never cancels (adds instead of
 /// subtracts), so unlike sinh needs no small-x branch. See exp's doc
 /// comment for the inherited unchecked-exp2 domain limit.
+#[doc(alias = "coshf")]
 #[inline(always)]
 pub fn cosh(x: f32) -> f32 {
     let (ep, en) = exp_pos_neg(x);
@@ -2069,6 +2083,7 @@ pub fn cosh_throughput(x: f32) -> f32 {
 /// bit-identical correctly-rounded answer. The clamp's real perf cost
 /// was accepted per this crate's usual "pay to fix wrong/NaN for
 /// legitimate finite input" precedent.
+#[doc(alias = "tanhf")]
 #[inline(always)]
 pub fn tanh(x: f32) -> f32 {
     // Standalone copy of expm1 (not a call through the public `expm1`
@@ -2458,6 +2473,7 @@ pub fn smootherstep(edge0: f32, edge1: f32, x: f32) -> f32 {
 /// for huge `ax` (rescaled sqrt above `ax = 2048`, matching acosh's
 /// threshold) and the final sum overflowing near f32::MAX (`ln(ax) +
 /// LN_2` fallback, same asymptote as acosh's).
+#[doc(alias = "asinhf")]
 #[inline(always)]
 pub fn asinh(x: f32) -> f32 {
     let ax = x.abs();
@@ -2540,6 +2556,7 @@ pub fn asinh(x: f32) -> f32 {
 ///    (rounding tiny `s` against `x`'s magnitude) and subtracting 1 from
 ///    that afterward; `log1p(d)` then reuses log1p's own Sterbenz
 ///    correction on top. Cut max ulp at the boundary from 1522 to 4.
+#[doc(alias = "acoshf")]
 #[inline(always)]
 pub fn acosh(x: f32) -> f32 {
     // NOT the same "shared x2" opportunity as asinh: `direct` needs
@@ -2606,6 +2623,7 @@ fn atanh_small(x: f32) -> f32 {
 /// (`log1p(inf)=inf`, matching `atanh(+-1)=+-inf`), and is `< -1` for
 /// any `a>1` (`log1p` already `NaN` there, matching `atanh`'s domain
 /// edge). Current: avg/max ulp 0.0037/2 (exhaustive).
+#[doc(alias = "atanhf")]
 #[inline(always)]
 pub fn atanh(x: f32) -> f32 {
     let a = x.abs();
@@ -2664,6 +2682,7 @@ fn asin_poly(x: f32) -> f32 {
 /// it: `x + 0.0` is `-0.0 + 0.0 = +0.0` exactly (IEEE754's defined
 /// round-to-nearest behavior for that one case) and a no-op for every
 /// other `x`, genuinely negative or not.
+#[doc(alias = "acosf")]
 #[inline(always)]
 pub fn acos(x: f32) -> f32 {
     const PI: f32 = std::f32::consts::PI;
@@ -2749,6 +2768,7 @@ fn asin_small(x: f32) -> f32 {
 /// Current: max ulp 6, avg 0.020 (exhaustive). An earlier three-branch
 /// design with a rational mid-branch was strictly worse -- see IDEAS.md
 /// §asin/acos for that history and the rejected refit variants.
+#[doc(alias = "asinf")]
 #[inline(always)]
 pub fn asin(x: f32) -> f32 {
     let a = x.abs();
@@ -2849,6 +2869,7 @@ fn atan_poly(x: f32) -> f32 {
 
 /// Straight port of jodiemath's atanf: reciprocates |x| > 1 into range
 /// (atan(x) = pi/2 - atan(1/x)) before the poly, matching atan_poly's fit.
+#[doc(alias = "atanf")]
 #[inline(always)]
 pub fn atan(x: f32) -> f32 {
     let a = x.abs();
@@ -2972,6 +2993,7 @@ pub fn atan_latency(x: f32) -> f32 {
 /// (`atan` propagates it correctly from there) -- only the `x == 0`
 /// branch bypasses that path entirely. Fixed with an explicit trailing
 /// override.
+#[doc(alias = "atan2f")]
 #[inline(always)]
 pub fn atan2(y: f32, x: f32) -> f32 {
     let nonzerox = x != 0.0;
@@ -3073,6 +3095,7 @@ pub fn atan2_pos(y: f32, x: f32) -> f32 {
 
 /// Straight port of jodiemath's tanf: sin(x)/cos(x), same domain limits as
 /// this crate's sin/cos (see their doc comments).
+#[doc(alias = "tanf")]
 #[inline(always)]
 pub fn tan(x: f32) -> f32 {
     sin(x) / cos(x)
@@ -3119,6 +3142,7 @@ fn erf_poly(x: f32, x2: f32) -> f32 {
 /// through `erf_poly` before `exp2` ever sees it, and `exp2`'s bit-twiddled
 /// exponent field only feeds a NaN-tainted multiply/fma from there, so the
 /// result stays NaN regardless of that field's garbage value.
+#[doc(alias = "erff")]
 #[inline(always)]
 pub fn erf(x: f32) -> f32 {
     let xa = x.abs();
@@ -3171,6 +3195,7 @@ fn erfc_rational(xa: f32) -> f32 {
 /// exp2_checked's bound), and it's already the crate's existing
 /// correctly-rounded full-range primitive, no new code needed.
 /// Current: max ulp 109, avg 0.311 (|x| <= 10 sweep).
+#[doc(alias = "erfcf")]
 #[inline(always)]
 pub fn erfc(x: f32) -> f32 {
     let z = if x < 0.0 { -1.0 } else { 1.0 };
@@ -3451,6 +3476,7 @@ pub fn hypot_unchecked(x: f32, y: f32) -> f32 {
 /// rescaling (unlike std's hypot) -- trades the overflow/underflow edge cases
 /// for vectorizability, same tradeoff this crate makes for cbrt/sin/cos vs.
 /// their std counterparts.
+#[doc(alias = "hypotf")]
 #[inline(always)]
 pub fn hypot(x: f32, y: f32) -> f32 {
     let normal = fma(x, x, y * y).sqrt();
@@ -3730,6 +3756,7 @@ macro_rules! powf_sign_combine {
     }};
 }
 
+#[doc(alias = "pow")]
 #[inline(always)]
 pub fn powf(x: f32, y: f32) -> f32 {
     let ax = x.abs();
@@ -4142,6 +4169,7 @@ macro_rules! remainder_style_combine {
     }};
 }
 
+#[doc(alias = "remainderf")]
 #[inline(always)]
 pub fn remainder(x: f32, y: f32) -> f32 {
     let q = (x / y).round();
@@ -4328,6 +4356,7 @@ pub fn remainder_wide(x: f32, y: f32) -> f32 {
 /// wrong side of an exact *integer* (`.trunc()`'s decision boundary),
 /// putting `q` off by a whole 1 and the result off by exactly `y`. Not
 /// corrected here for the same reason as `remainder`.
+#[doc(alias = "fmodf")]
 #[inline(always)]
 pub fn fmod(x: f32, y: f32) -> f32 {
     let q = (x / y).trunc();

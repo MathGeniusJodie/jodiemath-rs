@@ -2144,8 +2144,6 @@ core::simd tier exists; each replaces multi-op scalar idioms)
 189. **periodic_poly! dedup macro** once #43/#44 land (four
      near-identical folded-constant sinf_poly variants) — same
      macro-not-fn pattern as pi_reduce_and_poly!.
-190. **#[doc(alias)] C-name annotations** (expf, atan2f, sincosf…) —
-     zero-cost discoverability.
 
 #### Batch 2: speculative / process
 
