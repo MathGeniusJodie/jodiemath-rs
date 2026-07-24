@@ -773,6 +773,23 @@ what shipped.
   84% avg improvement, but real fuzz found a *regression* (0.317→0.325),
   worst case landing right at the 0.28 branch crossover with erf_poly.
   Check the crossover neighborhood for any poly next to a domain split.
+- **erf_unchecked, drop the `xa_bounded` 10.0 clamp** (idea #98, the
+  same "unchecked tier drops a redundant guard" mechanism that shipped
+  for `sind_unchecked`/`cosd_unchecked`): rejected on inspection before
+  any implementation -- `erf`'s own doc comment already documents *why*
+  this specific clamp isn't a `sind`/`cosd`-style pure safety net.
+  `erf_poly` is a plain degree-6 polynomial with a *positive* leading
+  coefficient, so past its fitted domain it doesn't degrade gracefully
+  or merely risk non-finite output -- it turns around and diverges
+  (`erf_poly(9) ~ -92`, `erf_poly(20) ~ +8698`), which the doc comment
+  records as a real, already-fixed bug: unclamped, `erf(50)` came out
+  `-1.02e17` instead of the true ~1.0 -- catastrophically wrong sign
+  *and* magnitude for a perfectly ordinary-looking input, not the
+  "possibly non-finite past the documented domain" contract every other
+  `_unchecked` tier in this crate carries. An `erf_unchecked` as the
+  idea literally proposes would reintroduce that exact fixed bug as new
+  public API. Not implemented; `sind`/`cosd`'s own clamp is a genuinely
+  different, provably-no-op-in-domain case and doesn't generalize here.
 - **acos_poly unconstrained joint acos+asin objective**: improved joint
   score but regressed acos's own max ulp 4→5.
 - **acos_poly degree 6→7**: zero-seeded 8th coefficient converged to
@@ -1911,10 +1928,11 @@ an idea revisits a rejection, the differing mechanism is stated.
     -extra-vectorizer-passes, SLP horizontal reductions — cheap sweep,
     same method as the interleave/zmm experiments.
 98. **Auto-`_unchecked` macro (existing entry) — concrete new
-    candidates**: erf (drop the 10.0 bound), softplus/logaddexp
-    (drop NaN guards), sinpi (drop the x==0 select). (sind/cosd's own
-    candidate shipped, see lib.rs/git log — `sind_unchecked`/
-    `cosd_unchecked`/`tand_unchecked`.)
+    candidates**: softplus/logaddexp (drop NaN guards), sinpi (drop the
+    x==0 select). (sind/cosd's own candidate shipped, see lib.rs/git
+    log — `sind_unchecked`/`cosd_unchecked`/`tand_unchecked`; erf's own
+    candidate rejected on inspection, see rejected section above —
+    would reintroduce a real, already-fixed bug.)
 99. **tgamma** companion to the lgamma entry (Lanczos/Stirling, shares
     machinery).
 100. **Bessel j0/j1** (Cephes-style two-region rational + trig
