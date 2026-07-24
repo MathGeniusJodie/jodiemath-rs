@@ -468,10 +468,41 @@ throughput_fn!(thr_hypot_checked, "hypot_checked_throughput", |x: f32| hypot_che
 latency_fn!(lat_rhypot, "rhypot_latency", |x: f32| rhypot(x, 1.0));
 throughput_fn!(thr_rhypot, "rhypot_throughput", |x: f32| rhypot(x, 1.0));
 
+latency_fn!(lat_normalize2, "normalize2_latency", |x: f32| {
+    let (a, b) = normalize2(x, 1.0);
+    a + b
+});
+throughput_fn!(thr_normalize2, "normalize2_throughput", |x: f32| {
+    let (a, b) = normalize2(x, 1.0);
+    a + b
+});
+
 latency_fn!(lat_hypot3, "hypot3_latency", |x: f32| hypot3(x, 1.0, 2.0));
 throughput_fn!(thr_hypot3, "hypot3_throughput", |x: f32| hypot3(x, 1.0, 2.0));
 latency_fn!(lat_rnorm3, "rnorm3_latency", |x: f32| rnorm3(x, 1.0, 2.0));
 throughput_fn!(thr_rnorm3, "rnorm3_throughput", |x: f32| rnorm3(x, 1.0, 2.0));
+
+latency_fn!(lat_normalize3, "normalize3_latency", |x: f32| {
+    let (a, b, c) = normalize3(x, 1.0, 2.0);
+    a + b + c
+});
+throughput_fn!(thr_normalize3, "normalize3_throughput", |x: f32| {
+    let (a, b, c) = normalize3(x, 1.0, 2.0);
+    a + b + c
+});
+
+latency_fn!(lat_hypot4, "hypot4_latency", |x: f32| hypot4(x, 1.0, 2.0, 3.0));
+throughput_fn!(thr_hypot4, "hypot4_throughput", |x: f32| hypot4(x, 1.0, 2.0, 3.0));
+latency_fn!(lat_rnorm4, "rnorm4_latency", |x: f32| rnorm4(x, 1.0, 2.0, 3.0));
+throughput_fn!(thr_rnorm4, "rnorm4_throughput", |x: f32| rnorm4(x, 1.0, 2.0, 3.0));
+latency_fn!(lat_normalize4, "normalize4_latency", |x: f32| {
+    let (a, b, c, d) = normalize4(x, 1.0, 2.0, 3.0);
+    a + b + c + d
+});
+throughput_fn!(thr_normalize4, "normalize4_throughput", |x: f32| {
+    let (a, b, c, d) = normalize4(x, 1.0, 2.0, 3.0);
+    a + b + c + d
+});
 
 // black_box'd b/c/d: unlike hypot/rhypot's plain `1.0` above (fine there --
 // no branch or constant-foldable sub-expression depends on it), diff_of_products
@@ -829,8 +860,13 @@ fn main() {
         lat_hypot, thr_hypot;
         lat_hypot_checked, thr_hypot_checked;
         lat_rhypot, thr_rhypot;
+        lat_normalize2, thr_normalize2;
         lat_hypot3, thr_hypot3;
         lat_rnorm3, thr_rnorm3;
+        lat_normalize3, thr_normalize3;
+        lat_hypot4, thr_hypot4;
+        lat_rnorm4, thr_rnorm4;
+        lat_normalize4, thr_normalize4;
         lat_diff_of_products, thr_diff_of_products;
         lat_cross2, thr_cross2;
         lat_rsqrt, thr_rsqrt;

@@ -1347,6 +1347,16 @@ fn main() {
     check("rhypot(inf,nan)", rhypot(f32::INFINITY, f32::NAN), 0.0);
     check("rhypot(nan,inf)", rhypot(f32::NAN, f32::INFINITY), 0.0);
 
+    // normalize2 (backlog idea #136).
+    {
+        let (nx, ny) = normalize2(3.0, 4.0);
+        check("normalize2(3,4).0", nx, 0.6);
+        check("normalize2(3,4).1", ny, 0.8);
+        let (zx, zy) = normalize2(0.0, 0.0);
+        check("normalize2(0,0).0", zx, f32::NAN);
+        check("normalize2(0,0).1", zy, f32::NAN);
+    }
+
     // hypot3/rnorm3 (backlog idea #55): same naive-fma-chain tradeoff and
     // inf-wins-over-NaN override as hypot/rhypot, one arg wider.
     check("hypot3(0,0,0)", hypot3(0.0, 0.0, 0.0), 0.0);
@@ -1358,6 +1368,42 @@ fn main() {
     check("rnorm3(2,3,6)", rnorm3(2.0, 3.0, 6.0), 1.0 / 7.0);
     check("rnorm3(inf,nan,1)", rnorm3(f32::INFINITY, f32::NAN, 1.0), 0.0);
     check("rnorm3(nan,nan,nan)", rnorm3(f32::NAN, f32::NAN, f32::NAN), f32::NAN);
+
+    // normalize3 (backlog idea #136). Magnitude check, not exact-value:
+    // normalize3(x,y,z) multiplies by rnorm3's own reciprocal-norm
+    // *approximation* (verified ~2 ulp accurate, not exact), so e.g.
+    // `3.0*rnorm3(2,3,6)` need not land on the exact same f32 as the
+    // literal `3.0/7.0` even though both approximate the same real
+    // number -- found by a real FAIL here first, not assumed.
+    {
+        let (nx, ny, nz) = normalize3(2.0, 3.0, 6.0);
+        check_bounded("normalize3(2,3,6) magnitude deviation", (hypot3(nx, ny, nz) - 1.0).abs(), 1e-6);
+        let (zx, zy, zz) = normalize3(0.0, 0.0, 0.0);
+        check("normalize3(0,0,0).0", zx, f32::NAN);
+        check("normalize3(0,0,0).1", zy, f32::NAN);
+        check("normalize3(0,0,0).2", zz, f32::NAN);
+    }
+
+    // hypot4/rnorm4/normalize4 (backlog idea #134): companions to
+    // hypot3/rnorm3, one arg wider (quaternion case).
+    check("hypot4(0,0,0,0)", hypot4(0.0, 0.0, 0.0, 0.0), 0.0);
+    check("hypot4(1,2,2,4)", hypot4(1.0, 2.0, 2.0, 4.0), 5.0);
+    check("hypot4(inf,nan,1,1)", hypot4(f32::INFINITY, f32::NAN, 1.0, 1.0), f32::INFINITY);
+    check("rnorm4(0,0,0,0)", rnorm4(0.0, 0.0, 0.0, 0.0), f32::INFINITY);
+    check("rnorm4(1,2,2,4)", rnorm4(1.0, 2.0, 2.0, 4.0), 0.2);
+    check("rnorm4(inf,nan,1,1)", rnorm4(f32::INFINITY, f32::NAN, 1.0, 1.0), 0.0);
+    {
+        let (w, x, y, z) = normalize4(1.0, 2.0, 2.0, 4.0);
+        check("normalize4(1,2,2,4).0", w, 0.2);
+        check("normalize4(1,2,2,4).1", x, 0.4);
+        check("normalize4(1,2,2,4).2", y, 0.4);
+        check("normalize4(1,2,2,4).3", z, 0.8);
+        let (zw, zx, zy, zz) = normalize4(0.0, 0.0, 0.0, 0.0);
+        check("normalize4(0,0,0,0).0", zw, f32::NAN);
+        check("normalize4(0,0,0,0).1", zx, f32::NAN);
+        check("normalize4(0,0,0,0).2", zy, f32::NAN);
+        check("normalize4(0,0,0,0).3", zz, f32::NAN);
+    }
 
     // diff_of_products(a,b,c,d) = a*b - c*d via Kahan's compensated
     // two-product (backlog idea #135). NaN/inf propagate through the

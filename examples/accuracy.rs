@@ -1419,6 +1419,20 @@ fn main() {
         let rhypot_ref = |v: F64xN, w: F64xN| F64xN::splat(1.0) / hypot_u35(v, w);
         let s = fuzz2(TWOARG_SAMPLES, hypot_domain, rhypot, rhypot_ref);
         report("rhypot", &s, t0);
+        // normalize2 (backlog idea #136): check the result actually has
+        // unit magnitude, not a ulp comparison against a single reference.
+        let mut max_dev = 0.0f64;
+        for _ in 0..1_000_000u64 {
+            let x = f32::from_bits(rand::rng().random::<u32>());
+            let y = f32::from_bits(rand::rng().random::<u32>());
+            if !(hypot_domain(x, y)) || (x == 0.0 && y == 0.0) {
+                continue;
+            }
+            let (nx, ny) = normalize2(x, y);
+            let mag = hypot(nx, ny) as f64;
+            max_dev = max_dev.max((mag - 1.0).abs());
+        }
+        println!("{:24} max |magnitude-1| {:>10.6e}", "normalize2", max_dev);
     }
     if run("hypot3") {
         // Same naive-fma-chain overflow/underflow tradeoff as hypot (see
@@ -1463,6 +1477,91 @@ fn main() {
                 t0.elapsed().as_secs_f64(),
             );
         }
+        // normalize3 (backlog idea #136): same magnitude check as
+        // normalize2/normalize4.
+        let ok = |v: f32| v == 0.0 || (v.abs() > 1e-15 && v.abs() < 1e18);
+        let mut max_dev = 0.0f64;
+        for _ in 0..1_000_000u64 {
+            let x = f32::from_bits(rand::rng().random::<u32>());
+            let y = f32::from_bits(rand::rng().random::<u32>());
+            let z = f32::from_bits(rand::rng().random::<u32>());
+            if !(ok(x) && ok(y) && ok(z)) || (x == 0.0 && y == 0.0 && z == 0.0) {
+                continue;
+            }
+            let (nx, ny, nz) = normalize3(x, y, z);
+            let mag = hypot3(nx, ny, nz) as f64;
+            max_dev = max_dev.max((mag - 1.0).abs());
+        }
+        println!("{:24} max |magnitude-1| {:>10.6e}", "normalize3", max_dev);
+    }
+    if run("hypot4") {
+        // Same tradeoff and ground-truth approach as hypot3 above, one
+        // argument wider (backlog idea #134).
+        let ok = |v: f32| v == 0.0 || (v.abs() > 1e-15 && v.abs() < 1e18);
+        let n_samples = 10_000_000u64;
+        for (label, f) in [
+            ("hypot4", hypot4 as fn(f32, f32, f32, f32) -> f32),
+            ("rnorm4", rnorm4 as fn(f32, f32, f32, f32) -> f32),
+        ] {
+            let mut sum = 0u64;
+            let mut max = 0u64;
+            let mut worst = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+            for _ in 0..n_samples {
+                let w = f32::from_bits(rand::rng().random::<u32>());
+                let x = f32::from_bits(rand::rng().random::<u32>());
+                let y = f32::from_bits(rand::rng().random::<u32>());
+                let z = f32::from_bits(rand::rng().random::<u32>());
+                if !(ok(w) && ok(x) && ok(y) && ok(z)) {
+                    continue;
+                }
+                let got = f(w, x, y, z);
+                let norm = ((w as f64).powi(2)
+                    + (x as f64).powi(2)
+                    + (y as f64).powi(2)
+                    + (z as f64).powi(2))
+                .sqrt();
+                let want = (if label == "hypot4" { norm } else { 1.0 / norm }) as f32;
+                let d = ulp_diff(got, want);
+                sum += d;
+                if d > max {
+                    max = d;
+                    worst = (w, x, y, z);
+                }
+            }
+            println!(
+                "{:24} avg ulp {:>10.4}  max ulp {:>10}  worst w={:e},x={:e},y={:e},z={:e} ({:>12} samples, {:>7.2}s elapsed)",
+                label,
+                sum as f64 / n_samples as f64,
+                max,
+                worst.0,
+                worst.1,
+                worst.2,
+                worst.3,
+                n_samples,
+                t0.elapsed().as_secs_f64(),
+            );
+        }
+        // normalize4: check the result actually has unit magnitude
+        // (hypot4 of the normalized components ~= 1), not a ulp
+        // comparison against a single reference value.
+        let mut max_dev = 0.0f64;
+        for _ in 0..1_000_000u64 {
+            let w = f32::from_bits(rand::rng().random::<u32>());
+            let x = f32::from_bits(rand::rng().random::<u32>());
+            let y = f32::from_bits(rand::rng().random::<u32>());
+            let z = f32::from_bits(rand::rng().random::<u32>());
+            if !(ok(w) && ok(x) && ok(y) && ok(z)) || (w == 0.0 && x == 0.0 && y == 0.0 && z == 0.0)
+            {
+                continue;
+            }
+            let (nw, nx, ny, nz) = normalize4(w, x, y, z);
+            let mag = hypot4(nw, nx, ny, nz) as f64;
+            let dev = (mag - 1.0).abs();
+            if dev > max_dev {
+                max_dev = dev;
+            }
+        }
+        println!("{:24} max |magnitude-1| {:>10.6e}", "normalize4", max_dev);
     }
     if run("diff_of_products") {
         // Same overflow tradeoff as hypot_domain above, applied to the two

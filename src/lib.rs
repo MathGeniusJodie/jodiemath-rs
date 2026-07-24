@@ -3687,6 +3687,59 @@ pub fn rnorm3(x: f32, y: f32, z: f32) -> f32 {
     if x.is_infinite() || y.is_infinite() || z.is_infinite() { 0.0 } else { normal }
 }
 
+/// 2D vector normalize (backlog idea #136, the operation users actually
+/// want `rhypot` for): scales `(x,y)` by [`rhypot`] to unit magnitude.
+/// Same zero-vector (`(NaN,NaN)`, no meaningful direction) and `+-inf`
+/// override behavior as [`normalize4`], one level down.
+#[inline(always)]
+pub fn normalize2(x: f32, y: f32) -> (f32, f32) {
+    let r = rhypot(x, y);
+    (x * r, y * r)
+}
+
+/// 3D vector normalize (backlog idea #136): scales `(x,y,z)` by
+/// [`rnorm3`] to unit magnitude. See [`normalize2`]/[`normalize4`] for
+/// the shared zero-vector/`+-inf` behavior.
+#[inline(always)]
+pub fn normalize3(x: f32, y: f32, z: f32) -> (f32, f32, f32) {
+    let r = rnorm3(x, y, z);
+    (x * r, y * r, z * r)
+}
+
+/// 4-arg Euclidean norm (backlog idea #134, companion to [`hypot3`]):
+/// same naive-fma-chain construction, tradeoff, and inf/NaN override,
+/// one argument wider -- the quaternion-magnitude case.
+#[inline(always)]
+pub fn hypot4(w: f32, x: f32, y: f32, z: f32) -> f32 {
+    let normal = fma(w, w, fma(x, x, fma(y, y, z * z))).sqrt();
+    let any_inf = w.is_infinite() || x.is_infinite() || y.is_infinite() || z.is_infinite();
+    if any_inf { f32::INFINITY } else { normal }
+}
+
+/// Reciprocal of [`hypot4`] -- see [`rnorm3`]'s own doc comment for why
+/// the `+-inf` override is needed (same reason, one argument wider).
+#[inline(always)]
+pub fn rnorm4(w: f32, x: f32, y: f32, z: f32) -> f32 {
+    let normal = 1.0 / fma(w, w, fma(x, x, fma(y, y, z * z))).sqrt();
+    let any_inf = w.is_infinite() || x.is_infinite() || y.is_infinite() || z.is_infinite();
+    if any_inf { 0.0 } else { normal }
+}
+
+/// Quaternion normalize (backlog idea #134): scales `(w,x,y,z)` by
+/// [`rnorm4`] so the result has unit magnitude -- the actual operation
+/// callers reach for `rnorm4` to build themselves, provided directly.
+/// Inherits `rnorm4`'s own `+-inf`-in-any-component override (giving
+/// every component `0` rather than `NaN`) and its zero-vector behavior
+/// (`rnorm4(0,0,0,0)` is `+inf`, so `normalize4(0,0,0,0)` is
+/// `(NaN,NaN,NaN,NaN)` via `0*inf` -- there's no meaningful unit
+/// quaternion for the zero vector, so propagating `NaN` rather than
+/// picking an arbitrary direction is the honest answer).
+#[inline(always)]
+pub fn normalize4(w: f32, x: f32, y: f32, z: f32) -> (f32, f32, f32, f32) {
+    let r = rnorm4(w, x, y, z);
+    (w * r, x * r, y * r, z * r)
+}
+
 /// `a*b - c*d`, computed via Kahan's compensated algorithm instead of the
 /// naive two-multiply-one-subtract form (backlog idea #135): the naive
 /// form's error is unbounded relative to the true result whenever `a*b`

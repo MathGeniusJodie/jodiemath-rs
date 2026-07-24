@@ -253,8 +253,22 @@ fn main() {
     bench!("hypot_unchecked", move |x: f32| hypot_unchecked(x, hypot_y));
     bench!("hypot_checked", move |x: f32| hypot_checked(x, hypot_y));
     bench!("rhypot", move |x: f32| rhypot(x, hypot_y));
+    bench!("normalize2", move |x: f32| {
+        let (a, b) = normalize2(x, hypot_y);
+        a + b
+    });
     bench!("hypot3", move |x: f32| hypot3(x, hypot_y, 2.0));
     bench!("rnorm3", move |x: f32| rnorm3(x, hypot_y, 2.0));
+    bench!("normalize3", move |x: f32| {
+        let (a, b, c) = normalize3(x, hypot_y, 2.0);
+        a + b + c
+    });
+    bench!("hypot4", move |x: f32| hypot4(x, hypot_y, 2.0, 3.0));
+    bench!("rnorm4", move |x: f32| rnorm4(x, hypot_y, 2.0, 3.0));
+    bench!("normalize4", move |x: f32| {
+        let (a, b, c, d) = normalize4(x, hypot_y, 2.0, 3.0);
+        a + b + c + d
+    });
     bench!("rsqrt", rsqrt);
     // black_box'd 2nd arg, same reasoning as atan2/hypot above -- a literal
     // exponent lets LLVM constant-fold powf's y==0.0/y_int/y_odd branches

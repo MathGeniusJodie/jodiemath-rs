@@ -2005,9 +2005,12 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### Batch 2: roots / hypot / geometry
 
-134. **rnorm4 / quaternion normalize** — companion to hypot3 (#55).
-136. **normalize2/normalize3 slice kernels** (rhypot + scales — the
-     operation users actually want hypot for).
+136. **normalize2/normalize3 *slice* kernels** (rhypot + scales — the
+     operation users actually want hypot for). Single-call
+     `normalize2`/`normalize3`/`normalize4`/`hypot4`/`rnorm4` shipped
+     (see lib.rs/git log, ideas #55/#134) -- the slice-batched variant
+     itself still needs the slice-tier infrastructure that doesn't
+     exist yet (see the standing Batch/slice API tier entry above).
 137. **cbrt_throughput status decision**: document it as the approx-tier
      member it is (5.5 avg ulp) or drop it — currently in limbo with no
      doc comment.
