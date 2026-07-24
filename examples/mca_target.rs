@@ -388,6 +388,9 @@ throughput_fn!(thr_atanpi, "atanpi_throughput", atanpi);
 latency_fn!(lat_atan2, "atan2_latency", |x: f32| atan2(x, 1.0));
 throughput_fn!(thr_atan2, "atan2_throughput", |x: f32| atan2(x, 1.0));
 
+latency_fn!(lat_atan2_latency, "atan2_latency_latency", |x: f32| atan2_latency(x, 1.0));
+throughput_fn!(thr_atan2_latency, "atan2_latency_throughput", |x: f32| atan2_latency(x, 1.0));
+
 latency_fn!(lat_atan2_pos, "atan2_pos_latency", |x: f32| atan2_pos(x, 1.0));
 throughput_fn!(thr_atan2_pos, "atan2_pos_throughput", |x: f32| atan2_pos(x, 1.0));
 
@@ -783,6 +786,7 @@ fn main() {
         lat_atand, thr_atand;
         lat_atanpi, thr_atanpi;
         lat_atan2, thr_atan2;
+        lat_atan2_latency, thr_atan2_latency;
         lat_atan2_pos, thr_atan2_pos;
         lat_atan2d, thr_atan2d;
         lat_atan2pi, thr_atan2pi;

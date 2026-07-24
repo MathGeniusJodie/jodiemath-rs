@@ -1059,6 +1059,33 @@ fn main() {
     check("atan2(nan,nan)", atan2(f32::NAN, f32::NAN), f32::NAN);
     check("atan2(0,nan)", atan2(0.0, f32::NAN), f32::NAN);
     check("atan2(1,nan)", atan2(1.0, f32::NAN), f32::NAN);
+
+    // atan2_latency (backlog idea #60): identical wrapper to atan2, just a
+    // different atan-core, so every zero/inf/nan edge case above (none of
+    // which touch that core) transfers unchanged.
+    check("atan2_latency(1,0)", atan2_latency(1.0, 0.0), std::f32::consts::FRAC_PI_2);
+    check("atan2_latency(-1,0)", atan2_latency(-1.0, 0.0), -std::f32::consts::FRAC_PI_2);
+    check("atan2_latency(0,0)", atan2_latency(0.0, 0.0), 0.0);
+    check("atan2_latency(-0,0)", atan2_latency(-0.0, 0.0), -0.0);
+    check("atan2_latency(0,-0)", atan2_latency(0.0, -0.0), std::f32::consts::PI);
+    check("atan2_latency(-0,-0)", atan2_latency(-0.0, -0.0), -std::f32::consts::PI);
+    check("atan2_latency(inf,inf)", atan2_latency(f32::INFINITY, f32::INFINITY), std::f32::consts::FRAC_PI_4);
+    check(
+        "atan2_latency(inf,-inf)",
+        atan2_latency(f32::INFINITY, f32::NEG_INFINITY),
+        3.0 * std::f32::consts::FRAC_PI_4,
+    );
+    check("atan2_latency(nan,0)", atan2_latency(f32::NAN, 0.0), f32::NAN);
+    check("atan2_latency(nan,-0)", atan2_latency(f32::NAN, -0.0), f32::NAN);
+    check("atan2_latency(nan,1)", atan2_latency(f32::NAN, 1.0), f32::NAN);
+    check("atan2_latency(0,nan)", atan2_latency(0.0, f32::NAN), f32::NAN);
+    // Ordinary values: not bit-identical to atan2 (atan_latency's own poly
+    // differs from atan_poly's), but both correctly-rounded-ish and close
+    // -- pin against the exact 45-degree case, exact by construction for
+    // any reasonable atan-core (atan(1)==pi/4 to within its own ulp
+    // budget), not a fitted-poly-dependent value.
+    check("atan2_latency(1,1)", atan2_latency(1.0, 1.0), atan2(1.0, 1.0));
+
     // atan2_unchecked: contract is x != 0.0, not both infinite -- must
     // match atan2 exactly wherever that contract holds.
     check("atan2_unchecked(1,2)", atan2_unchecked(1.0, 2.0), atan2(1.0, 2.0));

@@ -2991,6 +2991,30 @@ pub fn atan2(y: f32, x: f32) -> f32 {
     if bothinf { inf_result } else { r }
 }
 
+/// atan2, latency tier (backlog idea #60): identical wrapper to [`atan2`]
+/// (same zero/NaN/inf edge-case fixes, none of which depend on which
+/// "atan"-shaped core fills in the ordinary case) but calls
+/// [`atan_latency`] instead of [`atan`] for the `y/x` term. `atan2`
+/// today stacks two divisions serially -- its own `y/x`, then
+/// `atan_poly`'s internal rational division on top -- since
+/// `atan_latency` is division-free past its own initial reciprocal,
+/// this removes the second one from the critical path entirely. Same
+/// tradeoff [`atan_latency`] documents on its own: better latency,
+/// worse throughput than [`atan2`].
+#[inline(always)]
+pub fn atan2_latency(y: f32, x: f32) -> f32 {
+    let nonzerox = x != 0.0;
+    let nonzeroy = y != 0.0;
+    let bothzero = !nonzerox && !nonzeroy;
+    let hpisignx = if nonzerox || bothzero { mulsign(FRAC_PI_2, x) } else { 0.0 };
+    let correction = mulsign(FRAC_PI_2 - hpisignx, y);
+    let r = if nonzerox { atan_latency(y / x) + correction } else { correction };
+    let r = if y.is_nan() { f32::NAN } else { r };
+    let bothinf = x.is_infinite() && y.is_infinite();
+    let inf_result = mulsign(if x.is_sign_negative() { 3.0 * FRAC_PI_4 } else { FRAC_PI_4 }, y);
+    if bothinf { inf_result } else { r }
+}
+
 /// atan2(y,x) in degrees (backlog idea #123): plain composite -- see
 /// `asind`'s own doc comment for why a rescaled-coefficient fold isn't
 /// attempted here either.

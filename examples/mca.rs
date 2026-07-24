@@ -200,6 +200,7 @@ fn main() {
         "atand",
         "atanpi",
         "atan2",
+        "atan2_latency",
         "atan2_pos",
         "atan2d",
         "atan2pi",

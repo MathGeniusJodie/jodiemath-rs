@@ -223,6 +223,7 @@ fn main() {
     // this exact fixed-argument limitation.
     let atan2_x2 = std::hint::black_box(1.0);
     bench!("atan2", move |x: f32| atan2(x, atan2_x2));
+    bench!("atan2_latency", move |x: f32| atan2_latency(x, atan2_x2));
     bench!("std atan2", move |x: f32| x.atan2(atan2_x2));
     bench!("atan2_unchecked", move |x: f32| atan2_unchecked(x, atan2_x2));
     bench!("atan2_pos", move |x: f32| atan2_pos(x, atan2_x2));

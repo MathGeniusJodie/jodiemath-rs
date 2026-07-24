@@ -1318,6 +1318,8 @@ fn main() {
     if run("atan2") {
         let s = fuzz2(TWOARG_SAMPLES, |_, _| true, atan2, atan2_u35);
         report("atan2", &s, t0);
+        let s = fuzz2(TWOARG_SAMPLES, |_, _| true, atan2_latency, atan2_u35);
+        report("atan2_latency", &s, t0);
         let s = fuzz2(TWOARG_SAMPLES, |_, _| true, |y: f32, x: f32| y.atan2(x), atan2_u35);
         report("std atan2", &s, t0);
         // atan2_unchecked's documented contract: x != 0.0, not both infinite.

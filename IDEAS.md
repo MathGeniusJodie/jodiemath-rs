@@ -1879,11 +1879,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     FTZ/DAZ around its own loop and restore — gets the FTZ
     feature-flag idea's win without a global cargo feature.
 
-#### asin / acos / atan
-
-60. **atan2_latency tier**: atan_latency-based atan2 — atan2 currently
-    stacks atan_poly's division on top of its own y/x division.
-
 #### erf family
 
 66. **erfinv** (Giles-style poly in w = ln(1−x²), two-poly branchless
