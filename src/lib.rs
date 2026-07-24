@@ -3454,6 +3454,90 @@ pub fn norm_pdf(x: f32) -> f32 {
     INV_SQRT_2PI * exp_checked(-0.5 * x * x)
 }
 
+// dawson's central branch (backlog idea #138): `x*P(u)/Q(u)`, `u=x^2`,
+// degree 5/5, Estrin-grouped. Real least-squares fit (scipy) of
+// `dawsn(x)/x` against `u` over `|x| <= 4`, not a transcription of any
+// published algorithm's constants.
+#[inline(always)]
+fn dawson_central_ratio(u: f32) -> f32 {
+    let pc: [f32; 6] = [
+        1.0000001,
+        -0.059783164,
+        0.034603007,
+        0.00048943725,
+        0.00017723245,
+        -6.4844915e-7,
+    ];
+    let qc: [f32; 6] = [1.0, 0.6068863, 0.17250682, 0.029904548, 0.0033391602, 0.00026631297];
+    let u2 = u * u;
+    let u4 = u2 * u2;
+    let pl0 = fma(pc[1], u, pc[0]);
+    let pl1 = fma(pc[3], u, pc[2]);
+    let pl2 = fma(pc[5], u, pc[4]);
+    let pr0 = fma(pl1, u2, pl0);
+    let num = fma(pl2, u4, pr0);
+    let ql0 = fma(qc[1], u, qc[0]);
+    let ql1 = fma(qc[3], u, qc[2]);
+    let ql2 = fma(qc[5], u, qc[4]);
+    let qr0 = fma(ql1, u2, ql0);
+    let den = fma(ql2, u4, qr0);
+    num / den
+}
+
+// dawson's tail branch: `R(v)/(2x)`, `v=1/x^2`, degree 4, Estrin-grouped
+// -- a real least-squares fit of `2*x*dawsn(x)` against `v` over `|x| >
+// 4` (`v` in `[0, 1/16]`), matching the `1 + v/2 + O(v^2)` asymptotic
+// shape but fit directly rather than truncated from that series.
+#[inline(always)]
+fn dawson_tail_poly(v: f32) -> f32 {
+    let c: [f32; 5] = [1.0, 0.4999613, 0.7583368, 1.4159758, 14.885198];
+    let v2 = v * v;
+    let l0 = fma(c[1], v, c[0]);
+    let l1 = fma(c[3], v, c[2]);
+    let r0 = fma(l1, v2, l0);
+    fma(c[4], v2 * v2, r0)
+}
+
+/// Dawson's function `F(x) = exp(-x^2) * integral_0^x exp(t^2) dt`
+/// (backlog idea #138): odd, `F(0)=0`, a single interior maximum
+/// `F(x)~0.5410442` near `x~0.9241389`, decaying like `1/(2x)` for large
+/// `|x|`. Two branches, same rational/asymptotic-tail shape as
+/// [`erfcx`]: `x*P(u)/Q(u)` (`u=x^2`) for `|x| <= 4`, `R(v)/x` (halved
+/// first, `v=1/x^2`) past it.
+///
+/// The tail branch halves before dividing by `x`, not after: `x` itself
+/// never overflows (it's a finite input), but `2.0*x` does, for any
+/// `|x|` above `f32::MAX/2` -- found by fuzzing, not assumed, since it
+/// silently produces a wrong `0.0` (millions of ulp off) instead of the
+/// correct tiny subnormal result there, rather than an obviously-wrong
+/// `NaN`/`inf`. Halving first instead of last avoids this: halving never
+/// overflows, and the following divide-by-`x` only shrinks the result
+/// further.
+///
+/// Neither branch needs an explicit infinity override the way
+/// `erfinv`'s tail does: the branch actually *returned* never sees its
+/// own Estrin-overflow-to-NaN case here. The tail branch (selected for
+/// huge `|x|`) computes `v=1/x^2`, which cleanly saturates to `0.0` (not
+/// `NaN`) once `x*x` itself overflows to `+inf`, and `R(0)` is just its
+/// own finite constant term -- no cancellation, no mixed-sign overflow
+/// (`R`'s coefficients are all positive, so even `v=+inf` itself would
+/// combine to a consistently-signed `+inf`, not `NaN`). The *central*
+/// branch's `u=x^2` does overflow to `+inf` for that same huge `|x|`,
+/// and its Estrin-grouped numerator (mixed coefficient signs) does hit
+/// the same opposite-signed-infinities `NaN` erfinv's tail hit -- but
+/// only in the discarded arm of the final `if`, for inputs where `tail`
+/// is the one actually selected, so it never reaches the caller
+/// (confirmed by edgecheck, not assumed).
+#[doc(alias = "dawsn")]
+#[inline(always)]
+pub fn dawson(x: f32) -> f32 {
+    let u = x * x;
+    let central = x * dawson_central_ratio(u);
+    let v = 1.0 / u;
+    let tail = dawson_tail_poly(v) * 0.5 / x;
+    if x.abs() <= 4.0 { central } else { tail }
+}
+
 /// logit(p) = ln(p/(1-p)), sigmoid's inverse (backlog idea #71). Naive
 /// `ln(p/(1-p))` or `ln(p) - ln(1-p)` loses precision computing `1-p`
 /// directly whenever `p` is close to `1` (the same cancellation

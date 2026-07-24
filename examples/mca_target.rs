@@ -467,6 +467,9 @@ throughput_fn!(thr_erfc_inv, "erfc_inv_throughput", erfc_inv);
 latency_fn!(lat_probit, "probit_latency", probit);
 throughput_fn!(thr_probit, "probit_throughput", probit);
 
+latency_fn!(lat_dawson, "dawson_latency", dawson);
+throughput_fn!(thr_dawson, "dawson_throughput", dawson);
+
 latency_fn!(lat_hypot, "hypot_latency", |x: f32| hypot(x, 1.0));
 throughput_fn!(thr_hypot, "hypot_throughput", |x: f32| hypot(x, 1.0));
 
@@ -869,6 +872,7 @@ fn main() {
         lat_erfinv, thr_erfinv;
         lat_erfc_inv, thr_erfc_inv;
         lat_probit, thr_probit;
+        lat_dawson, thr_dawson;
         lat_hypot, thr_hypot;
         lat_hypot_checked, thr_hypot_checked;
         lat_rhypot, thr_rhypot;

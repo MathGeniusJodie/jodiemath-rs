@@ -221,6 +221,7 @@ fn main() {
         "erfinv",
         "erfc_inv",
         "probit",
+        "dawson",
         "hypot",
         "hypot_checked",
         "rhypot",

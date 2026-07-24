@@ -249,6 +249,7 @@ fn main() {
     bench!("erfinv", erfinv);
     bench!("erfc_inv", erfc_inv);
     bench!("probit", probit);
+    bench!("dawson", dawson);
     // black_box'd 2nd arg, same reasoning as atan2 above.
     let hypot_y = std::hint::black_box(1.0);
     bench!("hypot", move |x: f32| hypot(x, hypot_y));

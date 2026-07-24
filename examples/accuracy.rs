@@ -2023,6 +2023,67 @@ fn main() {
         let s = fuzz2(TWOARG_SAMPLES, fmod_checked_domain, fmod_checked, fmod_ref);
         report("fmod_checked", &s, t0);
     }
+    if run("dawson") {
+        // No sleef bucket for Dawson's function, so the reference here is
+        // a real independent computation, not a round-trip: Simpson's-rule
+        // quadrature of the defining integral D(x) = x * integral_0^1
+        // exp(-x^2*(1-s^2)) ds for |x| <= 5 (N=800, empirically >60x more
+        // accurate there than dawson()'s own ~6e-6 worst relative error),
+        // the literal double-factorial asymptotic series for |x| > 5 (15
+        // terms, converges to near f64 precision well before the series'
+        // own eventual divergence past its optimal truncation point).
+        let dawson_ref = |x: f64| -> f64 {
+            let ax = x.abs();
+            let mag = if ax <= 5.0 {
+                const N: usize = 800;
+                let h = 1.0 / N as f64;
+                let mut sum = (-ax * ax).exp() + 1.0;
+                for i in 1..N {
+                    let s = i as f64 * h;
+                    let f = (-ax * ax * (1.0 - s * s)).exp();
+                    sum += if i % 2 == 1 { 4.0 * f } else { 2.0 * f };
+                }
+                ax * (h / 3.0) * sum
+            } else {
+                let v = 1.0 / (ax * ax);
+                let mut term = 1.0;
+                let mut acc = 1.0;
+                for k in 1..=15 {
+                    term *= (2.0 * k as f64 - 1.0) * v * 0.5;
+                    acc += term;
+                }
+                acc / (2.0 * ax)
+            };
+            mag.copysign(x)
+        };
+        let n_samples = 2_000_000u64;
+        let mut sum = 0u64;
+        let mut max = 0u64;
+        let mut worst = 0.0f32;
+        for _ in 0..n_samples {
+            let x = f32::from_bits(rand::rng().random::<u32>());
+            if !x.is_finite() {
+                continue;
+            }
+            let want = dawson_ref(x as f64) as f32;
+            let got = dawson(x);
+            let d = ulp_diff(got, want);
+            sum += d;
+            if d > max {
+                max = d;
+                worst = x;
+            }
+        }
+        println!(
+            "{:24} avg ulp {:>10.4}  max ulp {:>10}  worst x={:e} ({:>12} samples, {:>7.2}s elapsed)",
+            "dawson",
+            sum as f64 / n_samples as f64,
+            max,
+            worst,
+            n_samples,
+            t0.elapsed().as_secs_f64(),
+        );
+    }
 
     println!("total: {:.2}s", t0.elapsed().as_secs_f64());
 }

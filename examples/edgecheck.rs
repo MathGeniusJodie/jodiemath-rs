@@ -1350,6 +1350,24 @@ fn main() {
         check_bounded(&format!("norm_cdf(probit({p}))-{p}"), norm_cdf(x) - p, 1e-4);
     }
 
+    // dawson (backlog idea #138): odd, `F(0)=0`, single interior maximum
+    // near x~0.9241389, decays like 1/(2x) for large |x|. f32::MAX/-MAX
+    // pins are a standing regression guard on the `2.0*x` overflow bug
+    // fuzzing found (fixed by halving before dividing by `x`, not after
+    // -- see dawson's own doc comment): both must stay finite, not NaN.
+    check("dawson(0)", dawson(0.0), 0.0);
+    check("dawson(-0)", dawson(-0.0), -0.0);
+    check("dawson(inf)", dawson(f32::INFINITY), 0.0);
+    check("dawson(-inf)", dawson(f32::NEG_INFINITY), -0.0);
+    check("dawson(nan)", dawson(f32::NAN), f32::NAN);
+    check_bounded("dawson(0.9241389)-0.5410442", dawson(0.9241389) - 0.5410442, 1e-4);
+    check_bounded("dawson(-0.9241389)+0.5410442", dawson(-0.9241389) + 0.5410442, 1e-4);
+    check_bounded("dawson(4)-0.1293480", dawson(4.0) - 0.1293480, 1e-4);
+    check_bounded("dawson(-4)+0.1293480", dawson(-4.0) + 0.1293480, 1e-4);
+    check_finite("dawson(f32::MAX)", dawson(f32::MAX));
+    check_finite("dawson(f32::MIN)", dawson(f32::MIN));
+    check_bounded("dawson(f32::MAX)-1.469e-39", dawson(f32::MAX) - 1.4693680e-39, 1e-40);
+
     check("hypot(0,0)", hypot(0.0, 0.0), 0.0);
     check("hypot(3,4)", hypot(3.0, 4.0), 5.0);
     // hypot(+-inf, anything) = +inf even with a NaN other argument --

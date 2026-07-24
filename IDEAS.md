@@ -2009,10 +2009,6 @@ an idea revisits a rejection, the differing mechanism is stated.
      member it is (5.5 avg ulp) or drop it — currently in limbo with no
      doc comment.
 
-#### Batch 2: erf / inverse-trig follow-ups
-
-138. **Dawson function F(x)** — erfcx sibling (spectroscopy), shares the
-     rational machinery.
 #### Batch 2: hyperbolics / ML / graphics
 
 148. **Softmax / logsumexp / normalize slice reductions** (max-pass +
