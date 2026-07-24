@@ -779,13 +779,19 @@ fn main() {
         let sind_domain = |x: f32| x.abs() < 4.7e7;
         let s = measure!(sind_domain, sind, sind_ref);
         report("sind (|x|<4.7e7)", &s, t0);
+        let s = measure!(sind_domain, sind_unchecked, sind_ref);
+        report("sind_unchecked (+)", &s, t0);
         let s = measure!(sind_domain, cosd, cosd_ref);
         report("cosd (|x|<4.7e7)", &s, t0);
+        let s = measure!(sind_domain, cosd_unchecked, cosd_ref);
+        report("cosd_unchecked (+)", &s, t0);
         // tand: same domain as sind/cosd (built directly on their own
         // reduction); real poles at cosd(x)==0 give expected huge ulp
         // there, same caveat as tanpi above.
         let s = measure!(sind_domain, tand, tand_ref);
         report("tand (|x|<4.7e7)", &s, t0);
+        let s = measure!(sind_domain, tand_unchecked, tand_ref);
+        report("tand_unchecked (+)", &s, t0);
     }
 
     if run("ln") {

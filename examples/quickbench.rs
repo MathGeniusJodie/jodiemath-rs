@@ -149,8 +149,11 @@ fn main() {
     bench!("sinc", sinc);
     bench!("sinc_unnormalized", sinc_unnormalized);
     bench!("sind", sind);
+    bench!("sind_unchecked", sind_unchecked);
     bench!("cosd", cosd);
+    bench!("cosd_unchecked", cosd_unchecked);
     bench!("tand", tand);
+    bench!("tand_unchecked", tand_unchecked);
 
     bench!("ln", ln);
     bench!("ln_unchecked", ln_unchecked);

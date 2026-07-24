@@ -359,6 +359,25 @@ fn main() {
     check_finite("sind(1e10)", sind(1e10));
     check_finite("cosd(1e10)", cosd(1e10));
 
+    // sind_unchecked/cosd_unchecked (backlog idea #98): same POLY_SAFE_BOUND
+    // clamp removed, valid only up to sind/cosd's own ~4.7e7 exactness
+    // limit -- no check_finite pins at f32::MAX/1e10 here, unlike sind/cosd
+    // above, since that guarantee is exactly what's given up past the
+    // documented domain (verified bit-identical to sind/cosd for all
+    // |x|<4.7e7 via a real exhaustive sweep before adopting).
+    check("sind_unchecked(0)", sind_unchecked(0.0), 0.0);
+    check("sind_unchecked(-0)", sind_unchecked(-0.0), -0.0);
+    check("cosd_unchecked(0)", cosd_unchecked(0.0), 1.0);
+    check("sind_unchecked(90)", sind_unchecked(90.0), sind(90.0));
+    check("sind_unchecked(180)", sind_unchecked(180.0), sind(180.0));
+    check("cosd_unchecked(180)", cosd_unchecked(180.0), cosd(180.0));
+    check("sind_unchecked(-90)", sind_unchecked(-90.0), sind(-90.0));
+    check("sind_unchecked(nan)", sind_unchecked(f32::NAN), f32::NAN);
+    check("cosd_unchecked(nan)", cosd_unchecked(f32::NAN), f32::NAN);
+    check("sind_unchecked(inf)", sind_unchecked(f32::INFINITY), f32::NAN);
+    check("sind_unchecked(-inf)", sind_unchecked(f32::NEG_INFINITY), f32::NAN);
+    check("cosd_unchecked(inf)", cosd_unchecked(f32::INFINITY), f32::NAN);
+
     // tand(x) = sind(x)/cosd(x): new function (backlog idea #29), same
     // "poles are real, IEEE754 division handles them for free" reasoning
     // as tanpi above.
@@ -373,6 +392,16 @@ fn main() {
     check("tand(inf)", tand(f32::INFINITY), f32::NAN);
     check("tand(-inf)", tand(f32::NEG_INFINITY), f32::NAN);
     check_finite("tand(1e10)", tand(1e10));
+
+    // tand_unchecked: same clamp-removal contract as sind_unchecked/
+    // cosd_unchecked above.
+    check("tand_unchecked(0)", tand_unchecked(0.0), 0.0);
+    check("tand_unchecked(-0)", tand_unchecked(-0.0), -0.0);
+    check("tand_unchecked(45)", tand_unchecked(45.0), 1.0);
+    check("tand_unchecked(180)", tand_unchecked(180.0), tand(180.0));
+    check("tand_unchecked(90)", tand_unchecked(90.0), f32::NEG_INFINITY);
+    check("tand_unchecked(nan)", tand_unchecked(f32::NAN), f32::NAN);
+    check("tand_unchecked(inf)", tand_unchecked(f32::INFINITY), f32::NAN);
 
     // ln/log10/log1p: same zero/negative/inf edges as log_2 (they're all
     // log_2 rescaled or composed with it).

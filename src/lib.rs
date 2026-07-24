@@ -727,6 +727,47 @@ pub fn tand(x: f32) -> f32 {
     sind(x) / cosd(x)
 }
 
+/// sind without the safety clamp (backlog idea #98): valid while `sind`'s
+/// own reduction stays exact, `|x|` up to ~4.7e7 (see [`sind`]'s doc
+/// comment) -- within that range `|d| <= 90` always (round-to-nearest-180
+/// residual), so `d*DEG_TO_RAD_SMALL` never exceeds `pi/2`, nowhere near
+/// `POLY_SAFE_BOUND` (1000.0): the clamp is provably a no-op in-domain,
+/// only doing real work past the documented exactness limit. Past that,
+/// unlike `sind`, no guarantee of even a finite result. Mirrors this
+/// crate's other `_unchecked` cores (`cbrt_unchecked`, etc.); see [`sind`]
+/// for the full-domain-safe version.
+#[inline(always)]
+pub fn sind_unchecked(x: f32) -> f32 {
+    let qb = fma(x, INV_180, ROUND_MAGIC);
+    let q = qb - ROUND_MAGIC;
+    let d = fma(-q, 180.0, x);
+    let s = sinf_poly(d * DEG_TO_RAD_SMALL);
+    let parity = qb.to_bits() << 31;
+    f32::from_bits(s.to_bits() ^ parity)
+}
+
+/// cosd without the safety clamp -- see [`sind_unchecked`] for the
+/// rationale (same no-op-in-domain clamp removal) and [`cosd`] for the
+/// full-domain-safe version.
+#[inline(always)]
+pub fn cosd_unchecked(x: f32) -> f32 {
+    let kb = fma(x, INV_180, -0.5) + ROUND_MAGIC;
+    let q = (kb - ROUND_MAGIC) + 0.5;
+    let d = fma(-q, 180.0, x);
+    let s = sinf_poly(d * DEG_TO_RAD_SMALL);
+    let parity = !kb.to_bits() << 31;
+    f32::from_bits(s.to_bits() ^ parity)
+}
+
+/// tand without the safety clamp -- same `sind_unchecked(x)/
+/// cosd_unchecked(x)` ratio construction as [`tand`] itself, so it
+/// inherits both this domain (`|x|` up to ~4.7e7) and its safety
+/// tradeoff for free.
+#[inline(always)]
+pub fn tand_unchecked(x: f32) -> f32 {
+    sind_unchecked(x) / cosd_unchecked(x)
+}
+
 // q = round(x/pi) must be an *exact* integer for x - q*pi to land
 // accurately in [-pi/2, pi/2]. A single-f32 q is a binary either-or:
 // either exactly the correctly-rounded integer, or (once |x| crosses q's

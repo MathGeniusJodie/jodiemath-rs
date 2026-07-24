@@ -1911,9 +1911,10 @@ an idea revisits a rejection, the differing mechanism is stated.
     -extra-vectorizer-passes, SLP horizontal reductions — cheap sweep,
     same method as the interleave/zmm experiments.
 98. **Auto-`_unchecked` macro (existing entry) — concrete new
-    candidates**: sind/cosd (drop the POLY_SAFE_BOUND clamp under the
-    4.7e7 contract), erf (drop the 10.0 bound), softplus/logaddexp
-    (drop NaN guards), sinpi (drop the x==0 select).
+    candidates**: erf (drop the 10.0 bound), softplus/logaddexp
+    (drop NaN guards), sinpi (drop the x==0 select). (sind/cosd's own
+    candidate shipped, see lib.rs/git log — `sind_unchecked`/
+    `cosd_unchecked`/`tand_unchecked`.)
 99. **tgamma** companion to the lgamma entry (Lanczos/Stirling, shares
     machinery).
 100. **Bessel j0/j1** (Cephes-style two-region rational + trig
