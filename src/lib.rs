@@ -4566,6 +4566,12 @@ pub fn powf_checked_unchecked(x: f32, y: f32) -> f32 {
 /// instead, correct for both this singularity and the ordinary
 /// remainder(+0.0, y) case (already correctly `+0.0`, so the guard is a
 /// no-op there).
+///
+/// The ties-away-from-zero rounding here is an inherited port convention
+/// (see this doc comment's first line), not a deliberate design goal --
+/// prefer [`remainder_ieee`] for new code unless matching that specific
+/// convention is what's actually wanted. It's the true IEEE754/C99
+/// standard besides, and genuinely cheaper (see its own doc comment).
 // Shared by remainder/remainder_ieee/fmod: given each caller's own `q`
 // (`.round()`, `.round_ties_even()`, or `.trunc()` -- the one place they
 // differ), the `x - q*y` combine plus the two special-case selects (the

@@ -2018,9 +2018,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 155. **powf slice integer-y dispatch**: slice checks all-y-integral once
      and routes to the pown path — per-slice dispatch is free where
      per-call isn't.
-156. **remainder_ieee as the documented default recommendation** —
-     cheaper (native vroundps) *and* standard; `remainder`'s ties-away
-     is an inherited port convention, not a design goal.
 157. **remainder_checked/remainder_wide consolidation screen** after the
      ties-even fix (#80): can one tier serve both contracts, or does
      wide's 6.5x cost keep them split? Screen only.
