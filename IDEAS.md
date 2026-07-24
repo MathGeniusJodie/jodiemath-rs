@@ -1904,8 +1904,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### New functions / API breadth
 
-86. **exp2i/ldexp/frexp-style exact power-of-two utilities**
-    (exp2_field_split is already the core; vcvtdq2ps-friendly).
 87. **Public Df32 module** (log2_df/exp2_checked_df/two_prod etc.) for
     power users composing their own accurate kernels.
 88. **Public checked pi-reduction API** (round_x_over_pi + reduce_pi)

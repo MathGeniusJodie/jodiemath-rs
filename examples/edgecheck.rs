@@ -123,6 +123,41 @@ fn main() {
     check("exp2_checked(-150)", exp2_checked(-150.0), 0.0);
     check("exp2_checked(-1000)", exp2_checked(-1000.0), 0.0);
     check("exp2_checked(0)", exp2_checked(0.0), 1.0);
+
+    // ldexp/frexp (backlog idea #86): exact power-of-two utilities.
+    // Verified via a real large-scale sweep before adopting -- found and
+    // fixed two real bugs (a premature-overflow case and a grossly-out-
+    // of-range-clamped-instead-of-saturated case, see ldexp's own doc
+    // comment) that these pins alone wouldn't have caught, but now pin
+    // the specific failure points directly as regression guards.
+    check("ldexp(0,5)", ldexp(0.0, 5), 0.0);
+    check("ldexp(-0,5)", ldexp(-0.0, 5), -0.0);
+    check("ldexp(inf,5)", ldexp(f32::INFINITY, 5), f32::INFINITY);
+    check("ldexp(-inf,5)", ldexp(f32::NEG_INFINITY, 5), f32::NEG_INFINITY);
+    check("ldexp(nan,5)", ldexp(f32::NAN, 5), f32::NAN);
+    check("ldexp(1,0)", ldexp(1.0, 0), 1.0);
+    check("ldexp(1,3)", ldexp(1.0, 3), 8.0);
+    check("ldexp(1,-3)", ldexp(1.0, -3), 0.125);
+    check("ldexp(f32::MAX,0)", ldexp(f32::MAX, 0), f32::MAX);
+    check("ldexp(f32::MAX,1)", ldexp(f32::MAX, 1), f32::INFINITY);
+    check("ldexp(f32::MIN_POSITIVE,-1000)", ldexp(f32::MIN_POSITIVE, -1000), 0.0);
+    // real bug #1 (premature overflow: x's own magnitude should have
+    // compensated for n past exp2_checked's own clamp, but didn't).
+    check("ldexp(7.26589e-9,148)", ldexp(7.26589e-9, 148), 2.5925562e36);
+    // real bug #2 (grossly-out-of-range clamped down to the reconstruction
+    // boundary instead of saturating -- true answer overflows regardless
+    // of mantissa).
+    check("ldexp(-224910930000000,148)", ldexp(-224910930000000.0, 148), f32::NEG_INFINITY);
+    check("frexp(0).0", frexp(0.0).0, 0.0);
+    check("frexp(0).1", frexp(0.0).1 as f32, 0.0);
+    check("frexp(-0).0", frexp(-0.0).0, -0.0);
+    check("frexp(inf).0", frexp(f32::INFINITY).0, f32::INFINITY);
+    check("frexp(nan).0", frexp(f32::NAN).0, f32::NAN);
+    check("frexp(6).0", frexp(6.0).0, 0.75);
+    check("frexp(6).1", frexp(6.0).1 as f32, 3.0);
+    check("frexp(f32::MAX).0", frexp(f32::MAX).0, 0.99999994);
+    check("frexp(f32::MAX).1", frexp(f32::MAX).1 as f32, 128.0);
+
     // cbrt
     for f in [cbrt as fn(f32) -> f32, cbrt_accurate as fn(f32) -> f32] {
         let n = if std::ptr::fn_addr_eq(f, cbrt as fn(f32) -> f32) { "cbrt" } else { "cbrt_acc" };

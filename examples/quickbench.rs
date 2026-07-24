@@ -240,6 +240,11 @@ fn main() {
     bench!("compound", move |x: f32| compound(x, 5.0));
     bench!("xlogy", move |x: f32| xlogy(x, 2.0));
     bench!("xlog1py", move |x: f32| xlog1py(x, 1.0));
+    bench!("ldexp", move |x: f32| ldexp(x, 5));
+    bench!("frexp", |x: f32| {
+        let (m, e) = frexp(x);
+        m + e as f32
+    });
     bench!("erfcx", erfcx);
     // black_box'd 2nd arg, same reasoning as atan2 above.
     let hypot_y = std::hint::black_box(1.0);

@@ -1511,6 +1511,69 @@ fn main() {
         pown_sweep(&pown_16, -64, 64, "pown_16 (|n|<=64)");
         pown_sweep(&pown_16, -65535, 65535, "pown_16 (|n|<=65535)");
     }
+    if run("ldexp") {
+        // ldexp/frexp (backlog idea #86): exact bit manipulations, not
+        // approximations -- expected max ulp is always exactly 0. Two
+        // real bugs were found and fixed during development via a much
+        // larger dedicated scratch sweep (see ldexp's own doc comment);
+        // this is a permanent, smaller-scale regression guard, not a
+        // substitute for that sweep.
+        let n_samples = 20_000_000u64;
+        let mut sum = 0u64;
+        let mut max = 0u64;
+        let mut worst = (0.0f32, 0i32);
+        for _ in 0..n_samples {
+            let x = f32::from_bits(rand::rng().random::<u32>());
+            let n: i32 = rand::rng().random_range(-2000..=2000);
+            if !x.is_finite() {
+                continue;
+            }
+            let got = ldexp(x, n);
+            let want = (x as f64 * 2f64.powi(n.clamp(-1100, 1100))) as f32;
+            let d = ulp_diff(got, want);
+            sum += d;
+            if d > max {
+                max = d;
+                worst = (x, n);
+            }
+        }
+        println!(
+            "{:24} avg ulp {:>10.4}  max ulp {:>10}  worst x={:e},n={} ({:>12} samples, {:>7.2}s elapsed)",
+            "ldexp",
+            sum as f64 / n_samples as f64,
+            max,
+            worst.0,
+            worst.1,
+            n_samples,
+            t0.elapsed().as_secs_f64(),
+        );
+        // frexp: exact reconstruction + mantissa-range check, not a ulp
+        // measurement (it's a decomposition, not an approximation) --
+        // reported as a bad-count, not avg/max ulp.
+        let mut fbad = 0u64;
+        for _ in 0..n_samples {
+            let x = f32::from_bits(rand::rng().random::<u32>());
+            let (m, e) = frexp(x);
+            let ok = if x == 0.0 {
+                m.to_bits() == x.to_bits() && e == 0
+            } else if !x.is_finite() {
+                (m.is_nan() && x.is_nan()) || m.to_bits() == x.to_bits()
+            } else {
+                let recon = (m as f64 * 2f64.powi(e)) as f32;
+                recon.to_bits() == x.to_bits() && m.abs() >= 0.5 && m.abs() < 1.0
+            };
+            if !ok {
+                fbad += 1;
+            }
+        }
+        println!(
+            "{:24} bad reconstructions {:>10} / {:<12} ({:>7.2}s elapsed)",
+            "frexp",
+            fbad,
+            n_samples,
+            t0.elapsed().as_secs_f64(),
+        );
+    }
     if run("powf") {
         // x != 0 (x == 0 is its own exact case, not a fuzz-density target)
         // and the exponent log2(|x|)*y kept inside exp2's unchecked range.

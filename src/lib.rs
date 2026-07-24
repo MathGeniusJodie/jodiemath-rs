@@ -347,6 +347,100 @@ pub fn exp2_checked(x: f32) -> f32 {
     p * t2
 }
 
+/// x*2^n (backlog idea #86), C's `ldexp`/`scalbn`. A first version tried
+/// `x * exp2_checked(n as f32)`, reusing `exp2_checked` wholesale --
+/// killed by a real fuzz run, not caught on paper: `exp2_checked`'s own
+/// clamp (`.clamp(-151.0, 128.0)`) is only safe *in isolation*, where the
+/// clamped exponent alone determines overflow. Here `x`'s own magnitude
+/// can compensate for an `n` past that clamp (e.g. `x=7.27e-9, n=148`:
+/// the true product `~2.59e36` is finite, but clamping `n` to `128`
+/// first computes `x * 2^128`, which overflows to `inf` on its own even
+/// though the real answer wouldn't) -- the same "premature overflow
+/// before a compensating factor gets a chance to apply" class of bug
+/// `exp`'s own t1-weave revisit (idea #24) found. Fixed by decomposing
+/// `x` via [`frexp`] first (mantissa always `< 1`, matching the same
+/// safety property `exp2_checked`'s own `p*t1*t2` combine relies on for
+/// its own poly correction) and combining the *exponents* before any
+/// clamping, so `x`'s own headroom is available to the combined value,
+/// not just to `n` alone.
+///
+/// A second real bug, also only found by fuzzing: clamping a combined
+/// exponent that's *grossly* out of range (not just past the boundary by
+/// a little) down to `128`/`-151` and reconstructing anyway silently
+/// computes `mantissa * 2^128` (a large but finite value) instead of the
+/// true answer, which at that magnitude gap (checked: 68 past the
+/// boundary in one real failing case) overflows regardless of `mantissa`
+/// -- no mantissa in `[0.5,1)` can pull a target exponent of `196` back
+/// under `f32::MAX`. Fixed by deciding overflow/underflow from the
+/// *unclamped* combined exponent directly (`> 128` always overflows,
+/// `< -151` always underflows to `0` -- verified against
+/// `exp2_checked`'s own already-confirmed bit-exact boundary at exactly
+/// those values, since `mantissa < 1` can only shrink the result
+/// relative to that bare-power-of-two reference, never grow it) rather
+/// than inferring it from whatever the clamped reconstruction happens to
+/// produce. Only the genuinely in-range combined exponents reach the
+/// `exp2_field_split` reconstruction below, where interleaving
+/// `mantissa` between `t1` and `t2` (mirroring `exp2_checked`'s own
+/// combine) is safe -- confirmed against a real exhaustive/fuzz sweep,
+/// including the exact boundary (`ldexp(f32::MAX, 0)` round-trips
+/// bit-exactly).
+///
+/// Not wired into `examples/mca.rs`/`mca_target.rs`: this function's own
+/// multi-exit-path branching (matching `pown_small`'s own documented
+/// harness limitation) corrupts llvm-mca's inline-asm region markers
+/// for the *whole* assembly file, not just this region -- confirmed by
+/// removing it restores every other function's mca numbers. Use
+/// quickbench for this one.
+#[inline(always)]
+pub fn ldexp(x: f32, n: i32) -> f32 {
+    let (mantissa, e) = frexp(x);
+    let target_exp_wide = e as i64 + n as i64;
+    let overflow = target_exp_wide > 128;
+    let underflow = target_exp_wide < -151;
+    let target_exp = target_exp_wide.clamp(-151, 128) as f32;
+    let (t1, t2) = exp2_field_split(target_exp);
+    let reconstructed = mantissa * t1 * t2;
+    let saturated = if overflow {
+        f32::INFINITY.copysign(x)
+    } else if underflow {
+        0.0f32.copysign(x)
+    } else {
+        reconstructed
+    };
+    if x == 0.0 || !x.is_finite() { x } else { saturated }
+}
+
+/// Decompose `x` into `(mantissa, exponent)` with `mantissa` in
+/// `[0.5, 1)` such that `x == mantissa * 2^exponent` (backlog idea #86),
+/// C's `frexp`. Denormal `x` is rescaled by `2^24` first (same
+/// `denormal_rescale!` idiom `log_2`/`ln`/`log10` already use), tracked
+/// via `koff` and folded back into the reported exponent at the end.
+/// The mantissa itself is built by a fixed bit substitution, not a
+/// relative adjustment of `x`'s own exponent field: replacing the
+/// biased exponent with the constant `126` (representing `2^-1`)
+/// directly encodes `1.mantissa_bits * 2^-1`, which is always in
+/// `[0.5, 1)` regardless of `x`'s original exponent -- a *relative*
+/// `-1` adjustment of the original field instead would wrap into a
+/// denormal encoding right at the smallest normal exponent (where the
+/// implicit leading-1 assumption breaks), a boundary bug avoided
+/// entirely by never depending on the original field's value for
+/// anything but the *reported* exponent. `x == 0`/non-finite `x` are
+/// overridden to `(x, 0)`: zero has no `[0.5,1)` decomposition at all,
+/// and `+-inf`/`NaN`'s own bit patterns would otherwise feed the same
+/// fixed-substitution trick and produce a finite, wrong mantissa.
+#[inline(always)]
+pub fn frexp(x: f32) -> (f32, i32) {
+    let ax = x.abs();
+    let (xs, koff) = denormal_rescale!(ax);
+    let bits = xs.to_bits();
+    let raw_exp = (bits >> 23) & 0xFF;
+    let mantissa_bits = (bits & 0x807FFFFF) | (126u32 << 23);
+    let mantissa = f32::from_bits(mantissa_bits).copysign(x);
+    let exponent = raw_exp as i32 - 126 + koff as i32;
+    let is_special = x == 0.0 || !x.is_finite();
+    (if is_special { x } else { mantissa }, if is_special { 0 } else { exponent })
+}
+
 /// 10^x. Naively rounding `x*LOG2_10` once before `exp2_checked` even
 /// starts loses precision that grows with `|x|` (the same flaw `exp`'s
 /// own doc comment describes for `exp2(x*LOG2_E)`). Fixed the same way
