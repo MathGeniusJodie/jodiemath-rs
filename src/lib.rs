@@ -1194,6 +1194,16 @@ pub fn sin_checked(x: f32) -> f32 {
     // true no-op everywhere the function was already accurate; the real
     // (small) mca cost was accepted per this crate's usual
     // "pay-to-fix-wrong-output" precedent.
+    //
+    // Measured per-decade (accuracy.rs's own magnitude buckets, found by
+    // an unrelated cross-function identity fuzz -- see IDEAS.md): max
+    // ulp is still bounded (not yet "any wrong answer in [-1,1]") through
+    // 6583 at `[1e12,1e13)` and 22073 at `[1e13,1e14)`, but `[1e14,1e15)`
+    // -- straddling the ~8.85e14 cliff above -- already reaches the same
+    // maximal ulp `[1e15,1e16)` shows. So the cliff isn't a clean step
+    // exactly at 8.85e14: individual inputs as low as ~6.2e14 (still
+    // under it) already hit the fully-degraded regime, not just a
+    // gradually-worsening one.
     let result = sinf_poly_raw(r).clamp(-1.0, 1.0);
     // reduce_pi's own multi-term error-compensation chain loses x's sign
     // at x = +-0.0 (an opposite-signed-zero addition somewhere inside it,

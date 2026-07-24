@@ -2062,9 +2062,6 @@ core::simd tier exists; each replaces multi-op scalar idioms)
 166. **Denormal-output correctness audit**: which functions produce
      correctly-rounded denormal outputs vs garbage (exp2_checked
      documents its behavior; most others are unaudited).
-167. **Identity-consistency fuzz**: sin²+cos²≈1, cosh²−sinh²≈1, tanh vs
-     sinh/cosh, exp(ln x)≈x with documented tolerance bands — cheap
-     cross-function bug detector.
 168. **Worst-case corpus regression gate**: persist each function's
      known worst-x list, re-check every commit in seconds between the
      hours-long full sweeps.

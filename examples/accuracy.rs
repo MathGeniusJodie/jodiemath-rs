@@ -654,6 +654,8 @@ fn main() {
             ("sin_checked [1e7,1e8)", 1e7, 1e8),
             ("sin_checked [1e9,1e10)", 1e9, 1e10),
             ("sin_checked [1e12,1e13)", 1e12, 1e13),
+            ("sin_checked [1e13,1e14)", 1e13, 1e14),
+            ("sin_checked [1e14,1e15)", 1e14, 1e15),
             ("sin_checked [1e15,1e16)", 1e15, 1e16),
         ] {
             let domain = move |x: f32| x.abs() >= lo && x.abs() < hi;
@@ -695,6 +697,8 @@ fn main() {
             ("cos_checked [1e7,1e8)", 1e7, 1e8),
             ("cos_checked [1e9,1e10)", 1e9, 1e10),
             ("cos_checked [1e12,1e13)", 1e12, 1e13),
+            ("cos_checked [1e13,1e14)", 1e13, 1e14),
+            ("cos_checked [1e14,1e15)", 1e14, 1e15),
             ("cos_checked [1e15,1e16)", 1e15, 1e16),
         ] {
             let domain = move |x: f32| x.abs() >= lo && x.abs() < hi;
@@ -2191,6 +2195,90 @@ fn main() {
             worst,
             n_samples,
             t0.elapsed().as_secs_f64(),
+        );
+    }
+
+    if run("identities") {
+        // Cross-function algebraic identity fuzz (backlog idea #167): a
+        // cheap bug detector independent of any single function's own
+        // f64 reference. Domain-restricted per identity to where the
+        // check itself stays well-conditioned -- e.g. cosh(x)^2-sinh(x)^2
+        // and exp(x)-1 vs expm1(x) both look like real failures if
+        // checked by *absolute* difference at large x (both sides are
+        // individually huge, so the identity's true near-zero residual
+        // is swamped by rounding in forming the huge intermediates
+        // themselves -- a real "does this test even make sense" trap,
+        // confirmed by checking relative error instead: exactly 0 at
+        // every magnitude tried). Every identity here already passed a
+        // 30M-sample sweep with no real finding -- kept as a standing
+        // regression gate, not because a bug was found.
+        let n_samples = 20_000_000u64;
+        let identity = |name: &str, domain: &dyn Fn(f32) -> bool, resid: &dyn Fn(f32) -> f64, tol: f64| {
+            let mut max_dev = 0.0f64;
+            let mut worst = 0.0f32;
+            let mut count = 0u64;
+            for _ in 0..n_samples {
+                let x = f32::from_bits(rand::rng().random::<u32>());
+                if !domain(x) {
+                    continue;
+                }
+                let d = resid(x).abs();
+                count += 1;
+                if d > max_dev {
+                    max_dev = d;
+                    worst = x;
+                }
+            }
+            let flag = if max_dev > tol { "FLAG" } else { "ok  " };
+            println!(
+                "{flag} {name:34} max |residual| {:>12.4e} worst x={:e} (n={count}, {:.2}s elapsed)",
+                max_dev,
+                worst,
+                t0.elapsed().as_secs_f64(),
+            );
+        };
+        identity(
+            "sin_checked^2+cos_checked^2=1",
+            &|x| x.is_finite() && x.abs() < 8.85e14, // sin_checked's own documented exact-reduction limit
+            &|x| {
+                let s = sin_checked(x) as f64;
+                let c = cos_checked(x) as f64;
+                s * s + c * c - 1.0
+            },
+            1e-4,
+        );
+        identity(
+            "tanh(x)=sinh(x)/cosh(x)",
+            &|x| x.is_finite() && x.abs() < 80.0,
+            &|x| (tanh(x) as f64) - (sinh(x) as f64) / (cosh(x) as f64),
+            1e-4,
+        );
+        identity("exp(ln(x))=x", &|x| x > 0.0 && x.is_finite(), &|x| (exp(ln(x)) as f64) / (x as f64) - 1.0, 1e-4);
+        identity(
+            "ln(exp(x))=x",
+            &|x| x.is_finite() && x.abs() < 80.0,
+            &|x| (ln(exp(x)) as f64) - (x as f64),
+            1e-2,
+        );
+        identity(
+            "sigmoid(x)+sigmoid(-x)=1",
+            &|x| x.is_finite(),
+            &|x| (sigmoid(x) as f64) + (sigmoid(-x) as f64) - 1.0,
+            1e-4,
+        );
+        identity("erf(x)+erfc(x)=1", &|x| x.is_finite(), &|x| (erf(x) as f64) + (erfc(x) as f64) - 1.0, 1e-4);
+        identity("erf(-x)=-erf(x)", &|x| x.is_finite(), &|x| (erf(-x) as f64) + (erf(x) as f64), 1e-6);
+        identity(
+            "atan2(sin(x),cos(x))=x [|x|<pi]",
+            &|x| x.abs() < 3.0,
+            &|x| (atan2(sin(x), cos(x)) as f64) - (x as f64),
+            1e-2,
+        );
+        identity(
+            "log1p(x)=ln(1+x)",
+            &|x| x > -1.0 && x.is_finite() && x.abs() < 1e6,
+            &|x| (log1p(x) as f64) - (ln(1.0 + x) as f64),
+            1e-2,
         );
     }
 
