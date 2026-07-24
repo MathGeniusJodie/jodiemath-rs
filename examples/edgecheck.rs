@@ -764,6 +764,22 @@ fn main() {
     check("sigmoid(-inf)", sigmoid(f32::NEG_INFINITY), 0.0);
     check("sigmoid(-1000)", sigmoid(-1000.0), 0.0);
     check("sigmoid(-f32::MAX)", sigmoid(-f32::MAX), 0.0);
+
+    // sigmoid_fast (backlog idea #191): approx tier, ~0.023 max absolute
+    // error by design (see its own doc comment) -- pins check it stays
+    // in that ballpark and, unlike sigmoid itself, correctly saturates
+    // to its own frozen boundary value (not exactly 0/1) for large |x|,
+    // never NaN/inf/wrong-side.
+    check("sigmoid_fast(0)", sigmoid_fast(0.0), 0.5);
+    check("sigmoid_fast(-0)", sigmoid_fast(-0.0), 0.5);
+    check_bounded("sigmoid_fast(1)-sigmoid(1)", sigmoid_fast(1.0) - sigmoid(1.0), 0.03);
+    check_bounded("sigmoid_fast(-1)-sigmoid(-1)", sigmoid_fast(-1.0) - sigmoid(-1.0), 0.03);
+    check_bounded("sigmoid_fast(inf)-1", sigmoid_fast(f32::INFINITY) - 1.0, 0.03);
+    check_bounded("sigmoid_fast(-inf)", sigmoid_fast(f32::NEG_INFINITY), 0.03);
+    check_bounded("sigmoid_fast(f32::MAX)-1", sigmoid_fast(f32::MAX) - 1.0, 0.03);
+    check_bounded("sigmoid_fast(-f32::MAX)", sigmoid_fast(-f32::MAX), 0.03);
+    check("sigmoid_fast(nan)", sigmoid_fast(f32::NAN), f32::NAN);
+    check_bounded("sigmoid_fast(100)-sigmoid_fast(inf)", sigmoid_fast(100.0) - sigmoid_fast(f32::INFINITY), 1e-6);
     check("sigmoid(-89)", sigmoid(-89.0), 0.0);
     // just below the fixed clamp boundary: still the same (correct, real)
     // value the old code also gave here, confirming no regression at the

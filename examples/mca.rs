@@ -180,6 +180,7 @@ fn main() {
         "tanh",
         "tanh_grad",
         "sigmoid",
+        "sigmoid_fast",
         "sigmoid_grad",
         "softplus",
         "logsigmoid",

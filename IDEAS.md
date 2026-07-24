@@ -2129,9 +2129,6 @@ core::simd tier exists; each replaces multi-op scalar idioms)
 
 #### Batch 2: speculative / process
 
-191. **PWL+correction sigmoid_fast inference tier**: hard-clamped
-     piecewise-linear base + one poly correction — approx-tier member
-     (#188), ML-inference latency play.
 192. **Caller-side FTZ/DAZ behavior test**: callers often run with FTZ
      set globally; document and test what each denormal-handling path
      actually does under inherited MXCSR state.

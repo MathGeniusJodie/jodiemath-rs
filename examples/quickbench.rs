@@ -201,6 +201,7 @@ fn main() {
     bench!("std tanh", |x: f32| x.tanh());
     bench!("tanh_grad", tanh_grad);
     bench!("sigmoid", sigmoid);
+    bench!("sigmoid_fast", sigmoid_fast);
     bench!("sigmoid_grad", sigmoid_grad);
     bench!("softplus", softplus);
     bench!("logsigmoid", logsigmoid);

@@ -2475,6 +2475,29 @@ pub fn sigmoid(x: f32) -> f32 {
     1.0 / (1.0 + e)
 }
 
+/// Hard-clamped piecewise-linear + one cubic correction (backlog idea
+/// #191): an approx-tier `sigmoid` for ML-inference latency, no `exp`
+/// call at all. `sigmoid(x) ~ 0.5 + x*(a + b*x^2)` for `|x| <=
+/// 3.288051` (`a`/`b` a real minimax fit, scipy, not a hand-derived
+/// Taylor truncation), clamped past that -- both the *input* (so the
+/// cubic term, unbounded outside its fit domain, never gets a chance to
+/// swing back the wrong way for large `|x|`; tried clamping only the
+/// *output* first and it does exactly that, silently returning ~1.0 for
+/// very negative `x` instead of ~0.0, found by checking the full range
+/// rather than assuming the fit domain was wide enough) and the
+/// *output* (belt-and-suspenders bound to `[0,1]`, though the input
+/// clamp alone already keeps the poly's own range inside that here).
+/// Max absolute error ~0.023 (minimax over the whole domain, jointly
+/// fit with the clamp threshold itself, not just the polynomial) --
+/// deliberately outside this crate's normal 0.5/2 ulp budget, the same
+/// tier `exp2_approx`/`rsqrt_approx` occupy.
+#[inline(always)]
+pub fn sigmoid_fast(x: f32) -> f32 {
+    let xc = x.clamp(-3.288051, 3.288051);
+    let poly = fma(-0.006715598, xc * xc, 0.2178126);
+    fma(poly, xc, 0.5).clamp(0.0, 1.0)
+}
+
 /// sigmoid'(x) = sigmoid(x) * (1 - sigmoid(x)) (backlog idea #150), the
 /// gradient ML backprop through a sigmoid activation needs. Same class of
 /// real cancellation bug as `tanh_grad`'s own doc comment, found the same

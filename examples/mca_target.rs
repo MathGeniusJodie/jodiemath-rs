@@ -319,6 +319,9 @@ throughput_fn!(thr_tanh_grad, "tanh_grad_throughput", tanh_grad);
 latency_fn!(lat_sigmoid, "sigmoid_latency", sigmoid);
 throughput_fn!(thr_sigmoid, "sigmoid_throughput", sigmoid);
 
+latency_fn!(lat_sigmoid_fast, "sigmoid_fast_latency", sigmoid_fast);
+throughput_fn!(thr_sigmoid_fast, "sigmoid_fast_throughput", sigmoid_fast);
+
 latency_fn!(lat_sigmoid_grad, "sigmoid_grad_latency", sigmoid_grad);
 throughput_fn!(thr_sigmoid_grad, "sigmoid_grad_throughput", sigmoid_grad);
 
@@ -841,6 +844,7 @@ fn main() {
         lat_tanh, thr_tanh;
         lat_tanh_grad, thr_tanh_grad;
         lat_sigmoid, thr_sigmoid;
+        lat_sigmoid_fast, thr_sigmoid_fast;
         lat_sigmoid_grad, thr_sigmoid_grad;
         lat_softplus, thr_softplus;
         lat_logsigmoid, thr_logsigmoid;
