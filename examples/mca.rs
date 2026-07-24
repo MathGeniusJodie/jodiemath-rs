@@ -219,6 +219,8 @@ fn main() {
         "erfcx_accurate",
         "erfcx_checked",
         "erfinv",
+        "erfc_inv",
+        "probit",
         "hypot",
         "hypot_checked",
         "rhypot",

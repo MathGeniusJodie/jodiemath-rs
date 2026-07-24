@@ -1309,6 +1309,59 @@ fn main() {
             n_samples,
             t0.elapsed().as_secs_f64(),
         );
+        // probit/erfc_inv (backlog idea #139): same round-trip approach,
+        // one level further out (through norm_cdf/erfc's own already-
+        // verified accuracy) -- no sleef bucket for either exists.
+        let mut max_dev_p = 0.0f64;
+        let mut worst_p = 0.0f32;
+        for _ in 0..n_samples {
+            let p = f32::from_bits(rand::rng().random::<u32>());
+            if !(p > 0.0 && p < 1.0) {
+                continue;
+            }
+            let x = probit(p) as f64;
+            let norm_cdf_ref = |v: F64xN| {
+                let z = F64xN::splat(-std::f64::consts::FRAC_1_SQRT_2) * v;
+                F64xN::splat(0.5) * erfc_u15(z)
+            };
+            let back = norm_cdf_ref(F64xN::splat(x)).to_array()[0];
+            let dev = (back - p as f64).abs();
+            if dev > max_dev_p {
+                max_dev_p = dev;
+                worst_p = p;
+            }
+        }
+        println!(
+            "{:24} max |norm_cdf(probit(p))-p| {:>10.6e}  worst p={:e} ({:>12} samples, {:>7.2}s elapsed)",
+            "probit",
+            max_dev_p,
+            worst_p,
+            n_samples,
+            t0.elapsed().as_secs_f64(),
+        );
+        let mut max_dev_y = 0.0f64;
+        let mut worst_y = 0.0f32;
+        for _ in 0..n_samples {
+            let y = f32::from_bits(rand::rng().random::<u32>());
+            if !(y > 0.0 && y < 2.0) {
+                continue;
+            }
+            let z = erfc_inv(y) as f64;
+            let back = erfc_u15(F64xN::splat(z)).to_array()[0];
+            let dev = (back - y as f64).abs();
+            if dev > max_dev_y {
+                max_dev_y = dev;
+                worst_y = y;
+            }
+        }
+        println!(
+            "{:24} max |erfc(erfc_inv(y))-y| {:>10.6e}  worst y={:e} ({:>12} samples, {:>7.2}s elapsed)",
+            "erfc_inv",
+            max_dev_y,
+            worst_y,
+            n_samples,
+            t0.elapsed().as_secs_f64(),
+        );
     }
     if run("norm_cdf") {
         // Both compose already-full-range primitives (erfc/exp_checked),

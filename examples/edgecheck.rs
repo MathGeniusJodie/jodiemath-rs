@@ -1330,6 +1330,26 @@ fn main() {
         check_bounded(&format!("erf(erfinv({x}))-{x}"), erf(y) - x, 1e-4);
     }
 
+    // erfc_inv/probit (backlog idea #139): erfc_inv(y) = erfinv(1-y),
+    // probit(p) = sqrt(2)*erfinv(2p-1). Round-trip checked (tolerance,
+    // not exact) the same way as erfinv's own ordinary-value pins above.
+    check("erfc_inv(1)", erfc_inv(1.0), 0.0);
+    check("erfc_inv(0)", erfc_inv(0.0), f32::INFINITY);
+    check("erfc_inv(2)", erfc_inv(2.0), f32::NEG_INFINITY);
+    check("erfc_inv(nan)", erfc_inv(f32::NAN), f32::NAN);
+    check("probit(0.5)", probit(0.5), 0.0);
+    check("probit(0)", probit(0.0), f32::NEG_INFINITY);
+    check("probit(1)", probit(1.0), f32::INFINITY);
+    check("probit(nan)", probit(f32::NAN), f32::NAN);
+    for &y in &[0.001f32, 0.5, 1.0, 1.5, 1.999] {
+        let z = erfc_inv(y);
+        check_bounded(&format!("erfc(erfc_inv({y}))-{y}"), erfc(z) - y, 1e-4);
+    }
+    for &p in &[0.001f32, 0.3, 0.5, 0.7, 0.999] {
+        let x = probit(p);
+        check_bounded(&format!("norm_cdf(probit({p}))-{p}"), norm_cdf(x) - p, 1e-4);
+    }
+
     check("hypot(0,0)", hypot(0.0, 0.0), 0.0);
     check("hypot(3,4)", hypot(3.0, 4.0), 5.0);
     // hypot(+-inf, anything) = +inf even with a NaN other argument --

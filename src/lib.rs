@@ -3415,6 +3415,30 @@ pub fn norm_cdf(x: f32) -> f32 {
     0.5 * erfc(-x * std::f32::consts::FRAC_1_SQRT_2)
 }
 
+/// Inverse of `erfc` (backlog idea #139): `erfc(z) = 1 - erf(z)`, so
+/// `erfc_inv(y) = erfinv(1 - y)` directly -- `1 - y` needs no
+/// cancellation-safe handling the way `erfinv`'s own `w` does, since
+/// `erfc_inv`'s intended use (small tail-probability `y` near `0`) lands
+/// `1-y` close to `1`, already `erfinv`'s own well-conditioned regime
+/// (Sterbenz-exact subtraction of two close, same-magnitude values, not
+/// the "large cancellation" case that needs a dedicated correction).
+#[inline(always)]
+pub fn erfc_inv(y: f32) -> f32 {
+    erfinv(1.0 - y)
+}
+
+/// Probit, the standard normal quantile function (backlog idea #139):
+/// inverse of [`norm_cdf`], `probit(p) = sqrt(2)*erfinv(2p-1)` --
+/// derived directly from `norm_cdf`'s own definition (`norm_cdf(x) =
+/// 0.5*erfc(-x/sqrt(2))`, solved for `x` via `erfc_inv`/`erfinv`'s
+/// oddness), not a separately-fit approximation. Completes the
+/// sampling-stack trio with [`erfinv`]/[`erfc_inv`] (inverse-CDF
+/// transforms, Box-Muller-style generators).
+#[inline(always)]
+pub fn probit(p: f32) -> f32 {
+    std::f32::consts::SQRT_2 * erfinv(fma(2.0, p, -1.0))
+}
+
 /// Standard normal PDF, `φ(x) = exp(-x^2/2)/sqrt(2*pi)` (backlog idea
 /// #67): routes through `exp_checked` (not the unchecked `exp`) since
 /// `-x^2/2` easily leaves `exp`'s own `[-87.3,88.7)` domain for

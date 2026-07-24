@@ -2013,9 +2013,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 138. **Dawson function F(x)** — erfcx sibling (spectroscopy), shares the
      rational machinery.
-139. **erfc_inv / probit (normal quantile)** alongside #66's erfinv —
-     completes the sampling stack.
-
 #### Batch 2: hyperbolics / ML / graphics
 
 148. **Softmax / logsumexp / normalize slice reductions** (max-pass +
