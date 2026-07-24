@@ -468,6 +468,11 @@ throughput_fn!(thr_hypot_checked, "hypot_checked_throughput", |x: f32| hypot_che
 latency_fn!(lat_rhypot, "rhypot_latency", |x: f32| rhypot(x, 1.0));
 throughput_fn!(thr_rhypot, "rhypot_throughput", |x: f32| rhypot(x, 1.0));
 
+latency_fn!(lat_hypot3, "hypot3_latency", |x: f32| hypot3(x, 1.0, 2.0));
+throughput_fn!(thr_hypot3, "hypot3_throughput", |x: f32| hypot3(x, 1.0, 2.0));
+latency_fn!(lat_rnorm3, "rnorm3_latency", |x: f32| rnorm3(x, 1.0, 2.0));
+throughput_fn!(thr_rnorm3, "rnorm3_throughput", |x: f32| rnorm3(x, 1.0, 2.0));
+
 // black_box'd b/c/d: unlike hypot/rhypot's plain `1.0` above (fine there --
 // no branch or constant-foldable sub-expression depends on it), diff_of_products
 // computes w=c*d and e=fma(-c,d,w) from those operands alone -- with literal
@@ -824,6 +829,8 @@ fn main() {
         lat_hypot, thr_hypot;
         lat_hypot_checked, thr_hypot_checked;
         lat_rhypot, thr_rhypot;
+        lat_hypot3, thr_hypot3;
+        lat_rnorm3, thr_rnorm3;
         lat_diff_of_products, thr_diff_of_products;
         lat_cross2, thr_cross2;
         lat_rsqrt, thr_rsqrt;

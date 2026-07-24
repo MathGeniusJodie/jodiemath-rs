@@ -1347,6 +1347,18 @@ fn main() {
     check("rhypot(inf,nan)", rhypot(f32::INFINITY, f32::NAN), 0.0);
     check("rhypot(nan,inf)", rhypot(f32::NAN, f32::INFINITY), 0.0);
 
+    // hypot3/rnorm3 (backlog idea #55): same naive-fma-chain tradeoff and
+    // inf-wins-over-NaN override as hypot/rhypot, one arg wider.
+    check("hypot3(0,0,0)", hypot3(0.0, 0.0, 0.0), 0.0);
+    check("hypot3(2,3,6)", hypot3(2.0, 3.0, 6.0), 7.0);
+    check("hypot3(inf,nan,1)", hypot3(f32::INFINITY, f32::NAN, 1.0), f32::INFINITY);
+    check("hypot3(1,inf,nan)", hypot3(1.0, f32::INFINITY, f32::NAN), f32::INFINITY);
+    check("hypot3(nan,1,inf)", hypot3(f32::NAN, 1.0, f32::INFINITY), f32::INFINITY);
+    check("rnorm3(0,0,0)", rnorm3(0.0, 0.0, 0.0), f32::INFINITY);
+    check("rnorm3(2,3,6)", rnorm3(2.0, 3.0, 6.0), 1.0 / 7.0);
+    check("rnorm3(inf,nan,1)", rnorm3(f32::INFINITY, f32::NAN, 1.0), 0.0);
+    check("rnorm3(nan,nan,nan)", rnorm3(f32::NAN, f32::NAN, f32::NAN), f32::NAN);
+
     // diff_of_products(a,b,c,d) = a*b - c*d via Kahan's compensated
     // two-product (backlog idea #135). NaN/inf propagate through the
     // ordinary fma/mul chain with no special-cased override needed.

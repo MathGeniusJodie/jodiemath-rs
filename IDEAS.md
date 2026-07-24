@@ -1873,8 +1873,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### cbrt / sqrt / hypot
 
-55. **hypot3/rnorm3** (3-arg vector norm): fma chain + sqrt,
-    graphics/physics staple, trivially vectorizes.
 56. **Slice-tier FTZ/DAZ via MXCSR**: a slice entry point can set
     FTZ/DAZ around its own loop and restore — gets the FTZ
     feature-flag idea's win without a global cargo feature.

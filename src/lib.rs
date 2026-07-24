@@ -3663,6 +3663,30 @@ pub fn rhypot(x: f32, y: f32) -> f32 {
     if x.is_infinite() || y.is_infinite() { 0.0 } else { normal }
 }
 
+/// 3-arg Euclidean norm, `sqrt(x^2+y^2+z^2)` (backlog idea #55): a
+/// graphics/physics staple (vector magnitude), same naive-fma-chain
+/// tradeoff as [`hypot`] -- no anti-overflow rescaling, and the same
+/// IEEE754/C99 "infinity wins over NaN" override for any argument being
+/// `+-inf`.
+#[inline(always)]
+pub fn hypot3(x: f32, y: f32, z: f32) -> f32 {
+    let normal = fma(x, x, fma(y, y, z * z)).sqrt();
+    if x.is_infinite() || y.is_infinite() || z.is_infinite() { f32::INFINITY } else { normal }
+}
+
+/// Reciprocal of [`hypot3`], `1/sqrt(x^2+y^2+z^2)` -- the normalize-a-
+/// vector building block ([`hypot3`]'s own point, per its doc comment).
+/// Same `+-inf` override as [`rhypot`] and for the same reason: if one
+/// argument is `+-inf` and another is `NaN`, the naive chain degrades to
+/// `1/sqrt(inf + NaN) = 1/NaN = NaN` instead of the IEEE754/C99-defined
+/// `0` (infinity "wins" over NaN in `hypot`'s own combine, so its
+/// reciprocal should too).
+#[inline(always)]
+pub fn rnorm3(x: f32, y: f32, z: f32) -> f32 {
+    let normal = 1.0 / fma(x, x, fma(y, y, z * z)).sqrt();
+    if x.is_infinite() || y.is_infinite() || z.is_infinite() { 0.0 } else { normal }
+}
+
 /// `a*b - c*d`, computed via Kahan's compensated algorithm instead of the
 /// naive two-multiply-one-subtract form (backlog idea #135): the naive
 /// form's error is unbounded relative to the true result whenever `a*b`

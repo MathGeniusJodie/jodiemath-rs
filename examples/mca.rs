@@ -221,6 +221,8 @@ fn main() {
         "hypot",
         "hypot_checked",
         "rhypot",
+        "hypot3",
+        "rnorm3",
         "diff_of_products",
         "cross2",
         "rsqrt",

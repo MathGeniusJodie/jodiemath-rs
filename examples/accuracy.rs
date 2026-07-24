@@ -1420,6 +1420,50 @@ fn main() {
         let s = fuzz2(TWOARG_SAMPLES, hypot_domain, rhypot, rhypot_ref);
         report("rhypot", &s, t0);
     }
+    if run("hypot3") {
+        // Same naive-fma-chain overflow/underflow tradeoff as hypot (see
+        // its own domain comment) -- no sleef hypot3, so a direct f64
+        // sqrt(x^2+y^2+z^2) is ground truth (plenty of headroom rounding
+        // down to f32).
+        let ok = |v: f32| v == 0.0 || (v.abs() > 1e-15 && v.abs() < 1e18);
+        let n_samples = 10_000_000u64;
+        for (label, f) in [
+            ("hypot3", hypot3 as fn(f32, f32, f32) -> f32),
+            ("rnorm3", rnorm3 as fn(f32, f32, f32) -> f32),
+        ] {
+            let mut sum = 0u64;
+            let mut max = 0u64;
+            let mut worst = (0.0f32, 0.0f32, 0.0f32);
+            for _ in 0..n_samples {
+                let x = f32::from_bits(rand::rng().random::<u32>());
+                let y = f32::from_bits(rand::rng().random::<u32>());
+                let z = f32::from_bits(rand::rng().random::<u32>());
+                if !(ok(x) && ok(y) && ok(z)) {
+                    continue;
+                }
+                let got = f(x, y, z);
+                let norm = ((x as f64).powi(2) + (y as f64).powi(2) + (z as f64).powi(2)).sqrt();
+                let want = (if label == "hypot3" { norm } else { 1.0 / norm }) as f32;
+                let d = ulp_diff(got, want);
+                sum += d;
+                if d > max {
+                    max = d;
+                    worst = (x, y, z);
+                }
+            }
+            println!(
+                "{:24} avg ulp {:>10.4}  max ulp {:>10}  worst x={:e},y={:e},z={:e} ({:>12} samples, {:>7.2}s elapsed)",
+                label,
+                sum as f64 / n_samples as f64,
+                max,
+                worst.0,
+                worst.1,
+                worst.2,
+                n_samples,
+                t0.elapsed().as_secs_f64(),
+            );
+        }
+    }
     if run("diff_of_products") {
         // Same overflow tradeoff as hypot_domain above, applied to the two
         // *products* rather than the raw operands directly: fuzz4 has no
