@@ -3310,6 +3310,97 @@ pub fn erfc(x: f32) -> f32 {
     fma(y, z, w)
 }
 
+// erfinv's central branch (backlog idea #66): erfinv(x) = x*P(x^2) for
+// |x| <= 0.7, degree 8 in u=x^2 (Estrin-grouped, same idiom as erf_poly).
+// Coefficients are a real least-squares fit (scipy) of erfinv(x)/x
+// against u over [0,0.7], not a transcription of any published
+// algorithm's constants.
+#[inline(always)]
+fn erfinv_central_poly(u: f32) -> f32 {
+    let c: [f32; 9] = [
+        8.8622695e-1,
+        2.3201263e-1,
+        1.2761366e-1,
+        8.534858e-2,
+        7.737176e-2,
+        -1.8498806e-2,
+        2.6768243e-1,
+        -3.5444248e-1,
+        3.377774e-1,
+    ];
+    let u2 = u * u;
+    let u4 = u2 * u2;
+    let l0 = fma(c[1], u, c[0]);
+    let l1 = fma(c[3], u, c[2]);
+    let l2 = fma(c[5], u, c[4]);
+    let l3 = fma(c[7], u, c[6]);
+    let r0 = fma(l1, u2, l0);
+    let r1 = fma(l3, u2, l2);
+    fma(c[8], u4 * u4, fma(r1, u4, r0))
+}
+
+// erfinv's tail branch: `erfinv(x) = sign(x)*sqrt(w)*Q(w)`,
+// `w = -ln(1-x^2)`, for `|x| > 0.7` -- same idea as the central branch,
+// a real least-squares fit of `erfinv(x)/sqrt(w)` against `w` over
+// `w` in `[-ln(1-0.7^2), -ln(1-x_max^2)]` (`x_max` = the largest f32
+// below 1.0, so the fit's own domain exactly matches what an f32 caller
+// can ever actually reach).
+#[inline(always)]
+fn erfinv_tail_poly(w: f32) -> f32 {
+    let c: [f32; 9] = [
+        8.8625765e-1,
+        1.037216e-2,
+        -2.0767662e-4,
+        -1.0906254e-4,
+        1.8217208e-5,
+        -1.4934789e-6,
+        7.075622e-8,
+        -1.8477235e-9,
+        2.0643756e-11,
+    ];
+    let w2 = w * w;
+    let w4 = w2 * w2;
+    let l0 = fma(c[1], w, c[0]);
+    let l1 = fma(c[3], w, c[2]);
+    let l2 = fma(c[5], w, c[4]);
+    let l3 = fma(c[7], w, c[6]);
+    let r0 = fma(l1, w2, l0);
+    let r1 = fma(l3, w2, l2);
+    fma(c[8], w4 * w4, fma(r1, w4, r0))
+}
+
+/// Inverse error function (backlog idea #66): the sampling/ML staple
+/// (inverse-CDF / Box-Muller-style transforms build on this). Two
+/// branches, same shape as this crate's other `erf`/`erfc` splits:
+/// `x*P(x^2)` for `|x| <= 0.7`, `sign(x)*sqrt(w)*Q(w)` (`w = -ln(1-x^2)`)
+/// past it, where `erfinv` itself grows without bound as `|x| -> 1`.
+/// `w` is computed as `-log1p(-x*x)`, reusing this crate's own
+/// cancellation-safe `log1p` rather than `-(1.0-x*x).ln()`, which would
+/// reintroduce exactly the precision loss `log1p` exists to avoid right
+/// where it matters most (`x` close to `+-1`, `1-x*x` close to `0`).
+/// `|x| > 1` needs no explicit domain-error handling: `-x*x < -1` there,
+/// so `log1p`'s own existing domain guard already gives `NaN`, which
+/// propagates through `sqrt`/the poly/`mulsign` unchanged.
+///
+/// `|x| == 1.0` exactly *does* need an explicit override, found by
+/// fuzzing, not assumed: `w` correctly reaches `+inf` there
+/// (`log1p(-1.0) == -inf`), but `erfinv_tail_poly`'s Estrin grouping
+/// evaluates several partial sums independently before combining them,
+/// and at `w=inf` different groups overflow to *opposite-signed*
+/// infinities depending on their own local coefficient signs (unlike a
+/// plain Horner chain, which stays consistently signed once the leading
+/// term dominates) -- so the combine hits a genuine `-inf + inf = NaN`
+/// instead of the correctly-signed `+-inf` erfinv actually has there.
+#[inline(always)]
+pub fn erfinv(x: f32) -> f32 {
+    let u = x * x;
+    let w = -log1p(-u);
+    let central = x * erfinv_central_poly(u);
+    let tail = mulsign(w.sqrt() * erfinv_tail_poly(w), x);
+    let normal = if x.abs() <= 0.7 { central } else { tail };
+    if x.abs() == 1.0 { f32::INFINITY.copysign(x) } else { normal }
+}
+
 /// Standard normal CDF, `Φ(x) = 0.5*erfc(-x/sqrt(2))` (backlog idea
 /// #67): a thin composite over the already-correctly-rounded, full-range
 /// `erfc` (itself saturating cleanly to `0`/`2` well before `x=+-inf`),

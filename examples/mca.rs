@@ -218,6 +218,7 @@ fn main() {
         "erfcx",
         "erfcx_accurate",
         "erfcx_checked",
+        "erfinv",
         "hypot",
         "hypot_checked",
         "rhypot",

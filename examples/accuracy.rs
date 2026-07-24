@@ -1279,6 +1279,37 @@ fn main() {
         let s = measure!(erfcx_checked_domain, erfcx_checked, erfcx_ref);
         report("erfcx_checked", &s, t0);
     }
+    if run("erfinv") {
+        // No sleef erfinv bucket, so verify via round-trip through erf_u10
+        // instead of a direct reference: erf and erfinv are computed via
+        // completely different mechanisms (erf's own poly/exp2 combine vs
+        // erfinv's central/tail fit), so erf_u10(erfinv(x)) landing back
+        // on x is real, independent evidence, not circular.
+        let n_samples = 5_000_000u64;
+        let mut max_dev = 0.0f64;
+        let mut worst_x = 0.0f32;
+        for _ in 0..n_samples {
+            let x = f32::from_bits(rand::rng().random::<u32>());
+            if !(x.abs() < 1.0) {
+                continue;
+            }
+            let y = erfinv(x) as f64;
+            let back = erf_u10(F64xN::splat(y)).to_array()[0];
+            let dev = (back - x as f64).abs();
+            if dev > max_dev {
+                max_dev = dev;
+                worst_x = x;
+            }
+        }
+        println!(
+            "{:24} max |erf(erfinv(x))-x| {:>10.6e}  worst x={:e} ({:>12} samples, {:>7.2}s elapsed)",
+            "erfinv",
+            max_dev,
+            worst_x,
+            n_samples,
+            t0.elapsed().as_secs_f64(),
+        );
+    }
     if run("norm_cdf") {
         // Both compose already-full-range primitives (erfc/exp_checked),
         // so no domain restriction needed (backlog idea #67).

@@ -1877,10 +1877,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     FTZ/DAZ around its own loop and restore — gets the FTZ
     feature-flag idea's win without a global cargo feature.
 
-#### erf family
-
-66. **erfinv** (Giles-style poly in w = ln(1−x²), two-poly branchless
-    select, fully fma-based) — sampling/ML staple, vectorizes cleanly.
 #### hyperbolics / activations
 
 

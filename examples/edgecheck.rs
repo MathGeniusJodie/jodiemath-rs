@@ -1311,6 +1311,25 @@ fn main() {
     check("erfcx_checked(100)", erfcx_checked(100.0), 5.641614e-3);
     check("erfcx_checked(200)", erfcx_checked(200.0), 2.820913e-3);
 
+    // erfinv (backlog idea #66): domain (-1,1), odd function, unbounded
+    // as |x|->1. Ordinary values checked via round-trip through erf
+    // (tolerance, not exact -- erfinv is an approximation) rather than a
+    // literal expected value, since there's no independent f32 erfinv
+    // reference in this file to pin an exact value against.
+    check("erfinv(0)", erfinv(0.0), 0.0);
+    check("erfinv(-0)", erfinv(-0.0), -0.0);
+    check("erfinv(1)", erfinv(1.0), f32::INFINITY);
+    check("erfinv(-1)", erfinv(-1.0), f32::NEG_INFINITY);
+    check("erfinv(1.5)", erfinv(1.5), f32::NAN);
+    check("erfinv(-1.5)", erfinv(-1.5), f32::NAN);
+    check("erfinv(nan)", erfinv(f32::NAN), f32::NAN);
+    check("erfinv(inf)", erfinv(f32::INFINITY), f32::NAN);
+    check("erfinv(-inf)", erfinv(f32::NEG_INFINITY), f32::NAN);
+    for &x in &[0.3f32, -0.3, 0.5, -0.5, 0.7, -0.7, 0.9, -0.9, 0.9999, -0.9999] {
+        let y = erfinv(x);
+        check_bounded(&format!("erf(erfinv({x}))-{x}"), erf(y) - x, 1e-4);
+    }
+
     check("hypot(0,0)", hypot(0.0, 0.0), 0.0);
     check("hypot(3,4)", hypot(3.0, 4.0), 5.0);
     // hypot(+-inf, anything) = +inf even with a NaN other argument --
