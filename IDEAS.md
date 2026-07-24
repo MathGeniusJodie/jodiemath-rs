@@ -1928,11 +1928,12 @@ an idea revisits a rejection, the differing mechanism is stated.
     -extra-vectorizer-passes, SLP horizontal reductions — cheap sweep,
     same method as the interleave/zmm experiments.
 98. **Auto-`_unchecked` macro (existing entry) — concrete new
-    candidates**: softplus/logaddexp (drop NaN guards), sinpi (drop the
-    x==0 select). (sind/cosd's own candidate shipped, see lib.rs/git
-    log — `sind_unchecked`/`cosd_unchecked`/`tand_unchecked`; erf's own
-    candidate rejected on inspection, see rejected section above —
-    would reintroduce a real, already-fixed bug.)
+    candidates**: softplus/logaddexp (drop NaN guards). (sind/cosd and
+    sinpi's own candidates shipped, see lib.rs/git log —
+    `sind_unchecked`/`cosd_unchecked`/`tand_unchecked`/
+    `sinpi_unchecked`; erf's own candidate rejected on inspection, see
+    rejected section above — would reintroduce a real, already-fixed
+    bug.)
 99. **tgamma** companion to the lgamma entry (Lanczos/Stirling, shares
     machinery).
 100. **Bessel j0/j1** (Cephes-style two-region rational + trig

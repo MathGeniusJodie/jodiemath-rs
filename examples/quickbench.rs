@@ -141,6 +141,7 @@ fn main() {
     bench!("cos_checked", cos_checked);
     bench!("std cos", |x: f32| x.cos());
     bench!("sinpi", sinpi);
+    bench!("sinpi_unchecked", sinpi_unchecked);
     bench!("cospi", cospi);
     bench!("tanpi", tanpi);
     bench!("sin2pi", sin2pi);

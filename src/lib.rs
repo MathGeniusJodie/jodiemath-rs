@@ -550,6 +550,23 @@ pub fn sinpi(x: f32) -> f32 {
     if x == 0.0 { x } else { normal }
 }
 
+/// sinpi without the `x==0.0` guard (backlog idea #98): bit-identical to
+/// [`sinpi`] everywhere except `x=-0.0`, where dropping the guard lets
+/// the `q=r=-0.0` cancellation described in [`sinpi`]'s own doc comment
+/// go uncorrected, returning `+0.0` instead of the correctly-signed
+/// `-0.0`. Unlike the rejected `erf_unchecked` candidate, this is a pure
+/// sign-of-zero nit at exactly one input (magnitude always correct, and
+/// every other input -- including every other special value -- is
+/// unaffected), not a diverging/wrong-magnitude failure mode; narrowing
+/// the domain to exclude `-0.0` mirrors other `_unchecked` cores that
+/// already exclude zero outright (e.g. `cbrt_unchecked`).
+#[inline(always)]
+pub fn sinpi_unchecked(x: f32) -> f32 {
+    let q = x.round_ties_even();
+    let r = x - q;
+    sinf_poly_raw(std::f32::consts::PI * r) * fma(-2.0, parity(q), 1.0)
+}
+
 /// cos(pi*x), argument in half-turns -- see `sinpi`'s doc comment for why
 /// this reduction is exact and shares `sinf_poly` directly, same
 /// full-range-accurate (no cliff) guarantee, and the same magic-round

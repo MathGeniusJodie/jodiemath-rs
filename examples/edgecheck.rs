@@ -271,6 +271,22 @@ fn main() {
     check("sinpi(1e20)", sinpi(1e20), 0.0);
     check("cospi(1e20)", cospi(1e20), 1.0);
 
+    // sinpi_unchecked (backlog idea #98): drops sinpi's `x==0.0` guard,
+    // bit-identical everywhere else (verified via a real exhaustive
+    // 2^32-pattern sweep before adopting). The one documented exception is
+    // pinned explicitly (not silently accepted): -0.0 loses its sign
+    // instead of propagating it, same known-tradeoff-not-bug documentation
+    // convention as cbrt_accurate's own pinned mantissa issue.
+    check("sinpi_unchecked(0)", sinpi_unchecked(0.0), 0.0);
+    check("sinpi_unchecked(-0) [documented exception: wrong sign]", sinpi_unchecked(-0.0), 0.0);
+    check("sinpi_unchecked(0.5)", sinpi_unchecked(0.5), 1.0);
+    check("sinpi_unchecked(1)", sinpi_unchecked(1.0), sinpi(1.0));
+    check("sinpi_unchecked(-0.5)", sinpi_unchecked(-0.5), sinpi(-0.5));
+    check("sinpi_unchecked(nan)", sinpi_unchecked(f32::NAN), f32::NAN);
+    check("sinpi_unchecked(inf)", sinpi_unchecked(f32::INFINITY), f32::NAN);
+    check("sinpi_unchecked(-inf)", sinpi_unchecked(f32::NEG_INFINITY), f32::NAN);
+    check("sinpi_unchecked(f32::MAX)", sinpi_unchecked(f32::MAX), sinpi(f32::MAX));
+
     // tanpi(x) = sinpi(x)/cospi(x): new function (backlog idea #29).
     // Poles at half-integer x are real (cospi(x)==0 there) and correctly
     // give +-inf via IEEE754 division, not NaN -- pinned so that stays

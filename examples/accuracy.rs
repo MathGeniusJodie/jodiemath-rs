@@ -712,6 +712,13 @@ fn main() {
         // caught it originally.
         let s = measure!(everywhere, sinpi, sinpi_ref);
         report("sinpi (all f32)", &s, t0);
+        // sinpi_unchecked's one documented difference from sinpi (wrong
+        // sign of zero at x=-0.0 only) is invisible to ulp_diff here --
+        // it treats +0.0/-0.0 as equal (see its own `ord` helper) -- so
+        // `everywhere` is safe; edgecheck.rs's exact-bits check is what
+        // actually pins the -0.0 exception.
+        let s = measure!(everywhere, sinpi_unchecked, sinpi_ref);
+        report("sinpi_unchecked (+)", &s, t0);
         let s = measure!(everywhere, cospi, cospi_ref);
         report("cospi (all f32)", &s, t0);
     }
