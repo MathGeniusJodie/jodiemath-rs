@@ -1290,6 +1290,30 @@ pub fn reduce_pi_half_checked(x: f32) -> (f32, f32) {
     (r, sign)
 }
 
+/// Wrap `x` (radians) to `(-pi, pi]` (backlog idea #126): the public
+/// angle-normalization primitive robotics/geometry callers keep
+/// reinventing, riding [`reduce_pi_checked`]'s own accurate-well-beyond-
+/// a-single-f32 reduction rather than a naive `x - TAU*round(x/TAU)`
+/// (which would need its own wide-range double-float treatment to avoid
+/// `reduce_pi_checked`'s only *because it already exists* here).
+/// `reduce_pi_checked` reduces mod `pi`, giving `r` in `[-pi/2,pi/2]`
+/// and `sign=(-1)^q` for `q=round(x/pi)` -- if `q` is even, `x` and `r`
+/// already sit in the same `2*pi` branch, so `r` alone is the answer;
+/// if `q` is odd, `x = q*pi + r` sits a half-turn away, so the true
+/// wrapped angle is `r +- pi` (whichever keeps the result in
+/// `(-pi,pi]`: `r+pi` when `r<=0`, `r-pi` when `r>0`).
+#[inline(always)]
+pub fn wrap_pi(x: f32) -> f32 {
+    let (r, sign) = reduce_pi_checked(x);
+    if sign > 0.0 {
+        r
+    } else if r > 0.0 {
+        r - std::f32::consts::PI
+    } else {
+        r + std::f32::consts::PI
+    }
+}
+
 /// tan(x), full-range gradual degradation -- `sin_checked(x) /
 /// cos_checked(x)`, mirroring `tanpi`/`tand`'s own plain-composition
 /// pattern (period cancellation, poles handled for free by IEEE754

@@ -2004,9 +2004,6 @@ an idea revisits a rejection, the differing mechanism is stated.
      sin_checked/cos_checked (parities as bits, XOR combine, direct
      sign mask) — composes #45/#46; deletes the float compare+select
      flip.
-126. **wrap_pi(x) → [−π, π] public angle normalization** riding
-     round_x_over_pi/reduce_pi (robotics/geo staple; user-level face of
-     #88).
 127. **sin_prereduced/cos_prereduced public** (r ∈ [−π/2, π/2]
      contract = sinf_poly + documented parity conventions) — for
      callers who already did their own reduction; the trig analog of

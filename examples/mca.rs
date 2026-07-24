@@ -136,6 +136,7 @@ fn main() {
         "sin_checked",
         "cos",
         "cos_checked",
+        "wrap_pi",
         "sinpi",
         "sinpi_unchecked",
         "cospi",

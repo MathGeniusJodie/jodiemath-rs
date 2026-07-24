@@ -285,6 +285,25 @@ fn main() {
         check_bounded(&format!("reduce_pi_half_checked({x})"), signc * rc.sin() - cos_checked(x), 1e-4);
     }
 
+    // wrap_pi (backlog idea #126): wraps to (-pi, pi], riding
+    // reduce_pi_checked's own reduction. Checked via sin/cos preserved
+    // (wrap_pi(x) and x are the same angle mod 2*pi) plus the range
+    // invariant directly.
+    check("wrap_pi(0)", wrap_pi(0.0), 0.0);
+    check_bounded("wrap_pi(pi)+pi", wrap_pi(std::f32::consts::PI) + std::f32::consts::PI, 1e-5);
+    for &x in &[1.0f32, 3.0, 4.0, -4.0, 100.0, -1e9, 1e6] {
+        let w = wrap_pi(x);
+        check_bounded(&format!("sin(wrap_pi({x}))-sin_checked({x})"), w.sin() - sin_checked(x), 1e-4);
+        check_bounded(&format!("cos(wrap_pi({x}))-cos_checked({x})"), w.cos() - cos_checked(x), 1e-4);
+        // in-range check: 0 when w is in (-pi,pi], positive by however
+        // far out of range otherwise (w=-pi itself, the excluded
+        // boundary, would show up here as pi - (-pi) = 2*pi).
+        let over = (w - std::f32::consts::PI).max(0.0);
+        let under = (-std::f32::consts::PI - w).max(0.0);
+        check_bounded(&format!("wrap_pi({x}) in (-pi,pi]"), over + under, 1e-6);
+    }
+    check("wrap_pi(nan)", wrap_pi(f32::NAN), f32::NAN);
+
     // sinpi/cospi: argument in half-turns, q=round(x)/r=x-q both exact in
     // f32, so (unlike sin/cos) there's no accuracy cliff anywhere -- these
     // pin the full-range "always finite, exact at exact half-integers"

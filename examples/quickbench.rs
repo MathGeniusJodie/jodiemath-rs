@@ -150,6 +150,7 @@ fn main() {
         let (r, s) = reduce_pi_half_checked(x);
         r + s
     });
+    bench!("wrap_pi", wrap_pi);
     bench!("sinpi", sinpi);
     bench!("sinpi_unchecked", sinpi_unchecked);
     bench!("cospi", cospi);
