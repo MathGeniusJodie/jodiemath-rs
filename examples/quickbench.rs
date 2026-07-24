@@ -257,6 +257,21 @@ fn main() {
     bench!("hypot_unchecked", move |x: f32| hypot_unchecked(x, hypot_y));
     bench!("hypot_checked", move |x: f32| hypot_checked(x, hypot_y));
     bench!("rhypot", move |x: f32| rhypot(x, hypot_y));
+    // Complex pack (idea #186): cabs/carg fix the 2nd arg like hypot/
+    // atan2 above. cexp/clog return (f32,f32) -- bench!/mca need a
+    // single f32, so this sums the pair as a cheap adapter (dominated
+    // by the same ops either way; not used for mca given clog's own
+    // branching, see mca_target.rs's own note).
+    bench!("cabs", move |x: f32| cabs(x, hypot_y));
+    bench!("carg", move |x: f32| carg(x, hypot_y));
+    bench!("cexp", move |x: f32| {
+        let (a, b) = cexp(x, hypot_y);
+        a + b
+    });
+    bench!("clog", move |x: f32| {
+        let (a, b) = clog(x, hypot_y);
+        a + b
+    });
     bench!("normalize2", move |x: f32| {
         let (a, b) = normalize2(x, hypot_y);
         a + b

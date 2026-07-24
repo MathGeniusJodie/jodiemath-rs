@@ -223,6 +223,8 @@ fn main() {
         "probit",
         "dawson",
         "hypot",
+        "cabs",
+        "carg",
         "hypot_checked",
         "rhypot",
         "normalize2",

@@ -1669,6 +1669,115 @@ fn main() {
         let s = fuzz4(QUICK_SAMPLES, cross2, bounded);
         report("cross2", &s, t0);
     }
+    if run("complex") {
+        // cexp/clog (backlog idea #186) return a (f32,f32) pair, not the
+        // single f32 fuzz2/fuzz4 expect, so this is a custom loop, same
+        // shape as erfinv's/rootn's own. cabs/carg are exact aliases for
+        // hypot_checked/atan2 (bit-identical by construction, verified
+        // by their own extensive fuzzing already), so no separate check
+        // for those two -- only the genuinely new compositions get
+        // fuzzed.
+        let n_samples = 5_000_000u64;
+        let mag_domain = |x: f32| x.abs() < 80.0; // exp(re) overflows past here
+        // cexp's own im has no such bound mathematically (cos/sin are
+        // total), but sin/cos's *own* accuracy already degrades past
+        // their documented large-argument range -- not a new cexp gap,
+        // so this just avoids re-measuring an already-known limit here.
+        let im_domain = |x: f32| x.abs() < 1e4;
+        let mut max_ulp_re = 0u64;
+        let mut max_ulp_im = 0u64;
+        let mut worst = (0.0f32, 0.0f32);
+        for _ in 0..n_samples {
+            let re = f32::from_bits(rand::rng().random::<u32>());
+            let im = f32::from_bits(rand::rng().random::<u32>());
+            if !mag_domain(re) || !im_domain(im) {
+                continue;
+            }
+            let (got_re, got_im) = cexp(re, im);
+            let want_re = (re as f64).exp() * (im as f64).cos();
+            let want_im = (re as f64).exp() * (im as f64).sin();
+            let d_re = ulp_diff(got_re, want_re as f32);
+            let d_im = ulp_diff(got_im, want_im as f32);
+            if d_re > max_ulp_re {
+                max_ulp_re = d_re;
+                worst = (re, im);
+            }
+            if d_im > max_ulp_im {
+                max_ulp_im = d_im;
+            }
+        }
+        println!(
+            "{:24} max ulp re {:>10} im {:>10}  worst (re,im)={:e},{:e} ({:>12} samples, {:>7.2}s elapsed)",
+            "cexp",
+            max_ulp_re,
+            max_ulp_im,
+            worst.0,
+            worst.1,
+            n_samples,
+            t0.elapsed().as_secs_f64(),
+        );
+        let mut max_ulp_re = 0u64;
+        let mut max_ulp_im = 0u64;
+        let mut worst = (0.0f32, 0.0f32);
+        for _ in 0..n_samples {
+            let re = f32::from_bits(rand::rng().random::<u32>());
+            let im = f32::from_bits(rand::rng().random::<u32>());
+            if !re.is_finite() || !im.is_finite() || (re == 0.0 && im == 0.0) {
+                continue;
+            }
+            let (got_re, got_im) = clog(re, im);
+            let want_re = (re as f64).hypot(im as f64).ln();
+            let want_im = (im as f64).atan2(re as f64);
+            let d_re = ulp_diff(got_re, want_re as f32);
+            let d_im = ulp_diff(got_im, want_im as f32);
+            if d_re > max_ulp_re {
+                max_ulp_re = d_re;
+                worst = (re, im);
+            }
+            if d_im > max_ulp_im {
+                max_ulp_im = d_im;
+            }
+        }
+        println!(
+            "{:24} max ulp re {:>10} im {:>10}  worst (re,im)={:e},{:e} ({:>12} samples, {:>7.2}s elapsed)",
+            "clog",
+            max_ulp_re,
+            max_ulp_im,
+            worst.0,
+            worst.1,
+            n_samples,
+            t0.elapsed().as_secs_f64(),
+        );
+        // Round-trip: clog(cexp(re,im)) should recover re exactly-ish and
+        // im modulo 2*pi, wrapped to carg's own principal range -- check
+        // against a bounded re (cexp's own domain above) and any finite im.
+        let mut max_dev_re = 0.0f64;
+        let mut max_dev_im = 0.0f64;
+        for _ in 0..n_samples {
+            let re = f32::from_bits(rand::rng().random::<u32>());
+            let im = f32::from_bits(rand::rng().random::<u32>());
+            if !mag_domain(re) || !im_domain(im) {
+                continue;
+            }
+            let (a, b) = cexp(re, im);
+            let (back_re, back_im) = clog(a, b);
+            let dev_re = (back_re as f64 - re as f64).abs();
+            // wrap im to (-pi,pi] the same way carg's atan2 does before comparing
+            let two_pi = std::f64::consts::TAU;
+            let im_wrapped = im as f64 - two_pi * ((im as f64 + std::f64::consts::PI) / two_pi).floor();
+            let dev_im = (back_im as f64 - im_wrapped).abs();
+            max_dev_re = max_dev_re.max(dev_re);
+            max_dev_im = max_dev_im.max(dev_im);
+        }
+        println!(
+            "{:24} max |re-back| {:>10.4e} max |im-back| {:>10.4e} ({:>12} samples, {:>7.2}s elapsed)",
+            "clog(cexp(.))",
+            max_dev_re,
+            max_dev_im,
+            n_samples,
+            t0.elapsed().as_secs_f64(),
+        );
+    }
     if run("pown") {
         // pown(x, n) takes an i32 exponent, not the f32/f64 pair shape
         // the rest of this harness is built around (SIMD reference via

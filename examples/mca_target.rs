@@ -473,6 +473,19 @@ throughput_fn!(thr_dawson, "dawson_throughput", dawson);
 latency_fn!(lat_hypot, "hypot_latency", |x: f32| hypot(x, 1.0));
 throughput_fn!(thr_hypot, "hypot_throughput", |x: f32| hypot(x, 1.0));
 
+// cabs/carg (idea #186): exact aliases for hypot_checked/atan2, wired
+// the same way those already are. cexp/clog return (f32,f32), which
+// doesn't fit latency_fn!/throughput_fn!'s Fn(f32)->f32 shape -- see
+// quickbench.rs for those instead (an adapter closure works there;
+// clog's own branching also risks the multi-exit-path region-marker
+// corruption already documented for pown_small/ldexp/frexp/rootn, not
+// worth the risk for a function whose cost is just its already-measured
+// constituents).
+latency_fn!(lat_cabs, "cabs_latency", |x: f32| cabs(x, 1.0));
+throughput_fn!(thr_cabs, "cabs_throughput", |x: f32| cabs(x, 1.0));
+latency_fn!(lat_carg, "carg_latency", |x: f32| carg(x, 1.0));
+throughput_fn!(thr_carg, "carg_throughput", |x: f32| carg(x, 1.0));
+
 latency_fn!(lat_hypot_checked, "hypot_checked_latency", |x: f32| hypot_checked(x, 1.0));
 throughput_fn!(thr_hypot_checked, "hypot_checked_throughput", |x: f32| hypot_checked(x, 1.0));
 
@@ -874,6 +887,8 @@ fn main() {
         lat_probit, thr_probit;
         lat_dawson, thr_dawson;
         lat_hypot, thr_hypot;
+        lat_cabs, thr_cabs;
+        lat_carg, thr_carg;
         lat_hypot_checked, thr_hypot_checked;
         lat_rhypot, thr_rhypot;
         lat_normalize2, thr_normalize2;

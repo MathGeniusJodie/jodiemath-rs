@@ -4054,6 +4054,107 @@ pub fn cross2(ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
     diff_of_products(ax, by, ay, bx)
 }
 
+/// Complex modulus `|re+im*i|` (backlog idea #186): a named alias for
+/// [`hypot_checked`], not the faster but overflow-prone [`hypot`] --
+/// found by fuzzing, not assumed: `hypot`'s own doc comment already
+/// documents "naive sqrt(x^2+y^2), no anti-overflow rescaling" as a
+/// deliberate tradeoff for that function specifically, but a general-
+/// purpose complex modulus silently going to `inf` for any two inputs
+/// individually representable in f32 (found via `clog`'s own
+/// composition: `hypot(-1413.68, 1.8447e19)` gives `inf`, not `≈im`) is
+/// a worse default here, where nothing calls for `hypot`'s speed at the
+/// cost of that gap.
+#[doc(alias = "cabsf")]
+#[inline(always)]
+pub fn cabs(re: f32, im: f32) -> f32 {
+    hypot_checked(re, im)
+}
+
+/// Complex argument (principal value, backlog idea #186): a named
+/// alias for [`atan2`], same relationship to [`cabs`]/[`hypot`] as
+/// `carg` has to `cabs` mathematically (`atan2`'s `(y, x)` argument
+/// order already matches `carg`'s own `(im, re)`).
+#[doc(alias = "cargf")]
+#[inline(always)]
+pub fn carg(re: f32, im: f32) -> f32 {
+    atan2(im, re)
+}
+
+/// Complex exponential `e^(re+im*i) = e^re*(cos(im)+i*sin(im))`
+/// (backlog idea #186), returned as `(re, im)`. Calls `cos`/`sin`
+/// separately rather than a hand-fused "sincos": both are
+/// `#[inline(always)]` over the same reduction, and this crate's own
+/// `sinh_cosh` investigation (see IDEAS.md) already confirmed LLVM's
+/// GVN shares that reduction across separate call sites for free, so a
+/// combined function would cost real complexity for no real speedup.
+#[inline(always)]
+pub fn cexp(re: f32, im: f32) -> (f32, f32) {
+    let m = exp(re);
+    (m * cos(im), m * sin(im))
+}
+
+/// Complex natural log `ln(re+im*i) = ln(|re+im*i|) + i*arg(re+im*i)`
+/// (backlog idea #186), returned as `(re, im)`. The imaginary part is
+/// just [`carg`] (`atan2`'s principal-value convention is exactly what
+/// the complex log's imaginary part is defined to be); the real part
+/// needs more care than a direct `ln(cabs(re, im))`, for two distinct
+/// reasons found by fuzzing, not assumed:
+///
+/// - `|z|` near `1` (e.g. `re=1.0000999, im=0.00242`) makes `ln(|z|)`
+///   itself the near-zero-argument cancellation [`log1p`] exists to
+///   avoid -- `ln` of a value that close to its own zero amplifies even
+///   `cabs`'s own already-good ~1-ulp error into thousands of ulp in
+///   the tiny output. `log1p(cabs-1.0)` recovers most of this (the
+///   *only* fix available at this precision tier: the residual
+///   thousands-of-ulp error left even after it is `cabs`'s own ~1-ulp
+///   imprecision at magnitude ~1 having nowhere near enough absolute
+///   precision left to support a correctly-rounded *much smaller*
+///   output -- an information-theoretic floor of composing on top of
+///   plain `f32` `cabs`, not something reachable without a compensated/
+///   double-float magnitude the way `_accurate` tiers elsewhere in this
+///   crate use, out of scope for this composite). `log1p(cabs-1.0)`
+///   fixes what it can *only* in the narrow band `cabs` is actually
+///   close to `1.0` (`|cabs-1.0| < 0.5` here) -- reaching for it
+///   unconditionally was tried first and made things far worse (max
+///   ulp over a billion)
+///   for `cabs` far from `1`, e.g. very small: `log1p`'s own argument is
+///   then close to `-1`, not `0`, none of the cancellation-avoidance
+///   `log1p` provides actually applies there, and round-tripping an
+///   already-computed `cabs` through `1.0+(cabs-1.0)` internally just
+///   reintroduces the exact cancellation this was meant to avoid.
+/// - `cabs` can overflow to `inf` even when both `re`/`im` are finite
+///   (e.g. both individually near `f32::MAX`): the true mathematical
+///   magnitude exceeds `f32::MAX` before `ln` of it would, so forming
+///   `cabs` first throws away a real, still-representable answer.
+///   Rescued the same way `hypot_checked` itself avoids overflow
+///   internally: factor out the larger magnitude `mx` before squaring
+///   (`ratio = mn/mx` stays in `[0,1]`, never overflows), so
+///   `ln(cabs(re,im)) = ln(mx) + 0.5*log1p(ratio*ratio)` without ever
+///   forming the too-large intermediate (`mx` is never close to `1`
+///   here -- `cabs` wouldn't have overflowed if it were -- so this
+///   branch uses plain `ln(mx)`, not `log1p`). Only taken when both
+///   inputs are finite but `cabs` isn't -- a genuinely infinite/NaN
+///   `re`/`im` instead falls through to plain `ln(cabs(re,im))`,
+///   inheriting whatever convention `cabs`/`hypot_checked` already
+///   establish there (e.g. infinity-wins-over-NaN) rather than
+///   re-deriving it.
+#[inline(always)]
+pub fn clog(re: f32, im: f32) -> (f32, f32) {
+    let mag = cabs(re, im);
+    let log_mag = if mag.is_finite() {
+        if (mag - 1.0).abs() < 0.5 { log1p(mag - 1.0) } else { ln(mag) }
+    } else if re.is_finite() && im.is_finite() {
+        let are = re.abs();
+        let aim = im.abs();
+        let (mx, mn) = if are > aim { (are, aim) } else { (aim, are) };
+        let ratio = mn / mx;
+        ln(mx) + 0.5 * log1p(ratio * ratio)
+    } else {
+        ln(mag)
+    };
+    (log_mag, carg(re, im))
+}
+
 /// log2(x) as a double-float (Df32) instead of a collapsed f32, for
 /// positive finite x only (same domain log_2_normal assumes -- callers
 /// must guard zero/negative/inf/nan themselves). Reuses log_2_normal's

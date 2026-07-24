@@ -1511,6 +1511,33 @@ fn main() {
     check("cross2(1,0,1,0)", cross2(1.0, 0.0, 1.0, 0.0), 0.0);
     check("cross2(0,0,5,5)", cross2(0.0, 0.0, 5.0, 5.0), 0.0);
 
+    // Complex pack (backlog idea #186). cabs/carg are exact aliases for
+    // hypot_checked/atan2 -- pinned against the same classic cases those
+    // functions themselves use. cexp/clog are real compositions (exp/
+    // cos/sin, and ln/log1p/carg respectively), so their "nice point"
+    // pins are check_bounded, not exact.
+    check("cabs(3,4)", cabs(3.0, 4.0), 5.0);
+    check("cabs(0,0)", cabs(0.0, 0.0), 0.0);
+    check("cabs(nan,0)", cabs(f32::NAN, 0.0), f32::NAN);
+    check("carg(1,0)", carg(1.0, 0.0), 0.0);
+    check("carg(0,0)", carg(0.0, 0.0), 0.0);
+    check_bounded("carg(0,1)-FRAC_PI_2", carg(0.0, 1.0) - std::f32::consts::FRAC_PI_2, 1e-6);
+    check_bounded("carg(-1,0)-PI", carg(-1.0, 0.0) - std::f32::consts::PI, 1e-6);
+    let (cer, cei) = cexp(0.0, 0.0);
+    check_bounded("cexp(0,0).re-1", cer - 1.0, 1e-6);
+    check_bounded("cexp(0,0).im", cei, 1e-6);
+    let (cer, cei) = cexp(0.0, std::f32::consts::FRAC_PI_2);
+    check_bounded("cexp(0,pi/2).re", cer, 1e-5);
+    check_bounded("cexp(0,pi/2).im-1", cei - 1.0, 1e-5);
+    let (clr, cli) = clog(1.0, 0.0);
+    check_bounded("clog(1,0).re", clr, 1e-6);
+    check_bounded("clog(1,0).im", cli, 1e-6);
+    let (clr, cli) = clog(0.0, 0.0);
+    check("clog(0,0).re", clr, f32::NEG_INFINITY);
+    check("clog(0,0).im", cli, 0.0);
+    let (clr, _) = clog(f32::MAX, f32::MAX);
+    check_finite("clog(MAX,MAX).re", clr);
+
     check("rsqrt(1)", rsqrt(1.0), 1.0);
     check("rsqrt(4)", rsqrt(4.0), 0.5);
     check("rsqrt(0)", rsqrt(0.0), f32::INFINITY);
