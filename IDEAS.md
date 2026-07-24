@@ -1912,8 +1912,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 87. **Public Df32 module** (log2_df/exp2_checked_df/two_prod etc.) for
     power users composing their own accurate kernels.
-88. **Public checked pi-reduction API** (round_x_over_pi + reduce_pi)
-    for user compositions (custom periodic kernels).
 
 #### Infrastructure / harness / tiers
 

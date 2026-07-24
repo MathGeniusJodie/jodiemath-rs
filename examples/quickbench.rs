@@ -140,6 +140,16 @@ fn main() {
     bench!("cos", cos);
     bench!("cos_checked", cos_checked);
     bench!("std cos", |x: f32| x.cos());
+    // reduce_pi_checked/reduce_pi_half_checked (idea #88): (f32,f32),
+    // same tuple-adapter reasoning as cexp/clog above.
+    bench!("reduce_pi_checked", |x: f32| {
+        let (r, s) = reduce_pi_checked(x);
+        r + s
+    });
+    bench!("reduce_pi_half_checked", |x: f32| {
+        let (r, s) = reduce_pi_half_checked(x);
+        r + s
+    });
     bench!("sinpi", sinpi);
     bench!("sinpi_unchecked", sinpi_unchecked);
     bench!("cospi", cospi);

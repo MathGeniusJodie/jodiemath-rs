@@ -272,6 +272,19 @@ fn main() {
     check("sin_checked(-0)", sin_checked(-0.0), -0.0);
     check("cos_checked(-0)", cos_checked(-0.0), 1.0);
 
+    // reduce_pi_checked/reduce_pi_half_checked (backlog idea #88): the
+    // public pi-reduction primitive sin_checked/cos_checked build on.
+    // sign is a plain +-1.0 multiplier (see its own doc comment for why,
+    // not a bool) such that sign*sin(r) reconstructs sin_checked(x) (or
+    // cos_checked(x) for the half variant) -- checked here via std::f32
+    // sin as the reference poly, not this crate's own private sinf_poly.
+    for &x in &[0.0f32, 1.0, 3.0, 100.0, -7.5, 1e6, -1e9] {
+        let (r, sign) = reduce_pi_checked(x);
+        check_bounded(&format!("reduce_pi_checked({x})"), sign * r.sin() - sin_checked(x), 1e-4);
+        let (rc, signc) = reduce_pi_half_checked(x);
+        check_bounded(&format!("reduce_pi_half_checked({x})"), signc * rc.sin() - cos_checked(x), 1e-4);
+    }
+
     // sinpi/cospi: argument in half-turns, q=round(x)/r=x-q both exact in
     // f32, so (unlike sin/cos) there's no accuracy cliff anywhere -- these
     // pin the full-range "always finite, exact at exact half-integers"

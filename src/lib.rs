@@ -1228,6 +1228,58 @@ pub fn cos_checked(x: f32) -> f32 {
     sinf_poly(r).clamp(-1.0, 1.0)
 }
 
+/// Reduce `x` modulo `pi`, accurate well beyond a single f32's
+/// exact-integer range (backlog idea #88): the same double-float
+/// `round_x_over_pi`/`reduce_pi` machinery `sin_checked` builds on,
+/// exposed for power users composing their own periodic kernels (the
+/// "public checked pi-reduction API" companion to a public `Df32`
+/// module, idea #87). Returns `(r, sign)`: `r` is `x - q*pi` for the
+/// nearest integer `q`, unclamped (see `sin_checked`'s own doc comment
+/// for why *it* clamps to `POLY_SAFE_BOUND` before its own poly --
+/// that's specific to `sinf_poly`'s fitted domain, not a general
+/// reduction contract, so it's on the caller here); `sign` is `+-1.0`
+/// such that `sin(x) = sign * f(r)` for any odd `f` approximating `sin`
+/// on `[-pi/2, pi/2]` -- a plain multiplier rather than a "which way
+/// does this bool go" convention deliberately, found necessary by
+/// fuzzing: an earlier version returned a bare parity bool and got its
+/// own doc comment's if/else direction backwards for the cos variant
+/// below (verified by reconstructing `cos_checked` from it and finding
+/// a real sign mismatch, not just a doc typo -- the bool's *value* was
+/// right, only which case meant "negate" was swapped). Only the
+/// `pre_offset=0.0` (sin) convention is exposed -- see
+/// [`reduce_pi_half_checked`] for the `-0.5` (cos) one; arbitrary
+/// `pre_offset` values are `round_x_over_pi`'s own internal contract,
+/// not verified for other conventions.
+#[inline(always)]
+pub fn reduce_pi_checked(x: f32) -> (f32, f32) {
+    let (qh, ql) = round_x_over_pi(x, 0.0);
+    let r = reduce_pi(x, qh, ql);
+    let sign = if parity(qh) != parity(ql) { -1.0 } else { 1.0 };
+    (r, sign)
+}
+
+/// Reduce `x` modulo `pi`, offset by half a turn (backlog idea #88):
+/// the `cos_checked`-style companion to [`reduce_pi_checked`], `q` here
+/// the nearest integer to `x/pi - 0.5` (so `r = x - (q+0.5)*pi`, i.e.
+/// `x` reduced around cosine's own zero-crossing grid instead of sine's
+/// -- see `cos_checked`'s own doc comment for why this needs its own
+/// `pre_offset=-0.5` reduction rather than a `+ pi/2` shift applied
+/// after the fact, same "fold small corrections in before the reduction
+/// loses the precision to represent them" reasoning throughout this
+/// crate's own `_checked` tier). Same `(r, sign)` shape and the exact
+/// same multiplier convention as [`reduce_pi_checked`] -- `cos(x) =
+/// sign * f(r)` -- so callers needing both never have to remember two
+/// different sign conventions, even though the underlying parity
+/// check's sense really is inverted between sin's `q` and cos's `q+1`
+/// exponent (folded in here, not left for the caller to get backwards).
+#[inline(always)]
+pub fn reduce_pi_half_checked(x: f32) -> (f32, f32) {
+    let (kh, kl) = round_x_over_pi(x, -0.5);
+    let r = reduce_pi(x, kh, kl + 0.5);
+    let sign = if parity(kh) == parity(kl) { -1.0 } else { 1.0 };
+    (r, sign)
+}
+
 /// tan(x), full-range gradual degradation -- `sin_checked(x) /
 /// cos_checked(x)`, mirroring `tanpi`/`tand`'s own plain-composition
 /// pattern (period cancellation, poles handled for free by IEEE754
