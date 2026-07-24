@@ -1890,8 +1890,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     full Df32 arithmetic) through the y multiply + a single
     multiplicative correction — targets powf's y-amplified error at a
     fraction of powf_checked's +61% throughput cost.
-75. **rootn (C23)**: x^(1/n) with odd-n negative handling — cbrt
-    generalization reusing powf/pown pieces.
 76. **Constant-base powf slice**: precompute log2_df(x) once per slice;
     per-element work drops to a Df32 multiply + exp2 (slice-tier
     candidate, fixed-base workloads).

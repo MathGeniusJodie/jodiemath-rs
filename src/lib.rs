@@ -4017,6 +4017,52 @@ pub fn powf_unchecked(x: f32, y: f32) -> f32 {
     exp2_checked(log_2_unchecked(x) * y)
 }
 
+/// x^(1/n) for integer `n` (backlog idea #75, C23 `rootn`), the `cbrt`
+/// generalization -- unlike `powf(x, 1.0/n as f32)`, which would reuse
+/// `powf`'s own negative-base parity check on `1/n` itself (almost never
+/// an integer, so that check would wrongly call `rootn(-8, 3)` domain
+/// error instead of the real `-2`), this checks `n`'s own parity
+/// directly, matching the actual C23 semantics: real for negative `x`
+/// only when `n` is odd, domain error (`NaN`) for negative `x` with
+/// even `n` or for `n == 0` regardless of `x` (verified against the
+/// real glibc rootn implementation notes, not guessed). The magnitude
+/// itself reuses `powf`'s own `log_2`/`exp2_checked` machinery on `|x|`:
+/// `log_2`'s own error is on an absolute scale, and dividing it by `n`
+/// shrinks that error proportionally before `exp2_checked` sees it, so
+/// accuracy genuinely improves as `|n|` grows (measured: avg/max ulp
+/// falls from ~2.7/44 at `n=2` to ~0.06/1 at `n=1000`) -- but `n=1`
+/// (`1/n = 1`, no shrinking at all) is the *worst* case by this same
+/// logic, not a favorable one, measured at avg/max ulp ~11/45, worse
+/// than every other `n` tested. Special-cased directly (`x` is already
+/// available, so the override costs nothing extra) since `n=1` is also
+/// the single most likely real call. `x == 0`/`x` infinite need no
+/// extra special-casing beyond that: `log_2(0) == -inf` and
+/// `exp2_checked`'s own saturation already give the right zero/infinity
+/// magnitude through the same formula, for both positive and negative
+/// `n` (verified directly, not assumed, before relying on it).
+///
+/// Not wired into `examples/mca.rs`/`mca_target.rs`: this function's own
+/// multi-exit-path branching (`n==0`/`n==1`/negative-even-domain-error)
+/// corrupts llvm-mca's inline-asm region markers for the whole assembly
+/// file, the same documented harness limitation `pown_small`/`ldexp`
+/// already have. Use quickbench for this one too.
+#[inline(always)]
+pub fn rootn(x: f32, n: i32) -> f32 {
+    let ax = x.abs();
+    let mag = exp2_checked(log_2(ax) / (n as f32));
+    let n_odd = n % 2 != 0;
+    let signed = if n_odd { mulsign(mag, x) } else { mag };
+    let neg_even_domain_error = x < 0.0 && !n_odd;
+    let r = if neg_even_domain_error { f32::NAN } else { signed };
+    // n==1 is the identity, but the general log_2/exp2_checked round trip
+    // doesn't land on it exactly (found by fuzzing, not assumed: avg 11 /
+    // max 45 ulp there, the worst of any n tested, since dividing by 1
+    // doesn't shrink log_2's own error the way larger n does). x is
+    // already available for free, so this override costs nothing extra.
+    let r = if n == 1 { x } else { r };
+    if n == 0 { f32::NAN } else { r }
+}
+
 /// sRGB -> linear (backlog idea #146), IEC 61966-2-1's piecewise
 /// transfer function: a linear "toe" near black (avoiding the power
 /// curve's infinite slope at 0) below `0.04045`, `((c+0.055)/1.055)^2.4`

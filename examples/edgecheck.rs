@@ -864,6 +864,34 @@ fn main() {
     check("pow_2_3(-inf)", pow_2_3(f32::NEG_INFINITY), f32::INFINITY);
     check("pow_2_3(nan)", pow_2_3(f32::NAN), f32::NAN);
 
+    // rootn (backlog idea #75, C23): x^(1/n) -- domain error (NaN) for
+    // n==0 or negative x with even n, real negative result for negative
+    // x with odd n. Verified against the real glibc rootn spec, not
+    // guessed (see rootn's own doc comment).
+    check("rootn(8,3)", rootn(8.0, 3), 2.0);
+    check("rootn(-8,3)", rootn(-8.0, 3), -2.0);
+    check("rootn(16,4)", rootn(16.0, 4), 2.0);
+    check("rootn(-16,4)", rootn(-16.0, 4), f32::NAN);
+    check("rootn(4,2)", rootn(4.0, 2), 2.0);
+    check("rootn(-4,2)", rootn(-4.0, 2), f32::NAN);
+    check("rootn(x,0)", rootn(4.0, 0), f32::NAN);
+    check("rootn(nan,0)", rootn(f32::NAN, 0), f32::NAN);
+    check("rootn(5,1)", rootn(5.0, 1), 5.0);
+    check("rootn(-5,1)", rootn(-5.0, 1), -5.0);
+    check("rootn(0,3)", rootn(0.0, 3), 0.0);
+    check("rootn(-0,3)", rootn(-0.0, 3), -0.0);
+    check("rootn(0,2)", rootn(0.0, 2), 0.0);
+    check("rootn(-0,2)", rootn(-0.0, 2), 0.0);
+    check("rootn(0,-3)", rootn(0.0, -3), f32::INFINITY);
+    check("rootn(-0,-3)", rootn(-0.0, -3), f32::NEG_INFINITY);
+    check("rootn(0,-2)", rootn(0.0, -2), f32::INFINITY);
+    check("rootn(inf,3)", rootn(f32::INFINITY, 3), f32::INFINITY);
+    check("rootn(inf,-3)", rootn(f32::INFINITY, -3), 0.0);
+    check("rootn(-inf,3)", rootn(f32::NEG_INFINITY, 3), f32::NEG_INFINITY);
+    check("rootn(-inf,-3)", rootn(f32::NEG_INFINITY, -3), -0.0);
+    check("rootn(-inf,2)", rootn(f32::NEG_INFINITY, 2), f32::NAN);
+    check("rootn(nan,3)", rootn(f32::NAN, 3), f32::NAN);
+
     // fast_round_int (backlog idea #185): the ROUND_MAGIC idiom exposed
     // standalone. Sign-of-zero pins are load-bearing, not decorative --
     // a real exhaustive sweep found the bare idiom (no trailing

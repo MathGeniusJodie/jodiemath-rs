@@ -290,6 +290,7 @@ fn main() {
         bench!("pown_small", |x: f32| pown_small(x, n));
         bench!("pown_small_accurate", |x: f32| pown_small_accurate(x, n));
         bench!("pown_16", |x: f32| pown_16(x, n));
+        bench!("rootn", |x: f32| rootn(x, 3));
     }
     {
         // pown_16's own distinct value proposition: an exponent beyond

@@ -1654,6 +1654,60 @@ fn main() {
         pown_sweep(&pown_16, -64, 64, "pown_16 (|n|<=64)");
         pown_sweep(&pown_16, -65535, 65535, "pown_16 (|n|<=65535)");
     }
+    if run("rootn") {
+        // x^(1/n) (backlog idea #75): reference matches the documented
+        // C23 domain-error/sign rules (see rootn's own doc comment),
+        // not a naive x.powf(1.0/n) -- that would mishandle negative x
+        // with odd n the exact same way a naive implementation would.
+        let rootn_ref = |x: f64, n: i32| -> f64 {
+            if n == 0 {
+                return f64::NAN;
+            }
+            if x == 0.0 {
+                let n_odd = n % 2 != 0;
+                let mag = if n > 0 { 0.0 } else { f64::INFINITY };
+                return if n_odd { mag.copysign(x) } else { mag };
+            }
+            if x < 0.0 {
+                return if n % 2 == 0 { f64::NAN } else { -((-x).powf(1.0 / n as f64)) };
+            }
+            x.powf(1.0 / n as f64)
+        };
+        let ns: [i32; 8] = [1, -1, 2, -2, 3, -3, 7, -7];
+        let n_samples = 5_000_000u64;
+        for &n in &ns {
+            let mut sum = 0u64;
+            let mut max = 0u64;
+            let mut worst = 0.0f32;
+            for _ in 0..n_samples {
+                let x = f32::from_bits(rand::rng().random::<u32>());
+                if !x.is_finite() {
+                    continue;
+                }
+                let want_f64 = rootn_ref(x as f64, n);
+                if !want_f64.is_finite() {
+                    continue;
+                }
+                let got = rootn(x, n);
+                let want = want_f64 as f32;
+                let d = ulp_diff(got, want);
+                sum += d;
+                if d > max {
+                    max = d;
+                    worst = x;
+                }
+            }
+            println!(
+                "{:24} avg ulp {:>10.4}  max ulp {:>10}  worst x={:e} ({:>12} samples, {:>7.2}s elapsed)",
+                format!("rootn(x,{n})"),
+                sum as f64 / n_samples as f64,
+                max,
+                worst,
+                n_samples,
+                t0.elapsed().as_secs_f64(),
+            );
+        }
+    }
     if run("ldexp") {
         // ldexp/frexp (backlog idea #86): exact bit manipulations, not
         // approximations -- expected max ulp is always exactly 0. Two

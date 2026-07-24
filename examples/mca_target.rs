@@ -602,6 +602,7 @@ throughput_fn!(thr_pown, "pown_throughput", {
     let n = black_box(5);
     move |x: f32| pown(x, n)
 });
+
 // pown_small deliberately NOT wired up here: with only 8 unrolled
 // iterations (vs pown's 32), LLVM's cost model chooses to branch-
 // specialize on the shared black_box'd `n` this harness uses (cheap
