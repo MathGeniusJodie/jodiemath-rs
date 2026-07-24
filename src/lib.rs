@@ -1424,12 +1424,32 @@ pub fn sqrt_approx(x: f32) -> f32 {
 pub fn rcp_approx(x: f32) -> f32 {
     f32::from_bits(0x7EEF370B - x.to_bits())
 }
+/// Classic single-bit-trick `2^x` seed (backlog idea #188), no Newton
+/// refinement: max relative error ~6.1% over `|x| < 120`. Deliberately
+/// rough (this crate's real `exp2`/`exp2_checked` exist for accurate
+/// use) -- kept for the `_approx_plot`/`_error` test suite, demonstrating
+/// the exponent-field bit-manipulation idiom those real functions build
+/// on, not a candidate tier of its own.
 pub fn exp2_approx(x: f32) -> f32 {
     -f32::from_bits((x + 383.).to_bits() << 8)
 }
+
+/// Classic single-bit-trick `log2(x)` seed (backlog idea #188), no
+/// Newton refinement: max absolute error ~0.086 over positive normal
+/// `x` (relative error is only meaningful away from `log2(x)=0` at
+/// `x=1`, same "ulp isn't meaningful near a true zero" caveat this
+/// crate's other log-family functions document). Deliberately rough --
+/// this crate's real `log_2`/`ln`/`log2_unchecked` exist for accurate
+/// use -- kept for the `_approx_plot`/`_error` test suite.
 pub fn log2_approx(x: f32) -> f32 {
     f32::from_bits((x).to_bits() >> 8 | 256_f32.to_bits()) - 383.
 }
+
+/// Quake-style `1/sqrt(x)` bit-trick seed (backlog idea #188), no Newton
+/// refinement: max relative error ~4.8% over positive normal `x` (the
+/// famous version adds one Newton iteration to reach ~0.2% -- this one
+/// deliberately doesn't, see [`rsqrt`]'s own doc comment). Kept for the
+/// `_approx_plot`/`_error` test suite, not a candidate replacement.
 pub fn rsqrt_approx(x: f32) -> f32 {
     f32::from_bits(0x5F33E79F - (x.to_bits() >> 1))
 }
@@ -3823,9 +3843,10 @@ pub fn erfcx_checked(x: f32) -> f32 {
 /// `x <= 0.0` (including `-0.0`), `x.is_nan()`, and `x == inf` all
 /// already give the right answer (`+inf`/`inf`, `NaN`, `0.0`
 /// respectively) purely from IEEE754 semantics. (The crate's older
-/// `rsqrt_approx` -- a Quake-style bit-trick seed with no correction,
-/// ~1e4 ulp -- is a deliberately-rough exploratory function kept for the
-/// `_approx_plot` test suite, not a candidate replacement.)
+/// [`rsqrt_approx`] -- a Quake-style bit-trick seed with no correction,
+/// ~4.8% max relative error -- is a deliberately-rough exploratory
+/// function kept for the `_approx_plot` test suite, not a candidate
+/// replacement.)
 #[inline(always)]
 pub fn rsqrt(x: f32) -> f32 {
     1.0 / x.sqrt()

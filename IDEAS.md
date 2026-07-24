@@ -2122,10 +2122,12 @@ core::simd tier exists; each replaces multi-op scalar idioms)
      reinventing these wrong.
 187. **n-ary logaddexp slice reduction** (tree or max+sum-exp) — pairs
      with #148.
-188. **_approx tier promotion**: exp2_approx/log2_approx/rsqrt_approx
-     exist untabulated — publish error bounds, add sin/sigmoid/tanh
-     members for ML-inference users, explicitly outside the 0.5/2
-     budget (cbrt_throughput's tier, done properly).
+188. **_approx tier new members**: exp2_approx/log2_approx/rsqrt_approx
+     now have real doc-comment error bounds (max relative/absolute
+     error, see lib.rs/git log) — still open: add sin_approx/tanh_approx
+     members for ML-inference users, explicitly outside the 0.5/2 budget
+     (cbrt_throughput's tier, done properly). sigmoid_approx folds into
+     #191's own PWL+correction design instead of a separate bit-trick.
 189. **periodic_poly! dedup macro** once #43/#44 land (four
      near-identical folded-constant sinf_poly variants) — same
      macro-not-fn pattern as pi_reduce_and_poly!.
