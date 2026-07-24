@@ -309,6 +309,24 @@ pub fn exp2(x: f32) -> f32 {
     fma(q, exp2int * f, exp2int)
 }
 
+/// `2^(k+f)` for an already-integer-valued `k` and `f` in `[0,1)`
+/// (backlog idea #116): [`exp2`]'s own combine step, exposed directly
+/// for user custom-base kernels (and this crate's own `exp10`, though
+/// not refactored to call through here -- its existing, separately
+/// verified body is untouched) that already have their own `k`/`f` and
+/// want to skip re-deriving this exact exponent-field-plus-poly
+/// combine. No domain check: same `[-126,128)` contract as `exp2`
+/// itself (garbage out for `k` outside that range), and `f` outside
+/// `[0,1)` is simply a different (still well-defined) input to the same
+/// polynomial, not a checked contract.
+#[inline(always)]
+#[allow(clippy::approx_constant)]
+pub fn exp2_kf(k: f32, f: f32) -> f32 {
+    let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
+    let q = exp2_q_poly!(f);
+    fma(q, exp2int * f, exp2int)
+}
+
 #[inline(always)]
 #[allow(clippy::approx_constant)] // g0's constant term is a fitted minimax
 // coefficient near ln(2), not ln(2) itself (bit pattern deliberately differs)

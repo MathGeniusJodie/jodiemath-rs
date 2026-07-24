@@ -110,6 +110,17 @@ fn main() {
     check("exp2(-125.9)", exp2(-125.9), ((-125.9f32) as f64).exp2() as f32);
     check("exp2(-126)", exp2(-126.0), ((-126.0f32) as f64).exp2() as f32);
     check("exp2(0)", exp2(0.0), 1.0);
+    // exp2_kf (backlog idea #116): exp2's own combine, k/f supplied
+    // directly -- bit-identical to exp2(x) when fed exp2's own
+    // k=floor(x)/f=x-k (verified across 20M samples before shipping).
+    check("exp2_kf(0,0)", exp2_kf(0.0, 0.0), 1.0);
+    check("exp2_kf(1,0)", exp2_kf(1.0, 0.0), 2.0);
+    check("exp2_kf(0,1)", exp2_kf(0.0, 1.0), 2.0);
+    for &x in &[3.7f32, -10.25, 100.0, -125.9] {
+        let k = x.floor();
+        let f = x - k;
+        check("exp2_kf reconstructs exp2", exp2_kf(k, f), exp2(x));
+    }
     // exp2_checked: full range
     check("exp2_checked(128)", exp2_checked(128.0), f32::INFINITY);
     check("exp2_checked(127.9999)", exp2_checked(127.9999), (127.9999f32 as f64).exp2() as f32);

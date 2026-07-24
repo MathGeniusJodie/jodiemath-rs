@@ -150,6 +150,9 @@ throughput_fn!(thr_smootherstep, "smootherstep_throughput", {
 latency_fn!(lat_exp2, "exp2_latency", exp2);
 throughput_fn!(thr_exp2, "exp2_throughput", exp2);
 
+latency_fn!(lat_exp2_kf, "exp2_kf_latency", |f: f32| exp2_kf(3.0, f));
+throughput_fn!(thr_exp2_kf, "exp2_kf_throughput", |f: f32| exp2_kf(3.0, f));
+
 latency_fn!(lat_exp2_checked, "exp2_checked_latency", exp2_checked);
 throughput_fn!(thr_exp2_checked, "exp2_checked_throughput", exp2_checked);
 
@@ -802,6 +805,7 @@ fn main() {
         lat_smoothstep, thr_smoothstep;
         lat_smootherstep, thr_smootherstep;
         lat_exp2, thr_exp2;
+        lat_exp2_kf, thr_exp2_kf;
         lat_exp2_checked, thr_exp2_checked;
         lat_exp10, thr_exp10;
         lat_exp10_checked, thr_exp10_checked;

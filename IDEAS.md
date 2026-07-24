@@ -1994,8 +1994,6 @@ an idea revisits a rejection, the differing mechanism is stated.
      denormal-rounding half of the split's job disappears; same cascade
      deletes denormal_rescale from the log family and cbrt — scope #56
      to capture all of it.
-116. **Public exp2_kf(k, f) pre-reduced primitive** — exp10, powf, and
-     user custom-base kernels skip the redundant floor/frac.
 #### Batch 2: trig
 
 125. **Integer-domain parity pipeline end-to-end** for

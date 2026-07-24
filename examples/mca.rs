@@ -127,6 +127,7 @@ fn main() {
         "smoothstep",
         "smootherstep",
         "exp2",
+        "exp2_kf",
         "exp2_checked",
         "exp10",
         "exp10_checked",
