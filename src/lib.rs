@@ -763,22 +763,81 @@ pub fn sinc_unnormalized(x: f32) -> f32 {
     if x == 0.0 { 1.0 } else { normal }
 }
 
-/// tan(pi*x), argument in half-turns, built directly from
-/// `sinpi`/`cospi`'s own ratio: `tan` has period 1 in
+// tan(pi*e) = e * Q(e^2) (idea #128), e in [-0.25, 0.25], degree 5,
+// Estrin-grouped. Real least-squares fit (scipy) of tan(pi*e)/e against
+// e^2, not a transcription of any published algorithm's constants.
+#[inline(always)]
+fn tan_poly(u: f32) -> f32 {
+    let c: [f32; 6] =
+        [1.0, 0.33335323, 0.13294287, 0.056705125, 0.013512152, 0.019691950];
+    let u2 = u * u;
+    let u4 = u2 * u2;
+    let l0 = fma(c[1], u, c[0]);
+    let l1 = fma(c[3], u, c[2]);
+    let l2 = fma(c[5], u, c[4]);
+    let r0 = fma(l1, u2, l0);
+    fma(l2, u4, r0)
+}
+
+// tan(pi*e) (idea #128, tanpi only -- the same direct-poly idea applied
+// to tand regressed a real fuzz-found precision bug and was reverted,
+// see IDEAS.md), `e` the exact half-turn-fraction reduction `tanpi`'s
+// own `r` already is. `theta=PI*e`, `aphi=PI*(0.5-|e|)`: the caller
+// computes both, subtracting *before* scaling by `PI`, not after --
+// `0.5-|e|` in the small, bounded `[-0.5,0.5]` domain is more precise
+// than the mathematically-equivalent `FRAC_PI_2-|theta|` computed after
+// scaling, since `theta`'s own ulp (fixed by its larger, ~pi/2-ish
+// magnitude) is coarser than `e`'s, and near the pole that coarseness
+// swamps the tiny quantity being computed. Both forms are Sterbenz-exact
+// *given their own inputs*, so this isn't about avoiding rounding in the
+// subtraction itself, only about which domain has finer-grained ulps to
+// subtract in to begin with. Found by fuzzing (max ulp 11 vs 356266+
+// for the exact same reflection formula, differing only in this
+// subtract-then-scale vs scale-then-subtract order).
+//
+// `tan_poly` directly for `|e| <= 0.25`; past that, the cotangent
+// reflection `tan(pi*e) = 1/tan(aphi)` (sign matching `e`/`theta`).
+//
+// `aphi == 0.0` exactly (`x` a genuine half-integer, `tan`'s true pole)
+// needs an explicit override, found by fuzzing, not assumed: the
+// reflected formula is a real `1.0/0.0` there, but `mulsign(.., theta)`
+// ties its sign to `theta`'s own sign, which alternates with which
+// half-integer `x` happens to be (tracks `theta`'s sign, not tan's
+// actual pole-crossing direction) -- while the previous
+// `sinpi(x)/cospi(x)` form (like this crate's own f64 `tanpi_ref` test
+// reference, verified exhaustively over 1000 half-integers) always
+// lands on the *same* sign, `-inf`, regardless of which half-integer:
+// `sinpi`'s numerator sign and `cospi`'s zero sign there both alternate
+// together in lockstep, canceling to a constant ratio sign that
+// `theta`'s sign alone doesn't reconstruct.
+#[inline(always)]
+fn tan_core(theta: f32, aphi: f32) -> f32 {
+    let ae = theta.abs();
+    let direct = theta * tan_poly(theta * theta);
+    let reflected = mulsign(1.0 / (aphi * tan_poly(aphi * aphi)), theta);
+    let normal = if ae <= std::f32::consts::FRAC_PI_4 { direct } else { reflected };
+    if aphi == 0.0 { f32::NEG_INFINITY } else { normal }
+}
+
+/// tan(pi*x), argument in half-turns (idea #128): `tan` has period 1 in
 /// half-turns (unlike `sin`/`cos` individually, which flip sign every
-/// integer), so `sinpi(x)/cospi(x)` is exactly `tan(pi*x)` with no
-/// separate reduction of its own needed -- whichever integer `sinpi`'s
-/// `q=round(x)` and `cospi`'s own `k=round(x-0.5)` each resolve to, their
-/// respective sign corrections (`parity(q)`/`parity(k)`) cancel exactly
-/// in the division (both numerator and denominator flip together or not
-/// at all) -- correct by construction. At `cospi`'s own zeros (`x` a half-integer,
-/// `tan`'s true poles), IEEE754 division by a signed zero already gives
-/// the correctly-signed `+-inf` for free, no extra handling needed
-/// (`sinpi` is nonzero there, so this is a real `finite/0`, never the
-/// `0/0` that would need a NaN override).
+/// integer -- see `sinpi`'s own doc comment for why *its* reduction needs
+/// a parity correction that this one doesn't), so `x`'s exact `q=round(x)`/
+/// `r=x-q` reduction (identical to `sinpi`'s own) already lands directly
+/// on `tan(pi*x) = tan(pi*r)`, no sign combine needed. `tan_core` handles
+/// the direct-poly/cotangent-reflection split and the pole itself (`r` a
+/// half-integer distance from `x`, i.e. `x` itself a half-integer):
+/// `aphi=0` there, so `1.0/(aphi*tan_poly(aphi*aphi))` is a real
+/// `1.0/0.0`, giving the correctly-signed `+-inf` for free, the same
+/// "division by a true zero, never a `0/0`" free case the previous
+/// `sinpi(x)/cospi(x)` form also had.
 #[inline(always)]
 pub fn tanpi(x: f32) -> f32 {
-    sinpi(x) / cospi(x)
+    let q = x.round_ties_even();
+    let r = x - q;
+    let ar = r.abs();
+    let normal = tan_core(std::f32::consts::PI * r, std::f32::consts::PI * (0.5 - ar));
+    if x == 0.0 { x } else { normal }
 }
 
 /// sin(2*pi*x), full-turn argument (backlog idea #122): DSP phase
@@ -875,11 +934,19 @@ pub fn cosd(x: f32) -> f32 {
     f32::from_bits(s.to_bits() ^ parity)
 }
 
-/// tan(x*pi/180), argument in degrees --
-/// same `sind(x)/cosd(x)` ratio construction as `tanpi`'s own doc
-/// comment describes (period-180 cancellation, poles handled for free by
-/// IEEE754 division). See `sind`'s own doc comment for the shared
-/// reduction's exactness limit (`|x|` up to ~4.7e7) and safety clamp.
+/// tan(x*pi/180), argument in degrees -- same `sind(x)/cosd(x)` ratio
+/// construction as `tanpi`'s own original doc comment describes
+/// (period-180 cancellation, poles handled for free by IEEE754
+/// division). See `sind`'s own doc comment for the shared reduction's
+/// exactness limit (`|x|` up to ~4.7e7) and safety clamp.
+///
+/// idea #128's direct-poly approach (see [`tanpi`], which uses it)
+/// was tried here too and reverted: reusing `sind`'s own `d` for the
+/// pole-distance calculation loses precision `d` never kept (it's
+/// already reduced away from `x`, unlike `tanpi`'s `r`), and fixing
+/// that needed a whole second, `cosd`-style independent reduction --
+/// at which point real mca/quickbench numbers no longer showed a clean
+/// win over this simpler ratio form. See IDEAS.md.
 #[inline(always)]
 pub fn tand(x: f32) -> f32 {
     sind(x) / cosd(x)

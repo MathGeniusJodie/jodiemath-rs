@@ -322,14 +322,20 @@ fn main() {
     check("sinpi_unchecked(-inf)", sinpi_unchecked(f32::NEG_INFINITY), f32::NAN);
     check("sinpi_unchecked(f32::MAX)", sinpi_unchecked(f32::MAX), sinpi(f32::MAX));
 
-    // tanpi(x) = sinpi(x)/cospi(x): new function (backlog idea #29).
-    // Poles at half-integer x are real (cospi(x)==0 there) and correctly
-    // give +-inf via IEEE754 division, not NaN -- pinned so that stays
-    // true. tanpi(inf)/(-inf) are NaN, matching sinpi/cospi's own
-    // existing (inherited, not new) convention at infinity.
+    // tanpi(x): direct poly + cotangent reflection (backlog idea #128,
+    // superseding the original sinpi(x)/cospi(x) ratio, idea #29).
+    // Poles at half-integer x are real (an exact `1.0/0.0` in
+    // `tan_core`'s reflected branch) and correctly give +-inf, not NaN
+    // -- pinned so that stays true. tanpi(inf)/(-inf) are NaN, matching
+    // sinpi/cospi's own existing (inherited, not new) convention at
+    // infinity. `tanpi(0.25)` is `check_bounded`, not exact, unlike the
+    // old ratio construction: that happened to give bit-identical
+    // sinpi(0.25)/cospi(0.25) values (X/X==1.0 exactly), a structural
+    // coincidence of the ratio, not a guarantee this fit-based version
+    // inherits.
     check("tanpi(0)", tanpi(0.0), 0.0);
     check("tanpi(-0)", tanpi(-0.0), -0.0);
-    check("tanpi(0.25)", tanpi(0.25), 1.0);
+    check_bounded("tanpi(0.25)-1", tanpi(0.25) - 1.0, 1e-5);
     check("tanpi(1)", tanpi(1.0), 0.0);
     check("tanpi(0.5)", tanpi(0.5), f32::NEG_INFINITY);
     check("tanpi(-0.5)", tanpi(-0.5), f32::NEG_INFINITY);
@@ -345,7 +351,7 @@ fn main() {
     check("cos2pi(0)", cos2pi(0.0), 1.0);
     check("cos2pi(0.25)", cos2pi(0.25), -0.0);
     check("tan2pi(0)", tan2pi(0.0), 0.0);
-    check("tan2pi(0.125)", tan2pi(0.125), 1.0);
+    check_bounded("tan2pi(0.125)-1", tan2pi(0.125) - 1.0, 1e-5);
     check("sin2pi(nan)", sin2pi(f32::NAN), f32::NAN);
     // Doubling overflows past f32::MAX/2, a documented gap (see doc
     // comment) -- NaN there, not a meaningful finite answer.
@@ -431,7 +437,8 @@ fn main() {
 
     // tand(x) = sind(x)/cosd(x): new function (backlog idea #29), same
     // "poles are real, IEEE754 division handles them for free" reasoning
-    // as tanpi above.
+    // as tanpi above. (idea #128's direct-poly form was tried and
+    // reverted for tand specifically -- see tand's own doc comment.)
     check("tand(0)", tand(0.0), 0.0);
     check("tand(-0)", tand(-0.0), -0.0);
     check("tand(45)", tand(45.0), 1.0);

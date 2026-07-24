@@ -735,6 +735,20 @@ what shipped.
   next to the risk given this exact function pair's own documented
   history of sign bugs (`sin_checked` range-invariant entry above, the
   ±0 bugs listed in Batch 2 idea #164). Not pursued further.
+- **tand direct poly (idea #128)**: shipped for `tanpi` (see lib.rs/git
+  log — real fuzz-caught bug fixed along the way: the reflection's
+  pole-distance must be computed by subtracting *before* scaling to
+  radians, not after — the mathematically-equivalent post-scale form
+  loses exactly the precision needed near the pole), but the same
+  approach for `tand` regressed a real accuracy loss: reusing `sind`'s
+  own `d` (already reduced away from `x`) for the pole-distance
+  calculation isn't precise enough (real ~15% relative error, max ulp
+  over a million near odd multiples of 90), and fixing that needs a
+  whole second, `cosd`-style independent reduction. With that fix in
+  place `tand` did work correctly (max ulp 3→12, still good), but real
+  mca/quickbench numbers no longer showed a clean win over the simpler
+  `sind(x)/cosd(x)` ratio once that extra reduction's cost is included
+  — reverted, `tand` still ships as `sind(x)/cosd(x)`.
 
 ### asin / acos / atan / atan2
 
@@ -1991,12 +2005,6 @@ an idea revisits a rejection, the differing mechanism is stated.
      contract = sinf_poly + documented parity conventions) — for
      callers who already did their own reduction; the trig analog of
      #116.
-128. **tanpi/tand direct poly**: tan(πr) poly on |r| ≤ 0.25 + cotangent
-     reflection for the rest — every radian direct-tan attempt died on
-     *inexact reduction* near poles; tanpi/tand have *exact* reductions,
-     which removes precisely that documented blocker. Targets the
-     sinpi/cospi division and the near-pole ulp blowup.
-
 #### Batch 2: roots / hypot / geometry
 
 136. **normalize2/normalize3 *slice* kernels** (rhypot + scales — the
