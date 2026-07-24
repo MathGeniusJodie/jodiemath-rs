@@ -430,6 +430,23 @@ throughput_fn!(thr_compound, "compound_throughput", {
     move |x: f32| compound(x, n)
 });
 
+latency_fn!(lat_xlogy, "xlogy_latency", {
+    let y = black_box(2.0);
+    move |x: f32| xlogy(x, y)
+});
+throughput_fn!(thr_xlogy, "xlogy_throughput", {
+    let y = black_box(2.0);
+    move |x: f32| xlogy(x, y)
+});
+latency_fn!(lat_xlog1py, "xlog1py_latency", {
+    let y = black_box(1.0);
+    move |x: f32| xlog1py(x, y)
+});
+throughput_fn!(thr_xlog1py, "xlog1py_throughput", {
+    let y = black_box(1.0);
+    move |x: f32| xlog1py(x, y)
+});
+
 latency_fn!(lat_erfc_accurate, "erfc_accurate_latency", erfc_accurate);
 throughput_fn!(thr_erfc_accurate, "erfc_accurate_throughput", erfc_accurate);
 
@@ -798,6 +815,8 @@ fn main() {
         lat_norm_pdf, thr_norm_pdf;
         lat_logit, thr_logit;
         lat_compound, thr_compound;
+        lat_xlogy, thr_xlogy;
+        lat_xlog1py, thr_xlog1py;
         lat_erfc_accurate, thr_erfc_accurate;
         lat_erfcx, thr_erfcx;
         lat_erfcx_accurate, thr_erfcx_accurate;

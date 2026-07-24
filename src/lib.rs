@@ -3241,6 +3241,33 @@ pub fn logit(p: f32) -> f32 {
     ln(p) - log1p(-p)
 }
 
+/// x*ln(y) (backlog idea #84), the entropy-sum kernel (`sum(p*ln(p))`
+/// etc.): matches `scipy.special.xlogy`'s convention exactly -- `0` when
+/// `x == 0`, *regardless of `y`* (even `y <= 0` or `y == NaN`), since
+/// `0*ln(0)` is the indeterminate form entropy sums define away to `0`
+/// by convention, and a caller summing many `x*ln(y)` terms wants every
+/// zero-weight term to vanish from the sum without a NaN poisoning it,
+/// not just the one exactly-`0*0` case. Every other `x` (including
+/// `x < 0`) passes straight through to plain `x*ln(y)`, so `y <= 0`
+/// still gives `+-inf`/`NaN` there exactly as bare multiplication would.
+#[inline(always)]
+pub fn xlogy(x: f32, y: f32) -> f32 {
+    let normal = x * ln(y);
+    if x == 0.0 { 0.0 } else { normal }
+}
+
+/// x*ln(1+y) (backlog idea #84), `xlogy`'s cancellation-safe sibling for
+/// callers whose natural parameter is `1+y` (e.g. KL-divergence terms
+/// written against a base rate) -- same `x == 0` override, and reuses
+/// `log1p` instead of forming `1.0+y` and calling `xlogy`/`ln` directly,
+/// avoiding the precision loss `log1p` itself exists to prevent for
+/// small `y`.
+#[inline(always)]
+pub fn xlog1py(x: f32, y: f32) -> f32 {
+    let normal = x * log1p(y);
+    if x == 0.0 { 0.0 } else { normal }
+}
+
 /// (1+x)^n (backlog idea #72), the compound-interest/growth-rate
 /// kernel: `pown((1.0+x), n)` (or `powf`) forms `1.0+x` as its own
 /// first step, losing exactly the low-order bits of a small `x` the

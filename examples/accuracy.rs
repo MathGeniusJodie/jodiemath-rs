@@ -135,6 +135,19 @@ fn sinc_unnormalized_ref(v: F64xN) -> F64xN {
     let is_zero = v.simd_eq(F64xN::splat(0.0));
     is_zero.select(F64xN::splat(1.0), safe.select(normal, F64xN::splat(f64::NAN)))
 }
+// xlogy/xlog1py (backlog idea #84): x==0 overrides to 0 regardless of y
+// (matching scipy.special.xlogy's own convention, see the real
+// functions' doc comments), otherwise plain x*ln(y)/x*ln(1+y). log_u35
+// itself already returns NaN for y<=0 and propagates NaN/inf correctly,
+// so no extra domain guarding needed beyond the x==0 override.
+fn xlogy_ref(x: F64xN, y: F64xN) -> F64xN {
+    let is_zero = x.simd_eq(F64xN::splat(0.0));
+    is_zero.select(F64xN::splat(0.0), x * log_u35(y))
+}
+fn xlog1py_ref(x: F64xN, y: F64xN) -> F64xN {
+    let is_zero = x.simd_eq(F64xN::splat(0.0));
+    is_zero.select(F64xN::splat(0.0), x * log1p_u10(y))
+}
 // tanpi/tand's own references: same ratio construction as the real
 // functions (see their doc comments) -- reuses sinpi_ref/cospi_ref
 // (resp. sind_ref/cosd_ref below) directly rather than a naive
@@ -1344,6 +1357,12 @@ fn main() {
         let atan2pi_ref = |y: F64xN, x: F64xN| atan2_u35(y, x) * F64xN::splat(1.0 / std::f64::consts::PI);
         let s = fuzz2(TWOARG_SAMPLES, |_, _| true, atan2pi, atan2pi_ref);
         report("atan2pi", &s, t0);
+    }
+    if run("xlogy") {
+        let s = fuzz2(TWOARG_SAMPLES, |_, _| true, xlogy, xlogy_ref);
+        report("xlogy", &s, t0);
+        let s = fuzz2(TWOARG_SAMPLES, |_, _| true, xlog1py, xlog1py_ref);
+        report("xlog1py", &s, t0);
     }
     if run("compound") {
         // Domain x > -1 (backlog idea #72), log1p's own real-domain

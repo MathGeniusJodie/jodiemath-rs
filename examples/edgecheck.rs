@@ -1162,6 +1162,29 @@ fn main() {
     check("logit(nan)", logit(f32::NAN), f32::NAN);
     check("sigmoid(logit(0.7))", sigmoid(logit(0.7)), 0.70000005);
 
+    // xlogy/xlog1py (backlog idea #84): x==0 overrides to 0 regardless of
+    // y, matching scipy.special.xlogy's convention exactly -- including
+    // the indeterminate 0*ln(0) case entropy sums define away, and even
+    // y<0/NaN, since a zero-weight term should vanish from a sum rather
+    // than poison it with NaN.
+    check("xlogy(0,0)", xlogy(0.0, 0.0), 0.0);
+    check("xlogy(0,-5)", xlogy(0.0, -5.0), 0.0);
+    check("xlogy(0,nan)", xlogy(0.0, f32::NAN), 0.0);
+    check("xlogy(-0,1)", xlogy(-0.0, 1.0), 0.0);
+    check("xlogy(1,1)", xlogy(1.0, 1.0), 0.0);
+    check("xlogy(2,1)", xlogy(2.0, 1.0), 0.0);
+    check("xlogy(1,0)", xlogy(1.0, 0.0), f32::NEG_INFINITY);
+    check("xlogy(-1,0)", xlogy(-1.0, 0.0), f32::INFINITY);
+    check("xlogy(nan,1)", xlogy(f32::NAN, 1.0), f32::NAN);
+    check("xlogy(1,-1)", xlogy(1.0, -1.0), f32::NAN);
+    check("xlog1py(0,0)", xlog1py(0.0, 0.0), 0.0);
+    check("xlog1py(0,-5)", xlog1py(0.0, -5.0), 0.0);
+    check("xlog1py(0,nan)", xlog1py(0.0, f32::NAN), 0.0);
+    check("xlog1py(1,0)", xlog1py(1.0, 0.0), 0.0);
+    check("xlog1py(2,0)", xlog1py(2.0, 0.0), 0.0);
+    check("xlog1py(1,-1)", xlog1py(1.0, -1.0), f32::NEG_INFINITY);
+    check("xlog1py(nan,1)", xlog1py(f32::NAN, 1.0), f32::NAN);
+
     // compound(x,n) = (1+x)^n (backlog idea #72).
     check("compound(0,5)", compound(0.0, 5.0), 1.0);
     check("compound(-1,5)", compound(-1.0, 5.0), 0.0);
