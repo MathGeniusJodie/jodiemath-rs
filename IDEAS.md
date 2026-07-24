@@ -368,6 +368,29 @@ what shipped.
   this for real would need a genuinely more precise `corr` (a
   double-float `log1p_unit`, i.e. an `_accurate` tier, not a one-line
   `two_sum` swap) -- a much bigger undertaking than the idea as stated.
+- **softplus/logaddexp\_unchecked, drop the trailing NaN guard** (idea
+  #98, the same "unchecked tier drops a redundant guard" mechanism that
+  shipped for `sind_unchecked`/`cosd_unchecked`/`sinpi_unchecked`):
+  rejected on inspection before any implementation, same style as the
+  `erf_unchecked` rejection above (§asin/acos/atan/atan2) but a
+  different concrete mechanism. Verified directly (a tiny standalone
+  probe, not just reasoning): Rust's `f32::max`/`min` are NaN-*avoiding*
+  (IEEE754 minNum/maxNum semantics) -- `f32::NAN.max(0.0)` returns
+  `0.0`, `f32::NAN.min(87.0)` returns `87.0`, not NaN. Both `softplus`
+  and `logaddexp` route their NaN-propagation entirely through this
+  guard specifically *because* their own bodies use `.max()`/`.min()`
+  for the ordinary control flow (`x.max(0.0)`, `d.min(87.0)`), not
+  through comparisons that fall through to arithmetic the way most of
+  this crate's other wrapper guards do. Dropping the guard doesn't risk
+  a rare edge case or a merely-imprecise result -- it silently returns
+  an ordinary, plausible-looking finite number for the single-NaN case
+  (`softplus(NaN)` would compute as if `x` were absent entirely, and
+  `logaddexp(NaN, b)` as if `a` were absent, both landing near `corr`/`b`
+  respectively) instead of the NaN every other function in this crate
+  guarantees. Unlike `sind`/`cosd`/`sinpi`'s own clamp/guard removals
+  (provably no-ops for any in-domain input, narrowing only the *range*
+  contract), this one changes behavior for an input class (NaN) with no
+  natural "in domain" concept to narrow around. Not implemented.
 
 ### log family
 
@@ -1927,13 +1950,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 97. **Targeted LLVM flag screen**: -enable-unroll-and-jam,
     -extra-vectorizer-passes, SLP horizontal reductions — cheap sweep,
     same method as the interleave/zmm experiments.
-98. **Auto-`_unchecked` macro (existing entry) — concrete new
-    candidates**: softplus/logaddexp (drop NaN guards). (sind/cosd and
-    sinpi's own candidates shipped, see lib.rs/git log —
-    `sind_unchecked`/`cosd_unchecked`/`tand_unchecked`/
-    `sinpi_unchecked`; erf's own candidate rejected on inspection, see
-    rejected section above — would reintroduce a real, already-fixed
-    bug.)
 99. **tgamma** companion to the lgamma entry (Lanczos/Stirling, shares
     machinery).
 100. **Bessel j0/j1** (Cephes-style two-region rational + trig
