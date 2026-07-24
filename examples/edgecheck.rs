@@ -829,6 +829,26 @@ fn main() {
     check("pow_2_3(-inf)", pow_2_3(f32::NEG_INFINITY), f32::INFINITY);
     check("pow_2_3(nan)", pow_2_3(f32::NAN), f32::NAN);
 
+    // fast_round_int (backlog idea #185): the ROUND_MAGIC idiom exposed
+    // standalone. Sign-of-zero pins are load-bearing, not decorative --
+    // a real exhaustive sweep found the bare idiom (no trailing
+    // copysign) wrong-signed for every negative x rounding to zero
+    // (~1.057 billion bit patterns, all confined to |x|<=0.5), fixed by
+    // the copysign now in the shipped body.
+    check("fast_round_int(0)", fast_round_int(0.0), 0.0);
+    check("fast_round_int(-0)", fast_round_int(-0.0), -0.0);
+    check("fast_round_int(0.5)", fast_round_int(0.5), 0.0);
+    check("fast_round_int(-0.5)", fast_round_int(-0.5), -0.0);
+    check("fast_round_int(-0.4999999)", fast_round_int(-0.4999999), -0.0);
+    check("fast_round_int(1.5)", fast_round_int(1.5), 2.0);
+    check("fast_round_int(2.5)", fast_round_int(2.5), 2.0);
+    check("fast_round_int(-3.7)", fast_round_int(-3.7), -4.0);
+    check("fast_round_int(2^22)", fast_round_int(4_194_304.0), 4_194_304.0);
+    check("fast_round_int(-2^22)", fast_round_int(-4_194_304.0), -4_194_304.0);
+    check("fast_round_int(nan)", fast_round_int(f32::NAN), f32::NAN);
+    check("fast_round_int(inf)", fast_round_int(f32::INFINITY), f32::INFINITY);
+    check("fast_round_int(-inf)", fast_round_int(f32::NEG_INFINITY), f32::NEG_INFINITY);
+
     // smoothstep/smootherstep (backlog idea #147): exact endpoints,
     // clamped outside [edge0,edge1].
     check("smoothstep(0,1,0)", smoothstep(0.0, 1.0, 0.0), 0.0);

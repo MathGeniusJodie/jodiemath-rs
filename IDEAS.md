@@ -2140,8 +2140,6 @@ core::simd tier exists; each replaces multi-op scalar idioms)
 184. **Public EFT toolkit**: two_prod/two_sum/quick_two_sum + mulsign
      (with the mulsign-vs-copysign semantics doc) — users keep
      reinventing these wrong.
-185. **fast_round_int public** (the ROUND_MAGIC idiom with its |x|<2^22
-     contract documented) — for callers building their own reductions.
 186. **Complex pack**: cexp/clog/cabs/carg composites (SoA-friendly,
      mostly existing kernels).
 187. **n-ary logaddexp slice reduction** (tree or max+sum-exp) — pairs

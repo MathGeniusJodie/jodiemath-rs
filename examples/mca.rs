@@ -112,6 +112,8 @@ fn main() {
 
     let order = [
         "nop",
+        "fast_round_int",
+        "std_round",
         "cbrt",
         "cbrt_unchecked",
         "cbrt_wrapped",

@@ -32,6 +32,48 @@ fn fma(a: f32, b: f32, c: f32) -> f32 {
     a.mul_add(b, c)
 }
 
+/// Round to the nearest integer (ties-to-even), for `|x| <= 2^22`
+/// (backlog idea #185): the magic-constant idiom this crate uses
+/// throughout its own reductions (`exp`'s `k`, `sinpi`'s `q`'s cheaper
+/// sibling, etc.), exposed standalone for callers building their own
+/// periodic reductions. Adding `1.5*2^23` forces the sum to round to an
+/// integer at that magnitude (ties resolved by the hardware's default
+/// round-to-nearest-even, unlike `f32::round`'s ties-away-from-zero,
+/// which needs extra emulation instructions), and subtracting the same
+/// constant back off reveals that integer as a plain `f32` -- one `fma`
+/// and one subtract, versus `.round()`'s multi-instruction ties-away
+/// path. Exact only up to `|x| <= 2^22`: past that the *combined*
+/// magnitude `x + 1.5*2^23` needs more than 23 mantissa bits to keep
+/// distinguishing integers one apart, so the addition itself starts
+/// rounding to a coarser grid -- verified directly, not assumed: at
+/// `x=5_000_001.0` (already an exact integer, no rounding even needed)
+/// this returns `5_000_000.0`, off by one, not `x` unchanged. No
+/// guarantee of any kind past the documented bound, same convention as
+/// this crate's other `_unchecked`-style contracts.
+///
+/// The trailing `.copysign(x)` fixes a real sign-of-zero gap the bare
+/// idiom has on its own: for any negative `x` that rounds to zero
+/// (`x` in `[-0.5, 0)`), `x + 1.5*2^23` rounds to *exactly*
+/// `1.5*2^23` -- subtracting the same constant back off is then
+/// `1.5*2^23 - 1.5*2^23`, which IEEE754 always resolves to `+0.0`
+/// regardless of `x`'s own sign, not the `-0.0` correctly-rounded
+/// output needs. Caught by a real exhaustive sweep before shipping
+/// (`round_ties_even`-vs-bare-idiom mismatches: 0 in magnitude, but
+/// ~1.057 billion in sign, every one confined to `|x| <= 0.5`) --
+/// this crate's ~16 *internal* call sites never needed this fix
+/// (their own reductions only ever consume the rounded integer's
+/// *value*, e.g. as an exponent, where `0` and `-0` are
+/// interchangeable), which is exactly why the gap went unnoticed
+/// until this function's contract had to stand on its own for a
+/// general-purpose caller. `copysign` is a no-op for any nonzero
+/// result (reapplying the sign the subtraction already got right), so
+/// this only ever changes the zero case.
+#[inline(always)]
+pub fn fast_round_int(x: f32) -> f32 {
+    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+    (fma(x, 1.0, ROUND_MAGIC) - ROUND_MAGIC).copysign(x)
+}
+
 // Shared denormal handling for log_2/ln/log10/log2_df: scale a denormal
 // input up by 2^24 before the single normal-path evaluation, tracking
 // the compensating exponent offset to fold back in afterwards. Macro,

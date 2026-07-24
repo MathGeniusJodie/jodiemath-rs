@@ -81,6 +81,11 @@ macro_rules! throughput_fn {
 latency_fn!(lat_nop, "nop_latency", |x: f32| black_box(x));
 throughput_fn!(thr_nop, "nop_throughput", |x: f32| x);
 
+latency_fn!(lat_fast_round_int, "fast_round_int_latency", fast_round_int);
+throughput_fn!(thr_fast_round_int, "fast_round_int_throughput", fast_round_int);
+latency_fn!(lat_std_round, "std_round_latency", |x: f32| x.round());
+throughput_fn!(thr_std_round, "std_round_throughput", |x: f32| x.round());
+
 latency_fn!(lat_cbrt, "cbrt_latency", cbrt_normal);
 throughput_fn!(thr_cbrt, "cbrt_throughput", cbrt);
 
@@ -688,6 +693,8 @@ fn main() {
 
     run_all!(
         lat_nop, thr_nop;
+        lat_fast_round_int, thr_fast_round_int;
+        lat_std_round, thr_std_round;
         lat_cbrt, thr_cbrt;
         lat_cbrt_unchecked, thr_cbrt_unchecked;
         lat_cbrt_accurate, thr_cbrt_accurate;
