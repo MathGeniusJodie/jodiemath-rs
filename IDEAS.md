@@ -997,6 +997,27 @@ what shipped.
   worse) and accuracy split the other way (cosh fine, sinh regressed ~12x
   avg ulp). When two functions share a reassociated intermediate, check
   accuracy for both independently.
+- **Public `sinh_cosh` pair function** (idea #33, share one `exp_pos_neg`
+  call between both outputs instead of paying its reduction/poly/field
+  split twice): implemented as a literal transcription of `sinh`'s and
+  `cosh`'s own bodies calling `exp_pos_neg` once; bit-identical to calling
+  both separately by construction, confirmed over a real exhaustive
+  2^32-pattern sweep (0 mismatches). But the idea's own premise — that
+  callers needing both today pay the reduction *twice* — is false: `mca`
+  reported `sinh_cosh` and a naive `sinh(x) + cosh(x)` at exactly the same
+  latency (60.00 cyc) and throughput (2.219 cyc/elem), and a direct
+  `--emit=asm` diff of both mca regions showed not just matching op
+  counts but an *identical* opcode sequence, 102/102 instructions in the
+  same order — `exp_pos_neg` is `#[inline(always)]` and a pure function
+  of `x`, so once `sinh(x)` and `cosh(x)` both inline at the same call
+  site, LLVM's GVN/CSE already merges the two identical reduction+poly
+  computations for free. Same no-op class as the `koff-free
+  unchecked-log fast path` and `atan2's bothzero/hpisignx` entries above
+  (compiler already does it) — not shipped, since a new public function
+  with zero measured benefit over the existing composition is pure added
+  surface area. Reverted (`git checkout --`). Only relevant if a future
+  caller needs the two outputs from two *non-inlinable* call sites (e.g.
+  across a real function-pointer boundary) where CSE can't reach.
 - **exp_pos_neg_checked_half: fold the ×0.5 into the integer reciprocal
   trick** (backlog idea #17): `t1*0.5`/`t1n*0.5` as exact exponent-field
   decrements (`t1.to_bits() - 0x0080_0000`, `0x7E80_0000 - t1.to_bits()`)
@@ -1757,8 +1778,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     t2 instead, or pre-scale p): the rejected version's accuracy win
     (max 3→2, cascading to expm1/sinh/cosh/tanh) was fully real — only
     fma/mul port contention killed it.
-33. **Public `sinhcosh` pair function**: exp_pos_neg already computes
-    both — callers needing both pay one reduction instead of two.
 36. **rlibm-style discrete rounding-interval LP extended to ln/log10**
     (same 2^23 reduced-input multiplicity as the existing log_2 entry).
 38. **softplus fused kernel**: one fitted poly for ln(1+2^-t) over the
