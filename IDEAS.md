@@ -273,6 +273,34 @@ what shipped.
   paper: precomputing `t1*t2` off the critical path would break the
   `exp(88.37628)` edgecheck by prematurely overflowing before the sub-1
   poly factor brings it back down.
+  **Re-tested (idea #24, "different port placement"): both proposed
+  variants re-fail, and a fresh direct probe re-confirms both original
+  findings independently.** The overflow claim: reconfirmed with a
+  standalone f32 probe (not the crate's own code) stepping through
+  `exp`'s reduction near its domain ceiling -- at `x=88.376274`,
+  `t1=t2=1.8446744e19` and `t1*t2` alone is `inf`, while the real
+  interleaved `p*t1*t2` correctly lands on `2.4061984e38` (finite);
+  "pre-scale p" is a real correctness bug, not just a paper concern. The
+  port-contention claim: re-derived the exact op-count algebra by hand
+  (counting the reduction's own ops separately) -- both the original
+  direct form and the weave form cost the same 9 total ops (4 mul + 4
+  fma + 1 add vs 4 mul + 5 fma), the weave just trades the free `add`
+  for a 5th `fma`, matching "lateral shift onto busier ports" exactly.
+  Swapping which of `t1`/`t2` gets woven in (idea #24's specific
+  proposal) doesn't change this trade at all -- they play symmetric
+  roles in the final combine, so whichever one is folded into the poly,
+  the total op count and fma-port pressure are identical either way.
+  Tested empirically anyway rather than trusting the symmetry argument
+  alone: first attempt (two new standalone `#[doc(hidden)]` scratch
+  functions, weave-into-t1 and weave-into-t2, coexisting in the same
+  `mca_target.rs`) measured throughput 1.274/1.303 -- a real-looking
+  *improvement*, contradicting the original entry. Directly replacing
+  `exp`'s own body with the identical weave logic, tested in isolation
+  (no coexisting sibling scratch fn), reproduced the original 1.393
+  regression exactly, three separate times. The standalone-siblings test
+  was a methodology artifact, not a real signal -- see
+  [[jodiemath-mca-coexisting-scratch-artifact]]. Not shipped, on both
+  counts, exactly as originally found.
 - **exp10 third Cody-Waite reduction word**: already tight (avg
   0.0343/max ulp 2, 2.2B+ samples) — minimal headroom for a third word to
   collect, not worth the extra fma.
@@ -1774,10 +1802,6 @@ an idea revisits a rejection, the differing mechanism is stated.
     where `k` still never reaches the split-requiring edge) with the
     *same* poly, unrefit. Not pursued further given #112 reaches the
     same single-field destination with strictly less risk.
-24. **exp t1-weave revisit with different port placement** (weave into
-    t2 instead, or pre-scale p): the rejected version's accuracy win
-    (max 3→2, cascading to expm1/sinh/cosh/tanh) was fully real — only
-    fma/mul port contention killed it.
 36. **rlibm-style discrete rounding-interval LP extended to ln/log10**
     (same 2^23 reduced-input multiplicity as the existing log_2 entry).
 38. **softplus fused kernel**: one fitted poly for ln(1+2^-t) over the
