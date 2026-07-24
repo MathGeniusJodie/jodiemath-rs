@@ -805,7 +805,13 @@ what shipped.
 - **erfc's n/d rational Horner→Estrin**: small theoretical win, measured
   as a wash on speed plus a real accuracy cost (avg +2.7%).
 - **erf's near-zero Padé branch refit / tail branch (erf_poly) refit**:
-  both — max ulp unchanged, avg moved <0.3%. No headroom.
+  both — max ulp unchanged, avg moved <0.3%. No headroom. Same
+  conclusion reached independently via a degree-shed screen (idea #4):
+  erf_poly's own worst x is always in the Padé branch (xa<0.28), never
+  erf_poly's own branch, so it isn't even erf's binding constraint --
+  and dropping deg 6→5 idealizes to 6.35 ulp-equivalent, already past
+  erf_poly's own current ~4-5 ulp range on the branch it does own. Not
+  attempted.
 - **Same near-zero branch, LP numerator refit**: isolated fit predicted an
   84% avg improvement, but real fuzz found a *regression* (0.317→0.325),
   worst case landing right at the 0.28 branch crossover with erf_poly.
@@ -983,6 +989,12 @@ what shipped.
 - **atan_latency's poly LP refit**: isolated fit predicted a modest 6%
   improvement — too weak a signal, found nothing real (avg ulp 0.0516 vs
   0.0517, statistically identical).
+- **atan_latency degree-shed (idea #4)**: screened, not implemented --
+  dropping deg 8→7 (in u=r^2) idealized to 1.41 ulp-equivalent against a
+  real max ulp of 3, only a 2.1x margin (under this crate's own ~10x
+  "automatically safe" bar), and the poly's already "at its LP optimum"
+  per the entry above. Too thin to risk; skipped in favor of `ln`/log10
+  (see lib.rs/git log), which had genuine headroom.
 - **atan_poly 4/4 Pade bump, properly seeded** (backlog idea #59):
   scipy `least_squares` (plain L2, multi-start, and an IRLS-style
   max-reweighted approximation to minimax, three separate attempts)
@@ -1756,10 +1768,6 @@ an idea revisits a rejection, the differing mechanism is stated.
    homegrown fpminimax, since sollya isn't installed).
 3. **1-D exhaustive ±few-hundred-ulp scan of each poly's final combine
    constant** scored on the real fuzz — the cheap slice of #1.
-4. **Degree-shed sweep with the max-capped weighted-LP machinery** (the
-   rejected degree probes used plain lolremez minimax, a weaker tool):
-   ln/log10 (deg 9), atan_latency (deg 17), erf_poly — can any drop a
-   term while holding max ulp?
 5. **Per-caller Pade refit where domains genuinely differ**: exp2m1's
    Pade argument is y=x·ln2, |y|<0.347 — narrower than expm1/tanh's
    shared |y|<0.5 fit. (The rejected decouplings — sinf_poly,

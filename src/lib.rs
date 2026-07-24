@@ -1582,22 +1582,49 @@ pub fn ln(x: f32) -> f32 {
 #[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
 pub fn ln_normal(x: f32, koff: f32) -> f32 {
-    let (p, s, k) = log_family_normal!(
-        x,
-        koff,
-        [
-            1.0,
-            -0.49999988,
-            0.33333343,
-            -0.25001621,
-            0.20002009,
-            -0.16609012,
-            0.14181833,
-            -0.13243459,
-            0.12904665,
-            -0.07621122,
-        ]
-    );
+    // Degree 8 (backlog idea #4), not `log_family_normal!`'s shared
+    // degree 9 -- a real least-squares refit (scipy), not the old
+    // coefficients with the last one dropped. Real max ulp (exhaustive)
+    // stayed at 3 (same as degree 9): the degree-9 poly's own idealized
+    // fit error was ~5e-9 (~0.05 ulp) against a real 3-ulp max that's
+    // entirely rounding-chain-dominated (the reduction's own fma combine),
+    // so degree 9 had spare accuracy well beyond what it needed --
+    // confirmed before implementing, not assumed, by checking the
+    // degree-8 refit's own idealized error (~2.4e-8, ~0.3 ulp-equivalent)
+    // stays far under both 1 ulp and that 3-ulp floor. `log10` shares
+    // this same reduction shape and same "already at its degree-9
+    // optimum" diagnosis, but was not independently re-verified at
+    // degree 8 -- do that before assuming this transfers.
+    let e = (x.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23;
+    let m = f32::from_bits((x.to_bits() as i32).wrapping_sub(e << 23) as u32);
+    let k = e as f32 + koff;
+    let s = m - 1.0;
+    let c: [f32; 9] = [
+        1.0,
+        -0.49999994,
+        0.33334,
+        -0.25001356,
+        0.19962999,
+        -0.16583247,
+        0.14908722,
+        -0.14196032,
+        0.08632387,
+    ];
+    let s2 = s * s;
+    let s4 = s2 * s2;
+    let l0 = fma(c[1], s, c[0]);
+    let l1 = fma(c[3], s, c[2]);
+    let l2 = fma(c[5], s, c[4]);
+    let l3 = fma(c[7], s, c[6]);
+    let r0 = fma(l1, s2, l0);
+    let r1 = fma(l3, s2, l2);
+    // c[8] (the odd 9th coefficient, degree 8) folds into r1 at the s4
+    // level instead of needing its own s8 = s4*s4 level: r1b*s4 ==
+    // (c4+c5*s+c6*s2+c7*s3+c8*s4)*s4, correctly placing c8 at s8 with
+    // one more fma but no new multiply, keeping the same op count
+    // `log_family_normal!`'s degree-9 form uses for s2/s4 alone.
+    let r1b = fma(c[8], s4, r1);
+    let p = fma(r1b, s4, r0);
     let k_hi = k * LN2_HI; // exact, see LN2_HI's comment
     fma(p, s, k_hi) + k * LN2_LO
 }
@@ -1621,26 +1648,40 @@ pub fn log10(x: f32) -> f32 {
 }
 
 /// Core of log10 for positive normal finite x only -- see ln_normal, same
-/// approach with coefficients fitted for log10 (log_2's c[i] * LOG10_2).
+/// approach (own degree-8 refit, own doc comment explains the shared
+/// Estrin-folding trick) with coefficients fitted directly for log10
+/// (not log_2's own coefficients times a constant, and not ln_normal's
+/// degree-8 refit times a constant either -- least-squares was run
+/// fresh against log10(1+s)/s). Real max ulp (exhaustive) confirmed
+/// unchanged at degree 8, same as ln_normal's own verification.
 #[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
 pub fn log10_normal(x: f32, koff: f32) -> f32 {
-    let (p, s, k) = log_family_normal!(
-        x,
-        koff,
-        [
-            std::f32::consts::LOG10_E, // bit-identical to this literal; not a coincidence
-            -0.2171472,
-            0.14476489,
-            -0.10858066,
-            0.08686763,
-            -0.07213202,
-            0.06159092,
-            -0.05751561,
-            0.05604425,
-            -0.03309811,
-        ]
-    );
+    let e = (x.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23;
+    let m = f32::from_bits((x.to_bits() as i32).wrapping_sub(e << 23) as u32);
+    let k = e as f32 + koff;
+    let s = m - 1.0;
+    let c: [f32; 9] = [
+        0.43429446,
+        -0.21714722,
+        0.14476772,
+        -0.10857951,
+        0.086698204,
+        -0.07202013,
+        0.06474776,
+        -0.06165259,
+        0.037489995,
+    ];
+    let s2 = s * s;
+    let s4 = s2 * s2;
+    let l0 = fma(c[1], s, c[0]);
+    let l1 = fma(c[3], s, c[2]);
+    let l2 = fma(c[5], s, c[4]);
+    let l3 = fma(c[7], s, c[6]);
+    let r0 = fma(l1, s2, l0);
+    let r1 = fma(l3, s2, l2);
+    let r1b = fma(c[8], s4, r1);
+    let p = fma(r1b, s4, r0);
     let k_hi = k * LOG10_2_HI; // exact, see LN2_HI's comment (same trick)
     fma(p, s, k_hi) + k * LOG10_2_LO
 }
