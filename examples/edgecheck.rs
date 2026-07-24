@@ -584,6 +584,16 @@ fn main() {
     // pinned here so it can't silently come back.
     check_finite("exp(88.37628)", exp(88.37628));
 
+    // exp_scaled (backlog idea #117): e^x*2^s, s folded into exp's own
+    // exponent-field split.
+    check("exp_scaled(0,0)", exp_scaled(0.0, 0), 1.0);
+    check("exp_scaled(0,1)", exp_scaled(0.0, 1), 2.0);
+    check("exp_scaled(0,-1)", exp_scaled(0.0, -1), 0.5);
+    check_bounded("exp_scaled(1,0)-exp(1)", exp_scaled(1.0, 0) - exp(1.0), 1e-6);
+    check_bounded("exp_scaled(10,5)-1", exp_scaled(10.0, 5) / (exp(10.0) * 32.0) - 1.0, 1e-5);
+    check_bounded("exp_scaled(-10,-5)-1", exp_scaled(-10.0, -5) / (exp(-10.0) / 32.0) - 1.0, 1e-5);
+    check("exp_scaled(nan,0)", exp_scaled(f32::NAN, 0), f32::NAN);
+
     // exp_narrow (backlog ideas #23/#112): same reduction/poly as exp,
     // single exponent field instead of the split, valid only up to
     // 88.37627 (one ulp below the k=128 edge above) -- pinned at its own

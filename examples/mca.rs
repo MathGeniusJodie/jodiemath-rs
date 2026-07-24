@@ -163,6 +163,7 @@ fn main() {
         "log2p1",
         "log10p1",
         "exp",
+        "exp_scaled",
         "exp_narrow",
         "exp_checked",
         "expm1",

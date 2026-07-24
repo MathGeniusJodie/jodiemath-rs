@@ -1928,6 +1928,30 @@ pub fn exp(x: f32) -> f32 {
     p * t1 * t2
 }
 
+/// `e^x * 2^s` (backlog idea #117): a softmax/normalization building
+/// block (rescaling a running exponential sum by a power of two costs
+/// nothing extra here, instead of a separate multiply by `2^s` after an
+/// ordinary `exp(x)`). Identical to [`exp`] except `s` folds directly
+/// into the exponent-field split: `exp`'s own `k` already becomes two
+/// exponent-field words via [`exp2_field_split`], and that split doesn't
+/// care whether `k` came from `x`'s own reduction alone or has an extra
+/// integer folded in first -- `exp2_field_split(k + s)` gives `2^(k+s)`
+/// exactly as cheaply as `2^k`, so this is `exp`'s own body with one
+/// `+ s as f32` added, not a separate multiply after the fact. Same
+/// domain/accuracy as `exp` for `s=0`; for nonzero `s`, valid while
+/// `k+s` itself stays within `exp2_field_split`'s own wide-but-not-
+/// unlimited range (softmax-style rescaling needs nowhere near that).
+#[inline(always)]
+pub fn exp_scaled(x: f32, s: i32) -> f32 {
+    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+    let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
+    let r = fma(-k, LN2_HI, x);
+    let r = fma(-k, LN2_LO, r);
+    let p = exp_r_poly!(r);
+    let (t1, t2) = exp2_field_split(k + s as f32);
+    p * t1 * t2
+}
+
 /// exp(x), single-exponent-field tier (backlog ideas #23/#112): same
 /// reduction and poly as [`exp`] (residual range unchanged, no refit
 /// needed), but skips `exp2_field_split` entirely -- valid only while

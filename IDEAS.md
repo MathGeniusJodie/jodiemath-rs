@@ -1996,8 +1996,6 @@ an idea revisits a rejection, the differing mechanism is stated.
      to capture all of it.
 116. **Public exp2_kf(k, f) pre-reduced primitive** — exp10, powf, and
      user custom-base kernels skip the redundant floor/frac.
-117. **exp_scaled(x, s) = e^x · 2^s** with s folded into the field
-     split for free — softmax/normalization building block.
 #### Batch 2: trig
 
 125. **Integer-domain parity pipeline end-to-end** for

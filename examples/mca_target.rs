@@ -257,6 +257,9 @@ throughput_fn!(thr_log10p1, "log10p1_throughput", log10p1);
 latency_fn!(lat_exp, "exp_latency", exp);
 throughput_fn!(thr_exp, "exp_throughput", exp);
 
+latency_fn!(lat_exp_scaled, "exp_scaled_latency", |x: f32| exp_scaled(x, 3));
+throughput_fn!(thr_exp_scaled, "exp_scaled_throughput", |x: f32| exp_scaled(x, 3));
+
 latency_fn!(lat_exp_narrow, "exp_narrow_latency", exp_narrow);
 throughput_fn!(thr_exp_narrow, "exp_narrow_throughput", exp_narrow);
 
@@ -835,6 +838,7 @@ fn main() {
         lat_log2p1, thr_log2p1;
         lat_log10p1, thr_log10p1;
         lat_exp, thr_exp;
+        lat_exp_scaled, thr_exp_scaled;
         lat_exp_narrow, thr_exp_narrow;
         lat_exp_checked, thr_exp_checked;
         lat_expm1, thr_expm1;

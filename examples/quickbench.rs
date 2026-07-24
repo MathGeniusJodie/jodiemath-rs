@@ -180,6 +180,7 @@ fn main() {
     bench!("std log1p", |x: f32| x.ln_1p());
     bench!("log2p1", log2p1);
     bench!("exp", exp);
+    bench!("exp_scaled", |x: f32| exp_scaled(x, 3));
     bench!("std exp", |x: f32| x.exp());
     bench!("exp_narrow", exp_narrow);
     bench!("exp_checked", exp_checked);
