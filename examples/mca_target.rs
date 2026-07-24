@@ -180,6 +180,11 @@ throughput_fn!(thr_cos_checked, "cos_checked_throughput", cos_checked);
 latency_fn!(lat_wrap_pi, "wrap_pi_latency", wrap_pi);
 throughput_fn!(thr_wrap_pi, "wrap_pi_throughput", wrap_pi);
 
+latency_fn!(lat_sin_prereduced, "sin_prereduced_latency", sin_prereduced);
+throughput_fn!(thr_sin_prereduced, "sin_prereduced_throughput", sin_prereduced);
+latency_fn!(lat_cos_prereduced, "cos_prereduced_latency", cos_prereduced);
+throughput_fn!(thr_cos_prereduced, "cos_prereduced_throughput", cos_prereduced);
+
 latency_fn!(lat_sinpi, "sinpi_latency", sinpi);
 throughput_fn!(thr_sinpi, "sinpi_throughput", sinpi);
 
@@ -804,6 +809,8 @@ fn main() {
         lat_cos, thr_cos;
         lat_cos_checked, thr_cos_checked;
         lat_wrap_pi, thr_wrap_pi;
+        lat_sin_prereduced, thr_sin_prereduced;
+        lat_cos_prereduced, thr_cos_prereduced;
         lat_sinpi, thr_sinpi;
         lat_sinpi_unchecked, thr_sinpi_unchecked;
         lat_cospi, thr_cospi;

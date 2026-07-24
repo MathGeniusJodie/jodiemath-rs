@@ -1314,6 +1314,39 @@ pub fn wrap_pi(x: f32) -> f32 {
     }
 }
 
+/// sin(r) for r already reduced to `[-pi/2, pi/2]` (backlog idea #127,
+/// the trig analog of the still-backlog "public exp2_kf pre-reduced
+/// primitive", idea #116): callers who already have their own accurate
+/// reduction (e.g. via
+/// [`reduce_pi_checked`]/[`reduce_pi_half_checked`], or their own) skip
+/// re-deriving this crate's own reduction and its sign combine, since
+/// [`sin`]/[`cos`]/[`sin_checked`]/[`cos_checked`] all ultimately
+/// evaluate this exact same polynomial on their own respective `r` --
+/// the two functions only differ in *reduction* and the parity-based
+/// sign combine after, never in this step (verified directly against
+/// `cos`'s own source: it computes `r` via its own `k=round(x/pi-0.5)`
+/// convention, then calls the identical poly before its own separate
+/// sign flip). No domain check: garbage in, garbage out for `|r| >
+/// pi/2`, same contract as this crate's other `_unchecked`/prereduced
+/// primitives.
+#[inline(always)]
+pub fn sin_prereduced(r: f32) -> f32 {
+    sinf_poly(r)
+}
+
+/// cos-side companion to [`sin_prereduced`] (backlog idea #127) --
+/// bit-identical to it. Kept as its own named function anyway: a caller
+/// who reduced `x` via cosine's own `k=round(x/pi-0.5)` convention (not
+/// sine's `round(x/pi)`) is thinking in terms of "the cosine step", and
+/// a function named `sin_prereduced` is easy to miss even though it's
+/// exactly what's needed -- the same discoverability reasoning as
+/// [`cabs`]/[`carg`] being named aliases for [`hypot_checked`]/[`atan2`]
+/// rather than expecting callers to know the underlying identity.
+#[inline(always)]
+pub fn cos_prereduced(r: f32) -> f32 {
+    sinf_poly(r)
+}
+
 /// tan(x), full-range gradual degradation -- `sin_checked(x) /
 /// cos_checked(x)`, mirroring `tanpi`/`tand`'s own plain-composition
 /// pattern (period cancellation, poles handled for free by IEEE754

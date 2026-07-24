@@ -304,6 +304,23 @@ fn main() {
     }
     check("wrap_pi(nan)", wrap_pi(f32::NAN), f32::NAN);
 
+    // sin_prereduced/cos_prereduced (backlog idea #127): bit-identical
+    // to each other (both are exactly sinf_poly) -- see their own doc
+    // comments for why two names exist anyway. Checked by reconstructing
+    // sin_checked/cos_checked from reduce_pi_checked/
+    // reduce_pi_half_checked + these (within 1 ulp: sin_checked/
+    // cos_checked's own extra `.clamp(-1,1)` isn't part of this lower-
+    // level primitive's contract).
+    check("sin_prereduced(0)", sin_prereduced(0.0), 0.0);
+    check("cos_prereduced(0)", cos_prereduced(0.0), 0.0);
+    check("sin_prereduced(cos_prereduced same fn)", sin_prereduced(0.7), cos_prereduced(0.7));
+    for &x in &[0.3f32, -0.9, 1.5, -1.5, 100.0, -1e6] {
+        let (r, sign) = reduce_pi_checked(x);
+        check_bounded(&format!("sin_prereduced reconstructs sin_checked({x})"), sign * sin_prereduced(r) - sin_checked(x), 1e-6);
+        let (rc, signc) = reduce_pi_half_checked(x);
+        check_bounded(&format!("cos_prereduced reconstructs cos_checked({x})"), signc * cos_prereduced(rc) - cos_checked(x), 1e-6);
+    }
+
     // sinpi/cospi: argument in half-turns, q=round(x)/r=x-q both exact in
     // f32, so (unlike sin/cos) there's no accuracy cliff anywhere -- these
     // pin the full-range "always finite, exact at exact half-integers"

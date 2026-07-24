@@ -2004,10 +2004,6 @@ an idea revisits a rejection, the differing mechanism is stated.
      sin_checked/cos_checked (parities as bits, XOR combine, direct
      sign mask) — composes #45/#46; deletes the float compare+select
      flip.
-127. **sin_prereduced/cos_prereduced public** (r ∈ [−π/2, π/2]
-     contract = sinf_poly + documented parity conventions) — for
-     callers who already did their own reduction; the trig analog of
-     #116.
 #### Batch 2: roots / hypot / geometry
 
 136. **normalize2/normalize3 *slice* kernels** (rhypot + scales — the

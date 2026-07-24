@@ -151,6 +151,8 @@ fn main() {
         r + s
     });
     bench!("wrap_pi", wrap_pi);
+    bench!("sin_prereduced", sin_prereduced);
+    bench!("cos_prereduced", cos_prereduced);
     bench!("sinpi", sinpi);
     bench!("sinpi_unchecked", sinpi_unchecked);
     bench!("cospi", cospi);
