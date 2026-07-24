@@ -1902,8 +1902,6 @@ an idea revisits a rejection, the differing mechanism is stated.
 76. **Constant-base powf slice**: precompute log2_df(x) once per slice;
     per-element work drops to a Df32 multiply + exp2 (slice-tier
     candidate, fixed-base workloads).
-77. **pown_16 tier** (|n| ≤ 65535): 16 iterations — pown_small's 8-iter
-    precedent measured ~4-6x over pown.
 82. **Const-y remainder/fmod slice variant**: precompute 1/y,
     `q = round(x * (1/y))` — trades the per-element division for a
     multiply; the changed q rounding needs an accuracy screen

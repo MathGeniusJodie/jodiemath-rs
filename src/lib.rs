@@ -3833,6 +3833,20 @@ pub fn pown_small(x: f32, n: i32) -> f32 {
     pown_body!(x, n, 8u32)
 }
 
+/// `pown` restricted to `|n| <= 65535` (backlog idea #77): same lever as
+/// `pown_small` above, one tier wider -- 16 unrolled iterations instead
+/// of 32 (`65535` is `2^16-1`), for callers whose exponents exceed
+/// `pown_small`'s `|n| <= 255` contract but still don't need `pown`'s
+/// full `i32::MIN`-covering range. Bit-identical to `pown` whenever the
+/// contract holds. Same harness limitation as `pown_small` (LLVM
+/// branch-specializes the multi-exit-path body against mca's
+/// uniform-`n` shape) -- not wired into `examples/mca.rs`/
+/// `mca_target.rs`; use quickbench for this one too.
+#[inline(always)]
+pub fn pown_16(x: f32, n: i32) -> f32 {
+    pown_body!(x, n, 16u32)
+}
+
 /// `pown_small`, but with `base`'s own repeated-squaring chain carried in
 /// `Df32` (compensated, mantissa-only) instead of plain `f32`: each
 /// squaring's rounding error is exactly recovered instead of silently

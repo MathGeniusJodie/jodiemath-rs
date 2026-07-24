@@ -265,6 +265,15 @@ fn main() {
         bench!("pown", |x: f32| pown(x, n));
         bench!("pown_small", |x: f32| pown_small(x, n));
         bench!("pown_small_accurate", |x: f32| pown_small_accurate(x, n));
+        bench!("pown_16", |x: f32| pown_16(x, n));
+    }
+    {
+        // pown_16's own distinct value proposition: an exponent beyond
+        // pown_small's |n|<=255 contract (pown_small isn't valid here at
+        // all), still well inside pown_16's |n|<=65535.
+        let n = black_box(1000);
+        bench!("pown (n=1000)", |x: f32| pown(x, n));
+        bench!("pown_16 (n=1000)", |x: f32| pown_16(x, n));
     }
     // N baked in at compile time (not black_box'd -- that's the whole
     // point of pown_const, unlike pown/pown_small above).

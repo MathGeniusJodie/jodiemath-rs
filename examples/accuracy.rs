@@ -1482,6 +1482,13 @@ fn main() {
         pown_sweep(&pown_small_accurate, -8, 8, "pown_small_accurate (|n|<=8)");
         pown_sweep(&pown_small_accurate, -64, 64, "pown_small_accurate (|n|<=64)");
         pown_sweep(&pown_small_accurate, -255, 255, "pown_small_accurate (|n|<=255)");
+        // pown_16 (backlog idea #77): |n| <= 65535 contract -- bit-identical
+        // to pown whenever both are in-domain, so the shared |n|<=8/|n|<=64
+        // buckets also double as a regression check, same as pown_small's
+        // own entries above.
+        pown_sweep(&pown_16, -8, 8, "pown_16 (|n|<=8)");
+        pown_sweep(&pown_16, -64, 64, "pown_16 (|n|<=64)");
+        pown_sweep(&pown_16, -65535, 65535, "pown_16 (|n|<=65535)");
     }
     if run("powf") {
         // x != 0 (x == 0 is its own exact case, not a fuzz-density target)

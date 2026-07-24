@@ -1311,6 +1311,29 @@ fn main() {
     check("pown_small(2,255)", pown_small(2.0, 255), pown(2.0, 255));
     check("pown_small(2,-255)", pown_small(2.0, -255), pown(2.0, -255));
 
+    // pown_16 (backlog idea #77): same representative cases as pown/
+    // pown_small above, one tier wider (|n| <= 65535).
+    check("pown_16(2,3)", pown_16(2.0, 3), 8.0);
+    check("pown_16(2,0)", pown_16(2.0, 0), 1.0);
+    check("pown_16(0,0)", pown_16(0.0, 0), 1.0);
+    check("pown_16(0,5)", pown_16(0.0, 5), 0.0);
+    check("pown_16(0,-3)", pown_16(0.0, -3), f32::INFINITY);
+    check("pown_16(-0,3)", pown_16(-0.0, 3), -0.0);
+    check("pown_16(-0,-3)", pown_16(-0.0, -3), f32::NEG_INFINITY);
+    check("pown_16(-2,3)", pown_16(-2.0, 3), -8.0);
+    check("pown_16(-2,4)", pown_16(-2.0, 4), 16.0);
+    check("pown_16(2,-1)", pown_16(2.0, -1), 0.5);
+    check("pown_16(nan,2)", pown_16(f32::NAN, 2), f32::NAN);
+    check("pown_16(inf,2)", pown_16(f32::INFINITY, 2), f32::INFINITY);
+    check("pown_16(inf,-2)", pown_16(f32::INFINITY, -2), 0.0);
+    check("pown_16(-inf,3)", pown_16(f32::NEG_INFINITY, 3), f32::NEG_INFINITY);
+    check("pown_16(-inf,-3)", pown_16(f32::NEG_INFINITY, -3), -0.0);
+    // Beyond pown_small's contract but inside pown_16's own |n| <= 65535.
+    check("pown_16(2,1000)", pown_16(2.0, 1000), pown(2.0, 1000));
+    // Boundary of pown_16's own contract.
+    check("pown_16(1.001,65535)", pown_16(1.001, 65535), pown(1.001, 65535));
+    check("pown_16(1.001,-65535)", pown_16(1.001, -65535), pown(1.001, -65535));
+
     // pown_small_accurate: Df32-compensated squaring chain (idea #78),
     // same |n| <= 255 contract and same special-value behavior as
     // pown_small (verified against it directly for every case its own
