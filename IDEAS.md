@@ -331,6 +331,39 @@ what shipped.
   `exp2_checked_throughput` and 4 downstream callers (`erf`/`erfc`/`powf`
   throughput regions). Any `as <int>` cast in a hot path needs a
   codegen_check run immediately, regardless of apparent runtime bounds.
+  **Retested 2026-07-27 via ideas #13/#14 (`to_int_unchecked`), which
+  exist specifically to rescue this rejection — the de-vectorization is
+  genuinely fixable, and the idea still loses. Now rejected on cost, not
+  codegen.**
+  - `f32::to_int_unchecked` lowers exactly as #14 predicted: the region
+    gets **2 packed `vcvttps2dq`** and *zero* scalar converts, with
+    packed `vpsrad`/`vpsubd`/`vpaddd`/`vpslld` for the field math, and
+    `codegen_check` passes all 148 regions. So the "LLVM can't prove the
+    bound" obstacle is real but avoidable — this closes that question.
+  - NaN is the subtlety worth recording: `to_int_unchecked` on NaN is
+    **UB**, and `.clamp()` does *not* remove NaN (Rust's clamp propagates
+    it). Handled by feeding the integer path a NaN-quashed copy via
+    `k.max(-151.0).min(128.0)` (Rust's `f32::max`/`min` return the
+    non-NaN operand), while NaN still reaches the result through `f`/`q`
+    exactly as the shipped version already relies on. Verified:
+    `exp2_checked(nan) = NaN` and all edgecheck pins pass.
+  - But it is a real regression everywhere: `exp2_checked` throughput
+    1.399 -> **1.584 (+13.2%)**, latency 43.06 -> 48.06; `erfc` 2.437 ->
+    **2.651 (+8.8%)**; `powf` 5.651 -> 5.714 (+1.1%). (`erf`,
+    `exp10_checked` and unchecked `exp2` unchanged — they don't route
+    through this body.)
+  - Root cause, which also predicts the outcome without measuring: the
+    magic-round path is **8 ops** (`fma`+`sub`+`add`+`sub`, then
+    2x`shift`+`and`) versus the integer path's **9** (`max`+`min`+`cvt`,
+    then `>>1`+`sub`+2x(`+127`+`<<23`)). The float trick bakes the
+    exponent bias into the magic constant so `<<8 & MASK` extracts a
+    ready-biased field, while a pure-integer path must add `127` per
+    field explicitly. Same lesson as idea #12's own entry: the de-bias
+    arithmetic isn't redundant scaffolding, it's what makes the field
+    extraction free. The idea #12 hope that moving work onto less
+    contended integer ports would pay for the extra op does not
+    materialize here — `vcvttps2dq` competes for the same ports as the
+    FP ops it replaces.
 - **exp2 poly evaluated as direct `P(f)=2^f` (c0 pinned to exactly 1.0)
   instead of `1+f·Q(f)`**: paper-screening predicted a modest 1-multiply
   combine saving; actually running it (via `tune.rs`'s `tune_fixed0`) found
@@ -1875,11 +1908,29 @@ an idea revisits a rejection, the differing mechanism is stated.
 13. **`core::hint::assert_unchecked` range hints after clamps** so LLVM
     can prove bounds it currently can't — directly targets the rejected
     "k1 from bit-twiddled k" (killed only because LLVM couldn't prove
-    the clamp bound at codegen time).
+    the clamp bound at codegen time). **Not needed for that target:**
+    #14's `to_int_unchecked` solves the codegen half outright (see below),
+    and the target then loses on op count anyway. Still untried as a
+    general technique on other clamped values, but note the motivating
+    case is now closed.
 14. **`f32::to_int_unchecked` where the range is guaranteed**: lowers to
     plain vcvttps2dq (vectorizes), unlike the saturating `as i32` that
     de-vectorized exp2_checked's rejected variant. codegen_check
-    mandatory, pairs with #13.
+    mandatory, pairs with #13. **Tested 2026-07-27 on that exact target.
+    The mechanism works; the optimization it was meant to rescue does
+    not.** Codegen came out exactly as claimed — 2 packed `vcvttps2dq`,
+    zero scalar converts, packed `vpsrad`/`vpsubd`/`vpaddd`/`vpslld`,
+    codegen_check clean across all 148 regions — but `exp2_checked`
+    throughput still regressed 1.399 -> 1.584 (+13.2%), because the
+    integer path needs 9 ops against the magic-round's 8 (it must add the
+    `127` exponent bias per field explicitly, where the float trick bakes
+    it into the magic constant). Full numbers and the NaN-UB caveat
+    (`to_int_unchecked` on NaN is UB and `.clamp()` does *not* strip NaN
+    — quash with `max`/`min`, which return the non-NaN operand) are in
+    the "k1 from bit-twiddled k" entry above. So: keep this in the
+    toolbox as *the* way to get a vectorizing float->int cast, but it
+    doesn't make a pure-integer exponent-field construction competitive
+    with the magic-round idiom.
 15. **lzcnt-based denormal normalization** (`u32::leading_zeros` →
     vplzcntd, AVX-512CD): replace the compare+select 2^24 rescale in the
     log family/cbrt/hypot_checked with an exact shift-based normalize.
