@@ -2430,16 +2430,24 @@ fn exp_pos_neg_half(x: f32) -> (f32, f32) {
 // poly (not routed through the macro, which hardcodes the split) --
 // same standalone-copy precedent as expm1/exp_checked's own reductions.
 #[inline(always)]
-fn exp_pos_neg_narrow(x: f32) -> (f32, f32) {
+fn exp_pos_neg_narrow_half(x: f32) -> (f32, f32) {
     const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
     let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
     let r = fma(-k, LN2_HI, x);
     let r = fma(-k, LN2_LO, r);
-    let c: [f32; 4] = [4.99993e-1, 1.6667245e-1, 4.188372e-2, 8.300987e-3];
+    // Pre-halved, exactly as in `exp_pos_neg_core!` -- see its comment for
+    // why this is free and exact, and `sinh`'s for the premature-overflow
+    // gap it closes.
+    let c: [f32; 4] = [
+        4.99993e-1 * 0.5,
+        1.6667245e-1 * 0.5,
+        4.188372e-2 * 0.5,
+        8.300987e-3 * 0.5,
+    ];
     let r2 = r * r;
     let r4 = r2 * r2;
-    let e = fma(c[2], r4, fma(c[0], r2, 1.0));
-    let o = fma(c[3], r4, fma(c[1], r2, 1.0));
+    let e = fma(c[2], r4, fma(c[0], r2, 0.5));
+    let o = fma(c[3], r4, fma(c[1], r2, 0.5));
     let p_pos = fma(r, o, e);
     let p_neg = fma(-r, o, e);
     let t = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
@@ -2525,8 +2533,8 @@ pub fn cosh(x: f32) -> f32 {
 #[inline(always)]
 pub fn sinh_narrow(x: f32) -> f32 {
     let a = sinh_small(x);
-    let (ep, en) = exp_pos_neg_narrow(x);
-    let b = 0.5 * (ep - en);
+    let (ep, en) = exp_pos_neg_narrow_half(x);
+    let b = ep - en;
     if x.abs() < 0.5 { a } else { b }
 }
 
@@ -2535,8 +2543,8 @@ pub fn sinh_narrow(x: f32) -> f32 {
 #[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
 pub fn cosh_narrow(x: f32) -> f32 {
-    let (ep, en) = exp_pos_neg_narrow(x);
-    0.5 * (ep + en)
+    let (ep, en) = exp_pos_neg_narrow_half(x);
+    ep + en
 }
 
 /// `exp_pos_neg`, but with `x` clamped first so `k = round(x*log2e)`

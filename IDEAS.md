@@ -1121,6 +1121,12 @@ what shipped.
   weighted-LP/minimax tool), not just a bigger scipy fit. Not pursued
   further this session.
 - **Plain atan: port atan_latency's own adopted mulsign-reassociation**
+  — **re-screened under idea #22 on 2026-07-27: does NOT flip.**
+  Reproduces the original numbers almost exactly on rustc
+  1.98.0-nightly: `atan` 1.491 -> 1.529 (+2.5%), `atan2` 1.694 -> 1.731
+  (+2.2%), `carg` +1.4%, with only `atand`/`atanpi` improving (-0.8%).
+  Latency flat. Reverted again. Original entry follows.
+- **Plain atan: port atan_latency's own adopted mulsign-reassociation**
   (backlog idea #16's atan slice): apply `mulsign` to the poly result and
   `FRAC_PI_2` individually, then select/subtract, instead of selecting
   first and applying one final `mulsign`. Bit-exact as expected (same
@@ -1270,6 +1276,12 @@ what shipped.
     `cosh_checked` 58.06 -> 55.06, `coshm1` 70.06 -> 68.06). Throughput
     `cosh_checked` **-7.3%**, `sinh` -1.1%, `sinh_checked` -0.2%,
     `cosh` +0.9%.
+  - **Applied to the narrow tier too** (`exp_pos_neg_narrow_half`, a
+    standalone copy of the same poly): `sinh_narrow` 52.00/1.630 ->
+    **48.00/1.524 (-6.5%)**, `cosh_narrow` 51.00/1.350 ->
+    **47.00/1.274 (-5.6%)** — clean wins on *both* axes here, with
+    `worst_corpus` bit-identical and avg/max ulp unchanged (0.0821/5 and
+    0.0589/5).
   - **`coshm1` +61.6% is an llvm-mca artifact, and this one is provable
     rather than merely suspected** — worth recording as the cleanest
     example yet of the model diverging from the machine. The `coshm1`
