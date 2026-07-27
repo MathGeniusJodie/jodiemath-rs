@@ -1883,6 +1883,20 @@ an idea revisits a rejection, the differing mechanism is stated.
     magic-round, k already sits in kb's low mantissa bits —
     `((kb_bits + C) << 23) & EXPONENT_MASK` replaces the `(k+383)`
     float-add/shift chain with vpaddd/vpslld on less-contended ports.
+    **Prior against this got substantially stronger 2026-07-27**: the
+    closely-related `to_int_unchecked` experiment (see #14 and the "k1 from
+    bit-twiddled k" rejected entry) built a fully-vectorized pure-integer
+    exponent-field construction for `exp2_checked` — packed
+    `vcvttps2dq`/`vpsrad`/`vpaddd`/`vpslld`, codegen_check clean — and it
+    **regressed throughput 13.2%**. The measured reason applies to this
+    idea too: an integer path must add the `127`/`383` exponent bias per
+    field *explicitly*, whereas the magic-round bakes it into the constant
+    so `<< 8 & MASK` extracts a ready-biased field for free. The hoped-for
+    "less-contended ports" saving also failed to appear, because the
+    float->int conversion competes for the same ports as the FP ops it
+    displaces. This doesn't formally falsify the `<< 23` construction
+    (still never implemented), but the port-pressure premise it rests on
+    has now been measured and did not hold.
     Sites: exp10/exp10_checked, exp_r_singlefield (tanh/sigmoid),
     exp2_field_split. Verify negative-k two's-complement wrap;
     codegen_check. **Naive first attempt tried and rejected 2026-07-20**:
