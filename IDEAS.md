@@ -2280,6 +2280,36 @@ core::simd tier exists; each replaces multi-op scalar idioms)
 165. **Saturation-boundary pins**: every clamp constant and overflow
      threshold gets an edgecheck pin at ±1 ulp around it — the
      exp10_checked overflow-at-the-boundary pattern, systematized.
+     **Shipped 2026-07-27** as `examples/saturation_pins.rs`. Result: no
+     new bugs — every clamp is correctly placed.
+     - Sweeps ±64 ulp (not ±1) around each bound, because a misplaced
+       clamp is usually off by a few ulp, so the failure sits just inside
+       or just outside the constant rather than exactly at it. 10
+       functions x their bounds = ~3.4k points, each compared *bitwise*
+       against an f64 reference, plus 20 direct far-outside saturation
+       pins (`f(±1e30)` must equal the mathematical limit, which is the
+       literal exp10_checked failure mode this generalizes).
+     - Clean: `exp2_checked`, `exp10_checked`, `exp_checked`,
+       `expm1_checked`, `exp2m1`, `exp10m1`, `tanh`, `sinh_checked`,
+       `cosh_checked` all worst ≤1 ulp in-window, and all 20 saturation
+       limits exact (`inf`/`0`/`-1`/`±1` as appropriate).
+     - One hit, and it is a *documented accepted gap*, not a new bug:
+       `sigmoid` shows 2098176 ulp at `x ≈ -88.72235`. Its own doc comment
+       states it verbatim — "for `x` in roughly `(-104.7,-88.7)` the true
+       answer is a nonzero denormal but this returns exactly `0`, slightly
+       early saturation on a sliver of denormal-scale outputs". Exempted
+       in the harness by *true-result-is-denormal*, deliberately not by an
+       `x` range, so a new failure at normal output magnitudes still fails
+       the gate (129 points skipped on that basis).
+     - Useful framing the huge ulp number illustrates: at denormal output
+       magnitudes ulp error is ~meaningless as a severity signal (ulp
+       there is 1.4e-45, so a wrong answer of the same order as the value
+       reads as ~2e6 ulp). Any future gate over near-zero outputs wants an
+       absolute or relative-to-magnitude criterion, not raw ulp.
+     - Overlaps idea #166 (denormal-output correctness audit): this pass
+       incidentally establishes that `sigmoid` is the only clamped
+       exp-family function that saturates early into the denormal range;
+       the others reach their true denormal outputs.
 166. **Denormal-output correctness audit**: which functions produce
      correctly-rounded denormal outputs vs garbage (exp2_checked
      documents its behavior; most others are unaudited).
