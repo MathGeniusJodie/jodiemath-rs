@@ -2223,27 +2223,28 @@ an idea revisits a rejection, the differing mechanism is stated.
       its doc comment — so the wrapper's `-inf` arm is dead too.
       `logit` must keep it: `t == 0` at `p == 1` is what makes
       `logit(1) == +inf`.
-    - Bit-identical over all 2^32 inputs, **including NaN payloads**. The
-      obvious further collapse — folding `t <= 0` and NaN into a single
-      `t > 0.0` select, 2 ops cheaper — is bit-identical on all
-      4278190083 non-NaN patterns but canonicalises the 16777213 NaN ones
-      (`t*t` carries the payload through, an `f32::NAN` literal does not).
-      Kept the payload-preserving form; `nan_payload.rs` reports `erfinv`
-      as payload-keeping and that stays true.
-    - mca throughput: `erfinv` 3.815 -> **3.439**, `probit` 4.215 ->
-      **3.591**, `erfc_inv` 4.129 -> **3.533**, `logit` 3.457 ->
-      **3.354**. Against this session's pre-#54d baseline that compounds
-      to `probit` **-28.5%**, `erfc_inv` **-19.2%**, `erfinv` **-17.8%**,
-      `logit` **-10.0%**.
-    - Latency: `erfinv` 111.06 -> **69.14**, `probit` 124.03 -> **81.36**,
-      `erfc_inv` 117.77 -> **74.16** — i.e. #54d's apparent latency
-      "regression" on exactly these three is now not just reversed but
-      well past its own baseline (`erfinv` started at 98.22), which is
+    - **Bit-identical on all 4278190083 non-NaN patterns.** `erfinv`'s
+      `t <= 0` and NaN arms then fold into a *single* `t > 0.0` select
+      (false for both, and both want `NaN`), which canonicalises the NaN
+      it returns instead of forwarding the input's payload — the only
+      difference, on exactly the 16777213 NaN patterns. Taken, per
+      Jodie's rule that a NaN is a NaN (see the `ulp_diff`/`worst_corpus`
+      entries); `nan_payload.rs` now reports `erfinv` as canonicalising,
+      which is simply the new truth, not a regression.
+    - mca throughput, cumulative over #54d + #54f: `probit` 5.021 ->
+      **3.514 (-30.0%)**, `erfinv` 4.185 -> **3.321 (-20.6%)**,
+      `erfc_inv` 4.372 -> **3.514 (-19.6%)**, `logit` 3.728 ->
+      **3.354 (-10.0%)**. The single-select collapse alone is worth
+      `erfinv` -3.4%, `probit` -2.1%, `erfc_inv` -0.5%.
+    - Latency, same cumulative span: `erfinv` 98.22 -> **43.68 (-55.5%)**,
+      `probit` 108.33 -> **55.72**, `erfc_inv` 104.19 -> **52.57** — so
+      #54d's apparent latency "regression" on exactly these three ends up
+      not merely reversed but less than half its own starting point,
       further confirmation it was the branch-modelling artifact #54d
-      describes. `logit`'s own row moves the other way (56.00 -> 60.94)
-      and is the same artifact again: its region's instruction count went
-      *down* (5657 -> 5645), and 3 interleaved wall-clock reps have the
-      new code far ahead (12.93/14.60/15.67 vs 19.94/18.61/31.06 ns).
+      describes. `logit`'s row did the same thing at the #54f step
+      (56.00 -> 60.94) with its region's instruction count going *down*
+      (5657 -> 5645); 3 interleaved wall-clock reps put the new code far
+      ahead (12.93/14.60/15.67 vs 19.94/18.61/31.06 ns).
 
 23. **exp/exp_checked floor-domain reduction**: superseded by the
     simpler idea #112 mechanism, which shipped instead (see lib.rs/git

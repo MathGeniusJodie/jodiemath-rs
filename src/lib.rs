@@ -4018,31 +4018,27 @@ fn erfinv_tail_poly(w: f32) -> f32 {
 /// term dominates) -- so the combine hits a genuine `-inf + inf = NaN`
 /// instead of the correctly-signed `+-inf` erfinv actually has there.
 #[inline(always)]
-#[allow(clippy::neg_cmp_op_on_partial_ord)]
 pub fn erfinv(x: f32) -> f32 {
     let u = x * x;
     // `-log1p(-u)`, with everything this call site can't reach removed
     // (the "guard is the licence" lever, see `atanh`/`log1p`). `t = 1-u`
     // is never denormal (`1 - fl(x*x)` is either `0` or `>= 2^-24`), and
-    // `-u == 0` only at `x == 0`, where the central arm is selected — so
+    // `-u == 0` only at `x == 0`, where the central arm is selected -- so
     // both `ln`'s rescale and `log1p`'s signed-zero select are dead. The
     // `-inf` arm goes too: `t == 0` happens *exactly* when `|x| == 1`
     // (verified exhaustively, not argued), which the trailing override
-    // below already owns. That leaves one select for everything —
-    // `t <= 0` (`|x| > 1`) is a real domain error and wants `NaN`, and
-    // NaN keeps its own arm rather than folding into that one: `t*t`
-    // carries the input's NaN *payload* through, which a `f32::NAN`
-    // literal would canonicalise away (verified — collapsing the two
-    // selects into one `t > 0.0` is otherwise bit-identical over all
-    // 2^32 inputs, and differs on exactly the 16777213 NaN patterns).
+    // below already owns. What is left collapses to a single select:
+    // `t > 0.0` is false for `t <= 0` (`|x| > 1`, a real domain error)
+    // and for NaN alike, and both want `NaN`. That does canonicalise the
+    // NaN it returns rather than forwarding the input's payload, which is
+    // fine by this crate's convention -- a NaN is a NaN, the same rule
+    // `ulp_diff` and `worst_corpus` follow.
     let nu = -u;
     let t = 1.0 + nu;
     let c = nu - (t - 1.0);
     let corr = c / t;
     let corr = if corr.is_finite() { corr } else { 0.0 };
-    let l = if t <= 0.0 { f32::NAN } else { ln_normal(t, 0.0) + corr };
-    let l = if !(t < f32::INFINITY) { t * t } else { l };
-    let w = -l;
+    let w = -if t > 0.0 { ln_normal(t, 0.0) + corr } else { f32::NAN };
     let central = x * erfinv_central_poly(u);
     let tail = mulsign(w.sqrt() * erfinv_tail_poly(w), x);
     let normal = if x.abs() <= 0.7 { central } else { tail };
