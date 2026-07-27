@@ -1943,7 +1943,46 @@ an idea revisits a rejection, the differing mechanism is stated.
 8. **atan_poly joint numerator+denominator nonlinear refit** (scipy
    least_squares on the true rational) — only separate num-only/
    denom-only LPs were tried; the max-4 worst point was diagnosed as
-   denominator-or-division-bound.
+   denominator-or-division-bound. **Screened 2026-07-27 and closed: there
+   is no fit to recover.** A joint nonlinear minimax over all six free
+   coefficients (`a0..a2`, `b0..b2` of the `[3/3]` in `t = x^2`, both
+   constant terms pinned to 1 as the shipped construction does), seeded
+   from the shipped values and run to convergence:
+
+   | | idealized max rel err | ulp-equivalent |
+   |---|---|---|
+   | shipped, as f64 literals | 1.949e-09 | 0.033 |
+   | best joint refit, f64 | 1.567e-09 | **0.026** |
+   | that refit rounded to f32 | 8.62e-09 | 0.145 |
+   | shipped, as actually rounded to f32 | 1.73e-08 | 0.291 |
+
+   - The whole idealized error budget is **0.03 ulp** and the best
+     possible joint refit recovers 1.24x of it. Against `atan`'s real max
+     of 4 ulp that is nothing: ~99% of the observed error is rounding
+     chain, which is precisely the "denominator-or-division-bound"
+     diagnosis the entry already carried, now quantified.
+   - Note the fourth row is *worse* than the second-best row, and that is
+     not a defect: the shipped coefficients were tuned by `tune.rs`
+     against the **real f32 chain**, not against an idealized model, so
+     they deliberately sit off the idealized optimum. Any future refit
+     here has to be scored the same way to be comparable — an idealized
+     0.29 -> 0.145 "improvement" would very likely be a real regression.
+   - Methodology trap worth recording, since the same LP is the obvious
+     tool for every rational in this crate: the natural
+     **`linprog`-feasibility-plus-bisection** formulation of rational
+     minimax **silently fails at this error scale**. HiGHS's default
+     primal feasibility tolerance is ~1e-7, and the constraints here need
+     to hold to ~1e-9 in quantities of size O(1), so it reported
+     "infeasible" at tolerances the *shipped* coefficients demonstrably
+     satisfy (verified directly: max constraint violation -5.3e-11, i.e.
+     strictly feasible, while HiGHS returned status 2). Left uncaught it
+     produces a confident, completely wrong answer — the first run of
+     this screen "found" an optimum 25x *worse* than the shipped point.
+     Either rescale the problem around the incumbent (substitute
+     `a_i = a_i^ship + 1e-8*alpha_i` so residuals come out O(1)) or, as
+     here, skip the LP and run a derivative-free nonlinear minimax
+     seeded from the shipped values. Always sanity-check that the
+     incumbent is reported feasible before trusting any LP verdict.
 9. **erf joint Pade+erf_poly refit with explicit crossover-region
    weighting** — the rejected num-only LP regressed exactly at the 0.28
    seam, which a joint objective would score directly.
