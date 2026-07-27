@@ -39,6 +39,18 @@
 // ones, and a corpus gate is only ever as good as its input list. The
 // exhaustive sweeps in accuracy.rs remain the authority; this is a cheap
 // early-warning net between them.
+//
+// One deliberate exemption from bit-exactness: a NaN result compared against
+// a NaN golden always passes, whatever the payload/sign/quiet bits are. A
+// NaN is a NaN -- payload bits carry no numeric meaning, so a payload-only
+// move is not a behavioural change. This matches the rule every ulp metric
+// in the repo follows (see accuracy.rs's `ulp_diff`). Values are still
+// compared bit-for-bit. Validated the same way the gate itself was, by
+// deliberately perturbing the golden file rather than by inspection: a
+// payload-only edit (7fc00000 -> ffc0dead) passes, the same entry edited to
+// a finite value (3f800000) still fails, and an ordinary entry moved by one
+// ulp still fails. Note the shipped corpus only feeds canonical NaNs in, so
+// this exemption is about what a function *returns*, not what it is given.
 #![allow(clippy::approx_constant)]
 use jodiemath_rs::*;
 use std::io::Write;
@@ -228,9 +240,30 @@ fn main() {
         std::process::exit(1);
     }
 
+    // A NaN is a NaN: two NaN results are the same result whatever their
+    // payload, sign or quiet bits say, so a payload-only move is not a
+    // behavioural change and must not fail the gate. This is the same rule
+    // every ulp metric in the repo follows (see accuracy.rs's `ulp_diff`);
+    // the gate is bit-exact about *values*, not about NaN bookkeeping.
+    // Everything else stays a raw bit comparison.
+    fn same_result(a: &str, b: &str) -> bool {
+        if a == b {
+            return true;
+        }
+        let (ap, bp): (Vec<&str>, Vec<&str>) = (a.split(' ').collect(), b.split(' ').collect());
+        // same function and same input, differing only in a NaN result
+        ap.len() == 3
+            && bp.len() == 3
+            && ap[0] == bp[0]
+            && ap[1] == bp[1]
+            && [ap[2], bp[2]].iter().all(|h| {
+                u32::from_str_radix(h, 16).map(|b| f32::from_bits(b).is_nan()).unwrap_or(false)
+            })
+    }
+
     let mut diffs: Vec<String> = Vec::new();
     for (got, want) in lines.iter().zip(expected.iter()) {
-        if got != want {
+        if !same_result(got, want) {
             let gp: Vec<&str> = got.split(' ').collect();
             let wp: Vec<&str> = want.split(' ').collect();
             diffs.push(format!(
