@@ -40,7 +40,7 @@ cbrt_accurate_unchecked (+) | 0.000 |     1     | (bit-identical to cbrt_accurat
     ln_unchecked (+)    |    0.235   |     3     | (bit-identical to ln on its domain)
                   log10 |    0.127   |     3     |  0.000  |    0
   log10_unchecked (+)   |    0.255   |     3     | (bit-identical to log10 on its domain)
-                  log1p |    0.106   |     4     |  0.000  |    0
+                  log1p |    0.097   |     4     |  0.000  |    0
                 log2p1  |    0.102   |     3     | (no std log2p1)
         exp (in-domain) |    0.075   |     3     |  0.000  |    1
             exp_checked |    0.039   |     3     |  0.000  |    1
@@ -60,8 +60,8 @@ cosh_throughput (in-domain)| 0.051   |     4     |  0.000  |    0
 logaddexp (|a|,|b|<80)|    0.141   |  ~1e3-1e5, heavy-tailed (real, narrow cancellation -- see its own doc comment) | (no std logaddexp)
                   asinh |    0.149   |     3     | 
                   acosh |    0.060   |     4     |  0.000  |    1
-                  atanh |    0.032   |     3     | 
-                   asin |    0.025   |     9     |  0.000  |    0
+                  atanh |    0.004   |     2     | 
+                   asin |    0.020   |     6     |  0.000  |    0
                    acos |    0.065   |     5     |  0.000  |    0
                    atan |    0.067   |     4     |  0.000  |    0
            atan_latency |    0.052   |     3     |  0.000  |    0
