@@ -2236,10 +2236,47 @@ core::simd tier exists; each replaces multi-op scalar idioms)
        function-specific. Also prints the f(+0)/f(-0)-differ list (59
        functions) as a standing record of which functions are
        sign-of-zero-preserving.
-     - Extension left open: 2-arg functions (`atan2`/`hypot`/`powf`/
-       `remainder`/`compound`/`xlogy`) need the same treatment over the
-       ±0/±inf/NaN *cross product*, which is where the original `atan2`
-       and `remainder` ±0 bugs lived. Not covered by this pass.
+     - **2-arg half also shipped** as `examples/special_matrix2.rs`: the
+       full ±0/±inf/NaN cross product (9x9 = 81 combos per function) over
+       the 2-arg surface, which is where the original `atan2` and
+       `remainder` ±0 bugs lived. Result: **no new bugs.** All nine
+       functions with an f64 std counterpart — `atan2`, `hypot`,
+       `hypot_checked`, `powf`, `powf_checked`, `fmod`, `fmod_checked`,
+       `div_euclid`, `rem_euclid` — match `f64` std *bitwise* on all 81
+       combos each (729 comparisons, zero mismatches). Worth stating as a
+       positive: the 2-arg special-value surface is in good shape, and it
+       is now gated rather than assumed. The comparison is exact rather
+       than tolerance-based because std implements the IEEE754/C99 Annex F
+       rules and every correct result at these inputs is exactly
+       representable in f32.
+     - Everything notable in the print-only set (no std counterpart:
+       `remainder*`, `rhypot`, `logaddexp`, `xlogy`, `xlog1py`,
+       `compound`, `signed_pow`, `mulsign`) traced to a documented,
+       deliberate convention, checked against each doc comment rather
+       than assumed:
+       - `compound`'s NaN at the `n=±0` corners (`compound(±inf, ±0)`,
+         `compound(-2, ±0)`, `compound(NaN, ±0)` are all NaN where C99
+         `pow(x, ±0)` would be 1.0) is called out verbatim in its own doc
+         as "a real, deliberate deviation for a thin composite" — it is
+         `exp_checked(n * log1p(x))`, so `0 * ±inf` is NaN by
+         construction.
+       - `xlogy(±0, y) = +0` and `xlog1py(±0, y) = +0` for *every* `y`
+         including NaN and negative `y`: the documented `x == 0` override.
+         Note it forces *positive* zero (`{ 0.0 }`, not `{ x }`), so the
+         sign of a `-0.0` first argument is not preserved. Left alone
+         deliberately — unlike `wrap_pi`, there is no natural sign to
+         preserve here (`x*ln(y)` at `x=+0` is `-0` whenever `y<1`, so the
+         "faithful" sign depends on `y`), the convention exists precisely
+         to override the `0*±inf` case, and scipy likewise returns `+0`.
+       - `signed_pow`'s corners are all internally consistent with
+         `sign(x)*|x|^y` composed with IEEE `pow`'s own rules
+         (`pow(1, NaN) = 1` giving `signed_pow(-1, NaN) = -1`,
+         `pow(x, ±0) = 1` giving `signed_pow(NaN, ±0) = 1`).
+       - `rhypot`'s `+0` at `(±inf, NaN)` follows IEEE `hypot(±inf, NaN)
+         = +inf` (NaN deliberately not propagated), reciprocated.
+     - Still open: the `_unchecked` 2-arg tiers were not asserted (they
+       promise nothing off-domain, same reasoning as the 1-arg
+       exemptions), and no 3-arg surface exists to sweep.
 165. **Saturation-boundary pins**: every clamp constant and overflow
      threshold gets an edgecheck pin at ±1 ulp around it — the
      exp10_checked overflow-at-the-boundary pattern, systematized.
