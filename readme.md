@@ -17,7 +17,7 @@ cbrt_accurate_unchecked (+) | 0.000 |     1     | (bit-identical to cbrt_accurat
                    exp2 |    0.026   |     1     |  0.000  |    1
            exp2_checked |    0.014   |     1     |  0.000  |    1
                   exp10 |    0.031   |     2     | (no std exp10)
-          exp10_checked |    0.031   |     1     | (no std exp10)
+          exp10_checked |    0.008   |     1     | (no std exp10)
                    log2 |    0.003   |     3     |  0.000  |    1
    log2_unchecked (+)   |    0.006   |     3     | (bit-identical to log2 on its domain)
         sin (|x|<1.3e7) |    0.065   |   1183    |  0.003  |    1
@@ -277,7 +277,7 @@ rcbrt               |          46.30 |             1.666
 exp2                |          35.00 |             0.841
 exp2_checked        |          43.06 |             1.399
 exp10               |          52.00 |             1.565
-exp10_checked       |          63.56 |             2.361
+exp10_checked       |          51.06 |             1.897
 log2                |          34.23 |             1.584
 log2_unchecked      |          34.23 |             0.958
 sin                 |          46.00 |             1.151

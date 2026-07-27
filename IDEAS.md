@@ -262,6 +262,36 @@ what shipped.
   (finite) instead of `inf`, since the round convention lets `f<0` pull an
   overflowing product back under `f32::MAX` at the clamp boundary. All six
   reverted.
+  **`exp10_checked`'s half was rescued and shipped 2026-07-27** — the
+  other five stay rejected, and their failures above are structural
+  (`exp2`/`exp10` produce NaN in-domain, `exp2_checked`/`exp2m1` are pure
+  cost) so don't retry those. What made this one different is that its
+  blocker was a single edge case, not a mechanism: re-derived from scratch
+  rather than resurrected, `exp10_checked(inf)` comes out `+inf` at the
+  *shipped* clamp bounds, i.e. the bug does not reproduce and no clamp
+  move was needed. The exact mechanism of the original failure was never
+  recorded, so what differs isn't knowable — most likely the combine or
+  the fit, since this version also does not reproduce the max 1→2
+  regression. Concretely: keep `round`'s own centered `f in [-0.5, 0.5]`
+  and drop `exp10_reduction!`'s floor-adjust (a compare, a select and two
+  add/subs), with a `Q(f)` refit for the centered domain
+  (`exp2_q_poly_centered!`). Centering is an affine change of variable, so
+  the same degree 5 buys the same accuracy — idealized max relative error
+  1.073e-8 vs the `[0,1)` fit's 1.217e-8.
+  - Exhaustive over all 2^32: avg ulp **0.0307 -> 0.0082** (3.8x better),
+    max **1, unchanged**. Plain `exp10` untouched (0.0307/2), and no other
+    row in the mca table moved.
+  - mca: throughput **2.361 -> 1.897 (-19.7%)**, latency **63.56 -> 51.06
+    (-19.7%)**. All 8 gates pass, including the `edgecheck` and
+    `saturation_pins` entries that exist because of this exact bug;
+    5 `worst_corpus` entries move sub-ulp (3 closer to the true value,
+    2 further) and were re-blessed.
+  - Reusable: this is the third time this session a rejection turned out
+    to be rejecting one *implementation* rather than the idea. A recorded
+    failure that is a single edge case, on an idea whose measured prize
+    was -30% throughput, is worth re-deriving from scratch — and
+    re-deriving beats resurrecting, since the old code's actual defect is
+    usually not in the record.
 - **exp: weave t1 into the poly like exp2_checked does** (`Q(r)=1+c0·r+...`,
   `p=fma(q,t1*r,t1); p*t2`): real accuracy win confirmed exhaustively (exp
   avg/max 0.0745/3→0.0522/2, cascading to expm1/sinh/cosh/tanh) but mca

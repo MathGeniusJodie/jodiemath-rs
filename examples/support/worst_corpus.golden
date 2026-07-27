@@ -3883,7 +3883,7 @@ exp10_checked 7f7fffff 7f800000
 exp10_checked ff7fffff 00000000
 exp10_checked 3e800000 3fe39ea9
 exp10_checked be800000 3f0ff59a
-exp10_checked 3e8a3d71 3fee58df
+exp10_checked 3e8a3d71 3fee58e0
 exp10_checked be8a3d71 3f097aea
 exp10_checked 3e8f5c29 3ff3e623
 exp10_checked be8f5c29 3f0659c8
@@ -3892,13 +3892,13 @@ exp10_checked bf000000 3ea1e89b
 exp10_checked 3f266666 408ef051
 exp10_checked bf266666 3e653ebc
 exp10_checked 3e4ccccd 3fcaddc8
-exp10_checked be4ccccd 3f21866c
+exp10_checked be4ccccd 3f21866b
 exp10_checked 3f800000 41200000
 exp10_checked bf800000 3dcccccd
 exp10_checked 45000000 7f800000
 exp10_checked c5000000 00000000
-exp10_checked 40526f6d 44f2a3a1
-exp10_checked c0526f6d 3a070c5b
+exp10_checked 40526f6d 44f2a3a0
+exp10_checked c0526f6d 3a070c5c
 exp10_checked 42b17218 7f800000
 exp10_checked c2d15498 00000000
 exp10_checked c2ac0000 00000000
@@ -3919,7 +3919,7 @@ exp10_checked becc5ca5 3ecc3b9e
 exp10_checked bd6d4a21 3f6007ea
 exp10_checked 34ddb3d9 3f800008
 exp10_checked 460be628 7f800000
-exp10_checked 3e81a89e 3fe552f2
+exp10_checked 3e81a89e 3fe552f3
 exp10_checked 3e1a1cac 3fb50359
 exp10_checked 3e7e062b 3fe29c55
 exp10_checked 49603a33 7f800000

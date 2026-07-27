@@ -155,6 +155,27 @@ macro_rules! exp2_q_poly {
     }};
 }
 
+// `exp2_q_poly!`'s centered sibling: the same `Q(f) = (2^f - 1)/f` and
+// the same 3-balanced-pair Estrin shape, refit for `f in [-0.5, 0.5]`
+// instead of `[0, 1)`. Only `exp10_checked` uses it, to keep `round`'s
+// own residual rather than paying a floor-adjust to convert it. This is
+// a genuine per-caller domain difference, not the kind of shared-poly
+// decoupling that got rejected elsewhere in IDEAS.md (there the callers'
+// domains were identical): centering is an affine change of variable, so
+// the same degree buys the same accuracy -- the idealized max relative
+// error is 1.073e-8 here against the `[0,1)` fit's 1.217e-8, i.e. 0.179
+// vs 0.203 ulp-equivalent.
+macro_rules! exp2_q_poly_centered {
+    ($f:expr) => {{
+        let f2 = $f * $f;
+        let g0 = fma(2.402265e-1, $f, 6.9314719e-1);
+        let g1 = fma(9.6182375e-3, $f, 5.5503574e-2);
+        let g2 = fma(1.5403504e-4, $f, 1.3390731e-3);
+        let h = fma(g2, f2, g1);
+        fma(h, f2, g0)
+    }};
+}
+
 // Shared by exp_pos_neg/exp_pos_neg_checked_half (sinh/cosh's
 // unchecked/checked exp(x)/exp(-x) core): one Cody-Waite reduction,
 // an even/odd-split poly, and the t1n/t2n reciprocal construction.
@@ -581,9 +602,22 @@ pub fn exp10_checked(x: f32) -> f32 {
     // doc comment for why these exact bounds make the old separate `k`
     // clamp redundant (removed).
     let x = x.clamp(-45.154503, 38.53184);
-    let (k, f) = exp10_reduction!(x);
+    // Unlike `exp10`, this keeps `round`'s own centered `f in [-0.5, 0.5]`
+    // instead of paying `exp10_reduction!`'s floor-adjust (a compare, a
+    // select and two add/subs) to reach `exp2_q_poly!`'s `[0,1)`
+    // convention. That needs its own Q refit -- see `exp2_q_poly_centered!`
+    // -- and is only safe here, not in `exp10`: `round` can put `k` at
+    // 128, which the k1/k2 split represents fine but a single exponent
+    // field cannot (the reason `exp10`'s own doc comment gives for
+    // keeping the adjust).
+    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+    let kb = fma(x, std::f32::consts::LOG2_10, ROUND_MAGIC);
+    let k = kb - ROUND_MAGIC; // round(x*log2(10))
+    let d = fma(-k, LOG10_2_HI, x);
+    let d = fma(-k, LOG10_2_LO, d);
+    let f = d * std::f32::consts::LOG2_10;
     let (t1, t2) = exp2_field_split(k);
-    let q = exp2_q_poly!(f);
+    let q = exp2_q_poly_centered!(f);
     let p = fma(q, t1 * f, t1);
     p * t2
 }
