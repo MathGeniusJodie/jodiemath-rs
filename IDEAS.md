@@ -1714,7 +1714,17 @@ what shipped.
 - **Intermediate sin/cos tier (|x|≲1e5)**: single extra correction word
   over the fast tier's 4-fma Cody-Waite, well short of checked's full
   double-float q — a third point on the speed/domain curve if any user
-  workload actually sits there.
+  workload actually sits there. **Now has measured numbers** from idea
+  #47's implementation (2026-07-27, see its entry below): the two_prod
+  `PI_HI`/`PI_LO`/`PI_TINY` reduction hits `sin_checked`'s exact
+  `|x|<=1e6` accuracy (avg/max 0.0356/2) at 1.278 cyc/elem vs
+  `sin_checked`'s 5.311 — **~4.2x cheaper for the same accuracy** over
+  that range, and ~11% dearer than fast `sin`'s 1.151. Correctly rejected
+  as a fast-tier *replacement*; as a *new* `sin_mid`/`cos_mid` it's
+  additive and zero-risk. Caveat that bounds the value: it does not move
+  the ~1.3e7 cliff (same `q` failure as fast sin), so the tier's domain
+  is fast sin's, not wider — the sell is 7 -> 2 max ulp inside it, not
+  more range.
 - **sinh_accurate/cosh_accurate tier**: Df32 through the exp combine —
   only if a user asks; max 5 is comfortably documented already.
 - **lgamma (Stirling + reflection)**: big job, listed for completeness —
@@ -1916,6 +1926,59 @@ an idea revisits a rejection, the differing mechanism is stated.
     similar op count. Concrete design for the backlog's "intermediate
     tier" (distinct from the rejected *word-dropping* 3-word/3.5-word
     attempts, which reduced precision; this adds none of that risk).
+    **Implemented and measured 2026-07-27; rejected as a fast-tier
+    replacement, but the numbers make it a live "intermediate tier"
+    candidate — see below.** Real accuracy win, real perf cost, so it
+    fails the accuracy-without-a-penalty bar:
+    - Accuracy (real quick fuzz, both sides same harness run): `sin`
+      `|x|<=1e6` avg/max **0.0409/7 -> 0.0356/2**, `|x|<=1000`
+      0.0212/2 -> 0.0198/2, in-domain 0.0646/222 -> 0.0589/220. The
+      `|x|<=1e6` numbers land *exactly* on `sin_checked`'s own
+      (0.0356/2) — the fast tier becomes as accurate as the double-float
+      tier over that range.
+    - It does **not** move the ~1.3e7 cliff, and can't: the cliff is the
+      magic-round producing a wrong `q` (`|x/pi| >= 2^22`), not an
+      inexact `q*pi` product. The idea's "push the cliff far out" premise
+      conflates the two error sources; in-domain max stays ~220 because
+      the post-cliff region dominates it either way. Moving the cliff
+      needs more pi bits (Payne-Hanek) or checked's double-float q.
+    - Cost (mca): `sin` throughput 1.151 -> **1.278 (+11.0%)**, latency
+      46.00 -> 50.00; `cos` throughput 1.406 -> **1.651 (+17.4%)**,
+      latency 54.00 -> 58.00. "Similar op count" doesn't hold: the
+      working form is **6 ops** (mul + fma for two_prod, two subs, then
+      `PI_LO` *and* `PI_TINY` fmas) against the current 4 fmas.
+    - `PI_TINY` is **not** droppable, which is what kills the op count.
+      The 5-op two-word version (`PI_HI`+`PI_LO` only) is catastrophically
+      worse than even the baseline: `|x|<=1e6` max **8758**, in-domain max
+      **126119**. Reason the naive estimate misses this: `q*PI_TINY` is
+      ~1.1e-9 at `q ~ 3.2e5`, which looks like ~0.01 ulp *if you assume
+      `r ~ 1`* — but near sin's zeros `r` is itself ~1e-9, so that
+      absolute term is the whole answer. Any future "drop a pi word" idea
+      needs to be scored near the zeros, not at generic `r`.
+    - Rejected *as a replacement* because sin/cos exist to be the cheap
+      tier (their own doc comments point accuracy-seeking callers at
+      sin_checked), and throughput is the axis this crate optimizes —
+      paying 11-17% there to buy accuracy the checked tier already sells
+      is the wrong direction for that function.
+    - **But**: at 1.278 cyc/elem it delivers `sin_checked`'s exact
+      `|x|<=1e6` accuracy (0.0356/2) for **~4.2x less** than
+      `sin_checked`'s own 5.311 — which is precisely the standing
+      "Intermediate sin/cos tier" backlog entry's value proposition, now
+      with measured numbers instead of a guess. Cheap to revisit as a
+      *new* `sin_mid`/`cos_mid` pair (additive, zero regression risk to
+      existing callers); the open question is whether the narrow win
+      (max 7 -> 2 over `|x|<=1e6`, same cliff, same domain as fast sin)
+      justifies the API surface.
+    - **Methodology warning worth reusing**: an isolated screen of just
+      the reduction — scoring `r`'s error in units of `ulp(r_true)` with
+      `q` held fixed — reported *no benefit at all* (CW 123 vs two_prod
+      120 at 2^19..2^20, and two_prod slightly *worse* at 2^20..2^21) and
+      would have killed this idea outright. That metric is an artifact:
+      it explodes wherever `r_true` lands near a zero of sin, so it
+      measures proximity-to-zero, not reduction quality. The real
+      end-to-end fuzz disagreed. Same artifact class as the
+      identity-fuzz entry — score the shipped function, not an
+      intermediate, whenever cancellation is in play.
 49. **sinf_poly real-chain refit** (#1's method) scoring sin_checked +
     cos_checked's actual reductions jointly — the rejected LPs used
     continuous grids that mis-weighted the caller split.
