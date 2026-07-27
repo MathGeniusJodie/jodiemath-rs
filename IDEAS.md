@@ -2706,6 +2706,36 @@ an idea revisits a rejection, the differing mechanism is stated.
        true error is invisible once both candidates land in the same
        rounding bin. Same family as the "score the shipped fn, not the
        intermediate" trap: score what the gate scores.
+     - **Second application, `asin`'s 0.27 seam — also no headroom, but a
+       more useful negative.** `asin` carries the crate's largest seam gap
+       (6 ulp, `edgecheck`'s own seam report) and its max ulp is 6, so it
+       looked like the same story as `tanh`. The optimal run is
+       **[0.2608490, 0.2994175]**, 0.27 is inside it, and 0.27's band-avg
+       (0.25473) is within 0.0002 of the run's avg-minimising point
+       (0.2749 -> 0.25452). Nothing to move.
+     - What the scan found *instead* is where `asin`'s max actually lives,
+       which the seam gap had disguised: the big arm's max stays 6 for
+       every candidate seam right up to 0.45 and only drops to 3 at 0.50,
+       and **2875 distinct f32 in [0.27, 1] reach 6 ulp**. So this is a
+       broad plateau across roughly `[0.27, 0.5)`, not a seam artifact.
+       Cause is the big arm's own cancellation: `FRAC_PI_2 - sqrt(1-a)*P(a)`
+       at `a ~ 0.3` subtracts 1.266 from 1.5708 to get 0.3047, a ~4.2x
+       amplification, so ~1 ulp on the subtrahend is ~4 ulp out. No refit
+       of `asin_poly` addresses that.
+     - The only fix that would is a **third, mid-range branch** evaluating
+       `asin` directly (an `a*P(a^2)` minimax on `[0.27, 0.5]` has no
+       cancellation at all). Priced before building: it is a whole extra
+       poly evaluated unconditionally plus a select, on a function that is
+       already one of the crate's cheapest (0.968 cyc/elem) — an accuracy
+       win with a real perf penalty, i.e. the wrong side of this session's
+       bar. Extending `asin_small` instead is worse: it is degree 3 in
+       `x^2` and already 7 ulp at 0.30, and asin's series decays by only
+       `x^2 = 0.25` per term, so reaching f32 accuracy at 0.5 needs ~12
+       terms against today's 4.
+     - Reusable conclusion for the scan: **a large seam *gap* does not mean
+       a misplaced seam.** Both functions scanned had their max at or near
+       the seam and both seams were already optimal; in `asin`'s case the
+       gap was pointing at a plateau that merely happens to start there.
 
 #### Batch 2: exp / log family
 
