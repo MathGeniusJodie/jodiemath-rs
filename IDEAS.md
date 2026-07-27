@@ -1309,6 +1309,26 @@ what shipped.
   same class of already-established no-op as the `wrapping_sub`-combined-
   range-compares and `koff-free unchecked-log` findings above. Reverted,
   no reason to carry the less-obvious source form for zero benefit.
+- **exp10m1's `0.2` seam** (the sixth seam, missing from idea #7's own
+  list): **no headroom, 2026-07-27.** Swept against the real *exhaustive*
+  sweep (4.29e9 samples per point). Narrowing hurts (`0.15`: avg
+  0.1279→0.1283, max **4→5**, worst x moves to 0.1505). Widening does
+  nothing: `0.18`, `0.205`, `0.21`, `0.215` are all identical to the
+  shipped `0.2` to 4 decimal places on avg, max, *and* worst-x
+  (0.1279/4/-5.7932023e-2); `0.2171`, the largest value keeping `|v| =
+  |x*LN_10| < 0.5`, is marginally worse (avg 0.1280). The shipped value
+  sits in the middle of a flat plateau.
+  Structural reason it differs from `exp2m1`, worth keeping: the entire
+  *legal* widening window here is `0.2 -> 0.217`, only +8.5%, because
+  `LN_10 ≈ 3.3x LN_2` compresses how much `x`-range fits inside the shared
+  Pade's `|v| < 0.5` fit. `exp2m1`'s win came from a 30% widening
+  (`0.5 -> 0.65`), a big enough slice of the domain to move a global
+  average; 8.5% is not. So "an unaudited seam with a shipped analogue"
+  isn't sufficient reason to expect a win — check how wide the legal
+  window actually is first, since the win scales with the *fraction of
+  inputs that change branch*, not with the seam's existence. Also note
+  `exp10m1`'s worst case (x≈-0.0579) sits deep inside the Pade branch,
+  nowhere near the seam, so no threshold could touch the max.
 - **Seam retunes not yet done** (backlog idea #7, five sub-items): all
   five now checked directly against the real exhaustive sweep (plus mca
   where relevant), same method as the earlier 5-function crossover audit
@@ -2128,8 +2148,34 @@ an idea revisits a rejection, the differing mechanism is stated.
        the surviving `+inf` case needs an explicit compare+select, which
        would eat much of a saving that is only ~0.39 cyc/elem gross
        (`exp_m1_over_x` 1.798 vs `exp_m1_over_x_narrow` 1.411) before the
-       clamp is even paid for. Worth doing only alongside a decision about
-       whether a `_checked` tier owes a defined value at `+inf` at all.
+       clamp is even paid for.
+       - `x.min(HI)` as the divisor (1 op, not a 2-op compare+select) does
+         fix both ends of that particular problem — `+inf` numerator over
+         a finite `HI` gives `inf`, and a `-1` numerator over the original
+         very-negative `x` gives `+0`. But it doesn't rescue the idea,
+         because of a **deeper obstacle found while checking it
+         (2026-07-27)**: `(e^x-1)/x` is mathematically finite well past
+         where `e^x` itself overflows. `e^x` overflows f32 at
+         `x ≈ 88.7228`, but the *quotient* stays representable to
+         `x ≈ 93.2582` (at `x=93` the true value is 2.64e38, comfortably
+         in range). Any implementation that forms the numerator first
+         returns `inf` across that whole ~4.5-wide band. Verified on the
+         shipped function: `exp_m1_over_x(89.0)` gives `inf` where the
+         true value is 5.0445088e36, and likewise at 88.73/90/92/93.
+       - That is *within* the current contract — `exp_m1_over_x`'s doc says
+         "garbage outside roughly `x in [-87.3, 88.7)`" — so it is a
+         documented domain limit, not a bug. But it means a `_checked`
+         tier here cannot be built by clamping alone: clamping saturates
+         to `inf` exactly where honest finite answers exist, which is the
+         premature-overflow defect class, not a fix for it.
+       - Mechanism that would actually work, for whoever picks this up:
+         fold the division into the exponent for the large-`x` arm, i.e.
+         `e^x/x = e^(x - ln x)`, the same "reorder so the intermediate
+         never overflows" lever as the `R(v)/(2*x)` -> halve-first fix in
+         the dawson entry. Cost is the problem: a branchless select
+         computes both arms, so this buys a full `ln` on *every* call to
+         extend a band most callers never touch. Screen the mca cost
+         before building it.
 114. **FTZ-mode minimal exp2_checked/exp_checked** (rides the MXCSR
      slice-tier idea #56): lower clamp −151→−126 and the
      denormal-rounding half of the split's job disappears; same cascade
