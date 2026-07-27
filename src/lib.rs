@@ -4721,17 +4721,43 @@ pub fn cexp(re: f32, im: f32) -> (f32, f32) {
 ///   inheriting whatever convention `cabs`/`hypot_checked` already
 ///   establish there (e.g. infinity-wins-over-NaN) rather than
 ///   re-deriving it.
+///
+/// Neither `log1p` call is a real `log1p` call: both sit under a guard
+/// that leaves `log1p` nothing to guard against ("the guard is the
+/// licence", as in `atanh`/`erfinv`). `|mag-1| < 0.5` puts the first
+/// one's `u = 1+v` in `(0.5, 1.5)` and `ratio in [0,1]` puts the
+/// second's in `[1, 2]`, so on top of `ln`'s zero/negative/denormal/
+/// non-finite arms, *both* of `log1p`'s own selects are dead too: `c/u`
+/// cannot be non-finite over those ranges, and the `v == 0.0`
+/// signed-zero guard has nothing to fix (`v` is `+0.0` at worst, and
+/// `ln_normal(1.0, 0.0) + 0.0` is already `+0.0`). What is left is the
+/// Sterbenz correction and the bare poly.
 #[inline(always)]
 pub fn clog(re: f32, im: f32) -> (f32, f32) {
+    // `log1p(v)` for a `v` that is known to keep `1+v` positive, normal
+    // and finite -- see this function's doc comment. Bit-identical to
+    // `log1p` over every f32 in both call sites' licensed ranges
+    // (`|v| < 0.5` and `[0, 1]`, checked exhaustively) with exactly one
+    // exception, `v == -0.0`, where `log1p`'s signed-zero select returns
+    // `-0.0` and this returns `+0.0`. Neither site can produce it, also
+    // checked exhaustively rather than argued: `mag - 1.0` is `+0.0` for
+    // every non-negative finite `mag` (IEEE `x - x` is `+0.0` under
+    // round-to-nearest), and a square is never `-0.0`.
+    #[inline(always)]
+    fn log1p_guarded(v: f32) -> f32 {
+        let u = 1.0 + v;
+        let c = v - (u - 1.0);
+        ln_normal(u, 0.0) + c / u
+    }
     let mag = cabs(re, im);
     let log_mag = if mag.is_finite() {
-        if (mag - 1.0).abs() < 0.5 { log1p(mag - 1.0) } else { ln(mag) }
+        if (mag - 1.0).abs() < 0.5 { log1p_guarded(mag - 1.0) } else { ln(mag) }
     } else if re.is_finite() && im.is_finite() {
         let are = re.abs();
         let aim = im.abs();
         let (mx, mn) = if are > aim { (are, aim) } else { (aim, are) };
         let ratio = mn / mx;
-        ln(mx) + 0.5 * log1p(ratio * ratio)
+        ln(mx) + 0.5 * log1p_guarded(ratio * ratio)
     } else {
         ln(mag)
     };

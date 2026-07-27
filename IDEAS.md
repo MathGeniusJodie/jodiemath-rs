@@ -2246,6 +2246,30 @@ an idea revisits a rejection, the differing mechanism is stated.
       (5657 -> 5645); 3 interleaved wall-clock reps put the new code far
       ahead (12.93/14.60/15.67 vs 19.94/18.61/31.06 ns).
 
+54g. **clog: both `log1p` calls are fully guarded** — fifth and last hit
+    from #54b's sweep, **shipped 2026-07-27**, and the most complete one:
+    here even `log1p`'s *own* two selects die, not just `ln`'s wrapper.
+    `|mag-1| < 0.5` puts the near-1 branch's `u = 1+v` in `(0.5, 1.5)`
+    and `ratio in [0,1]` puts the rescaled branch's in `[1, 2]`, so `c/u`
+    can't be non-finite and the `v == 0.0` signed-zero guard has nothing
+    to fix. What survives is the Sterbenz correction plus `ln_normal`.
+    - Bit-identical to `log1p` over **every** f32 in both licensed ranges,
+      with exactly one exception found by the check rather than reasoned
+      about: `v == -0.0`, where `log1p` returns `-0.0` and the stripped
+      form returns `+0.0`. Neither call site can produce it, verified
+      exhaustively too — `mag - 1.0` is `+0.0` for every non-negative
+      finite `mag` (IEEE `x - x` under round-to-nearest), and a square is
+      never `-0.0`. Worth noting as the general shape of these: the
+      licence usually holds, but *which* input breaks it is not always the
+      one you would guess, so enumerate the range rather than spot-check.
+    - Measured with interleaved `quickbench` A/B, not mca: `clog` is
+      deliberately not mca-wired (its branching risks the multi-exit-path
+      region-marker corruption `mca_target.rs` documents, and its cost
+      used to be "just its already-measured constituents" — an argument
+      this change is precisely what invalidates). 3 reps, new ahead every
+      time: throughput **5.66/5.35/5.25 vs 5.92/5.62/5.73 ns** (~5-8%),
+      latency flat (36.54/35.94/35.95 vs 37.38/35.82/35.95).
+
 23. **exp/exp_checked floor-domain reduction**: superseded by the
     simpler idea #112 mechanism, which shipped instead (see lib.rs/git
     log, `exp_narrow`) -- rather than switching to floor + refitting the
