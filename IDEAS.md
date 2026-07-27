@@ -2484,6 +2484,37 @@ an idea revisits a rejection, the differing mechanism is stated.
       general-purpose kernel (there, `ln`; here, `sqrt`). Worth sweeping
       the crate for other guarded branches that still call something
       general: the guard is the licence.
+    - **That sweep was run to exhaustion on 2026-07-27 and is now closed.**
+      Five hits shipped, all of them accuracy-free (bit-identical, or
+      bit-identical off NaN): **#54c** `atanh`, **#54d** `log1p`/`log2p1`/
+      `log10p1` (the widest — its licence is the *argument's own
+      construction*, `1+x`, not a branch guard, so it pays out at every
+      caller), **#54e** `softplus`/`logaddexp`, **#54f** `erfinv`/`logit`,
+      **#54g** `clog`. Headline throughput: `probit` -30.0%, `erfinv`
+      -20.6%, `erfc_inv` -19.6%, `xlog1py` -20.1%, `log2p1` -19.0%,
+      `log1p` -18.9%, `softplus`/`logaddexp` -15.7%, `atanh` -12.7%,
+      `logsigmoid` -10.3%, `logit` -10.0%, `compound` -10.7%.
+    - Screened and **rejected**, so the sweep doesn't get re-run on them:
+      - `erfc`'s `exp2_checked` clamp is load-bearing (it deliberately
+        feeds the *unclamped* `xa`, see its body comment).
+      - `erfcx`'s `exp2_checked(x*x*LOG2_E)` has a dead *lower* clamp only
+        (`x*x >= 0`), worth exactly one `vmaxps`. Not taken: extracting an
+        unclamped core would put a new shared boundary in front of
+        `powf`/`erfc`/`exp2m1` as well, and this crate has a +32%
+        regression precedent for exactly that (see the macro-vs-fn dedup
+        entry). One op is not worth exposing four callers to it.
+      - `tanh_grad`/`sigmoid_grad`/`norm_pdf` all feed `exp_checked` an
+        argument that is `<= 0` by construction, so their upper clamp is
+        dead — but this saves *nothing*. `.clamp(lo, hi)` is already two
+        instructions, and a one-sided replacement that still propagates
+        NaN (`if v < lo { lo } else { v }`) is also two; the one-instruction
+        `v.max(lo)` is wrong, since `f32::max` returns the *other* operand
+        for NaN and would turn `f(NaN)` into a finite value.
+      - `norm_pdf` additionally cannot use `exp_narrow`: its argument must
+        stay clampable to `-104.665` for the result to reach exactly `0`,
+        which is outside `exp_narrow`'s `[-87.68, 88.38]` domain. Clamping
+        at `-87` instead would freeze `norm_pdf` at ~`6.4e-39` forever —
+        the same freeze bug `erfc`'s own doc comment records.
 56. **Slice-tier FTZ/DAZ via MXCSR**: a slice entry point can set
     FTZ/DAZ around its own loop and restore — gets the FTZ
     feature-flag idea's win without a global cargo feature.
