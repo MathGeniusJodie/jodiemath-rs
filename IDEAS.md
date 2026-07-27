@@ -2423,7 +2423,53 @@ core::simd tier exists; each replaces multi-op scalar idioms)
        the others reach their true denormal outputs.
 166. **Denormal-output correctness audit**: which functions produce
      correctly-rounded denormal outputs vs garbage (exp2_checked
-     documents its behavior; most others are unaudited).
+     documents its behavior; most others are unaudited). **Shipped
+     2026-07-27** as `examples/denormal_audit.rs`. Answer: **the tier is
+     in good shape — only `sigmoid` flushes materially, and its gap is
+     already documented.**
+     - Audited in two separate classes, because they fail for different
+       reasons. **(A) normal input -> denormal output**, where the
+       function's own machinery has to carry a result below `MIN_POSITIVE`
+       without flushing (a bit-trick exponent field structurally cannot,
+       so this is where early saturation lives). **(B) denormal input ->
+       denormal output**, the near-zero identity region, where the risk is
+       the reverse: a reduction or rescale mangling a subnormal argument.
+     - **(B) is completely clean**: `sin`, `tan`, `asin`, `atan`, `sinh`,
+       `asinh`, `atanh`, `expm1`, `expm1_checked`, `log1p`, `softsign`,
+       `wrap_pi` all carry denormals at *exactly* zero relative error
+       (they are the identity there), and `erf`/`sinpi`/`dawson`/
+       `sqrt1pm1`/`gelu`/`silu` are correct to within one representable
+       step at the very bottom.
+     - **(A): `exp2_checked`, `exp_checked`, `exp10_checked`, `erfc` and
+       `erfc_accurate` all carry denormals with zero premature flushing.**
+       Only two flush at all: `sigmoid` (94% of its denormal-output range)
+       and `norm_pdf` (1%).
+     - The decisive metric is **how early a flush starts relative to where
+       the true result genuinely rounds to f32 zero**, not what fraction of
+       samples flushed. By that measure `sigmoid` is premature by **15.6 in
+       x** (flushes from -88.38 where the true zero is at -103.97 — i.e.
+       the whole `(-104, -88.4)` band, exactly the gap its own doc states),
+       while `norm_pdf` is premature by only **0.0125 in x**, one
+       representable unit, not worth an op to fix. Everything else: never
+       premature.
+     - Two harness traps worth remembering, both of which I hit and fixed:
+       - Classifying "denormal output" by the f64 magnitude alone
+         (`|ref| < MIN_POSITIVE`) is wrong — it admits values under ~7e-46
+         that round to f32 *zero*, where returning 0 is correct. That
+         inflated `erfc` to a reported "39% flushed" when it is not
+         premature at all. Require the correctly-rounded f32 answer to be a
+         nonzero denormal.
+       - Sweeping an `_unchecked` tier past its documented domain measures
+         documented garbage. An early version swept unchecked `exp2` to
+         -150 and reported a meaningless 5.8e76 relative error; `exp2`'s doc
+         scopes it to non-denormal results, so it has no denormal outputs
+         within its own domain at all.
+     - Also note a reporting artifact that is *not* an error: several
+       clean functions show "worst rel ~1.0" alongside **zero** flushes.
+       At the smallest denormals only one or two representable values
+       exist, so returning the correctly-rounded one is still ~100% off in
+       relative terms. Read the flush columns, not the relative error, at
+       the very bottom of the range.
 168. **Worst-case corpus regression gate**: persist each function's
      known worst-x list, re-check every commit in seconds between the
      hours-long full sweeps. **Shipped 2026-07-27** as
