@@ -2420,7 +2420,38 @@ core::simd tier exists; each replaces multi-op scalar idioms)
      diagnosis tool.
 171. **f16-lattice smoke gate**: all 65536 f16 values promoted to f32
      against the f64 reference for every 1-arg function — sub-second CI
-     sanity check.
+     sanity check. Still untried as such, but the *motivation* (cheap
+     coverage for every function) prompted an audit of which 1-arg
+     functions accuracy.rs actually measures. **Two real gaps found and
+     closed 2026-07-27**: `sqrt1pm1` and `wrap_pi` both had edgecheck
+     pins but had never had an ulp sweep.
+     - `sqrt1pm1`: avg 0.2053, **max 2** (exhaustive, 3.20e9 in-domain
+       samples), clean. Reference is `x / (sqrt(1+x) + 1)`, the
+       algebraically-equal form that does *not* repeat the cancellation
+       the function exists to avoid — same rule as log1pmx's reference.
+     - `wrap_pi`: avg **0.0244**, max 41, worst x 8953.539, over
+       `|x| <= 1e4`. The max is the crate's usual near-a-true-zero
+       artifact, not a defect: the worst inputs sit almost exactly on a
+       multiple of `2*pi`, so the answer (`-2.3e-7`) is near-total
+       cancellation of operands ~1e4. Away from those points it measures
+       **<= 0.41 ulp**.
+     - Methodology point worth keeping: the first version of this
+       reference used a single-word f64 `TAU` and reported max **66**. The
+       reference was itself the inaccurate party — a 1-word vs 2-word f64
+       reduction disagree by **24.56 ulp** at that same x. Splitting TAU
+       into `TAU_HI + TAU_LO` dropped the reported max to 41, matching an
+       independent scalar probe exactly. When referencing a function that
+       rides a double-float reduction, a single f64 word is not
+       automatically good enough ground truth — check the reference
+       against a wider one before believing a large max.
+     - The `_approx` tier (`cbrt_approx`, `exp2_approx`, `log2_approx`,
+       `rcp_approx`, `rsqrt_approx`, `sqrt_approx`) plus `sigmoid_fast`
+       and `fast_round_int` remain unmeasured in accuracy.rs, which is
+       defensible (they are explicitly outside the 0.5/2 budget) — but
+       note idea #188 gave several of them real doc-comment error bounds,
+       and *nothing currently verifies those bounds*. That is the natural
+       next coverage target, and a better fit for the f16-lattice idea
+       than the budgeted functions are.
 172. **wgpu/GPU compute sweeps** for 2-arg functions — makes the
      importance-sampling lattices (#93) orders of magnitude denser.
 173. **Round-trip contract measurement**: published ulp bounds for

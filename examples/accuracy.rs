@@ -1480,6 +1480,63 @@ fn main() {
         let s = measure!(rsqrt_domain, rsqrt, |v: F64xN| F64xN::splat(1.0) / v.sqrt());
         report("rsqrt", &s, t0);
     }
+    if run("sqrt1pm1") {
+        // First ulp sweep for this function -- it had edgecheck pins but no
+        // accuracy coverage. Reference is `x / (sqrt(1+x) + 1)`, the
+        // algebraically-equal form that does *not* repeat the cancellation
+        // sqrt1pm1 itself exists to avoid: computing `sqrt(1+x) - 1`
+        // directly in f64 would lose exactly the low bits being measured
+        // for small |x| (same "the reference must not repeat the
+        // cancellation trap" rule as log1pmx's own reference).
+        let sqrt1pm1_domain = |x: f32| x >= -1.0 && x.is_finite();
+        let s = measure!(sqrt1pm1_domain, sqrt1pm1, |v: F64xN| {
+            v / ((F64xN::splat(1.0) + v).sqrt() + F64xN::splat(1.0))
+        });
+        report("sqrt1pm1", &s, t0);
+    }
+    if run("wrap_pi") {
+        // First ulp sweep for wrap_pi too (edgecheck had the range and
+        // sin/cos-preservation invariants, but no ulp measurement).
+        //
+        // Restricted to |x| <= 1e4 on purpose: wrap_pi rides
+        // reduce_pi_checked's double-float reduction, which stays accurate
+        // far past what a single f64 word can reference. Beyond this range
+        // edgecheck's sin(wrap_pi(x)) == sin_checked(x) invariant is what
+        // covers the reduction (out to 1e9).
+        //
+        // TAU is carried as two words (TAU_HI + TAU_LO) rather than one.
+        // That is not pedantry: with a single-word TAU the reference itself
+        // is off by ~25 ulp at the worst points, i.e. it would be the less
+        // accurate of the two things being compared. Measured directly --
+        // at x = 8953.539 a 1-word and 2-word f64 reference disagree by
+        // 24.56 ulp.
+        //
+        // Even with the 2-word reference the reported max stays large, and
+        // it is the crate's usual near-a-true-zero artifact rather than a
+        // real defect: the worst inputs are the ones sitting almost exactly
+        // on a multiple of 2*pi, where the answer is ~1e-7 formed by near
+        // total cancellation of operands ~1e4, so one f32 ulp of the
+        // *result* is a vanishingly small absolute quantity. Away from
+        // those points wrap_pi measures <= 0.41 ulp. Same class as cospi's
+        // and compound's documented near-zero cases.
+        let wrap_domain = |x: f32| x.abs() <= 1e4;
+        let s = measure!(wrap_domain, wrap_pi, |v: F64xN| {
+            // 2*pi split into two f64 words: TAU_LO holds the part that the
+            // nearest-f64 TAU_HI drops.
+            let tau_hi = F64xN::splat(6.283185307179586);
+            let tau_lo = F64xN::splat(2.4492935982947064e-16);
+            let pi = F64xN::splat(std::f64::consts::PI);
+            let tau = tau_hi + tau_lo;
+            let q = (v / tau_hi).round();
+            let r = (v - q * tau_hi) - q * tau_lo;
+            // fold into (-pi, pi]: r lands in [-tau/2, tau/2] but the
+            // half-open convention needs r > pi pulled down and
+            // r <= -pi pushed up.
+            let r = r.simd_gt(pi).select(r - tau, r);
+            r.simd_le(-pi).select(r + tau, r)
+        });
+        report("wrap_pi", &s, t0);
+    }
     if run("hypot") {
         // naive x*x+y*y overflows f32 once |x| or |y| exceeds ~sqrt(f32::MAX)
         // (~1.8e19), and underflows (or flushes clean to 0, losing the
