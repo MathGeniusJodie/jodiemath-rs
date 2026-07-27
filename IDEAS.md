@@ -2426,7 +2426,34 @@ core::simd tier exists; each replaces multi-op scalar idioms)
      documents its behavior; most others are unaudited).
 168. **Worst-case corpus regression gate**: persist each function's
      known worst-x list, re-check every commit in seconds between the
-     hours-long full sweeps.
+     hours-long full sweeps. **Shipped 2026-07-27** as
+     `examples/worst_corpus.rs` + `examples/support/worst_corpus.golden`:
+     9720 entries (108 public 1-arg functions x 90 inputs) checked in
+     **0.058s**.
+     - Design choice that got this out of the backlog: it is
+       **reference-free**. A ulp gate needs an f64 reference per function
+       (100+ of them, which is why this sat unbuilt); comparing against
+       *blessed output bits* instead answers "did anything move?" in
+       milliseconds with no reference machinery. The sweeps still answer
+       "is it correct?". `--bless` regenerates.
+     - Corpus is the special values, the branch seams this crate actually
+       has, every clamp boundary, the recorded worst-x values from IDEAS.md
+       and the readme, and a magnitude spread across the exponent range.
+     - **Validated by deliberate perturbation, and the negative results
+       matter more than the positive one.** A 0.5% change to the shared
+       Pade coefficient moves 61 entries and exits 1, as intended. But two
+       smaller real changes slipped through: (a) a *1-ulp* change to that
+       same coefficient is invisible, because it multiplies `v*v` against a
+       `-120.0` term so it shifts the sum by ~1e-10 relative, far under
+       f32's ~6e-8 resolution; (b) moving exp10m1's seam `0.2 -> 0.21` is
+       invisible, because the two branches agree bit-for-bit at the corpus
+       point `x=0.2` — a well-placed seam is *supposed* to, which is
+       exactly why seam points make weak canaries.
+     - So: a pass is not "nothing changed", and a corpus gate is only as
+       good as its input list. Documented in the file header so it can't
+       create false confidence. Worth noting the general lesson too — when
+       validating any new gate, perturb at *several* magnitudes, because a
+       single decisive perturbation proves only that the plumbing works.
 169. **ULP-error histogram artifacts** per function (not just avg/max)
      — bimodal structure reveals branch-split opportunities.
 170. **Worst-pocket auto-bisection**: given a fuzz argmax, exhaustively
