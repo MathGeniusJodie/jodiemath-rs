@@ -2209,6 +2209,42 @@ an idea revisits a rejection, the differing mechanism is stated.
       region (the vectorized one, where the select stays a blend) shrank
       too, and those numbers are the trustworthy ones.
 
+54f. **erfinv/logit: the same `log1p` inlining, one step further** —
+    fourth hit from #54b's sweep, **shipped 2026-07-27**. Both call
+    `log1p` on an argument whose sign is fixed by construction
+    (`erfinv`: `-x*x <= 0`; `logit`: `-p`), so `t = 1+arg` is never
+    denormal by #54d's own bound and `arg == 0` only where the *other*
+    branch is selected — `log1p`'s signed-zero select and `ln`'s rescale
+    both go.
+    - `erfinv` sheds one arm more than `logit` does: `t == 0` happens
+      **exactly** when `|x| == 1` (verified exhaustively, not argued from
+      `fl(x*x)`'s spacing), and the function already carries an explicit
+      `x.abs() == 1.0 -> +-inf` override for the Estrin-overflow reason in
+      its doc comment — so the wrapper's `-inf` arm is dead too.
+      `logit` must keep it: `t == 0` at `p == 1` is what makes
+      `logit(1) == +inf`.
+    - Bit-identical over all 2^32 inputs, **including NaN payloads**. The
+      obvious further collapse — folding `t <= 0` and NaN into a single
+      `t > 0.0` select, 2 ops cheaper — is bit-identical on all
+      4278190083 non-NaN patterns but canonicalises the 16777213 NaN ones
+      (`t*t` carries the payload through, an `f32::NAN` literal does not).
+      Kept the payload-preserving form; `nan_payload.rs` reports `erfinv`
+      as payload-keeping and that stays true.
+    - mca throughput: `erfinv` 3.815 -> **3.439**, `probit` 4.215 ->
+      **3.591**, `erfc_inv` 4.129 -> **3.533**, `logit` 3.457 ->
+      **3.354**. Against this session's pre-#54d baseline that compounds
+      to `probit` **-28.5%**, `erfc_inv` **-19.2%**, `erfinv` **-17.8%**,
+      `logit` **-10.0%**.
+    - Latency: `erfinv` 111.06 -> **69.14**, `probit` 124.03 -> **81.36**,
+      `erfc_inv` 117.77 -> **74.16** — i.e. #54d's apparent latency
+      "regression" on exactly these three is now not just reversed but
+      well past its own baseline (`erfinv` started at 98.22), which is
+      further confirmation it was the branch-modelling artifact #54d
+      describes. `logit`'s own row moves the other way (56.00 -> 60.94)
+      and is the same artifact again: its region's instruction count went
+      *down* (5657 -> 5645), and 3 interleaved wall-clock reps have the
+      new code far ahead (12.93/14.60/15.67 vs 19.94/18.61/31.06 ns).
+
 23. **exp/exp_checked floor-domain reduction**: superseded by the
     simpler idea #112 mechanism, which shipped instead (see lib.rs/git
     log, `exp_narrow`) -- rather than switching to floor + refitting the
