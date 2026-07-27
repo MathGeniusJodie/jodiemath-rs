@@ -2390,6 +2390,29 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### hyperbolics / activations
 
+54c. **atanh: inline `log1p`, minus the branches its own guard makes
+    unreachable** — the first hit from the crate-wide sweep idea #54b
+    recommends ("the guard is the licence"), **shipped 2026-07-27** (see
+    lib.rs/git log).
+    - `atanh`'s big arm is `0.5*log1p(2a/(1-a))` with `a = |x|`, so the
+      `log1p` argument `v` is non-negative for the whole in-domain half
+      and `u = 1+v >= 1`. That kills three of the general kernel's
+      branches outright: `ln`'s `denormal_rescale!` (`u` is never
+      denormal), the wrapper's `x == 0.0 -> -inf` select (`u` is never
+      zero), and `log1p`'s own `x == 0.0` signed-zero select (`v == 0`
+      only at `a == 0`, where the small-poly arm is selected anyway).
+      The two out-of-domain arms are still live and kept verbatim:
+      `u <= 0` for `a > 1`, and `!(u < inf)`'s `u*u`, which turns
+      `a == 1`'s `u = +inf` into `+inf` and any NaN back into NaN.
+    - mca: throughput 3.325 -> **2.903 (-12.7%)**, latency 75.47 ->
+      **69.42 (-8.0%)**.
+    - Accuracy: exhaustive over all 2^32 inputs, avg/max ulp 0.0037/2 —
+      unchanged to four decimals. `worst_corpus` bit-identical, all 8
+      standing gates and `codegen_check` pass.
+    - Two more sites the same sweep turned up, both smaller (only the
+      denormal rescale and the `x == 0.0` select are dead, the zero arm
+      stays live): `logit`'s `log1p(-p)` (`1-p >= 2^-24` for any `p < 1`)
+      and `erfinv`'s `-log1p(-x*x)` (same bound). Untested.
 
 #### powf / pown / remainder
 

@@ -3287,12 +3287,32 @@ fn atanh_small(x: f32) -> f32 {
 /// (`log1p(inf)=inf`, matching `atanh(+-1)=+-inf`), and is `< -1` for
 /// any `a>1` (`log1p` already `NaN` there, matching `atanh`'s domain
 /// edge). Current: avg/max ulp 0.0037/2 (exhaustive).
+///
+/// The `log1p` call is inlined rather than made, because `a = |x| >= 0`
+/// makes `v = 2a/(1-a)` non-negative for the whole in-domain half and
+/// therefore `u = 1+v >= 1`: `log1p`'s `x == 0.0` signed-zero select and
+/// `ln`'s denormal rescale and zero-input `-inf` select are all
+/// unreachable here (same "the guard is the licence" lever as
+/// `asinh`/`acosh`'s shared-`ln_normal` merge). Only the out-of-domain
+/// arms survive, and both are still exactly the cases `log_family_wrapper!`
+/// covers: `u < 0` for `a > 1` and the `!(u < inf)` catch that turns
+/// `a == 1`'s `u = +inf` into `+inf` and any `NaN` back into `NaN`.
 #[doc(alias = "atanhf")]
 #[inline(always)]
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
 pub fn atanh(x: f32) -> f32 {
     let a = x.abs();
     let small = atanh_small(x);
-    let big = mulsign(0.5 * log1p(2.0 * a / (1.0 - a)), x);
+    let v = 2.0 * a / (1.0 - a);
+    // log1p(v), minus the branches this call site can't reach.
+    let u = 1.0 + v;
+    let c = v - (u - 1.0);
+    let corr = c / u;
+    let corr = if corr.is_finite() { corr } else { 0.0 };
+    let l = ln_normal(u, 0.0) + corr;
+    let l = if u <= 0.0 { f32::NAN } else { l };
+    let l = if !(u < f32::INFINITY) { u * u } else { l };
+    let big = mulsign(0.5 * l, x);
     if a < 0.25 { small } else { big }
 }
 
