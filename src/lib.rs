@@ -1128,9 +1128,12 @@ pub fn two_prod(a: f32, b: f32) -> (f32, f32) {
 }
 
 /// round(x/pi + pre_offset), split into a double-float integer pair
-/// (qh, ql). pre_offset is 0 for sin, -0.5 for cos.
+/// (qh, ql). pre_offset is 0 for sin (`HALF = false`), -0.5 for cos
+/// (`HALF = true`). It is a const generic rather than an `f32` argument
+/// because `+ 0.0` is *not* a no-op LLVM may delete -- it turns `-0.0`
+/// into `+0.0` -- so sin's callers paid a real add for nothing.
 #[inline(always)]
-fn round_x_over_pi(x: f32, pre_offset: f32) -> (f32, f32) {
+fn round_x_over_pi<const HALF: bool>(x: f32) -> (f32, f32) {
     let (p0, e0) = two_prod(x, RPI_HI);
     // A quick_two_sum(p0, e0) here would be dead work: its error term's
     // only use would be `s + e1` immediately after, and for a Fast2Sum
@@ -1138,7 +1141,8 @@ fn round_x_over_pi(x: f32, pre_offset: f32) -> (f32, f32) {
     // so the whole call collapses to a plain add.
     let s = e0 + x * RPI_LO;
     // pre_offset folded in here, NOT into p0 -- see the constants' comment
-    let lo = fma(x, RPI_TINY, s) + pre_offset;
+    let lo = fma(x, RPI_TINY, s);
+    let lo = if HALF { lo - 0.5 } else { lo };
     // ql: ties-to-even -- q only needs to be *an* integer within 0.5 of
     // the true residual, so any consistent nearest-rounding rule works,
     // and round_ties_even lowers to a single vroundps (ql is the
@@ -1225,7 +1229,7 @@ const POLY_SAFE_BOUND: f32 = 1000.0;
 
 #[inline(always)]
 pub fn sin_checked(x: f32) -> f32 {
-    let (qh, ql) = round_x_over_pi(x, 0.0);
+    let (qh, ql) = round_x_over_pi::<false>(x);
     let r = reduce_pi(x, qh, ql).clamp(-POLY_SAFE_BOUND, POLY_SAFE_BOUND);
     // sin(x) = (-1)^q * sin(r); q = qh+ql, so parity(q) = (parity(qh) +
     // parity(ql)) mod 2. parity(qh) and parity(ql) are each exactly 0.0 or
@@ -1285,7 +1289,7 @@ pub fn sin_checked(x: f32) -> f32 {
 #[inline(always)]
 pub fn cos_checked(x: f32) -> f32 {
     // k = round(x/pi - 0.5), q = k + 0.5, r = x - q*pi in [-pi/2, pi/2]
-    let (kh, kl) = round_x_over_pi(x, -0.5);
+    let (kh, kl) = round_x_over_pi::<true>(x);
     // q = k + 0.5; fold the 0.5 into the small word kl, not the (possibly
     // huge) kh word, for the same reason pre_offset itself is folded into
     // the low correction term above -- kl stays small enough that + 0.5
@@ -1331,7 +1335,7 @@ pub fn cos_checked(x: f32) -> f32 {
 /// not verified for other conventions.
 #[inline(always)]
 pub fn reduce_pi_checked(x: f32) -> (f32, f32) {
-    let (qh, ql) = round_x_over_pi(x, 0.0);
+    let (qh, ql) = round_x_over_pi::<false>(x);
     let r = reduce_pi(x, qh, ql);
     let sign = if parity(qh) != parity(ql) { -1.0 } else { 1.0 };
     (r, sign)
@@ -1353,7 +1357,7 @@ pub fn reduce_pi_checked(x: f32) -> (f32, f32) {
 /// exponent (folded in here, not left for the caller to get backwards).
 #[inline(always)]
 pub fn reduce_pi_half_checked(x: f32) -> (f32, f32) {
-    let (kh, kl) = round_x_over_pi(x, -0.5);
+    let (kh, kl) = round_x_over_pi::<true>(x);
     let r = reduce_pi(x, kh, kl + 0.5);
     let sign = if parity(kh) == parity(kl) { -1.0 } else { 1.0 };
     (r, sign)

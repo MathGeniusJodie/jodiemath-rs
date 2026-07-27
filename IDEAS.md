@@ -544,7 +544,32 @@ what shipped.
 
 - **round_x_over_pi: remove dead pre_offset=0.0 add**: instructions
   confirmed gone via asm, but throughput got *worse* — removing an op let
-  the scheduler pick worse elsewhere.
+  the scheduler pick worse elsewhere. **Re-screened under idea #22 on
+  2026-07-27 and flipped: now a real win, shipped** (see lib.rs/git log).
+  Second of the three tagged scheduling artifacts to reverse on
+  rustc 1.98.0-nightly.
+  - Mechanism, which is worth stating because "dead add" undersells it:
+    `+ 0.0` is *not* an identity LLVM is allowed to delete — it maps
+    `-0.0` to `+0.0` — so sin's callers really did pay an add that only
+    ever normalized a sign of zero. Turned into a `const HALF: bool`
+    generic, so cos still gets its `- 0.5` and sin gets nothing.
+  - mca: `tan_checked` 8.787 -> **8.235 (-6.3%)**, `sin_checked` 5.311 ->
+    **5.232 (-1.5%)**, latencies flat, and no row anywhere regresses by
+    more than 0.001 (noise).
+  - Accuracy: unchanged everywhere. `worst_corpus` bit-identical across
+    all 108 functions, every gate passes, `sin_checked`/`cos_checked`'s
+    four documented buckets identical, `tan_checked`'s whole-domain max
+    identical at the same worst x.
+  - **One methodology note that nearly caused a false rejection**:
+    quick-fuzz `wrap_pi` reported max ulp 12/2/12 against a baseline's
+    1/1/2 over three repeats each, which reads like a real regression.
+    It is entirely sampling noise — exhaustive sweeps of both sides give
+    *identical* 0.0244 avg / 41 max at the same worst x. `wrap_pi`'s max
+    lives on a near-total-cancellation artifact at multiples of `2*pi`
+    that random sampling hits or misses, so its quick-fuzz max is
+    meaningless as an A/B signal even with repeats. Same lesson as the
+    2-arg repeat-run entries, but here repeats were *not* enough — the
+    exhaustive sweep was.
 - **round_x_over_pi: qh → round_ties_even**: regressed cos_checked's max
   ulp 2→6 (exact-half ties clash with cos's -0.5 offset). Reverted to
   `f32::round`.
@@ -2016,6 +2041,11 @@ an idea revisits a rejection, the differing mechanism is stated.
     rejected. So the premise holds: a rejection recorded as "the
     scheduler picked worse" has a real chance of being wrong on the next
     toolchain, and re-screening it costs one mca run.
+    - **Second pass, same day: the `pre_offset` dead-add removal flipped
+      too** (`tan_checked` -6.3%, `sin_checked` -1.5%; see its own entry
+      above). That is 2 of 3 reversed on one toolchain, which upgrades
+      this idea from "worth a look after a bump" to a standing chore.
+      Only `reduce_pi`'s depth-2 rebalance remains untested this pass.
     - Lesson the flip actually turned on, which generalizes past
       toolchain bumps: the *association* of an fma fold is a separate
       degree of freedom from the fold itself, and both orders need
