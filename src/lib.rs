@@ -232,10 +232,9 @@ macro_rules! pade_expm1_ratio {
 // respectively; false for `-inf`) -- hence each caller's
 // `#[allow(clippy::neg_cmp_op_on_partial_ord)]`. Macro, not a fn -- see
 // exp_r_poly!.
-macro_rules! log_family_wrapper {
-    ($x:expr, $normal:ident) => {{
-        let (xs, koff) = denormal_rescale!($x);
-        let r = $normal(xs, koff);
+macro_rules! log_family_edges {
+    ($x:expr, $r:expr) => {{
+        let r = $r;
         let spec = if $x == 0.0 { f32::NEG_INFINITY } else { f32::NAN };
         let r = if $x <= 0.0 { spec } else { r };
         if !($x < f32::INFINITY) {
@@ -244,6 +243,32 @@ macro_rules! log_family_wrapper {
             r
         }
     }};
+}
+
+macro_rules! log_family_wrapper {
+    ($x:expr, $normal:ident) => {
+        log_family_edges!($x, {
+            let (xs, koff) = denormal_rescale!($x);
+            $normal(xs, koff)
+        })
+    };
+}
+
+// `log_family_wrapper!` for callers whose argument provably can't be a
+// positive denormal, so the rescale's compare/multiply/two selects are
+// dead code: `u = 1.0 + x` is such an argument for *every* f32 `x`, since
+// `1+x` is exact by Sterbenz once `x <= -0.5` (making the smallest
+// positive `u` exactly `2^-24`, ~10^30 above `f32::MIN_POSITIVE`) and is
+// `>= 0.5` otherwise -- verified exhaustively over all 2^32 patterns, not
+// argued from the bound alone. The zero/negative/inf/NaN arms are all
+// still reachable at those call sites (`u == 0` at `x == -1`, `u < 0`
+// below it) and are shared verbatim. Same "the guard is the licence"
+// lever as `asinh`/`acosh`/`atanh`, one level down: here the licence
+// comes from the argument's own construction rather than a branch guard.
+macro_rules! log_family_wrapper_no_denormal {
+    ($x:expr, $normal:ident) => {
+        log_family_edges!($x, $normal($x, 0.0))
+    };
 }
 
 #[doc(alias = "log2f")]
@@ -1920,13 +1945,14 @@ pub fn log10_unchecked(x: f32) -> f32 {
 /// for every nonzero x `normal`'s sign already equals x's, making the
 /// select a no-op everywhere except the singular zero point.
 #[doc(alias = "log1pf")]
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
 #[inline(always)]
 pub fn log1p(x: f32) -> f32 {
     let u = 1.0 + x;
     let c = x - (u - 1.0);
     let corr = c / u;
     let corr = if corr.is_finite() { corr } else { 0.0 };
-    let normal = ln(u) + corr;
+    let normal = log_family_wrapper_no_denormal!(u, ln_normal) + corr;
     if x == 0.0 { x } else { normal }
 }
 
@@ -1994,13 +2020,14 @@ pub fn log1pmx(x: f32) -> f32 {
 /// trailing `x == 0.0` select for the opposite-signed-zero-addition trap
 /// -- both copied from `log1p` verbatim. Avg ulp 0.102, max 3
 /// (exhaustive).
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
 #[inline(always)]
 pub fn log2p1(x: f32) -> f32 {
     let u = 1.0 + x;
     let c = x - (u - 1.0);
     let corr = (c / u) * LOG2_E;
     let corr = if corr.is_finite() { corr } else { 0.0 };
-    let normal = log_2(u) + corr;
+    let normal = log_family_wrapper_no_denormal!(u, log_2_normal) + corr;
     if x == 0.0 { x } else { normal }
 }
 
@@ -2008,13 +2035,14 @@ pub fn log2p1(x: f32) -> f32 {
 /// above: identical Sterbenz-exact-correction structure, just converted
 /// to log10 units (`(c/u) * LOG10_E` instead of `* LOG2_E`) and calling
 /// `log10` instead of `log_2` for the dominant term.
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
 #[inline(always)]
 pub fn log10p1(x: f32) -> f32 {
     let u = 1.0 + x;
     let c = x - (u - 1.0);
     let corr = (c / u) * std::f32::consts::LOG10_E;
     let corr = if corr.is_finite() { corr } else { 0.0 };
-    let normal = log10(u) + corr;
+    let normal = log_family_wrapper_no_denormal!(u, log10_normal) + corr;
     if x == 0.0 { x } else { normal }
 }
 

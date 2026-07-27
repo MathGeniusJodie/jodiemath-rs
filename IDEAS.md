@@ -2170,6 +2170,45 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### exp / log family
 
+54d. **`1+x` is never a denormal, so `log1p`/`log2p1`/`log10p1` don't
+    need the log wrapper's denormal rescale** — the second hit from
+    #54b's crate-wide sweep, and the widest one: **shipped 2026-07-27**
+    (see lib.rs/git log).
+    - `fl(1+x)` is exact by Sterbenz once `x <= -0.5`, so the smallest
+      positive value it can take is exactly `2^-24` — about 10^30 above
+      `f32::MIN_POSITIVE`. Verified exhaustively over all 2^32 patterns
+      (zero positive-denormal cases, smallest positive `u` = 2^-24)
+      rather than argued from the bound, since this is the licence the
+      whole change rests on. The other three arms stay live and are
+      shared verbatim through a new `log_family_edges!`: `u == 0` at
+      `x == -1`, `u < 0` below it, `!(u < inf)` for `+inf`/NaN.
+    - Implemented as `log_family_wrapper_no_denormal!`, a sibling of
+      `log_family_wrapper!` over the shared edge macro — no duplicated
+      edge logic, and the `_normal` cores are untouched.
+    - **Bit-identical over all 2^32 inputs** for all three functions
+      (checked directly against the old formulation, not inferred), so
+      every downstream caller is too. All 8 gates + `codegen_check` pass.
+    - mca throughput: `log1p` 2.289 -> **1.857 (-18.9%)**, `log2p1`
+      2.328 -> **1.886 (-19.0%)**, and free for every caller —
+      `xlog1py` 2.324 -> 1.857 (-20.1%), `probit` 5.021 -> 4.215
+      (-16.1%), `compound` 4.570 -> 4.082 (-10.7%), `erfinv` 4.185 ->
+      3.815 (-8.8%), `logit` 3.728 -> 3.457 (-7.3%), `erfc_inv` 4.372
+      -> 4.129 (-5.6%).
+    - **mca's latency column disagrees for exactly three of those
+      (`erfinv` +13%, `probit` +14%, `erfc_inv` +13%) and is wrong
+      there** — worth recording as a harness trap, since the arbitration
+      generalizes. Those regions' instruction counts went *down*
+      (`erfinv_latency` 6662 -> 6020, `probit_latency` 7046 -> 6340,
+      `erfc_inv_latency` 6978 -> 6210) and the diff includes 64 `jbe`
+      and 64 `jmp` — one per chain iteration. The scalar latency harness
+      lowers `denormal_rescale!`'s select to a *branch*, and llvm-mca has
+      no branch predictor, so the baseline's simulated trace skipped a
+      path the branchless version has to count. Wall-clock settles it:
+      3 interleaved A/B reps, new is equal-or-better every time (22.12
+      vs 23.70, 21.22 vs 21.32, 20.93 vs 21.31 ns). Every *throughput*
+      region (the vectorized one, where the select stays a blend) shrank
+      too, and those numbers are the trustworthy ones.
+
 23. **exp/exp_checked floor-domain reduction**: superseded by the
     simpler idea #112 mechanism, which shipped instead (see lib.rs/git
     log, `exp_narrow`) -- rather than switching to floor + refitting the
