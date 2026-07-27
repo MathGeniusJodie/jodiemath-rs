@@ -372,6 +372,42 @@ instead.
   functions it analyzes and why each region is built the way it is (llvm-mca has no branch predictor,
   so branchy edge-case handling has to be routed around, not just measured through).
 
+Standing gates. Each exits nonzero on failure, so they can be run as a suite -- the whole set is about 20
+seconds (measured: edgecheck 0.1s, worst_corpus 0.2s, special_matrix 0.4s, special_matrix2 0.4s,
+saturation_pins 0.3s, eft_contract_check 2.9s, denormal_audit 3.5s, approx_bounds 12.6s). They cover
+contracts the ulp sweeps above structurally cannot -- special values, clamp boundaries, denormal handling,
+and documented-bound drift.
+
+- `cargo run --release --example worst_corpus` - 108 public 1-arg functions x 90 historically-hard inputs
+  (special values, every branch seam, every clamp boundary, recorded worst-x values) checked bit-identical
+  against a blessed golden file, in ~0.06s. The fast counterpart to the hours-long exhaustive sweeps.
+  `-- --bless` regenerates; an intentional accuracy change is *expected* to fail this, and the diff is
+  meant to be eyeballed. Note a pass is not "nothing changed": see the file header for two measured cases
+  that slip through (a 1-ulp coefficient nudge, and a seam move where both branches agree at the corpus point).
+- `cargo run --release --example special_matrix` - +-0/+-inf/NaN in/out matrix over every public 1-arg
+  function, asserting NaN propagation and quietness (the `_unchecked`/`_approx` tiers that promise nothing
+  off-domain are exempted by name, so a *new* function inheriting garbage NaN behaviour still fails).
+  Found the `wrap_pi(-0.0)` sign bug.
+- `cargo run --release --example special_matrix2` - the same for 2-arg functions, over the full 9x9
+  +-0/+-inf/NaN cross product, comparing bitwise against f64 std where a counterpart exists.
+- `cargo run --release --example saturation_pins` - every input clamp and overflow threshold swept +-64 ulp
+  against an f64 reference, plus far-outside pins asserting `f(+-1e30)` equals the mathematical limit.
+  Generalizes the exp10_checked overflow-at-the-boundary bug.
+- `cargo run --release --example denormal_audit` - which functions carry denormal outputs correctly vs
+  flush early, split into normal-input-denormal-output and denormal-in-denormal-out. Reports how *early*
+  each flush begins relative to the true zero, which is the metric that matters.
+- `cargo run --release --example approx_bounds` - asserts the `_approx` tier's doc-comment error bounds
+  (relative/absolute, not ulp -- that tier is deliberately outside the 0.5/2 budget).
+- `cargo run --release --example eft_contract_check` - the public EFT toolkit's exactness contracts against
+  an f64 reference, including exhaustive `mulsign` over 8 y-values x all 2^32 x.
+- `cargo run --release --example error_profile` - diagnostic rather than a gate: per-function ulp histogram
+  and per-magnitude-band avg/max, annotated by which side of the seam each band falls on. Distinguishes
+  refit / seam-move / new-sub-branch, which an avg+max pair cannot.
+- `cargo run --release --example codegen_check` - greps each `*_throughput` asm region for the specific
+  de-vectorization signatures this crate has actually been bitten by (scalar `call`, scalar float->int
+  converts, scalar divide/sqrt), and that at least one packed SIMD arithmetic instruction is present so an
+  optimized-away region can't pass vacuously.
+
 # todo:
 - do principled and thourough analysis of dependency chains and rounding errors to find optimizations
 - perfectly rounded versions
