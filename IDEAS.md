@@ -2213,6 +2213,33 @@ an idea revisits a rejection, the differing mechanism is stated.
 49. **sinf_poly real-chain refit** (#1's method) scoring sin_checked +
     cos_checked's actual reductions jointly — the rejected LPs used
     continuous grids that mis-weighted the caller split.
+50b. **Single-reduction `tan`/`tan_checked`** — noticed 2026-07-27 while
+    looking for throughput targets (`tan_checked` is the crate's 2nd most
+    expensive function at 8.235 cyc/elem), **pre-screened on paper and
+    parked as an accuracy-for-speed trade, not a free win.** Both `tan`
+    and `tan_checked` are `sin(x)/cos(x)`, i.e. *two* full argument
+    reductions. Only one is needed in principle: `tan` has period `pi`, so
+    with a single `r = x - q*pi` the `(-1)^q` parities cancel in the
+    quotient and `tan(x) = sin(r)/cos(r)` exactly — that would drop one
+    whole `round_x_over_pi` + `reduce_pi` pair *and* both `parity` calls.
+    - Why it is not free: `cos(r)` for `r` near `+-pi/2` is a
+      cancellation. Today's form reduces the cosine around cosine's *own*
+      zeros, so `cos_checked` keeps small *relative* error right at a pole
+      of `tan` and the quotient's relative error stays bounded. A poly in
+      `r` has only bounded *absolute* error, so its relative error goes
+      like `1/cos(r)` and blows up exactly at the poles.
+    - The obvious rescue does not work either: `cos(x) = +-sin(r - pi/2)`
+      and that subtraction *is* exact by Sterbenz (both operands ~1.57),
+      but `r` itself only carries ~1 ulp of absolute accuracy, so
+      `r - pi/2` near zero is all error. The information is genuinely gone
+      from a single-f32 `r` — recovering it needs a double-float `r`,
+      which is the `sincos_checked` shared-reduction fusion that already
+      measured *slower* on wall-clock.
+    - So the live version of this is a deliberately-sloppier tier
+      (`tan_fast`, poles excluded from its contract), not a change to
+      either existing function. Measure the win before building the API:
+      the saving is one reduction out of two, so expect roughly -40%, but
+      it buys nothing the existing `tan` contract can keep.
 
 #### cbrt / sqrt / hypot
 
