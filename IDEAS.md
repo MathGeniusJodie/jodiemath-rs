@@ -3039,9 +3039,6 @@ core::simd tier exists; each replaces multi-op scalar idioms)
      groupings) need re-measuring before claiming portability.
 179. **WASM relaxed-simd gate** (f32x4.relaxed_madd): without it the
      fma compile_error! fires — document/feature-gate the story.
-180. **f64 sibling module** — the whole architecture transfers, polys
-     refit at higher degree (big job, lgamma-class, listed for
-     completeness).
 181. **strict-ieee cargo feature**: swaps the documented convention
      divergences (remainder's ties-away, fmod's uncorrected quotient)
      for slower std-matching forms — escape hatch instead of a doc
