@@ -58,8 +58,8 @@ cosh_throughput (in-domain)| 0.051   |     4     |  0.000  |    0
                 sigmoid |    0.093   |     4     | (no std sigmoid)
        softplus (|x|<80)|    0.077   |     4     | (no std softplus)
 logaddexp (|a|,|b|<80)|    0.140   |  ~2e3 (real, narrow cancellation -- see its own doc comment) | (no std logaddexp)
-                  asinh |    0.173   |     4     | 
-                  acosh |    0.063   |     4     |  0.000  |    1
+                  asinh |    0.149   |     3     | 
+                  acosh |    0.060   |     4     |  0.000  |    1
                   atanh |    0.032   |     3     | 
                    asin |    0.025   |     9     |  0.000  |    0
                    acos |    0.065   |     5     |  0.000  |    0
@@ -313,8 +313,8 @@ tanh                |          82.72 |             1.859
 sigmoid             |          57.06 |             1.283
 softplus            |          78.14 |             3.006
 logaddexp           |          78.14 |             3.006
-asinh               |          81.00 |             5.406
-acosh               |          87.72 |             4.718
+asinh               |          81.02 |             4.169
+acosh               |          89.02 |             3.569
 atanh               |          75.47 |             3.325
 asin                |          59.03 |             0.968
 acos                |          37.11 |             0.820

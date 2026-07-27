@@ -3103,8 +3103,13 @@ pub fn asinh(x: f32) -> f32 {
     // (unlike acosh, see its body comment).
     let ax2 = ax * ax;
     let direct_sq = (ax2 + 1.0).sqrt();
-    let inv_ax2 = 1.0 / ax2;
-    let rescaled_sq = ax * (1.0 + inv_ax2).sqrt();
+    // sqrt(ax^2+1) = ax + 1/(2*ax) - 1/(8*ax^3) + ..., and this branch only
+    // runs for ax >= 2048, where the first dropped term is 1/(8*ax^4) <=
+    // 7e-15 relative -- seven orders of magnitude under f32's own 6e-8, so
+    // the two-term form is exact here. Costs one division and one fma
+    // instead of a division, an add, a sqrt and a multiply.
+    let inv_ax = 1.0 / ax;
+    let rescaled_sq = fma(0.5, inv_ax, ax);
     let sq = if small { direct_sq } else { rescaled_sq };
     let sm1 = if small { ax2 / (sq + 1.0) } else { sq - 1.0 };
     let d = ax + sm1;
@@ -3187,8 +3192,11 @@ pub fn acosh(x: f32) -> f32 {
     // `direct` and `inv_x2` each need their own x*x in a different
     // rounding context.
     let direct = fma(x, x, -1.0).sqrt();
-    let inv_x2 = 1.0 / (x * x);
-    let rescaled = x * fma(-inv_x2, 1.0, 1.0).sqrt();
+    // sqrt(x^2-1) = x - 1/(2*x) - 1/(8*x^3) - ..., same two-term expansion
+    // (and same 7e-15 bound at this branch's own x >= 2048) as asinh's --
+    // see its body comment.
+    let inv_x = 1.0 / x;
+    let rescaled = fma(-0.5, inv_x, x);
     let s = if x < 2048.0 { direct } else { rescaled };
     let d = (x - 1.0) + s;
     // Same shared-ln_normal merge as asinh (see its own doc comment for

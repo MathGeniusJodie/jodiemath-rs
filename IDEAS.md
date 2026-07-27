@@ -2282,6 +2282,35 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### cbrt / sqrt / hypot
 
+54b. **asinh/acosh large-|x| branch: drop the sqrt for a two-term
+    expansion** — found and **shipped 2026-07-27** (see lib.rs/git log).
+    Distinct from idea #54's rejected single-sqrt restructure, which only
+    moved *which* value the sqrt was applied to; this removes the sqrt
+    from that branch entirely.
+    - Both functions computed their large-|x| arm as
+      `ax*(1 +- 1/ax^2).sqrt()`. But that arm only runs for `ax >= 2048`,
+      where `sqrt(ax^2 +- 1) = ax +- 1/(2*ax) - 1/(8*ax^3) + ...` and the
+      first dropped term is `1/(8*ax^4) <= 7e-15` relative — seven orders
+      of magnitude under f32's own 6e-8. So `fma(+-0.5, 1.0/ax, ax)` is
+      not an approximation at this branch's own domain, it is exact to
+      f32.
+    - Op count: a division, an add, a sqrt and a multiply become a
+      division and an fma. `acosh` also sheds a whole `x*x` (its
+      `1.0/(x*x)` becomes `1.0/x`, and its *other* `x*x` has to stay
+      separate anyway — see its body comment on why the cancellation
+      needs its own fma).
+    - mca: `asinh` 5.406 -> **4.169 (-22.9%)**, `acosh` 4.718 ->
+      **3.569 (-24.4%)**, latency flat (`asinh` 81.00 -> 81.02, `acosh`
+      87.72 -> 89.02).
+    - Accuracy: exhaustive over all 2^32 inputs, `asinh` identical
+      (0.1493 avg / max 3, same worst x) and `acosh` marginally better
+      (0.0597 -> 0.0596 avg, max 4, same worst x). `worst_corpus`
+      bit-identical, all 8 standing gates pass.
+    - Generalizable: this is the *same* lever as idea #38 one level down —
+      a branch whose guard already proves a tight bound doesn't need a
+      general-purpose kernel (there, `ln`; here, `sqrt`). Worth sweeping
+      the crate for other guarded branches that still call something
+      general: the guard is the licence.
 56. **Slice-tier FTZ/DAZ via MXCSR**: a slice entry point can set
     FTZ/DAZ around its own loop and restore — gets the FTZ
     feature-flag idea's win without a global cargo feature.
