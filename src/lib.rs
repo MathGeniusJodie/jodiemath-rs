@@ -1745,11 +1745,19 @@ pub fn ln(x: f32) -> f32 {
 /// poly *shape*, but with coefficients fitted for ln directly (log_2's own
 /// c[i] * LN_2, each individually rounded to f32) and a Cody-Waite combine
 /// with k instead of a single fma: `k*LN2_HI` is exact (see LN2_HI's own
-/// comment), so `fma(poly, s, k*LN2_HI)` folds the poly correction in with
-/// only one rounding, then `+ k*LN2_LO` adds back the tiny residual LN2_HI
-/// dropped -- that final add's own rounding now only affects a small
-/// correction term instead of the whole (k-dominated) result, unlike the
-/// naive `log_2(x) * LN_2` where the second rounding scales everything.
+/// comment), and `k*LN2_LO` adds back the tiny residual LN2_HI dropped, so
+/// the correction's own rounding only ever affects a small term instead of
+/// the whole (k-dominated) result, unlike the naive `log_2(x) * LN_2` where
+/// the second rounding scales everything.
+///
+/// Both correction terms are folded in as `fma(p, s, fma(k, LN2_LO, k_hi))`
+/// -- two fma against the older `fma(p, s, k_hi) + k*LN2_LO`'s fma + mul +
+/// add, output bit-identical (verified exhaustively for `ln` and `log1p`).
+/// The association is load-bearing and was measured both ways: folding the
+/// LO word into the `k` term *first* is what wins, while doing the poly
+/// first reproduces a +1-cycle latency regression. `log10_normal`
+/// deliberately does *not* mirror this -- same transform, but there it
+/// costs real accuracy; see IDEAS.md.
 #[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
 pub fn ln_normal(x: f32, koff: f32) -> f32 {
@@ -1797,7 +1805,7 @@ pub fn ln_normal(x: f32, koff: f32) -> f32 {
     let r1b = fma(c[8], s4, r1);
     let p = fma(r1b, s4, r0);
     let k_hi = k * LN2_HI; // exact, see LN2_HI's comment
-    fma(p, s, k_hi) + k * LN2_LO
+    fma(p, s, fma(k, LN2_LO, k_hi))
 }
 
 /// ln without domain checks: valid for positive normal finite x only, see

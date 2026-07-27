@@ -433,7 +433,45 @@ what shipped.
   mca latency deterministically *worse* by 1 cycle (reproducible,
   re-confirmed on a second attempt after an initial stale-baseline
   false-positive); accuracy unchanged, the term was already off the
-  critical path.
+  critical path. **Re-screened under idea #22 on 2026-07-27 and the
+  result flipped — `ln_normal`'s half now ships** (see lib.rs/git log).
+  Two things had to change for that:
+  - The *association* matters, and the original attempt evidently used
+    the other one. `fma(p, s, fma(k, LN2_LO, k_hi))` (fold the LO word
+    into the `k` term first, poly last) wins across the board on
+    rustc 1.98.0-nightly; `fma(k, LN2_LO, fma(p, s, k_hi))` (poly first)
+    still reproduces the documented +1-cycle latency regression on the
+    same toolchain. Both are 2 fma against the old 1 fma + 1 mul + 1 add,
+    so this is pure scheduling, not op count — which is exactly the
+    "silently flips" class #22 predicted.
+  - **`log10_normal`'s half is genuinely worse and was dropped.**
+    Identical transform, opposite accuracy outcome, confirmed
+    exhaustively: `log10` avg/max **0.1265/3 -> 0.1280/4** and `log10p1`
+    **0.2319/3 -> 0.2347/4**, where `ln` and `log1p` come out *unchanged
+    to every digit and at the same worst x*. Worth remembering that a
+    Cody-Waite HI/LO reassociation is not automatically transferable
+    between two functions with the same shape — `LOG10_2_LO` is 3.2x
+    larger relative to its HI word than `LN2_LO` is, so it survives the
+    early fold less cleanly. Shipping only the `ln` half keeps every
+    perf win below (they all route through `ln_normal`) at zero
+    accuracy cost.
+  - Measured (mca, ln-only): `ln_unchecked` 38.22/1.113 ->
+    **34.06/1.018** (-8.5%), `compound` -4.5%, `acosh` -3.9%, `log1pmx`
+    -3.9%, `asinh` -3.3%, `log10p1`/`log1p` -2.0%, `xlogy` -1.6%,
+    `logit` -1.2%, latency down 1-8 cycles on all 14 affected rows and
+    up on none. Total instruction count in `mca_target.s` drops 380134
+    -> 378845.
+  - **mca reported a `probit` throughput regression of +15.1% that
+    wall-clock flatly contradicts** — quickbench min-of-7, 3 reps each
+    side: `probit` 1.599 -> **1.527 ns/op** (*faster*), `erfinv` 1.421
+    -> 1.423 (wash). This is the second recorded mca-vs-wall-clock
+    direction disagreement (after `sincos_checked`) and the reason to
+    trust wall-clock here is independent of both: the change strictly
+    *removes* 1289 instructions, so a real 15% slowdown would need a
+    mechanism, and none is visible. quickbench confirms the wins too
+    (`ln_unchecked` 0.307 -> 0.242 ns/op, -21%; `acosh` -12%;
+    `log1pmx` -11%; `asinh` -7%). Feeds idea #96's case for a
+    thermal-controlled wall-clock harness.
 - **log1p small-|x| dedicated branch**: adds a whole extra poly eval every
   call (branchless convention evaluates every branch unconditionally).
   Marginal accuracy gain (max 3 vs 4, avg 0.068 vs 0.073) but mca
@@ -1970,7 +2008,21 @@ an idea revisits a rejection, the differing mechanism is stated.
 22. **Toolchain-bump re-screen list**: tag the rejections that were pure
     scheduling artifacts (pre_offset dead-add removal, ln/log10
     trailing-fma fuse +1cyc, reduce_pi depth-2 rebalance) and re-measure
-    after each nightly bump — these can silently flip.
+    after each nightly bump — these can silently flip. **First pass run
+    2026-07-27 on rustc 1.98.0-nightly (f46ec5218): 1 of 3 flipped, and
+    it flipped hard.** The ln/log10 trailing-fma fuse is now a win on
+    every affected function — shipped for `ln_normal`, see its own entry
+    above for the numbers and for why `log10_normal`'s half stayed
+    rejected. So the premise holds: a rejection recorded as "the
+    scheduler picked worse" has a real chance of being wrong on the next
+    toolchain, and re-screening it costs one mca run.
+    - Lesson the flip actually turned on, which generalizes past
+      toolchain bumps: the *association* of an fma fold is a separate
+      degree of freedom from the fold itself, and both orders need
+      measuring. Only one of the two orders wins here; the other still
+      reproduces the original rejection's +1 cycle on today's toolchain,
+      so the old entry was probably never wrong about what it measured —
+      just about which of the two candidate expressions it measured.
 
 #### exp / log family
 
