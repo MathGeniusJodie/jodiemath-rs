@@ -2455,7 +2455,52 @@ core::simd tier exists; each replaces multi-op scalar idioms)
        validating any new gate, perturb at *several* magnitudes, because a
        single decisive perturbation proves only that the plumbing works.
 169. **ULP-error histogram artifacts** per function (not just avg/max)
-     — bimodal structure reveals branch-split opportunities.
+     — bimodal structure reveals branch-split opportunities. **Shipped
+     2026-07-27** as `examples/error_profile.rs` (ulp histogram + a
+     per-magnitude-band avg/max/worst-x breakdown, annotated with which
+     side of each function's seam a band falls on). Ran it on the three
+     joint-worst budgeted functions (`expm1`, `exp_m1_over_x`, `tanh`, all
+     max ulp 6) and it produced a real, actionable, mechanistically
+     explained diagnosis — **all three have their error concentrated in a
+     narrow band at and just above their seam**, not spread over the
+     domain:
+
+     | function | straddling seam | just above | rest of domain |
+     |---|---|---|---|
+     | `expm1` | avg 1.116, max 5 | avg 0.877, **max 6** | ~0.35 |
+     | `exp_m1_over_x` | avg 1.033, max 5 | avg 1.020, **max 6** | ~0.39 |
+     | `tanh` | avg 0.977, **max 6** | avg 0.831, max 4 | ~0.40-0.50 |
+
+     - Mechanism, verified numerically rather than guessed: the direct
+       branch forms `e^x` and then subtracts 1, so it loses
+       `log2(e^x/(e^x-1))` bits to cancellation, and that factor is
+       *largest immediately above the seam*: **2.541** at `x=0.5` (1.35
+       bits), 1.939 at 0.725, 1.582 at 1.0, 1.457 at 1.16, then 1.157 by
+       `x=2` and 1.007 by `x=5`. The measured error elevation tracks that
+       curve exactly — elevated while the factor is above ~1.5, back to
+       baseline once it drops under ~1.3.
+     - Neat confirmation that it really is this mechanism: `tanh`'s seam
+       sits at `0.25` and it feeds `expm1(2x)`, so its amplification at
+       the seam is the factor at `2*0.25 = 0.5` — **the same 2.541**, and
+       its error band is correspondingly at `|x| in [0.21, 0.49]` rather
+       than `[0.45, 1.16]`. Two different functions, one shared cause.
+     - **Actionable levers this points at**, in preference order. (a)
+       Widen the shared Pade's *fitted* domain (currently `|v| < 0.5`) so
+       the seam can move up past the high-amplification region — blocked
+       today because moving the seam alone pushes the Pade outside its fit
+       (its own doc: max 3/avg 0.109 over `|v|<0.5`), and the Pade is
+       shared by 5 callers so this needs the full mca sweep. (b) A
+       dedicated third branch over just the elevated band — precisely the
+       shape that rescued `atanh` (idea #69), where a loss confined to a
+       narrow region became a win on every axis once it got its own
+       branch. (c) Note what this rules *out*: a pure seam retune cannot
+       fix it, which is consistent with the 5-function crossover audit
+       already finding `0.5`/`0.25` optimal — the seam is in the right
+       place, the *branch* is what degrades near it.
+     - Reusable: "one max ulp figure" hid a 3x avg elevation confined to
+       less than one octave in all three functions. Worth profiling before
+       any future refit, since it distinguishes refit / seam-move /
+       new-sub-branch, which the avg+max pair cannot.
 170. **Worst-pocket auto-bisection**: given a fuzz argmax, exhaustively
      map the surrounding error pocket's shape and width — refit
      diagnosis tool.
