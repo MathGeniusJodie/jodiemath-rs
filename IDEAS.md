@@ -1238,8 +1238,55 @@ what shipped.
   sinh_checked's, which has sinh's own extra small-x branch on top and
   still came out faster). Reverted — cosh_checked's regression is too
   large to accept for sinh_checked's smaller win.
+- **exp_pos_neg: fold the 0.5 into the *poly constants* instead of a
+  multiply** — the version of idea #32 that works. **Shipped
+  2026-07-27** (see lib.rs/git log). The rejected attempt below relocated
+  the halving to a `t1 * 0.5` **multiply**, which is why it read as a
+  latency/throughput tradeoff: it moved an op, it never removed one.
+  Halving `exp_pos_neg_core!`'s four fitted coefficients and its two
+  leading `1.0`s costs **nothing** — the constants are compile-time, and
+  scaling every operand of an fma by the same power of two scales its
+  correctly-rounded result by exactly that power of two, so `p_pos`/
+  `p_neg` come out bit-for-bit halved.
+  - Removes the multiply from all four callers at once: `sinh`'s and
+    `cosh`'s trailing `0.5 *`, and both of
+    `exp_pos_neg_checked_half`'s `t1 * 0.5` / `t1n * 0.5`.
+  - **Free correctness win as a side effect.** `exp_pos_neg_checked_half`
+    documents (its own point 2) that the `0.5` must be applied before the
+    field multiply or `p_pos * t1 * t2` overflows to `inf` while
+    `sinh`/`cosh` are still finite. Halving in the poly satisfies that by
+    construction, so *plain* `sinh`/`cosh` inherit the fix they never
+    had: `sinh(88.7228)` was `inf`, is now **1.7014122e38**, and
+    `sinh(89.4)` was `inf`, is now **3.348863e38** (both verified against
+    the true values). 8 corpus entries move, all `inf` -> correct finite.
+  - Accuracy otherwise untouched: `worst_corpus` shows *only* those 8
+    entries, so `sinh_checked`/`cosh_checked`/`coshm1` are bit-identical
+    (as the algebra predicts — `p*(t1/2)*t2` and `(p/2)*t1*t2` are the
+    same real number at every step). Exhaustive `sinh` 0.0821 avg / max 5,
+    `sinh_checked` 0.0429 / 5, and the whole `cosh` family's avgs
+    unchanged to four digits.
+  - mca: latency down 2-4 cycles on all five affected rows (`sinh`
+    56.00 -> 52.00, `cosh` 55.00 -> 51.00, `sinh_checked` 58.06 -> 56.06,
+    `cosh_checked` 58.06 -> 55.06, `coshm1` 70.06 -> 68.06). Throughput
+    `cosh_checked` **-7.3%**, `sinh` -1.1%, `sinh_checked` -0.2%,
+    `cosh` +0.9%.
+  - **`coshm1` +61.6% is an llvm-mca artifact, and this one is provable
+    rather than merely suspected** — worth recording as the cleanest
+    example yet of the model diverging from the machine. The `coshm1`
+    region's opcode histogram is *identical* before and after except for
+    **4 fewer `vmulps` and 1 fewer `vbroadcastss`** (107 -> 102
+    instructions), and it is 100% packed `ymm`/`zmm` both ways, so there
+    is no de-vectorization, no new divide, no changed instruction class —
+    just strictly less of exactly the same work. A shorter, otherwise
+    identical, fully-vectorized instruction stream cannot take 1.6x the
+    cycles. Whole-target instruction count also drops 378296 -> 377953.
+    Wall-clock could not arbitrate (`sinh_checked` alone spanned
+    0.919-2.051 ns/op *within one configuration*, the documented 3-9x
+    environment swing), which is exactly why the asm-level check was the
+    decisive evidence — reach for the opcode histogram, not the
+    stopwatch, when mca reports something structurally impossible.
 - **exp_pos_neg: return halves pre-scaled by 0.5 for plain sinh/cosh
-  too** (idea #32, the *plain-multiply* relocation `exp_pos_neg_checked_half`
+  too, via a multiply** (idea #32, the *plain-multiply* relocation `exp_pos_neg_checked_half`
   already ships -- not the rejected bit-trick variant above): lower risk
   than it first looked, since the plain-multiply form is already proven
   safe in the checked sibling. Implemented and real-tested anyway

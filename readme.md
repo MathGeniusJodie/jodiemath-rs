@@ -303,12 +303,12 @@ expm1               |          71.00 |             1.695
 expm1_checked       |          75.06 |             1.595
 exp_m1_over_x       |          83.00 |             1.798
 exp2m1              |          76.06 |             1.843
-sinh                |          56.00 |             1.971
-cosh                |          55.00 |             1.754
+sinh                |          52.00 |             1.949
+cosh                |          51.00 |             1.770
 sinh_throughput     |          62.00 |             1.943
 cosh_throughput     |          61.00 |             1.616
-sinh_checked        |          58.06 |             2.345
-cosh_checked        |          58.06 |             2.212
+sinh_checked        |          56.06 |             2.340
+cosh_checked        |          55.06 |             2.051
 tanh                |          82.72 |             1.859
 sigmoid             |          57.06 |             1.283
 softplus            |          78.14 |             3.006

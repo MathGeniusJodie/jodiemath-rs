@@ -158,20 +158,38 @@ macro_rules! exp2_q_poly {
 // Shared by exp_pos_neg/exp_pos_neg_checked_half (sinh/cosh's
 // unchecked/checked exp(x)/exp(-x) core): one Cody-Waite reduction,
 // an even/odd-split poly, and the t1n/t2n reciprocal construction.
-// Only each caller's optional input clamp and final `0.5`-scaling
-// differ, so those stay at the call site. Returns
-// `(p_pos, p_neg, t1, t2, t1n, t2n)`. Macro, not a fn -- see exp_r_poly!.
+// Only each caller's optional input clamp differs, so that stays at the
+// call site. Returns `(p_pos, p_neg, t1, t2, t1n, t2n)` where p_pos/p_neg
+// are `0.5*e^(+-r)`, not `e^(+-r)`: every caller is a sinh/cosh that wants
+// the halves, and folding the 0.5 into the *poly constants* is free where
+// a `t1 * 0.5` multiply is not. Exact, not an approximation -- halving a
+// float is exact, and scaling every operand of an fma by the same power of
+// two scales its correctly-rounded result by exactly that power of two, so
+// `p_pos`/`p_neg` are bit-for-bit half of what the unhalved poly gives.
+// Halving here rather than at the end also keeps the checked caller's
+// premature-overflow fix (see exp_pos_neg_checked_half's own point 2):
+// the product never has to represent the unhalved `e^x` at any stage.
+// Macro, not a fn -- see exp_r_poly!.
 macro_rules! exp_pos_neg_core {
     ($x:expr) => {{
         const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
         let k = fma($x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
         let r = fma(-k, LN2_HI, $x);
         let r = fma(-k, LN2_LO, r);
-        let c: [f32; 4] = [4.99993e-1, 1.6667245e-1, 4.188372e-2, 8.300987e-3];
+        // The fitted coefficients, each exactly halved (see this macro's
+        // own comment). Written as `* 0.5` rather than as pre-divided
+        // decimal literals so the fit's own values stay legible and the
+        // halving cannot be mistranscribed.
+        let c: [f32; 4] = [
+            4.99993e-1 * 0.5,
+            1.6667245e-1 * 0.5,
+            4.188372e-2 * 0.5,
+            8.300987e-3 * 0.5,
+        ];
         let r2 = r * r;
         let r4 = r2 * r2;
-        let e = fma(c[2], r4, fma(c[0], r2, 1.0));
-        let o = fma(c[3], r4, fma(c[1], r2, 1.0));
+        let e = fma(c[2], r4, fma(c[0], r2, 0.5));
+        let o = fma(c[3], r4, fma(c[1], r2, 0.5));
         let p_pos = fma(r, o, e);
         let p_neg = fma(-r, o, e);
         let (t1, t2) = exp2_field_split(k);
@@ -2398,7 +2416,7 @@ fn exp2_field_split(k: f32) -> (f32, f32) {
 // scoring p_pos/e^r and p_neg/e^-r simultaneously. Same unchecked-exp2
 // domain limit as exp applies to both outputs.
 #[inline(always)]
-fn exp_pos_neg(x: f32) -> (f32, f32) {
+fn exp_pos_neg_half(x: f32) -> (f32, f32) {
     let (p_pos, p_neg, t1, t2, t1n, t2n) = exp_pos_neg_core!(x);
     (p_pos * t1 * t2, p_neg * t1n * t2n)
 }
@@ -2465,24 +2483,34 @@ fn sinh_small(x: f32) -> f32 {
 /// inherited unchecked-exp2 domain limit (only relevant on the `b` side,
 /// unconditionally evaluated but only selected for |x| >= 0.5). cosh below
 /// doesn't need this: it adds instead of subtracting, so it never cancels.
+///
+/// `exp_pos_neg_half` returns `0.5*e^(+-x)` rather than `e^(+-x)`, so
+/// there is no trailing `0.5*` here -- and folding the halving into the
+/// poly's own constants (free, exact) rather than paying a multiply also
+/// hands plain `sinh`/`cosh` the premature-overflow fix `sinh_checked`
+/// had to carry explicitly: the product never has to represent the
+/// unhalved `e^x`, so `x` in roughly `[87.3, 89.4]` now returns its true
+/// finite value instead of `inf` (e.g. `sinh(88.7228)` = 1.7014122e38,
+/// which was `inf` before).
 #[doc(alias = "sinhf")]
 #[inline(always)]
 pub fn sinh(x: f32) -> f32 {
     let a = sinh_small(x);
-    let (ep, en) = exp_pos_neg(x);
-    let b = 0.5 * (ep - en);
+    let (ep, en) = exp_pos_neg_half(x);
+    let b = ep - en;
     if x.abs() < 0.5 { a } else { b }
 }
 
-/// cosh(x) = 0.5*(exp(x) + exp(-x)) via `exp_pos_neg`'s shared reduction
-/// (see its own doc comment) -- never cancels (adds instead of
+/// cosh(x) = 0.5*(exp(x) + exp(-x)) via `exp_pos_neg_half`'s shared
+/// reduction (see its own doc comment) -- never cancels (adds instead of
 /// subtracts), so unlike sinh needs no small-x branch. See exp's doc
-/// comment for the inherited unchecked-exp2 domain limit.
+/// comment for the inherited unchecked-exp2 domain limit, and `sinh`'s
+/// for why the top of that range no longer overflows early.
 #[doc(alias = "coshf")]
 #[inline(always)]
 pub fn cosh(x: f32) -> f32 {
-    let (ep, en) = exp_pos_neg(x);
-    0.5 * (ep + en)
+    let (ep, en) = exp_pos_neg_half(x);
+    ep + en
 }
 
 /// sinh(x), single-exponent-field tier (backlog idea #201, same
@@ -2542,7 +2570,7 @@ pub fn cosh_narrow(x: f32) -> f32 {
 fn exp_pos_neg_checked_half(x: f32) -> (f32, f32) {
     let x = x.clamp(-170.0, 170.0);
     let (p_pos, p_neg, t1, t2, t1n, t2n) = exp_pos_neg_core!(x);
-    (p_pos * (t1 * 0.5) * t2, p_neg * (t1n * 0.5) * t2n)
+    (p_pos * t1 * t2, p_neg * t1n * t2n)
 }
 
 /// Full-range sibling of [`sinh`] -- same construction, just built on
