@@ -574,7 +574,19 @@ what shipped.
   ulp 2→6 (exact-half ties clash with cos's -0.5 offset). Reverted to
   `f32::round`.
 - **reduce_pi: rebalance 4-deep chain to depth 2**: bit-exact but +3 cyc
-  latency both functions.
+  latency both functions. **Re-screened under idea #22 on 2026-07-27:
+  does NOT flip — still rejected.** `(e1b + e2b) + (e3b - e3t)` against
+  the shipped `e1b + e2b + e3b - e3t` reproduces the original +3 cycles
+  exactly on rustc 1.98.0-nightly (`sin_checked` 117.02 -> 120.02,
+  `cos_checked` 122.00 -> 125.00, `wrap_pi` 92.02 -> 95.02,
+  `sinc_unnormalized` 128.00 -> 131.00, `tan_checked` 138.20 -> 141.20)
+  and throughput is mixed-to-worse on top (`sin_checked` +0.8%,
+  `tan_checked` +0.8%). Note the shipped order is already
+  latency-optimal in the way that matters: `e3t` is the last-ready value
+  (it carries the `ql` dependency) and the flat left-to-right chain
+  consumes it *last*, whereas any depth-2 pairing has to consume it one
+  level earlier. Shortening the tree does not help when the tree's
+  depth was never the binding constraint.
 - **reduce_pi: downgrade e2's two_prod to plain multiply**: regressed
   sin_checked's in-domain max ulp badly (2→51,054 at |x|≤1e6).
 - **reduce_pi: downgrade e3's two_prod to plain multiply**: mca diverged
@@ -2045,7 +2057,11 @@ an idea revisits a rejection, the differing mechanism is stated.
       too** (`tan_checked` -6.3%, `sin_checked` -1.5%; see its own entry
       above). That is 2 of 3 reversed on one toolchain, which upgrades
       this idea from "worth a look after a bump" to a standing chore.
-      Only `reduce_pi`'s depth-2 rebalance remains untested this pass.
+      `reduce_pi`'s depth-2 rebalance was the one that held: it
+      reproduces its original +3 cycles exactly, and the reason is
+      structural rather than schedule-luck (see its entry) — a useful
+      contrast, since it means "scheduling artifact" was the right tag
+      for two of the three and the wrong tag for the third.
     - Lesson the flip actually turned on, which generalizes past
       toolchain bumps: the *association* of an fma fold is a separate
       degree of freedom from the fold itself, and both orders need
