@@ -1772,6 +1772,33 @@ an idea revisits a rejection, the differing mechanism is stated.
    Pade argument is y=x·ln2, |y|<0.347 — narrower than expm1/tanh's
    shared |y|<0.5 fit. (The rejected decouplings — sinf_poly,
    exp_pos_neg — had *identical* caller domains; this one doesn't.)
+   **Rejected on a pre-implementation screen, 2026-07-27, on two
+   independent grounds.** (a) *The premise is stale*: the `|y|<0.347`
+   figure came from exp2m1's old `|x|<0.5` threshold, but that seam was
+   since retuned to `|x|<0.65` (see exp2m1's own doc comment), so the
+   real argument range is `|y| < 0.65*ln2 ≈ 0.4505` — a 10% narrowing
+   vs. the shared 0.5, not the 30% the idea assumes. Same
+   re-stale-check lesson as the asin_small/asin_poly entry below, in the
+   other direction: a *proposal's* premise can go stale from a later
+   change to the function it's about, not just a rejection's. (b) *The
+   binding error isn't at the domain edge, so narrowing cannot help*:
+   evaluating the current coefficients in exact arithmetic, max relative
+   error over `|y|<0.4505` is 0.617 ulp-equivalent and it peaks at an
+   **interior** point, `y≈+0.334`. That peak sits inside every candidate
+   domain, so `|y|<0.4505`, the stale `|y|<0.347`, and exp10m1's own
+   `|y|<0.4605` all score *identically* (0.617) — the shared 0.5 domain's
+   larger 1.367 figure is reached only at its edge, which exp2m1 never
+   visits. There is nothing for a narrower fit to recover. (c) Confirming
+   this from the other side: exp2m1's real exhaustive max is 4 ulp at
+   x≈-0.3991 (`y≈-0.277`), where the idealized fit error is only 0.158
+   ulp — i.e. ~96% of the observed error there is rounding chain, the
+   "near precision floor" diagnosis that has predicted refit failure
+   every time in this crate (see the LP-margin entries above). Note idea
+   #30 already rejected the *other* per-caller mechanism here (folding
+   `LN_2` into the rational) at a 5.6x margin; a HI/LO split of `LN_2`
+   instead (the sind idea #28 mechanism, which *adds* precision rather
+   than removing a rounding) is the one variant still untried, but #28's
+   own outcome — real accuracy win, real mca cost — is what to expect.
 6. **Joint threshold+coefficient coordinate descent** in tune.rs
    (crossover as a continuous search parameter) — automates the asin
    fix-5 lesson instead of retuning thresholds against frozen polys.
@@ -1991,7 +2018,55 @@ an idea revisits a rejection, the differing mechanism is stated.
 111. **expm1_checked / exp_m1_over_x_checked**: input clamp + single
      exponent field (the tanh/sigmoid pattern) — likely cheaper than the
      current k1/k2 split *and* total-domain, since the clamp caps k at
-     127 by construction.
+     127 by construction. **`expm1_checked` shipped 2026-07-27** (see
+     lib.rs/git log); `exp_m1_over_x_checked` deliberately deferred, see
+     below.
+     - The idea's own premise needed one correction: "the clamp caps k at
+       127 by construction" is exactly what must *not* happen. Capping k
+       at 127 caps the output near `2.4e38`, which (a) returns short
+       across the top third of an octave, `x` in `[88.376, 88.723)`,
+       whose true results are finite and representable right up to
+       `f32::MAX`, and (b) **saturates finite instead of overflowing to
+       `inf`** above `ln(f32::MAX)` — the same failure `edgecheck.rs`
+       caught in the rejected round-based `exp10_checked` reduction, and
+       the reason `exp_checked` itself still carries the k1/k2 split
+       (its clamp is deliberately set at `128/log2(e)` so `k` *reaches*
+       128 and overflows on its own).
+     - Fix that makes the idea work: emit the field at **`k-1`** (offset
+       `382`, not `expm1_narrow`'s `383`) and fold the missing factor of
+       two into an exact `p + p`. `k` can then reach 128 while `k-1`
+       stays inside a single field's `[-126, 127]`, so the top of the
+       range overflows naturally with no extra select. Clamp is
+       `[-86.0, 128/log2(e)]`; the bottom bound only has to keep
+       `k-1 >= -126` somewhere the answer is already exactly `-1` (true
+       for any `x < -17.4`, since `e^x` is then under half an ulp of 1),
+       and `-86.0` gives `k = -124`, clearing it with room. Verified over
+       all 2^32 inputs that `k-1` lands in `[-125, 127]`.
+     - Result: **bit-identical to `expm1` everywhere `expm1` is valid**
+       (zero disagreements, exhaustive), so max ulp is `expm1`'s own 6 at
+       the same worst point — totality at no accuracy cost. mca is a real
+       split: throughput 1.695 -> **1.595** cyc/elem (-5.9%), latency
+       71.00 -> **75.06** cyc (+5.7%). Fewer total ops buys the
+       throughput; the clamp sits at the head of the dependency chain
+       while the `exp2_field_split` work it displaces was partly parallel
+       to it, so the path lengthens as the op count falls — the
+       op-count-vs-path-depth distinction in mirror image (cf. the ln/
+       log10 degree-shed entry, where it was throughput-win/latency-wash).
+       Adopted on throughput, the axis this crate optimizes, and note the
+       comparison scale: `exp -> exp_checked` pays **+30%** throughput for
+       the same totality, where this is negative.
+     - `exp_m1_over_x_checked` deferred, with a real obstacle rather than
+       for lack of trying: `(e^x-1)/x` has to divide by something, and no
+       single choice of divisor is correct at both ends. Dividing by the
+       *original* `x` is right at `-inf` (`-1/-inf = +0`) and right for
+       large finite `x` (`inf/1e10 = inf`), but gives `inf/inf = NaN` at
+       exactly `+inf`; dividing by the *clamped* `x` fixes `+inf` but
+       then `-inf` returns `-1/-86 = 0.0116` instead of `0`. Correcting
+       the surviving `+inf` case needs an explicit compare+select, which
+       would eat much of a saving that is only ~0.39 cyc/elem gross
+       (`exp_m1_over_x` 1.798 vs `exp_m1_over_x_narrow` 1.411) before the
+       clamp is even paid for. Worth doing only alongside a decision about
+       whether a `_checked` tier owes a defined value at `+inf` at all.
 114. **FTZ-mode minimal exp2_checked/exp_checked** (rides the MXCSR
      slice-tier idea #56): lower clamp −151→−126 and the
      denormal-rounding half of the split's job disappears; same cascade

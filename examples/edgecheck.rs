@@ -647,6 +647,39 @@ fn main() {
     check("expm1_narrow(1)==expm1(1)", expm1_narrow(1.0), expm1(1.0));
     check("expm1_narrow(60)==expm1(60)", expm1_narrow(60.0), expm1(60.0));
 
+    // expm1_checked (backlog idea #111): single exponent field like
+    // expm1_narrow, but total, because the field is emitted at k-1 so k can
+    // still reach 128 and overflow to inf on its own. These pins are the
+    // whole reason for that indirection -- a naive k<=127 clamp saturates
+    // finite here instead (the rejected round-based exp10_checked bug), so
+    // the inf/-1 pairs below are the regression gate for it.
+    check("expm1_checked(0)", expm1_checked(0.0), 0.0);
+    check("expm1_checked(-0)", expm1_checked(-0.0), -0.0);
+    check("expm1_checked(inf)", expm1_checked(f32::INFINITY), f32::INFINITY);
+    check("expm1_checked(-inf)", expm1_checked(f32::NEG_INFINITY), -1.0);
+    check("expm1_checked(nan)", expm1_checked(f32::NAN), f32::NAN);
+    check("expm1_checked(f32::MAX)", expm1_checked(f32::MAX), f32::INFINITY);
+    check("expm1_checked(f32::MIN)", expm1_checked(f32::MIN), -1.0);
+    check("expm1_checked(-100)", expm1_checked(-100.0), -1.0);
+    // Saturation boundary, +-1 ulp around it (idea #165's pattern): just
+    // below ln(f32::MAX) must stay finite, at/above must be inf.
+    check_finite("expm1_checked(88.72283)", expm1_checked(88.72283));
+    check("expm1_checked(88.72284)", expm1_checked(88.72284), f32::INFINITY);
+    check("expm1_checked(1e10)", expm1_checked(1e10), f32::INFINITY);
+    // Bit-identical to expm1 everywhere expm1 is itself valid.
+    check("expm1_checked(1)==expm1(1)", expm1_checked(1.0), expm1(1.0));
+    check("expm1_checked(60)==expm1(60)", expm1_checked(60.0), expm1(60.0));
+    check(
+        "expm1_checked(-20)==expm1(-20)",
+        expm1_checked(-20.0),
+        expm1(-20.0),
+    );
+    check(
+        "expm1_checked(88.37627)==expm1(88.37627)",
+        expm1_checked(88.37627),
+        expm1(88.37627),
+    );
+
     // exp_m1_over_x(x) = (e^x-1)/x, with the removable singularity at 0
     // resolving to exactly 1.0 for free from the Pade branch's own
     // algebra (N(0)/D(0)=-120/-120=1.0 exactly) -- no explicit x==0.0

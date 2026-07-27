@@ -2126,6 +2126,66 @@ pub fn expm1_narrow(x: f32) -> f32 {
     if x.abs() < 0.5 { a } else { b }
 }
 
+/// Full-range sibling of [`expm1`] (backlog idea #111): total over every
+/// `f32`, at *better* throughput than `expm1` rather than the usual
+/// checked-tier surcharge, because clamping the input first is what makes
+/// a single exponent field legal -- so this pays for a clamp but drops the
+/// whole `exp2_field_split` k1/k2 chain plus its `p * t1` multiply.
+/// `expm1_checked(-inf) = -1`, `expm1_checked(inf) = inf`,
+/// `expm1_checked(NaN) = NaN`, versus `expm1`'s garbage/NaN outside
+/// roughly `[-87.3, 88.7)`.
+///
+/// Accuracy is not a tradeoff here: bit-identical to `expm1` everywhere
+/// `expm1` is itself valid (verified over all 2^32 patterns), so max ulp
+/// is `expm1`'s own 6, at the same worst point (`x ~ 0.9652`).
+///
+/// The cost split is real and goes both ways (mca): throughput
+/// 1.695 -> 1.595 cyc/elem (-5.9%), latency 71.00 -> 75.06 cyc (+5.7%).
+/// Fewer total ops buys the throughput, but the clamp lands at the *head*
+/// of the dependency chain while the `exp2_field_split` work it replaces
+/// was partly parallel to it, so the critical path gets longer even as the
+/// op count falls -- the op-count-vs-path-depth distinction, in mirror
+/// image. Throughput is the axis this crate optimizes, and for scale:
+/// `exp` -> `exp_checked` pays +30% throughput for the same totality,
+/// where this is *negative*.
+///
+/// The field is emitted at `k-1` (offset `382`, not [`expm1_narrow`]'s
+/// `383`) with the missing factor of two folded into an exact `p + p`.
+/// That indirection is the whole trick, and idea #111's own premise --
+/// "the clamp caps `k` at 127 by construction" -- is what it corrects:
+/// capping `k` at 127 would cap the output near `2.4e38`, so the top
+/// third of an octave (`x` in `[88.376, 88.723)`, whose true results are
+/// finite and representable up to `f32::MAX`) would come back short, and
+/// everything above `ln(f32::MAX)` would *saturate finite* instead of
+/// overflowing to `inf` -- the exact failure `edgecheck.rs` caught in the
+/// rejected round-based `exp10_checked` reduction. Shifting the field
+/// down one and doubling `p` instead lets `k` reach 128 while `k-1` stays
+/// inside a single field's `[-126, 127]`, so the top of the range
+/// overflows naturally, on its own, with no extra select.
+///
+/// Clamp bounds follow from that same one-field budget. Top is
+/// `128/log2(e)`, [`exp_checked`]'s own bound: it sits a hair above
+/// `ln(f32::MAX)`, so `x` at or past it overflows to `inf` as it should.
+/// Bottom only has to be somewhere `k-1 >= -126` still holds while the
+/// answer is already exactly `-1`: `e^x` is below half an ulp of 1 for
+/// any `x < -17.4`, so `-86.0` (`k = -124`) clears the field's floor with
+/// room to spare and every `x` below it correctly rounds to `-1.0`. The
+/// Pade branch, its `|x| < 0.5` threshold, the Cody-Waite reduction and
+/// `exp_r_poly!` are all shared with `expm1` unchanged.
+#[inline(always)]
+pub fn expm1_checked(x: f32) -> f32 {
+    let a = pade_expm1_ratio!(x, mul);
+    let xc = x.clamp(-86.0, 88.72283911167308);
+    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+    let k = fma(xc, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
+    let r = fma(-k, LN2_HI, xc);
+    let r = fma(-k, LN2_LO, r);
+    let p = exp_r_poly!(r);
+    let exp2int = f32::from_bits(((k + 382_f32).to_bits() << 8) & EXPONENT_MASK);
+    let b = fma(p + p, exp2int, -1.0);
+    if x.abs() < 0.5 { a } else { b }
+}
+
 /// (e^x - 1)/x: the well-conditioned primitive behind financial
 /// (continuously-compounded-rate) and ODE (exponential-integrator)
 /// kernels, where callers otherwise write `expm1(x)/x` and hope `x`

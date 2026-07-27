@@ -904,6 +904,16 @@ fn main() {
         let exp_narrow_domain = |x: f32| (-87.68311..=88.37627).contains(&x);
         let s = measure!(exp_narrow_domain, expm1_narrow, expm1_u10);
         report("expm1_narrow", &s, t0);
+        // expm1_checked (backlog idea #111) is total, so it gets the whole
+        // domain rather than exp_domain -- the same `everywhere` treatment
+        // exp_checked gets below, and the point of the function. std is
+        // measured over that same full domain too, so the readme's row can
+        // compare like with like (the "std expm1" run above is scored over
+        // exp_domain only, so its numbers are not interchangeable).
+        let s = measure!(everywhere, expm1_checked, expm1_u10);
+        report("expm1_checked", &s, t0);
+        let s = measure!(everywhere, |x: f32| x.exp_m1(), expm1_u10);
+        report("std expm1 (everywhere)", &s, t0);
     }
     if run("exp_checked") {
         // Full range (backlog idea #18): properly saturates to 0/inf, so

@@ -45,6 +45,7 @@ cbrt_accurate_unchecked (+) | 0.000 |     1     | (bit-identical to cbrt_accurat
         exp (in-domain) |    0.075   |     3     |  0.000  |    1
             exp_checked |    0.039   |     3     |  0.000  |    1
       expm1 (in-domain) |    0.130   |     6     |  0.000  |    0
+          expm1_checked |    0.068   |     6     |  0.000  |    0
 exp_m1_over_x (in-domain)| 0.073   |     6     | (no std exp_m1_over_x)
                 exp2m1  |    0.077   |     4     | (no std exp2m1)
        sinh (in-domain) |    0.082   |     5     |  0.000  |    1
@@ -299,6 +300,7 @@ log2p1              |          52.19 |             2.328
 exp                 |          42.00 |             1.327
 exp_checked         |          46.06 |             1.729
 expm1               |          71.00 |             1.695
+expm1_checked       |          75.06 |             1.595
 exp_m1_over_x       |          83.00 |             1.798
 exp2m1              |          76.06 |             1.844
 sinh                |          56.00 |             2.089
