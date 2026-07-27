@@ -2128,7 +2128,39 @@ an idea revisits a rejection, the differing mechanism is stated.
     documented 3-9x environment swing.
 97. **Targeted LLVM flag screen**: -enable-unroll-and-jam,
     -extra-vectorizer-passes, SLP horizontal reductions — cheap sweep,
-    same method as the interleave/zmm experiments.
+    same method as the interleave/zmm experiments. **Done 2026-07-27:
+    none of them change this crate's codegen at all.** All five tried —
+    `-enable-unroll-and-jam`, `-extra-vectorizer-passes`,
+    `-slp-vectorize-hor`, `-vectorizer-maximize-bandwidth`,
+    `-enable-masked-interleaved-mem-accesses` — produce **bit-identical**
+    `mca_target.s` (383662 instructions each). No llvm-mca run needed:
+    identical asm cannot differ in cycles. Plausible reading is that the
+    hot loops here are already fully unrolled fixed-size array loops over
+    straight-line FP, which gives these passes nothing to find.
+    - **Screened by asm diff rather than by mca**, which is the cheap way
+      to do this kind of sweep: a flag that leaves the asm untouched is
+      disqualified in ~15s instead of ~5min.
+    - **Two harness traps, and the first invalidated two whole attempts
+      before a control caught it.** Recording them because any future flag
+      or codegen sweep in this repo will hit both:
+      1. **`RUSTFLAGS` (env) *replaces* `.cargo/config.toml`'s
+         `build.rustflags`, it does not merge.** This repo's config sets
+         `-C target-cpu=native`, and dropping it makes `src/lib.rs`'s own
+         FMA `compile_error!` fire — so every flag build simply *failed*,
+         left the previous `.s` in place, and looked like "identical asm,
+         no effect". Always pass `RUSTFLAGS="-C target-cpu=native <flag>"`
+         and do not redirect stderr away.
+      2. Cargo's fingerprint does not track `--emit=asm` (mca.rs documents
+         this and bumps the mtime for exactly this reason), and a changed
+         `RUSTFLAGS` produces a *new* metadata hash, so several
+         `mca_target-*.s` files coexist — select the newest by mtime, never
+         `ls | head -1`.
+    - **Always include a control flag.** `-force-vector-width=2` must
+      change the asm; when it too came back "identical", that proved the
+      mechanism was broken rather than the flags being inert. Once fixed,
+      the control correctly showed 383662 -> 393186 instructions (narrower
+      vectors need more of them). Without that control this entry would
+      read "no LLVM flag helps" on the strength of builds that never ran.
 99. **tgamma** companion to the lgamma entry (Lanczos/Stirling, shares
     machinery).
 100. **Bessel j0/j1** (Cephes-style two-region rational + trig
