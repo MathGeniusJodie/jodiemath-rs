@@ -2216,11 +2216,25 @@ an idea revisits a rejection, the differing mechanism is stated.
       104.14/4.100 -> **78.14/3.006** (-26.7%).
     - Measured, accuracy: `softplus` avg **0.0833 -> 0.0768** (exhaustive,
       2.24e9 in-domain samples), max **4 unchanged**; `logsigmoid` the
-      same. `logaddexp` avg **0.157 -> 0.140** and its documented
-      cancellation max **~1e4 -> ~2e3** — 3 repeat runs per side, since
-      2-arg maxes swing run-to-run from sampling alone (baseline
-      7782/14422/42548, new 1507/2463/2835, so the direction is real and
-      not noise).
+      same. `logaddexp` avg **0.155 -> 0.141**, a real ~9% improvement.
+    - **Correction to this entry's first version, and a warning worth
+      keeping.** It originally also claimed `logaddexp`'s documented
+      cancellation max improved ~1e4 -> ~2e3, on 3 repeat runs per side
+      (baseline 7782/14422/42548, new 1507/2463/2835). **That claim does
+      not hold at 8 repeats per side**: baseline spans 992-38183 and the
+      new code spans 1013-15556, fully overlapping, and a separate
+      full-sweep run of the new code produced **249305**. The max here is
+      a heavy-tailed cancellation artifact and is *not* a usable A/B
+      signal at any repeat count this harness can afford — only the avg
+      is, and even that is partly tail-driven (a single 2.5e5 sample
+      shifts a 2.7M-sample mean by 0.09, most of the effect being
+      measured). The avg claim survives because the two 8-rep ranges are
+      *disjoint* (baseline min 0.1509 > new max 0.1451); that
+      disjointness, not a difference of means, is what makes it safe to
+      state. Stronger version of the existing 2-arg repeat-run rule: for
+      a heavy-tailed metric, require non-overlapping ranges, and if they
+      overlap report "no measurable change" rather than the direction of
+      the means.
     - Why accuracy *improved* rather than merely holding: the old form
       spent its precision recovering bits that the new one never loses.
       `u = 1 + e` rounds away `e`'s low bits and `c = e - (u - 1)` claws
