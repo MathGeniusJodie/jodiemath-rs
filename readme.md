@@ -311,8 +311,8 @@ sinh_checked        |          56.06 |             2.340
 cosh_checked        |          55.06 |             2.051
 tanh                |          82.72 |             1.859
 sigmoid             |          57.06 |             1.283
-softplus            |          78.14 |             3.006
-logaddexp           |          78.14 |             3.006
+softplus            |          73.14 |             2.534
+logaddexp           |          73.14 |             2.534
 asinh               |          81.02 |             4.169
 acosh               |          89.02 |             3.569
 atanh               |          69.42 |             2.903

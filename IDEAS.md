@@ -2429,6 +2429,24 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### hyperbolics / activations
 
+54e. **softplus/logaddexp: `exp_narrow`, not `exp`** — third hit from
+    #54b's sweep, **shipped 2026-07-27** (see lib.rs/git log). Both
+    already clamp their own exponent argument (`-ax.min(87.0)` /
+    `-d.min(87.0)`, landing in `[-87, 0]` for *every* input including
+    NaN, since `min` follows IEEE `minNum`), and that clamp is exactly
+    the guard `exp_narrow`'s single-exponent-field domain
+    (`[-87.68311, 88.37627]`) asks for — so `exp`'s `k1`/`k2`
+    `exp2_field_split` was dead weight at both call sites.
+    - Bit-identical: `softplus` verified over all 2^32 inputs,
+      `logaddexp` over 200M random pairs plus a 16M dense grid across
+      the `|a-b|` band where the correction term is live. `t1 * t2` and
+      the single field are the same exact power of two over this `k`
+      range, so no double-rounding difference exists to find.
+    - mca, both axes: `softplus`/`logaddexp` 3.006 -> **2.534 (-15.7%)**
+      throughput, 78.14 -> 73.14 latency; `logsigmoid` (a `-softplus(-x)`
+      composite) 2.969 -> **2.663 (-10.3%)**, 79.11 -> 74.11. No other
+      row in the table moved. All 8 gates pass.
+
 54c. **atanh: inline `log1p`, minus the branches its own guard makes
     unreachable** — the first hit from the crate-wide sweep idea #54b
     recommends ("the guard is the licence"), **shipped 2026-07-27** (see

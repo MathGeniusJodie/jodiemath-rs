@@ -2979,7 +2979,14 @@ fn log1p_unit(e: f32) -> f32 {
 #[inline(always)]
 pub fn softplus(x: f32) -> f32 {
     let ax = x.abs();
-    let e = exp(-ax.min(87.0));
+    // `exp_narrow`, not `exp`: the `min(87.0)` above is already the guard
+    // its single-exponent-field domain (`x` in `[-87.68311, 88.37627]`)
+    // asks for, so the k1/k2 split is dead weight here -- `-ax.min(87.0)`
+    // lands in `[-87, 0]` for every input, NaN included (`min` follows
+    // IEEE `minNum` and returns `87.0`, and the trailing `is_nan` below
+    // restores the NaN). Bit-identical, since `t1 * t2` and the single
+    // field are the same exact power of two over this k range.
+    let e = exp_narrow(-ax.min(87.0));
     let corr = if ax > 87.0 { 0.0 } else { log1p_unit(e) };
     let normal = x.max(0.0) + corr;
     if x.is_nan() { f32::NAN } else { normal }
@@ -3015,7 +3022,8 @@ pub fn logsigmoid(x: f32) -> f32 {
 pub fn logaddexp(a: f32, b: f32) -> f32 {
     let m = a.max(b);
     let d = (a - b).abs();
-    let e = exp(-d.min(87.0));
+    // `exp_narrow` for the same reason as `softplus`'s -- see its comment.
+    let e = exp_narrow(-d.min(87.0));
     let corr = if d > 87.0 { 0.0 } else { log1p_unit(e) };
     let normal = m + corr;
     if a.is_nan() || b.is_nan() { f32::NAN } else { normal }
