@@ -2684,6 +2684,33 @@ core::simd tier exists; each replaces multi-op scalar idioms)
      docs can't go stale.
 175. **NaN-payload/quietness propagation matrix** (which ops
      canonicalize payloads) — documentation-grade completeness.
+     **Shipped 2026-07-27** as `examples/nan_payload.rs`. The quietness
+     half is already *asserted* by `special_matrix.rs` (NaN in -> quiet
+     NaN out, which IEEE754 does require); this covers the payload half,
+     which it does not — a function may return an input NaN unchanged or
+     mint a fresh canonical one, and both are legal. So this is a record,
+     not a gate. Result over all 108 public 1-arg functions, feeding three
+     tagged payloads (including a sign-negative NaN):
+     - **74 preserve payload *and* sign exactly.** The common case, and
+       the mechanism is simply that a payload survives any operation that
+       merely propagates an operand — multiply, fma, select.
+     - **22 keep the payload but vary the sign**, which is what any
+       `copysign`/`mulsign`/negation in the tail does. Includes most of
+       the trig family (`cos`, `cosd`, `tand`, ...) and the `cbrt` tiers.
+     - **4 canonicalize to the default quiet NaN**: `acosh`, `asinh`,
+       `softplus`, `logsigmoid`. Worth knowing *why*, since it predicts
+       where else this will happen: all four route through a hardware
+       `sqrt` or a comparison-driven select, and x86's `vsqrtps`
+       canonicalizes rather than propagating its operand's payload. So
+       "does my payload survive" reduces to "does the tail contain a
+       sqrt/select that synthesizes a NaN from scratch".
+     - **8 return no NaN at all** — the `_unchecked`/`_approx` tiers whose
+       docs promise nothing off-domain (`exp2_approx`, `ln_unchecked`,
+       `log10_unchecked`, `log2_approx`, `log_2_unchecked`, `rcp_approx`,
+       `rsqrt_approx`, `sqrt_approx`). Broken out as their own class rather
+       than counted as "mixed": a first version lumped them in, which
+       overstated the mixed count at 30 and read as though a third of the
+       library had inconsistent payload behaviour.
 
 #### Batch 2: portability / infrastructure
 
