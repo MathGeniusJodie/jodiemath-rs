@@ -1611,14 +1611,41 @@ pub fn cbrt_throughput(x: f32) -> f32 {
 }
 
 
+/// Bit-trick `cbrt` seed plus two rational refinement steps (backlog idea
+/// #188's remaining members): max relative error **~5e-6** for `x` in
+/// `[1e-30, 1e30]` -- far tighter than its `_approx` siblings, since unlike
+/// them it does refine. Outside that band it degrades completely rather than
+/// gracefully: relative error reaches **100%** at the smallest normal
+/// (`1.175e-38`), because the seed's `+ 0x2a509849` carries the exponent
+/// field out of the normal range with no rescale to bring it back, and
+/// `cbrt_approx(-0.0)` is `NaN`. Deliberately outside the crate's 0.5/2 ulp
+/// budget -- use [`cbrt`] or [`cbrt_accurate`] for real work; this is kept
+/// for the `_approx_plot`/`_error` test suite. Bounds measured by
+/// `examples/approx_bounds.rs`.
 pub fn cbrt_approx(x: f32) -> f32 {
 	let y = f32::from_bits(0x2a509849u32 + (x.to_bits() / 3));
 	let y = (x + 2.*(y*y)*y) / (3.*(y*y));
     (2.*x*y + (y*y)*(y*y))/(x + 2.*(y*y)*y)
 }
+/// Classic single-bit-trick `sqrt` seed (backlog idea #188), no Newton
+/// refinement: max relative error **~4.5%** (4.484%), and unlike its
+/// siblings that figure holds over the *whole* positive-normal range, not
+/// just a mid-range band -- halving the exponent field via `>> 1` can't
+/// leave it. Deliberately outside the crate's 0.5/2 ulp budget; use
+/// `f32::sqrt` (a single hardware instruction) for real work. Bound measured
+/// by `examples/approx_bounds.rs`.
 pub fn sqrt_approx(x: f32) -> f32 {
     f32::from_bits(0x1FBD22DF + (x.to_bits() >> 1))
 }
+/// Classic single-bit-trick reciprocal seed (backlog idea #188), no Newton
+/// refinement: max relative error **~6.6%** (6.557%) for `x` in
+/// `[1e-30, 1e30]`. The band matters here -- near `f32::MAX` the true
+/// reciprocal is denormal and this has no range handling, so relative error
+/// grows without bound (~1e80 at `x = 3.29e38`), and it does not saturate
+/// sanely at the specials either (`rcp_approx(+0)` is `1.59e38`, not `inf`;
+/// `rcp_approx(+inf)` is negative). Deliberately outside the crate's 0.5/2
+/// ulp budget; use a plain `1.0 / x` for real work. Bounds measured by
+/// `examples/approx_bounds.rs`.
 pub fn rcp_approx(x: f32) -> f32 {
     f32::from_bits(0x7EEF370B - x.to_bits())
 }

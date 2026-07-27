@@ -2444,14 +2444,10 @@ core::simd tier exists; each replaces multi-op scalar idioms)
        rides a double-float reduction, a single f64 word is not
        automatically good enough ground truth — check the reference
        against a wider one before believing a large max.
-     - The `_approx` tier (`cbrt_approx`, `exp2_approx`, `log2_approx`,
-       `rcp_approx`, `rsqrt_approx`, `sqrt_approx`) plus `sigmoid_fast`
-       and `fast_round_int` remain unmeasured in accuracy.rs, which is
-       defensible (they are explicitly outside the 0.5/2 budget) — but
-       note idea #188 gave several of them real doc-comment error bounds,
-       and *nothing currently verifies those bounds*. That is the natural
-       next coverage target, and a better fit for the f16-lattice idea
-       than the budgeted functions are.
+     - The `_approx` tier stays out of accuracy.rs (it is explicitly
+       outside the 0.5/2 ulp budget, so ulp is the wrong metric), but idea
+       #188's doc-comment bounds for it were **unverified** — now covered
+       by `examples/approx_bounds.rs`, see #188.
 172. **wgpu/GPU compute sweeps** for 2-arg functions — makes the
      importance-sampling lattices (#93) orders of magnitude denser.
 173. **Round-trip contract measurement**: published ulp bounds for
@@ -2529,6 +2525,31 @@ core::simd tier exists; each replaces multi-op scalar idioms)
      members for ML-inference users, explicitly outside the 0.5/2 budget
      (cbrt_throughput's tier, done properly). sigmoid_approx folds into
      #191's own PWL+correction design instead of a separate bit-trick.
+     **Those three bounds are now verified, and the tier's remaining three
+     members documented, 2026-07-27** (`examples/approx_bounds.rs`; ulp is
+     the wrong metric for this tier, so it lives outside accuracy.rs and
+     asserts each doc's own claimed relative/absolute figure).
+     - All three documented bounds **hold**, and tightly enough to be worth
+       trusting: `exp2_approx` measures 6.149% against a documented ~6.1%,
+       `log2_approx` 0.086100 absolute against ~0.086, `rsqrt_approx`
+       4.8419% against ~4.8%. Exits nonzero if any drifts.
+     - The other three members had **no doc comment at all**; measured and
+       documented now. `sqrt_approx`: ~4.5% relative, and uniquely that
+       holds over the *whole* positive-normal range (halving the exponent
+       field via `>> 1` cannot leave it). `rcp_approx`: ~6.6% but only over
+       `[1e-30, 1e30]` — near `f32::MAX` the true reciprocal is denormal
+       and it has no range handling, so relative error is unbounded
+       (~1e80 at x=3.29e38). `cbrt_approx`: **~5e-6**, far tighter than any
+       sibling because it actually refines (two rational steps) — but it
+       degrades to **100%** error at the smallest normal, where the seed's
+       exponent-field addition leaves the normal range with no rescale.
+     - Generalisable observation for adding future members: the two
+       *unrefined* single-bit-trick seeds are uniform-ish across the whole
+       range (4.5%/6.6%), while the *refined* one is 4 orders of magnitude
+       better mid-range but has a hard domain edge. So "add a Newton step"
+       buys accuracy and buys a domain restriction at the same time; any
+       new `sin_approx`/`tanh_approx` should state both numbers, not just
+       the good one.
 189. **periodic_poly! dedup macro** once #43/#44 land (four
      near-identical folded-constant sinf_poly variants) — same
      macro-not-fn pattern as pi_reduce_and_poly!.
