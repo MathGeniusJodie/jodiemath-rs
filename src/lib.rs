@@ -2833,12 +2833,49 @@ pub fn sigmoid_grad(x: f32) -> f32 {
 /// *every* general `log1p` call regardless of caller) -- this is a
 /// separate callee only reachable from callers whose domain already
 /// proves the skipped checks unreachable.
+///
+/// That bounded domain also makes the whole `ln` machinery unnecessary
+/// (backlog idea #38): with `e` confined to `(0, 1]` there is no
+/// reduction to do, so a single fitted polynomial covers the range
+/// directly and the reduction, the exponent-field bit extraction, the
+/// `k*LN2_HI + k*LN2_LO` recombine *and* the Sterbenz correction's
+/// division all disappear. Written as `e + e^2*Q(e)` rather than
+/// `e*P(e)`: the leading `e` is then exact and only the (much smaller)
+/// correction carries the polynomial's rounding, which is also what
+/// makes tiny `e` come back bit-exact -- `e*e` flushes to zero below
+/// ~1e-19 and the result is literally `e`, matching the old form's own
+/// `1.0 + e == 1.0` path.
+///
+/// Degree 9 in `Q`, evaluated Estrin with the last two coefficients
+/// folded in at the `e^4` level (`ln_normal`'s own trick, so `e^8` never
+/// has to be formed): idealized max relative error 0.078 ulp-equivalent
+/// with the coefficients already rounded to f32.
 #[inline(always)]
 fn log1p_unit(e: f32) -> f32 {
-    let u = 1.0 + e;
-    let c = e - (u - 1.0);
-    let corr = c / u;
-    ln_normal(u, 0.0) + corr
+    let c: [f32; 10] = [
+        -0.499999881,
+        0.333326906,
+        -0.249885798,
+        0.198979303,
+        -0.161293283,
+        0.124671057,
+        -0.0830737948,
+        0.041981101,
+        -0.0136313466,
+        0.00207291939,
+    ];
+    let e2 = e * e;
+    let e4 = e2 * e2;
+    let l0 = fma(c[1], e, c[0]);
+    let l1 = fma(c[3], e, c[2]);
+    let l2 = fma(c[5], e, c[4]);
+    let l3 = fma(c[7], e, c[6]);
+    let l4 = fma(c[9], e, c[8]);
+    let r0 = fma(l1, e2, l0);
+    let r1 = fma(l3, e2, l2);
+    let r1b = fma(l4, e4, r1);
+    let q = fma(r1b, e4, r0);
+    fma(e2, q, e)
 }
 
 /// softplus(x) = ln(1+e^x), the smooth approximation to `max(x,0)` ML

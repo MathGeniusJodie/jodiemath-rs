@@ -1988,10 +1988,58 @@ an idea revisits a rejection, the differing mechanism is stated.
     same single-field destination with strictly less risk.
 36. **rlibm-style discrete rounding-interval LP extended to ln/log10**
     (same 2^23 reduced-input multiplicity as the existing log_2 entry).
-38. **softplus fused kernel**: one fitted poly for ln(1+2^-t) over the
-    k/f-reduced domain, replacing exp (full poly) → log1p (division +
-    deg-9 ln poly). Big throughput candidate.
-39. **logaddexp: same fused kernel** on |a−b|.
+38. **softplus fused kernel**: one fitted poly replacing log1p's
+    division + ln machinery. **Shipped 2026-07-27** — a real win on
+    *every* axis, which is rare enough here to be worth stating plainly.
+    - The idea as written proposed fitting `ln(1+2^-t)` over `exp`'s own
+      `k/f`-reduced domain, i.e. fusing *through* the exponential. That
+      is not what shipped and is not necessary: the whole win is
+      available one level up, at `log1p_unit`, whose callers
+      (`softplus`/`logaddexp`, via `e = exp(-something.min(87.0))` with
+      `something >= 0`) already guarantee `e` in `(0, 1]`. A bounded
+      domain means there is no reduction to do, so a single fitted
+      polynomial covers it directly and `ln_normal`'s exponent-field
+      extraction, its degree-8 poly, the `k*LN2_HI + k*LN2_LO` recombine
+      **and** the Sterbenz correction's `c / u` division all disappear at
+      once. `exp` is untouched.
+    - Form is `e + e^2*Q(e)`, not `e*P(e)`: the leading `e` is then exact
+      and only the smaller correction carries the poly's rounding. It
+      also reproduces the old code's tiny-`e` behaviour for free — `e*e`
+      flushes to zero below ~1e-19 and the result is literally `e`,
+      matching the old `1.0 + e == 1.0` path bit for bit.
+    - Degree 9 in `Q`, Estrin with the top two coefficients folded in at
+      the `e^4` level (`ln_normal`'s own trick, so `e^8` is never
+      formed): **2 mul + 10 fma = 12 ops** against the old form's ~22
+      plus a division. Idealized max relative error 0.078
+      ulp-equivalent *after* rounding the coefficients to f32 (0.221
+      straight off the scipy minimax fit; a coordinate descent over f32
+      ulp steps recovered the 2.8x).
+    - Measured, mca: `softplus` 104.14/4.100 -> **78.14/3.006**
+      (throughput **-26.7%**, latency -25.0%), `logsigmoid`
+      105.10/4.224 -> **79.11/2.969** (-29.7%), `logaddexp`
+      104.14/4.100 -> **78.14/3.006** (-26.7%).
+    - Measured, accuracy: `softplus` avg **0.0833 -> 0.0768** (exhaustive,
+      2.24e9 in-domain samples), max **4 unchanged**; `logsigmoid` the
+      same. `logaddexp` avg **0.157 -> 0.140** and its documented
+      cancellation max **~1e4 -> ~2e3** — 3 repeat runs per side, since
+      2-arg maxes swing run-to-run from sampling alone (baseline
+      7782/14422/42548, new 1507/2463/2835, so the direction is real and
+      not noise).
+    - Why accuracy *improved* rather than merely holding: the old form
+      spent its precision recovering bits that the new one never loses.
+      `u = 1 + e` rounds away `e`'s low bits and `c = e - (u - 1)` claws
+      them back through a division; a polynomial in `e` itself has
+      nothing to recover. The remaining error is `exp`'s own, which
+      propagates at a factor of `e/((1+e)*ln(1+e)) <= 1` — never
+      amplified.
+    - Only the fitting metric needed care. Fitting `Q` to minimize its
+      own *absolute* error is the wrong objective: the quantity that
+      matters is `e^2*dQ/ln(1+e)`, which weights the `e->1` end 1.44x and
+      the `e->0` end at essentially zero. Re-weighting the LP by that
+      factor moved degree 8 from 0.541 to 0.086 ulp-equivalent for free.
+39. **logaddexp: same fused kernel** on |a−b| — **shipped with #38**, no
+    separate work: `logaddexp` calls the same `log1p_unit`, so it picked
+    up the identical -26.7% and the accuracy improvement above.
 41. **logaddexp2** (base-2 sibling, ML/audio) — near-free variant of
     whatever #39 lands on.
 
