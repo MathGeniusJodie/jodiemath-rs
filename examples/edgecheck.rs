@@ -48,6 +48,10 @@ fn check_range(name: &str, got: f32, lo: f32, hi: f32) {
     );
 }
 
+// ULP distance along the monotonic ordering of f32 bit patterns. NaN vs
+// NaN is always exactly 0, whatever the two bit patterns are: payload,
+// sign and quiet bits carry no numeric meaning, so a difference there is
+// not an accuracy difference. Exactly one side being NaN stays maximal.
 fn ulp_diff(a: f32, b: f32) -> u64 {
     fn ord(x: f32) -> i64 {
         let b = x.to_bits();
@@ -90,6 +94,17 @@ fn check_seam(name: &str, f: impl Fn(f32) -> f32, threshold: f32) {
 }
 
 fn main() {
+    // The metric itself, before anything that uses it: NaN vs NaN scores
+    // 0 regardless of payload/sign, one-sided NaN scores maximal. Every
+    // ulp sweep in this repo depends on this, and `accuracy.rs`'s
+    // `thorough` mode feeds it all 2^24 NaN payloads.
+    let nan_a = f32::from_bits(0x7fc0_0001);
+    let nan_b = f32::from_bits(0xffc0_5678);
+    assert_eq!(ulp_diff(nan_a, nan_b), 0, "NaN vs NaN must be 0 ulp");
+    assert_eq!(ulp_diff(f32::NAN, f32::NAN), 0, "NaN vs NaN must be 0 ulp");
+    assert_eq!(ulp_diff(nan_a, 1.0), u64::MAX, "one-sided NaN must be maximal");
+    assert_eq!(ulp_diff(1.0, nan_b), u64::MAX, "one-sided NaN must be maximal");
+
     // log_2
     check("log_2(0)", log_2(0.0), f32::NEG_INFINITY);
     check("log_2(-0)", log_2(-0.0), f32::NEG_INFINITY);

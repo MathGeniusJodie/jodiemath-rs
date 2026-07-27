@@ -15,6 +15,10 @@ fn fma(a: f32, b: f32, c: f32) -> f32 {
     a.mul_add(b, c)
 }
 
+// ULP distance along the monotonic ordering of f32 bit patterns. NaN vs
+// NaN is always exactly 0, whatever the two bit patterns are: payload,
+// sign and quiet bits carry no numeric meaning, so a difference there is
+// not an accuracy difference. Exactly one side being NaN stays maximal.
 fn ulp_diff(a: f32, b: f32) -> u64 {
     fn ord(x: f32) -> i64 {
         let b = x.to_bits();

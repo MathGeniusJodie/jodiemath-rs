@@ -186,6 +186,16 @@ fn tand_ref(v: F64xN) -> F64xN {
     sind_ref(v) / cosd_ref(v)
 }
 
+/// ULP distance along the monotonic ordering of f32 bit patterns.
+///
+/// **NaN vs NaN is always exactly 0, whatever the two bit patterns are.**
+/// Payload, sign and quiet bits carry no numeric meaning, so a difference
+/// there is not an accuracy difference -- and `thorough` mode sweeps all
+/// 2^24 NaN payloads, so scoring them would swamp the max-ulp column with
+/// something that isn't error. Exactly one side being NaN is still a
+/// maximal error. Any bespoke scoring harness must copy this rule; the
+/// one deliberate exception in this repo is `worst_corpus.rs`, which is a
+/// bit-exactness regression gate rather than an accuracy test.
 fn ulp_diff(a: f32, b: f32) -> u64 {
     fn ord(x: f32) -> i64 {
         let b = x.to_bits();
