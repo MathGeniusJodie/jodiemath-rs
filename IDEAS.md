@@ -2523,18 +2523,47 @@ core::simd tier exists; each replaces multi-op scalar idioms)
          justifies. (Ignore the latency figure it reports, 71.00 -> 39.89:
          adding work cannot halve latency, and this is the documented mca
          latency-harness artifact. Throughput is the trustworthy axis.)
-     - **So the indicated next experiment is lever (a), and the
-       measurements above narrow it to something that could be free**:
-       refit the shared Pade over `|v| < 1.0` and move the seam to 1.0
-       with **no doubling at all**. That is the same op count as today —
-       one Pade, one select — so unlike both forms above it has no
-       structural cost, and it removes the same high-amplification band.
-       The cost moves entirely into the fit: a same-degree rational over a
-       2x wider domain loses headroom (cf. idea #23's screen, where a
-       doubled domain cost a degree-5 exp poly ~2.5x its idealized error),
-       and the Pade is shared by 5 callers so it needs the full mca sweep
-       plus each caller's own accuracy re-check. Worth trying, and now
-       well-motivated rather than speculative.
+     - **Lever (a) screened and disqualified the same day, before
+       implementation.** The plan was to refit the shared Pade over
+       `|v| < 1.0` and move the seam to 1.0 with no doubling — attractive
+       because it keeps today's op count exactly (one Pade, one select), so
+       unlike lever (b) it would have been structurally free. A scipy
+       minimax refit of the three free coefficients shows the fit simply
+       cannot be had at this degree. Best achievable idealized max relative
+       error, in f32-ulp-equivalents:
+
+       | domain | shipped coeffs | optimal same-degree refit |
+       |---|---|---|
+       | `\|v\|<0.5` (today) | 1.37 | **0.65** |
+       | `\|v\|<0.65` | 13.9 | 3.15 |
+       | `\|v\|<0.8` | 59.6 | 10.98 |
+       | `\|v\|<1.0` | 264.6 | **42.04** |
+
+       At the seam-1.0 target the *idealized* error alone is 42 ulp, before
+       a single rounding is added, against today's whole-function max of 6.
+       Even a modest widening to 0.65 costs 3.15, which would roughly
+       triple the Pade branch's own max (currently 3). The scaling is
+       brutal — ~65x across `0.5 -> 1.0` — as expected for a [2/3] rational
+       whose error term goes like `v^7`. Making the seam move work needs a
+       *higher degree* Pade, which per this file's own repeated finding
+       ("degree bump costs real": 3/3 such bumps gave real accuracy wins
+       and real mca cost) would be paid by all 5 callers of the shared
+       macro.
+     - **Net: the #169 concentration is structural at the current op
+       budget.** All three levers are now closed with evidence — (a)
+       disqualified by the fit screen above, (b) measured at +39.6%
+       throughput, (c) ruled out because the seam position is already
+       optimal and it is the *branch* that degrades near it. `expm1`'s
+       max 6 is not a tuning oversight.
+     - Incidental finding from the same screen, noted but *not* pursued:
+       the shipped coefficients are **not** minimax-optimal on their own
+       `|v|<0.5` domain either — 1.37 ulp-equivalent against an achievable
+       0.65, so ~2.1x idealized headroom. Deliberately left alone: that
+       margin sits squarely in the weak-to-moderate band this crate has
+       seen fail repeatedly (see the LP-margin entries), the coefficients
+       were tuned against the *real chain* rather than an idealized model
+       so a lower idealized error need not transfer, and #169's own
+       profiling shows the Pade branch is not where the max lives anyway.
 170. **Worst-pocket auto-bisection**: given a fuzz argmax, exhaustively
      map the surrounding error pocket's shape and width — refit
      diagnosis tool.
