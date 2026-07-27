@@ -2194,6 +2194,52 @@ core::simd tier exists; each replaces multi-op scalar idioms)
 164. **Special-value matrix v2**: systematic ±0/±inf/NaN in/out matrix
      for every public function as a standing test — five ±0 bugs found
      ad hoc so far (acos, atan2, sinf_poly, sinpi, remainder).
+     **Shipped 2026-07-27** as `examples/special_matrix.rs`, covering all
+     108 public 1-arg `f32 -> f32` functions, and it found a sixth ±0 bug
+     on the first run — making it 6-for-6 on this bug class.
+     - **Bug found and fixed: `wrap_pi(-0.0)` returned `+0.0`.** Same
+       root cause as `sinpi`'s: inside `reduce_pi_checked` the residual is
+       formed by subtracting equal signed zeros, which IEEE754 resolves to
+       `+0.0`, so `r` arrives with the sign already erased and nothing
+       downstream can recover it. Fixed with the identical `if x == 0.0
+       { x }` guard `sinpi` already carries.
+     - Isolating it mattered more than spotting it. `wrap_pi` is *not*
+       bit-exactly the identity on all of `(-pi, pi]` — beyond `|x| >
+       pi/2`, `q` flips to `±1` and the `r±pi` branch rounds, giving 7.79M
+       one-ulp differences out of 2.16e9, all legitimate. Restricting to
+       `|x| <= pi/2` (where `q = 0`, so `r == x` exactly) leaves exactly
+       **3** violations in 2.14e9 inputs: `-0.0`, plus `±pi/2` itself,
+       which are the same 1-ulp branch-boundary effect (f32's `pi/2`
+       rounds *above* true `pi/2`, so `x/pi > 0.5` and `q` becomes 1).
+       So the real signal was 1 anomaly in 2.14e9, not 7.79M.
+     - Cost of the fix: throughput 4.103 -> **4.280 (+4.3%)**, latency
+       92.00 -> 92.02 (flat). Accepted as a correctness fix rather than
+       weighed as an optimization — `sinpi` sets the precedent of paying
+       exactly this for exactly this bug. If the cost is ever unwanted,
+       the established pattern is a `wrap_pi_unchecked` sibling excluding
+       `-0.0` from its domain, mirroring `sinpi_unchecked` (idea #98);
+       not built unprompted.
+     - Three findings the matrix surfaced that are **not** bugs, confirmed
+       against their own docs: `sinpi_unchecked(-0.0) = +0.0` is idea
+       #98's deliberate documented tradeoff; `erfcx(+inf) = 5.61e-2` is
+       the known frozen tail (`erfcx_checked(+inf) = +0` is correct, see
+       the erfcx entry); and all 8 NaN-propagation failures are
+       `_unchecked`/`_approx` tiers that promise nothing off-domain
+       (`exp2_approx`, `ln_unchecked`, `log10_unchecked`, `log2_approx`,
+       `log_2_unchecked`, `rcp_approx`, `rsqrt_approx`, `sqrt_approx`).
+     - Gate design: NaN propagation and NaN quietness are checked
+       automatically (nothing off-domain-specific needed), with the 8
+       exemptions listed **by name** rather than matched on an
+       `_unchecked`/`_approx` name pattern, so a *new* function that
+       silently inherits garbage NaN behaviour still fails. The ±0/±inf
+       columns are printed for review, since the correct value there is
+       function-specific. Also prints the f(+0)/f(-0)-differ list (59
+       functions) as a standing record of which functions are
+       sign-of-zero-preserving.
+     - Extension left open: 2-arg functions (`atan2`/`hypot`/`powf`/
+       `remainder`/`compound`/`xlogy`) need the same treatment over the
+       ±0/±inf/NaN *cross product*, which is where the original `atan2`
+       and `remainder` ±0 bugs lived. Not covered by this pass.
 165. **Saturation-boundary pins**: every clamp constant and overflow
      threshold gets an edgecheck pin at ±1 ulp around it — the
      exp10_checked overflow-at-the-boundary pattern, systematized.

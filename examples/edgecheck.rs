@@ -301,6 +301,23 @@ fn main() {
     // (wrap_pi(x) and x are the same angle mod 2*pi) plus the range
     // invariant directly.
     check("wrap_pi(0)", wrap_pi(0.0), 0.0);
+    // -0.0 needs its own pin, not just +0.0: reduce_pi_checked forms the
+    // residual by subtracting equal signed zeros, which IEEE754 resolves
+    // to +0.0, so without wrap_pi's own `x == 0.0` guard this returned
+    // +0.0. Found by the special-value matrix (idea #164) -- it was the
+    // single sign anomaly across 2.14e9 inputs on |x| <= pi/2, the region
+    // where wrap_pi is otherwise exactly the identity.
+    check("wrap_pi(-0)", wrap_pi(-0.0), -0.0);
+    // Identity on |x| <= pi/2 (q = 0 there, so r == x exactly). Spot pins
+    // for the property the -0.0 case is the boundary of.
+    check("wrap_pi(0.5)", wrap_pi(0.5), 0.5);
+    check("wrap_pi(-0.5)", wrap_pi(-0.5), -0.5);
+    check("wrap_pi(min_denorm)", wrap_pi(f32::from_bits(1)), f32::from_bits(1));
+    check(
+        "wrap_pi(-min_denorm)",
+        wrap_pi(-f32::from_bits(1)),
+        -f32::from_bits(1),
+    );
     check_bounded("wrap_pi(pi)+pi", wrap_pi(std::f32::consts::PI) + std::f32::consts::PI, 1e-5);
     for &x in &[1.0f32, 3.0, 4.0, -4.0, 100.0, -1e9, 1e6] {
         let w = wrap_pi(x);

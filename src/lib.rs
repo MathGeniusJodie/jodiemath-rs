@@ -1374,13 +1374,23 @@ pub fn reduce_pi_half_checked(x: f32) -> (f32, f32) {
 #[inline(always)]
 pub fn wrap_pi(x: f32) -> f32 {
     let (r, sign) = reduce_pi_checked(x);
-    if sign > 0.0 {
+    let normal = if sign > 0.0 {
         r
     } else if r > 0.0 {
         r - std::f32::consts::PI
     } else {
         r + std::f32::consts::PI
-    }
+    };
+    // x=-0.0 needs the same guard sinpi uses, for the same reason: inside
+    // `reduce_pi_checked` the residual is formed by subtracting equal
+    // signed zeros, which IEEE754 resolves to +0.0, so `r` arrives with
+    // the sign already erased and there is nothing left downstream to
+    // recover it from. Found by the special-value matrix (idea #164): over
+    // |x| <= pi/2, where this function is otherwise *exactly* the
+    // identity, -0.0 was the single sign anomaly in 2.14e9 inputs (the
+    // only other two, at +-pi/2 itself, are legitimate 1-ulp boundary
+    // effects where q flips to +-1 and the r+-pi branch rounds).
+    if x == 0.0 { x } else { normal }
 }
 
 /// sin(r) for r already reduced to `[-pi/2, pi/2]` (backlog idea #127,
