@@ -2501,6 +2501,40 @@ core::simd tier exists; each replaces multi-op scalar idioms)
        less than one octave in all three functions. Worth profiling before
        any future refit, since it distinguishes refit / seam-move /
        new-sub-branch, which the avg+max pair cannot.
+     - **Lever (b) built and measured on `expm1` the same day; clean
+       accuracy win, rejected on cost.** The identity used avoids a refit
+       entirely: `expm1(2u) = a*(a+2)` with `a = expm1(u)`, so halving the
+       argument puts it back inside the Pade's own fitted `|v| < 0.5`
+       domain. Its own amplification `(2a+2)/(a+2)` is 1.124 at `x=0.5`
+       against the direct arm's 2.541 — **2.26x better** — staying ahead
+       until they cross at about `x=1.4`.
+       - Two-branch form (doubling for all `|x| < 1.0`, seam moved 0.5 ->
+         1.0): max **6 -> 5** but avg **0.1304 -> 0.1506, worse**. The
+         regression is the extra `fma` rounding, now paid at every small
+         `|x|` where there was no cancellation to fix in the first place.
+         Not a clean win.
+       - Three-branch form (plain Pade below 0.5, doubling over
+         `[0.5, 1.0)`, direct above): **clean win on both axes** — avg
+         0.1304 -> **0.1268**, max 6 -> **5**, worst x moving to 1.0389,
+         just above the new seam exactly as the mechanism predicts. But
+         throughput **1.695 -> 2.366 (+39.6%)**, because the doubling arm
+         is a whole second Pade evaluation *including its own division*.
+         Rejected: far outside anything an avg/max improvement of this size
+         justifies. (Ignore the latency figure it reports, 71.00 -> 39.89:
+         adding work cannot halve latency, and this is the documented mca
+         latency-harness artifact. Throughput is the trustworthy axis.)
+     - **So the indicated next experiment is lever (a), and the
+       measurements above narrow it to something that could be free**:
+       refit the shared Pade over `|v| < 1.0` and move the seam to 1.0
+       with **no doubling at all**. That is the same op count as today —
+       one Pade, one select — so unlike both forms above it has no
+       structural cost, and it removes the same high-amplification band.
+       The cost moves entirely into the fit: a same-degree rational over a
+       2x wider domain loses headroom (cf. idea #23's screen, where a
+       doubled domain cost a degree-5 exp poly ~2.5x its idealized error),
+       and the Pade is shared by 5 callers so it needs the full mca sweep
+       plus each caller's own accuracy re-check. Worth trying, and now
+       well-motivated rather than speculative.
 170. **Worst-pocket auto-bisection**: given a fuzz argmax, exhaustively
      map the surrounding error pocket's shape and width — refit
      diagnosis tool.
