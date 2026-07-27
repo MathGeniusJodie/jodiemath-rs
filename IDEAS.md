@@ -2586,6 +2586,34 @@ an idea revisits a rejection, the differing mechanism is stated.
 110. **±few-ulp exhaustive scan of every non-poly literal** (clamp
      bounds, seed constants, magic offsets, branch thresholds) scored on
      the real fuzz — #3's sibling for non-coefficient constants.
+     **First application run 2026-07-27 on `tanh`'s 0.25 seam, the
+     best-motivated target available (`error_profile` reports `tanh`'s
+     whole max-6 worst case sits in the band that straddles it, at
+     x ~ 0.2553). No headroom: rejected.** The scan itself is cheap and
+     worth reusing — score *each arm alone* over every f32 in a band, then
+     evaluate every candidate seam at once via a prefix-max of the
+     below-arm and a suffix-max of the above-arm. Result: the optimal
+     combined max is reached for any seam in **[0.2499507, 0.3039100]**,
+     i.e. the shipped 0.25 already sits (barely) inside the optimal run,
+     and every seam in it scores max 6. The avg-minimising point, 0.2716,
+     buys **0.1457 -> 0.1456 exhaustive avg** — nothing, and it moves 3
+     `worst_corpus` entries with two of them locally *worse* (x = +-0.25
+     exactly, 0.21/1.21 -> 1.79 ulp). Diagnosis matches the crate's usual
+     one: both arms independently reach ~6 across the whole plateau, so
+     the band's error is rounding-chain, not seam placement — fixing it
+     needs a better arm (wider Pade refit or a third branch), which is not
+     free.
+     - **Methodology trap, and this one cost a false positive:** score the
+       seam scan with **the harness's own `ulp_diff`** (integer bit
+       distance to the f64 reference *rounded to f32*), not a
+       true-value-relative `|got - exact| / ulp(exact)`. The first run
+       used the latter and reported a clean max **6.084 -> 5.557** win for
+       moving the seam to 0.27 — which is a real statement about the true
+       error and still rounds to bit distance 6 on both sides, so the
+       shipped metric showed no change at all. A sub-ulp difference in
+       true error is invisible once both candidates land in the same
+       rounding bin. Same family as the "score the shipped fn, not the
+       intermediate" trap: score what the gate scores.
 
 #### Batch 2: exp / log family
 
