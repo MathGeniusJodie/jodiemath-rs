@@ -400,6 +400,9 @@ and documented-bound drift.
   (relative/absolute, not ulp -- that tier is deliberately outside the 0.5/2 budget).
 - `cargo run --release --example eft_contract_check` - the public EFT toolkit's exactness contracts against
   an f64 reference, including exhaustive `mulsign` over 8 y-values x all 2^32 x.
+- `cargo run --release --example nan_payload` - record rather than a gate: whether each function preserves an
+  input NaN's payload and sign, canonicalizes it, or (for the off-domain tiers) returns no NaN at all. IEEE754
+  permits either of the first two; `special_matrix` asserts the part that *is* required.
 - `cargo run --release --example error_profile` - diagnostic rather than a gate: per-function ulp histogram
   and per-magnitude-band avg/max, annotated by which side of the seam each band falls on. Distinguishes
   refit / seam-move / new-sub-branch, which an avg+max pair cannot.
