@@ -2421,7 +2421,7 @@ fn exp_pos_neg_half(x: f32) -> (f32, f32) {
     (p_pos * t1 * t2, p_neg * t1n * t2n)
 }
 
-// exp_pos_neg, single-exponent-field tier (backlog idea #201, same
+// exp_pos_neg_half, single-exponent-field tier (backlog idea #201, same
 // mechanism as exp_narrow et al, one level further): both `+k` and `-k`
 // must fit a single field's own valid range simultaneously here (unlike
 // exp_narrow's one-sided k), which needs a domain a hair tighter than
@@ -2465,7 +2465,7 @@ fn exp_pos_neg_narrow_half(x: f32) -> (f32, f32) {
 // fma on every sinh/sinh_throughput/sinh_checked call (all three evaluate
 // this branch unconditionally, branchless-select) for a real ~6% throughput
 // win; the cost is contained because sinh's worst case lives in the
-// |x| >= 0.5 exp_pos_neg branch, not here -- this branch's max stays 3 ulp,
+// |x| >= 0.5 exp_pos_neg_half branch, not here -- this branch's max stays 3 ulp,
 // under sinh's overall max, so the headline accuracy is unchanged (avg ulp
 // rises slightly). c1/c2 are a least-squares fit (minimizes the branch's
 // average ulp given that max headroom), not minimax. See IDEAS.md
@@ -2482,7 +2482,7 @@ fn sinh_small(x: f32) -> f32 {
     x * p
 }
 
-/// sinh(x) = 0.5*(exp(x) - exp(-x)) directly (via `exp_pos_neg`'s shared
+/// sinh(x) = 0.5*(exp(x) - exp(-x)) directly (via `exp_pos_neg_half`'s shared
 /// reduction, see its own doc comment), except for |x| < 0.5 where exp(x)
 /// and exp(-x) are both ~1 and the subtraction cancels almost all
 /// precision (the same class of bug log1p/tanh had, see IDEAS.md) --
@@ -2524,7 +2524,7 @@ pub fn cosh(x: f32) -> f32 {
 /// sinh(x), single-exponent-field tier (backlog idea #201, same
 /// mechanism as `exp_narrow` et al, via [`exp_pos_neg_narrow`]): valid
 /// over `[-87.68311, 87.68311]` -- symmetric and a hair tighter than
-/// `exp_narrow`'s own `[-87.68311, 88.37627]`, because `exp_pos_neg`
+/// `exp_narrow`'s own `[-87.68311, 88.37627]`, because `exp_pos_neg_half`
 /// needs *both* `k` and `-k` to fit a single field's `[-126,127]` range
 /// simultaneously (found the same bit-level way: `k=126` is the last
 /// safe value, since `k=127` would need `-k=-127`, one past the single
@@ -2547,12 +2547,12 @@ pub fn cosh_narrow(x: f32) -> f32 {
     ep + en
 }
 
-/// `exp_pos_neg`, but with `x` clamped first so `k = round(x*log2e)`
+/// `exp_pos_neg_half`, but with `x` clamped first so `k = round(x*log2e)`
 /// never leaves the safe range for *both* `exp2_field_split(k)` and its
 /// reciprocal-based negation, AND returning `0.5*exp(x)`/`0.5*exp(-x)`
 /// directly instead of the raw pair:
 ///
-/// 1) `exp_pos_neg` has no clamp, so for `|x|` large enough the
+/// 1) `exp_pos_neg_half` has no clamp, so for `|x|` large enough the
 ///    bit-trick exponent construction wraps around instead of saturating
 ///    (wrong-sign infinities, finite garbage, NaN for `+-inf` input).
 ///    The split (and its reciprocal negation) exactly matches
@@ -2582,12 +2582,12 @@ fn exp_pos_neg_checked_half(x: f32) -> (f32, f32) {
 }
 
 /// Full-range sibling of [`sinh`] -- same construction, just built on
-/// `exp_pos_neg_checked_half` instead of the unchecked `exp_pos_neg`
-/// (which already returns the `0.5*exp(+-x)` halves, so no separate
-/// `0.5*` multiply here, unlike `sinh`). See that function's own doc
-/// comment for the correctness gaps this closes (`sinh`'s wrong-sign/NaN
-/// behavior for large `|x|`, plus a premature-overflow gap just below
-/// that).
+/// `exp_pos_neg_checked_half` instead of the unclamped
+/// `exp_pos_neg_half` (both return the `0.5*exp(+-x)` halves, so neither
+/// needs a separate `0.5*` multiply). See that function's own doc
+/// comment for the correctness gaps this closes: `sinh`'s wrong-sign/NaN
+/// behavior for large `|x|` (the premature-overflow gap that entry also
+/// mentions is now closed for plain `sinh` too, see its own doc).
 #[inline(always)]
 pub fn sinh_checked(x: f32) -> f32 {
     let a = sinh_small(x);
