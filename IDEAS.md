@@ -1919,7 +1919,10 @@ an idea revisits a rejection, the differing mechanism is stated.
 #### New functions / API breadth
 
 87. **Public Df32 module** (log2_df/exp2_checked_df/two_prod etc.) for
-    power users composing their own accurate kernels.
+    power users composing their own accurate kernels. Partially done:
+    the EFT primitives themselves (two_prod/two_sum/quick_two_sum) went
+    public via #184; what remains is the Df32 *type* and the df-suffixed
+    kernels (log2_df/exp2_checked_df), which is the larger API decision.
 
 #### Infrastructure / harness / tiers
 
@@ -2111,7 +2114,34 @@ core::simd tier exists; each replaces multi-op scalar idioms)
      by future rational _accurate tiers.
 184. **Public EFT toolkit**: two_prod/two_sum/quick_two_sum + mulsign
      (with the mulsign-vs-copysign semantics doc) — users keep
-     reinventing these wrong.
+     reinventing these wrong. **Shipped** (see lib.rs/git log): all four
+     are now `pub` with full contract docs, and the emitted assembly is
+     bit-identical to the private version (verified by a full pre/post
+     `mca_target.s` diff — these are `#[inline(always)]`, so going public
+     only adds standalone rlib symbols and cannot perturb inlined call
+     sites). Zero perf/accuracy risk by construction; no mca or fuzz
+     delta to weigh. The value was in the *contract audit* going public
+     forced, which found a real doc bug: `two_prod`'s original internal
+     note read "(no overflow)" as a *precondition*, and the first
+     public-facing rewrite reinterpreted it as a *guarantee* ("exact for
+     any a, b"). It isn't — `two_prod` is exact only for
+     `2^-102 <= |a*b| <= f32::MAX`, and both ends fail hard rather than
+     degrading (overflow: `p=inf, e=-inf`, so `p+e` is NaN; underflow:
+     `e`'s bits reach to `2^(E-47)` vs. subnormals' `2^-149` floor, so
+     `e` truncates, and below `2^-149` both flush to zero on a nonzero
+     true product). Note the bound is `2^-102`, **not** the `2^-103` the
+     "product must be normal" rule of thumb gives — `2^-103` still admits
+     real failures (~21k in 42M in-range pairs), a trap worth remembering
+     for any future EFT work. `two_sum`/`quick_two_sum`/`mulsign` needed
+     no contract changes beyond an overflow caveat: `two_sum` is exact
+     for any finite non-overflowing pair including throughout the
+     subnormal band, and `mulsign` matches xor-of-sign-bits exhaustively.
+     New standing verification: `examples/eft_contract_check.rs` (exits
+     nonzero on violation; 40M mixed random pairs + exhaustive mulsign
+     over 8 y-values x 2^32). Another instance of the internal->public
+     promotion lesson (cf. `fast_round_int`/#185): internal callers used
+     these only on bounded well-behaved values, so nothing in-tree ever
+     exercised the contract the docs were about to promise.
 187. **n-ary logaddexp slice reduction** (tree or max+sum-exp) — pairs
      with #148.
 188. **_approx tier new members**: exp2_approx/log2_approx/rsqrt_approx
