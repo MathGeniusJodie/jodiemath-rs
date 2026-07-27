@@ -450,22 +450,23 @@ throughput_fn!(thr_compound, "compound_throughput", {
     move |x: f32| compound(x, n)
 });
 
-latency_fn!(lat_xlogy, "xlogy_latency", {
-    let y = black_box(2.0);
-    move |x: f32| xlogy(x, y)
-});
-throughput_fn!(thr_xlogy, "xlogy_throughput", {
-    let y = black_box(2.0);
-    move |x: f32| xlogy(x, y)
-});
-latency_fn!(lat_xlog1py, "xlog1py_latency", {
-    let y = black_box(1.0);
-    move |x: f32| xlog1py(x, y)
-});
-throughput_fn!(thr_xlog1py, "xlog1py_throughput", {
-    let y = black_box(1.0);
-    move |x: f32| xlog1py(x, y)
-});
+// xlogy/xlog1py must take a *varying* y, unlike atan2/hypot/powf above,
+// which are fine with a loop-invariant second argument because their own
+// expensive work still depends on x. Here it doesn't: xlogy(x,y) = x*ln(y)
+// puts the entire transcendental on y alone, so a `black_box`ed invariant
+// y let LLVM hoist the whole ln/log1p out of the loop and the regions
+// measured little more than `x * precomputed_constant`. That is optimal
+// codegen, not a de-vectorization bug -- but it made the numbers
+// meaningless: xlog1py reported 9.03 cyc latency while log1p by itself is
+// 52.19, and it also tripped codegen_check, whose scalar-vdivss check was
+// seeing the hoisted loop-invariant divide rather than a per-element one.
+// Passing x for both operands keeps every operand varying. No CSE hazard:
+// x is a plain multiplier and y is the log's argument, so the two uses
+// share no subexpression.
+latency_fn!(lat_xlogy, "xlogy_latency", |x: f32| xlogy(x, x));
+throughput_fn!(thr_xlogy, "xlogy_throughput", |x: f32| xlogy(x, x));
+latency_fn!(lat_xlog1py, "xlog1py_latency", |x: f32| xlog1py(x, x));
+throughput_fn!(thr_xlog1py, "xlog1py_throughput", |x: f32| xlog1py(x, x));
 
 latency_fn!(lat_erfc_accurate, "erfc_accurate_latency", erfc_accurate);
 throughput_fn!(thr_erfc_accurate, "erfc_accurate_throughput", erfc_accurate);

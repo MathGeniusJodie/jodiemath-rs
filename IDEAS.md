@@ -2425,6 +2425,45 @@ core::simd tier exists; each replaces multi-op scalar idioms)
      (cbrt, sin_checked's flips, erfcx's branch) is silently deleted
      from every latency number — inject alternating sign into the chain
      instead. Directly repairs a documented harness defect.
+199. **Loop-invariant-2nd-arg hoisting in mca_target — found and fixed
+     2026-07-27.** A second, independent harness defect of the same class
+     as #198, worth recording because the numbers it produced looked
+     plausible enough to sit in the table unnoticed.
+     - The 2-arg idiom `{ let y = black_box(2.0); move |x: f32| f(x, y) }`
+       is only sound when the function's expensive work depends on `x`.
+       That holds for `atan2`/`hypot`/`powf`. It fails for
+       `xlogy(x,y) = x*ln(y)` and `xlog1py(x,y) = x*log1p(y)`, where the
+       whole transcendental sits on `y` alone: LLVM correctly hoists it out
+       of the loop, so the region measured little beyond
+       `x * precomputed_constant`.
+     - Two consequences, both live until now. (a) The published numbers
+       were meaningless — `xlog1py` read **9.03** cyc latency while
+       `log1p` alone is 56.09 — and wrong in *both* directions, since the
+       bogus throughput (1.858) was also worse than the true 2.301. (b) It
+       produced a **false-positive `codegen_check` failure**: the scalar
+       `vdivss` that check flagged was the hoisted loop-invariant divide,
+       not per-element de-vectorization. `codegen_check` had been failing
+       on `xlog1py_throughput` for exactly this reason; it now passes all
+       148 regions.
+     - Fix: pass `x` for both operands. Region went from 12 packed / 61
+       scalar to **73 / 18**, matching `log1p`'s own profile. No CSE
+       hazard when one operand is a plain multiplier and the other is the
+       log's argument. Corrected: `xlogy` 21.57/3.506 -> **58.94/1.612**
+       (vs `ln`'s 56.86/1.614), `xlog1py` 9.03/1.858 -> **57.23/2.301**
+       (vs `log1p`'s 56.09/2.335).
+     - **Reusable sanity rule**: check every mca row against the cost of
+       its most expensive component. A composite cheaper than its parts
+       means something was hoisted or optimized away, not that it is fast.
+     - Swept the rest of the invariant-arg benchmarks against that rule;
+       `xlogy`/`xlog1py` were the only two affected. The others are sound
+       because their heavy work still depends on `x`: `compound` is
+       `exp_checked(n*log1p(x))` (104.13 latency vs `log1p` 56.09 +
+       `exp_checked` 46.06 = ~102, consistent), `powf`/`powf_pos`/
+       `powf_unchecked`/`signed_pow` are all `exp2(y*log2(x))` with the
+       log on `x`, and `diff_of_products`/`cross2` take `x` as a live fma
+       operand. `pown`'s invariant `n` is `black_box`ed so its
+       bit-testing loop cannot constant-fold (that case has its own
+       `pown_const` regions, asserted separately by codegen_check).
 200. **Auto-tune CI loop**: a scheduled job re-runs the tune.rs
      coordinate descent (LP-seeded) on every poly and files a PR when a
      real fuzz-verified improvement appears — automates the crate's
