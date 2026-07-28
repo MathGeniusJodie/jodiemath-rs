@@ -2063,7 +2063,7 @@ what shipped.
   | `cbrt_corr` | cbrt tiers, rcbrt | 2.99 | 0.789 | 3.8x | REJECT (axis trade) |
   | `erfinv_tail_poly` | erfinv, erfc_inv, probit | 28.6 | 8.44 | 3.4x | **SHIPPED** |
   | `asinpi_small` | asinpi | 1.882 | 0.676 | 2.8x | **SHIPPED** |
-  | **`ln_normal`** | ln, log1p, asinh, acosh, atanh, logit, softplus... | 1.101 | 0.389 | **2.8x** | **untried — best remaining lead** |
+  | `ln_normal` | ln, log1p, asinh, acosh, atanh, erfinv, logit, clog, xlogy | 1.101 | 0.389 | 2.8x | **REJECT — fake headroom, see below** |
   | `tan_poly` | tanpi, tan2pi | 8.87 | 3.55 | 2.5x | **SHIPPED** |
   | `acos_poly` | acos, acosd | 3.185 | 1.584 | 2.0x | shipped (idea #1) |
   | `acospi_poly` | acospi | 3.001 | 1.614 | 1.9x | **SHIPPED** |
@@ -2113,6 +2113,42 @@ what shipped.
     chain. **Read the ratio and the absolute together** — a large ratio
     on a poly whose absolute error is already far under 1 ulp is not a
     lead, and this is the one row in the table where they disagree.
+  - **`ln_normal` (2.8x) is closed, and its diagnostic is the sharpest
+    in this file: a strictly better fit already exists in this repo's
+    own git history, and it measures *worse*.** Real-chain scoring
+    (hardware fma, bit-exact) over **all 8388608 mantissas** the
+    decomposition can produce, no stride:
+
+    | poly | idealised | real max | real avg |
+    |---|---|---|---|
+    | oracle: correctly-rounded `ln(1+s)/s` | 0 | **1** | **0.2723** |
+    | degree 9 (pre-shed, `9345bd2^`) | ~0.05 | 3 | 0.4644 |
+    | degree 8 shipped (LS) | 1.101 | 3 | **0.4531** |
+    | degree 8 LP minimax -> f32 | 0.427 | 3 | 0.4670 |
+    | degree 8 ulp-weighted LS | 0.939 | 3 | 0.4607 |
+    | degree 8 plain LS | 1.122 | 3 | 0.4520 |
+
+    A **22x better fit gives a worse real avg and the same max**, and six
+    objectives spanning idealised 0.05 to 1.12 all land within +-3% of
+    the same real avg. The oracle floor is max 1 / avg 0.272, so the
+    whole gap to max 3 / avg 0.453 is the 8-fma Estrin chain's own
+    rounding. Nothing a coefficient can reach.
+  - The LP candidate itself, exhaustive on both sides, is the **fourth of
+    four** confirmations of the least-squares-tuned rule: `acosh` max
+    4 -> 3, bought with a visible avg regression on `ln`, `ln_unchecked`,
+    `log1p`, `log1pmx` and `acosh` itself. A real-chain coordinate
+    descent (exhaustive enumeration, +-32 ulp span, 8 free coefficients)
+    does better — `ln`'s true all-exponent aggregate 0.235184 ->
+    0.235132, **-0.022%** — but pushes **`asinh` max 3 -> 4** at
+    x = 0.3538082, and the 100M quick fuzz reported max 3 on *both*
+    sides. Only `thorough` found it. Not worth 0.022%.
+  - Two corrections this produced, both worth keeping. **`softplus`,
+    `logsigmoid` and `logaddexp` do not route through `ln_normal`** —
+    they use `log1p_unit` (the already-closed 0.20x row), and `log2p1`
+    uses `log_2_normal`; the caller list above is corrected. And their
+    quick-fuzz avg drifted 0.0752 -> 0.0751 across builds with a
+    *provably identical* code path, which incidentally calibrates the
+    quick harness's own noise floor at **~+-0.0001 on avg**.
   - **Methodology: the stride-subsample trap applies to *search*, not
     just verification.** A stride-32 real-chain coordinate descent on
     `asin_poly` converged to a candidate that beat the shipped
