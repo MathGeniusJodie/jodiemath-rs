@@ -2095,6 +2095,19 @@ what shipped.
       or an LS fit whose error concentrates where the weight is high but
       the sample density is low (`erfinv_tail_poly`, `tan_poly`):
       **wins on both axes.** All four ships are in this class.
+  - **The cheapest screen of all, and it should be run FIRST — before
+    the ratio, before the objective class.** The ratio measures fit
+    headroom, but headroom only converts if **the fit is the binding
+    term**. Test that directly: score a *known-better-fitting* poly
+    through the real chain — a higher degree, or the pre-shed ancestor
+    sitting in git history — and see whether the real error moves. One
+    run. It settled `ln_normal` outright (degree 9 is a 22x better fit
+    and measures *worse*), and the same shape of experiment is what
+    exposed `asin_poly`'s fake 9.8x. The strongest version adds an
+    **oracle row**: feed the chain a correctly-rounded `p` and see where
+    the floor actually is. For `ln_normal` that floor is max 1 / avg
+    0.272 against a shipped max 3 / avg 0.453 — i.e. two of the three
+    ulps were never the polynomial's to give.
   - **`asin_poly`'s 9.8x is the table's largest headroom and is entirely
     fake** — worth knowing before anyone trusts the ratio alone. Real-
     chain simulation over all 16106127 f32 in `[0.27, 1)`: shipped max 6
