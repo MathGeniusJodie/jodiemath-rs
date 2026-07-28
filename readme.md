@@ -272,11 +272,11 @@ theoretical cost from llvm-mca (-mcpu=native, 100 iterations)
 cbrt                |          35.06 |             1.629
 cbrt_unchecked      |          35.06 |             0.906
 cbrt_accurate       |          59.06 |             3.129
-cbrt_accurate_unchecked |      59.06 |             2.067
+cbrt_accurate_unchecked |          59.06 |             2.067
 rcbrt               |          46.30 |             1.666
-exp2                |          35.00 |             0.841
+exp2                |          35.00 |             0.854
 exp2_checked        |          43.06 |             1.399
-exp10               |          52.00 |             1.565
+exp10               |          52.00 |             1.461
 exp10_checked       |          51.06 |             1.897
 log2                |          34.23 |             1.584
 log2_unchecked      |          34.23 |             0.958
@@ -286,7 +286,7 @@ cos                 |          54.00 |             1.406
 cos_checked         |         122.00 |             4.603
 sinpi               |          42.02 |             1.133
 cospi               |          51.00 |             1.283
-tanpi               |          71.14 |             2.152
+tanpi               |          78.88 |             2.031
 sinc                |          53.02 |             1.256
 sind                |          46.00 |             1.151
 cosd                |          54.00 |             1.406
@@ -297,24 +297,24 @@ log10               |          56.86 |             1.635
 log10_unchecked     |          38.22 |             1.113
 log1p               |          47.24 |             1.857
 log2p1              |          48.14 |             1.886
-exp                 |          42.00 |             1.327
-exp_checked         |          46.06 |             1.729
-expm1               |          71.00 |             1.695
-expm1_checked       |          75.06 |             1.595
-exp_m1_over_x       |          83.00 |             1.798
+exp                 |          42.00 |             1.230
+exp_checked         |          46.06 |             1.607
+expm1               |          70.00 |             1.620
+expm1_checked       |          74.06 |             1.556
+exp_m1_over_x       |          82.00 |             1.720
 exp2m1              |          76.06 |             1.843
-sinh                |          52.00 |             1.949
-cosh                |          51.00 |             1.770
+sinh                |          51.00 |             1.780
+cosh                |          50.00 |             1.647
 sinh_throughput     |          62.00 |             1.943
 cosh_throughput     |          61.00 |             1.616
-sinh_checked        |          56.06 |             2.340
-cosh_checked        |          55.06 |             2.051
-tanh                |          82.72 |             1.859
-sigmoid             |          57.06 |             1.283
-softplus            |          73.14 |             2.534
-logaddexp           |          73.14 |             2.534
-asinh               |          81.02 |             4.169
-acosh               |          89.02 |             3.569
+sinh_checked        |          55.06 |             2.274
+cosh_checked        |          54.06 |             1.943
+tanh                |          81.73 |             1.731
+sigmoid             |          57.06 |             1.222
+softplus            |          72.14 |             2.449
+logaddexp           |          72.14 |             2.449
+asinh               |          81.20 |             4.136
+acosh               |          89.08 |             3.828
 atanh               |          69.42 |             2.903
 asin                |          59.03 |             0.968
 acos                |          37.11 |             0.820
@@ -322,7 +322,7 @@ atan                |          61.09 |             1.491
 atan_latency        |          59.11 |             1.591
 atan2               |          61.28 |             1.694
 tan                 |          71.02 |             2.532
-erf                 |          76.11 |             2.034
+erf                 |          76.11 |             2.037
 erfc                |          64.00 |             2.437
 erfcx               |          39.36 |             2.278
 hypot               |          21.11 |             0.766
@@ -333,12 +333,12 @@ pown                |         176.00 |             3.805
 powf                |         102.99 |             5.651
 powf_unchecked      |          79.05 |             3.095
 powf_checked        |         130.33 |             9.105
-powf_checked_unchecked |      129.74 |             7.234
+powf_checked_unchecked |         129.74 |             7.234
 remainder           |          34.11 |                 ? (*)
 remainder_unchecked |          33.00 |             0.646
-remainder_checked   |          46.24 |             1.544
+remainder_checked   |          40.22 |             1.357
 remainder_ieee      |          29.11 |                 ? (*)
-remainder_wide      |         165.30 |             8.186
+remainder_wide      |         161.30 |             7.688
 fmod                |          29.11 |                 ? (*)
 fmod_unchecked      |          28.00 |             0.643
 ```
