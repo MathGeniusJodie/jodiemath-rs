@@ -3401,8 +3401,10 @@ pub fn acosh(x: f32) -> f32 {
     let koff = if finite_d { 0.0 } else { 1.0 };
     let shared = ln_normal(arg, koff);
     let combined = if finite_d { shared + corr } else { shared };
-    let combined = if x.is_infinite() { f32::INFINITY } else { combined };
-    let combined = if x.is_nan() { f32::NAN } else { combined };
+    // One select restores both non-finite cases, exactly as in `asinh`:
+    // `x` is already `+inf` for `x = +inf` and `NaN` for `x = NaN`, and
+    // `-inf` is discarded by the domain check below.
+    let combined = if x.is_finite() { combined } else { x };
     if x < 1.0 { f32::NAN } else { combined }
 }
 

@@ -1327,6 +1327,36 @@ what shipped.
     environment swing), which is exactly why the asm-level check was the
     decisive evidence — reach for the opcode histogram, not the
     stopwatch, when mca reports something structurally impossible.
+  - **Sharper arbitration rule, established on `acosh` 2026-07-28: use
+    `Block RThroughput` and the uOp count, not the simulated cycle
+    count.** `acosh`'s two non-finite selects merge into one exactly as
+    `asinh`'s do. The merge is -6 instructions with **every expensive
+    opcode identical** (`vdivps` 4, `vsqrtps` 2, 44 fma, 12 `vmulps`,
+    14 `vaddps` — only mask/blend bookkeeping moves), yet mca prices it
+    at **3.569 -> 3.828 (+7.3%)**, reproducibly, and a second independent
+    formulation reports +5.9%. `--bottleneck-analysis` shows why, and
+    exonerates it:
+
+    | | old | new |
+    |---|---|---|
+    | Total uOps | 16700 | **16100** |
+    | Block RThroughput | 40.0 | **40.0** |
+    | Resource Pressure | 78.4% | 58.1% |
+    | Register Dependencies | 42.2% | 48.6% |
+
+    Fewer uOps, **identical** resource-limited throughput bound, and the
+    reported slowdown is entirely mca's simulated schedule serializing on
+    register dependencies. The throughput harness feeds 16 *independent*
+    elements, so on real hardware there is nothing for those dependencies
+    to serialize — the out-of-order window interleaves them and the
+    binding constraint is the port pressure that `Block RThroughput`
+    already says is unchanged. Adopted.
+  - That is the same test that correctly *rejected* `erfinv`'s fold in
+    the evaluation-order sweep, where uOps went the other way (19400 ->
+    20300 while instructions fell 177 -> 164). So the pair is a clean
+    discriminator: **instructions down + uOps down + RThroughput flat =
+    take it; instructions down + uOps up = real regression.** The
+    reported cycle count distinguishes neither case.
   - **The `coshm1` row is not just occasionally wrong on a delta, it is
     wrong in absolute terms — established 2026-07-28 from a *static*
     comparison, no A/B needed.** `coshm1` is literally
@@ -3733,6 +3763,15 @@ core::simd tier exists; each replaces multi-op scalar idioms)
        canonicalizes rather than propagating its operand's payload. So
        "does my payload survive" reduces to "does the tail contain a
        sqrt/select that synthesizes a NaN from scratch".
+       **Now 3, and the membership changed twice, 2026-07-28**: `erfinv`
+       joined (idea #54f collapsed its two arms into one select), and
+       `acosh`/`asinh` *left* — merging their `is_infinite`/`is_nan`
+       selects into one `is_finite` select means the NaN they return is
+       the input rather than a fresh `f32::NAN`. Current counts: **76
+       preserve payload and sign, 3 canonicalize (`erfinv`, `softplus`,
+       `logsigmoid`), 21 vary the sign, 8 return no NaN.** All legal, all
+       still quiet, `special_matrix` unaffected — this file is a record,
+       and the record simply moves when the tails do.
      - **8 return no NaN at all** — the `_unchecked`/`_approx` tiers whose
        docs promise nothing off-domain (`exp2_approx`, `ln_unchecked`,
        `log10_unchecked`, `log2_approx`, `log_2_unchecked`, `rcp_approx`,
