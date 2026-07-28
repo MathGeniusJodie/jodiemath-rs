@@ -3800,6 +3800,28 @@ core::simd tier exists; each replaces multi-op scalar idioms)
        operand. `pown`'s invariant `n` is `black_box`ed so its
        bit-testing loop cannot constant-fold (that case has its own
        `pown_const` regions, asserted separately by codegen_check).
+
+201. **Two more harness facts, both learned the expensive way
+     2026-07-28** while running several experiments in parallel:
+     - **Never run `examples/mca` concurrently with any other
+       `--emit=asm` build of a *different* source state.** `mca.rs`
+       touches `mca_target.rs`'s mtime, runs `cargo rustc --emit=asm`,
+       then hands the resulting `.s` to `llvm-mca` — and a concurrent
+       build writes the *same* path. llvm-mca then reads assembly that
+       does not correspond to the tree mca thought it was measuring, with
+       no error and no obvious tell. If you are testing several ideas at
+       once, give each its own worktree (separate `target/`), or
+       serialize the mca runs.
+     - **Region-level llvm-mca is ~200x faster than the full harness and
+       reproduces its numbers exactly.** Extract just the
+       `LLVM-MCA-BEGIN`/`END` regions you care about into a small `.s`
+       and run `llvm-mca` on that: seconds instead of ~45 min, verified
+       against a full run. It also unlocks `--bottleneck-analysis`, which
+       is what separates a *resource*-bound regression from the
+       register-dependency artifacts (see the evaluation-order entry:
+       `erfinv` was 86% resource-pressure-bound and its regression was
+       real, while three same-shaped "regressions" at 50-90%
+       register-dependency-bound were not).
 200. **Auto-tune CI loop**: a scheduled job re-runs the tune.rs
      coordinate descent (LP-seeded) on every poly and files a PR when a
      real fuzz-verified improvement appears — automates the crate's
