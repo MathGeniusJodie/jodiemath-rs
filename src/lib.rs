@@ -3318,8 +3318,10 @@ pub fn asinh(x: f32) -> f32 {
     let koff = if finite_d { 0.0 } else { 1.0 };
     let shared = ln_normal(arg, koff);
     let combined = if finite_d { shared + corr } else { shared };
-    let combined = if x.is_infinite() { f32::INFINITY } else { combined };
-    let combined = if x.is_nan() { f32::NAN } else { combined };
+    // One select restores both non-finite cases: `ax` is already `+inf`
+    // for `x = +-inf` and `NaN` for `x = NaN`, and the trailing `mulsign`
+    // puts the infinity's sign back.
+    let combined = if x.is_finite() { combined } else { ax };
     mulsign(combined, x)
 }
 
@@ -4152,8 +4154,11 @@ pub fn erfinv(x: f32) -> f32 {
     let nu = -u;
     let t = 1.0 + nu;
     let c = nu - (t - 1.0);
+    // No `corr.is_finite()` guard: `c` is the exact rounding error of
+    // `1 + nu` whenever `|nu| <= 1`, so `corr` is finite for every `t`
+    // this arm is selected for -- the only inputs that make it `NaN`
+    // (`t <= 0`, i.e. `|x| >= 1`) already take the `NaN` arm below.
     let corr = c / t;
-    let corr = if corr.is_finite() { corr } else { 0.0 };
     let w = -if t > 0.0 { ln_normal(t, 0.0) + corr } else { f32::NAN };
     let central = x * erfinv_central_poly(u);
     let tail = mulsign(w.sqrt() * erfinv_tail_poly(w), x);
@@ -4329,8 +4334,11 @@ pub fn logit(p: f32) -> f32 {
     let np = -p;
     let t = 1.0 + np;
     let c = np - (t - 1.0);
+    // No `corr.is_finite()` guard: the only `p` making it non-finite are
+    // `p == 1` (`t == 0`, which takes the `spec` arm) and `p == -inf`
+    // (where `ln(p)` is already `NaN`, so the subtraction below is `NaN`
+    // either way).
     let corr = c / t;
-    let corr = if corr.is_finite() { corr } else { 0.0 };
     let spec = if t == 0.0 { f32::NEG_INFINITY } else { f32::NAN };
     let l = if t > 0.0 { ln_normal(t, 0.0) + corr } else { spec };
     ln(p) - l
@@ -4382,7 +4390,11 @@ pub fn xlog1py(x: f32, y: f32) -> f32 {
 /// own near-zero case, not a real precision defect.
 #[inline(always)]
 pub fn compound(x: f32, n: f32) -> f32 {
-    exp_checked(n * log1p(x))
+    // `log1p` minus its trailing signed-zero select: that select only
+    // changes `log1p(-0.0)` from `+0.0` to `-0.0`, and `exp_checked`
+    // maps both zeros to exactly `1.0`, so the sign never reaches the
+    // result.
+    exp_checked(n * log1p_nonzero!(x))
 }
 
 /// Full-precision-exponent sibling of [`erfc`]: `erfc`'s own exponent
@@ -5578,9 +5590,13 @@ pub fn remainder_unchecked(x: f32, y: f32) -> f32 {
 pub fn remainder_checked(x: f32, y: f32) -> f32 {
     let q0 = (x / y).round();
     let r0 = fma(-q0, y, x);
-    let adj = if (r0 > 0.0) == (y > 0.0) { 1.0 } else { -1.0 };
-    let r1 = fma(-adj, y, r0);
-    let normal = if r0.abs() > y.abs() * 0.5 { r1 } else { r0 };
+    // The correction always moves `r0` toward zero, so it is
+    // `r0 - copysign(|y|, r0)` -- no `+-1` multiplier to select and no
+    // fma. (The two forms differ only at `r0 == +-0.0`, where the guard
+    // below keeps `r0` anyway.) `ay` is shared with that guard.
+    let ay = y.abs();
+    let r1 = r0 - ay.copysign(r0);
+    let normal = if r0.abs() > ay * 0.5 { r1 } else { r0 };
     // Same exact-cancellation sign bug as remainder_style_combine! (see
     // its own comment): a nonzero x that's an exact multiple of y
     // exactly cancels to +0.0 regardless of x's sign, silently dropping
@@ -5659,6 +5675,7 @@ pub fn remainder_checked(x: f32, y: f32) -> f32 {
 pub fn remainder_wide(x: f32, y: f32) -> f32 {
     let big = x.abs() > f32::MAX * 0.25;
     let scale = if big { 0.125 } else { 1.0 };
+    let unscale = if big { 8.0 } else { 1.0 };
     let xs = x * scale;
     let ys = y * scale;
     let q0 = (xs / ys).round();
@@ -5667,10 +5684,17 @@ pub fn remainder_wide(x: f32, y: f32) -> f32 {
     let adj = (r0 / ys).round_ties_even();
     let r1_df = r0_df - Df32::from_mul(adj, ys);
     let r1 = r1_df.to_f32();
-    let adj2 = if (r1 > 0.0) == (ys > 0.0) { 1.0 } else { -1.0 };
-    let r2 = fma(-adj2, ys, r1);
-    let normal = if r1.abs() > ys.abs() * 0.5 { r2 } else { r1 };
-    let normal = normal * (1.0 / scale);
+    // The last whole-`y` correction always moves `r1` toward zero, so it
+    // is `r1 - copysign(|ys|, r1)` -- no `+-1` multiplier to select and
+    // no fma. (The two forms differ only at `r1 == +-0.0`, where the
+    // guard below keeps `r1` anyway.) `ays` is shared with that guard.
+    let ays = ys.abs();
+    let r2 = r1 - ays.copysign(r1);
+    let normal = if r1.abs() > ays * 0.5 { r2 } else { r1 };
+    // `unscale` is selected, not computed as `1.0 / scale`: both scales
+    // are exact powers of two, so their reciprocals are exact literals
+    // and a second blend replaces a full-width divide.
+    let normal = normal * unscale;
     // Same exact-cancellation sign bug as remainder_style_combine! (see
     // its own comment): a nonzero x that's an exact multiple of y
     // exactly cancels to +0.0 regardless of x's sign, silently dropping

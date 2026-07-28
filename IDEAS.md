@@ -2873,6 +2873,21 @@ an idea revisits a rejection, the differing mechanism is stated.
       unconstrained argument (`|x|`, `y`, `x` respectively), so none of
       the edge arms are dead; `pow_2_3`/`rcbrt`/`pow_3_2` bottom out in
       `cbrt`/`sqrt`, which supply their own special cases for free.
+
+54i. **The licence can be *downstream*, not just upstream — and that
+    reopened one of the entries above.** `compound` was screened closed
+    on the grounds that its `log1p` argument is unconstrained. True, and
+    irrelevant: `compound` is `exp_checked(n * log1p(x))`, and
+    `exp_checked` maps **both** signed zeros to exactly `1.0`, so
+    `log1p`'s trailing signed-zero select cannot be observed no matter
+    what reaches it. `log1p_nonzero!` there is bit-identical and
+    `compound_throughput` drops 159 -> 155.
+    - Add to the sweep recipe: the existing question is "what does the
+      caller's guard prove about the argument?" The missing one is
+      **"what does the consumer discard about the result?"** A function
+      whose output is fed into something many-to-one — `exp` at zero,
+      `abs`, a comparison, a saturating clamp — licenses dropping
+      whatever distinction that map collapses.
 56. **Slice-tier FTZ/DAZ via MXCSR**: a slice entry point can set
     FTZ/DAZ around its own loop and restore — gets the FTZ
     feature-flag idea's win without a global cargo feature.
