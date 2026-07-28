@@ -2005,11 +2005,65 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### Fitting & search techniques
 
-1. **Real-chain refit**: build the fit Jacobian by finite-differencing
-   coefficient ulp steps through the *actual compiled construction*
-   scored on the real fuzz, not a continuous poly model — attacks the
-   "error is rounding-chain-dominated" wall that killed log_2's LP.
-   Candidates: log_2, acos_poly (max 5), sinf_poly.
+1. **Real-chain refit** — **shipped for `acos_poly` 2026-07-28**, the
+   first refit in this file to beat the "rounding-chain-dominated" wall
+   rather than be stopped by it. `acos` max ulp **5 -> 4**, avg
+   **0.0650 -> 0.0555 (-14.6%)**, `acosd` avg 0.0634 -> 0.0545, for
+   provably zero perf change (`acos_throughput`/`acos_latency`/
+   `acosd_throughput` have byte-identical mnemonic streams; only the
+   constant pool differs). `acospi` is untouched — it has its own poly.
+   - **The reusable output is the screen, not the coefficients.**
+     Compare a poly's *exact-arithmetic* ulp-weighted error against a
+     same-degree weighted-LP optimum: seconds of scipy, and it cleanly
+     separates "no headroom" from real headroom. `acos_poly`: shipped
+     coefficients in exact f64 = **3.18** ulp-equivalent, chain floor
+     (same f32 chain fed an ideal poly value) = **2**, measured = 5, LP
+     optimum = **1.49** (1.54 quantised) — **2.1x real headroom**.
+     `log_2`, run through the same screen: current **0.3092**, LP optimum
+     **0.3092**, i.e. bit-for-bit at minimax already, its peak pinned at
+     `s -> 0` by `LOG2_E`'s own f32 rounding. So this result does *not*
+     overturn the class — it identifies which members of it were
+     misdiagnosed.
+   - **What was actually wrong was the objective, not the search.**
+     `tune.rs`'s `acos_poly` grid walks raw bits in steps of 10000 from
+     0 and is **positive-x only**. The fit error peaks as `x -> 1` (3.185
+     inside `1-a < 1e-6`) but the grid's largest point is 0.9998 with
+     ~1 point inside `1-a < 1.2e-3`, so **the grid's own max is 2.717 —
+     it structurally cannot see the binding region** — and it never
+     scores the `+PI` negative branch, which has a different ulp scale.
+     The probe itself was fine (bit-identical to the shipped chain for
+     `x >= 0` over 28M samples); this is not the `erf_poly` probe bug.
+   - The weight that made "minimax" mean the right thing:
+     `sqrt(1-x)/ulp(acos(x))` against the target `acos(x)/sqrt(1-x)`.
+     The LP seed delivered ~99% of the win; the finite-difference descent
+     through the real chain added ~1% (avg 0.112046 -> 0.111928). Worth
+     recording that for this poly the idealized and real-chain optima
+     essentially coincide *once the weight is right* — the expensive part
+     of #1 was not what paid.
+   - **Idea #3 (1-D +-few-hundred-ulp scan of a combine constant) is
+     structurally dead here**: c[0..2] swept at +-64 ulp, stride 1, zero
+     hits. The trailing constant is *pinned* by `edgecheck`
+     (`acos(0) == FRAC_PI_2`), and 365 ulp of c[0] moves the result by
+     1 ulp — the winning move was ~220000 ulp of c[0]. A local scan was
+     never going to reach it.
+   - **Max-claim trap, third independent sighting today**: a stride-8
+     subsample of the full domain (266M points, 2500x denser than
+     tune.rs's grid) still reported max 4 for candidates whose true max
+     is 5. Avg was faithful; max was not. Only `bstep=1` settles a max.
+   - Minimax redistributes, and honestly: big wins in `|x|` in
+     `[1e-3,0.1]`, `[0.5,0.7]`, `[0.99,1]` (positive `[0.999,1]`: avg
+     2.150 -> 1.263, max 5 -> 3), real regressions in `[0.1,0.5]` and
+     `[0.7,0.9]`. Global avg and global max both improve. The 16
+     `worst_corpus` entries that move (8 `acos`, 8 `acosd`) net *+3 ulp
+     worse* because those curated inputs cluster in `|x|` in
+     `[0.1,0.25]`, exactly the band a minimax refit raises — expected,
+     not a regression signal. Blessed.
+   - **Open lead, quantified by the same screen**: `acospi_poly` shows
+     the identical signature — idealized **3.00** vs LP minimax **1.61**
+     (1.62 quantised), 1.9x headroom, same construction, currently max 5
+     / avg 0.0536.
+   - Cost: ~1.1e12 scored real-fuzz evaluations (~460 exhaustive passes
+     plus 401 stride-8 screens), ~2.5 h wall.
 2. **MIP quantized fit**: HiGHS supports mixed-integer — fit with the
    f32 quantization of each coefficient as integer variables (a
    homegrown fpminimax, since sollya isn't installed).
@@ -2209,7 +2263,17 @@ an idea revisits a rejection, the differing mechanism is stated.
     #14's `to_int_unchecked` solves the codegen half outright (see below),
     and the target then loses on op count anyway. Still untried as a
     general technique on other clamped values, but note the motivating
-    case is now closed.
+    case is now closed. **Closed outright 2026-07-28: there is no
+    remaining target.** The technique only pays where a range proof
+    changes *lowering*, and in this crate that means a float->int cast.
+    Grepped every `as i32`/`as u32`/`as usize`/`to_int_unchecked` in
+    `src/lib.rs`: the only float-sourced one is `cbrt`'s
+    `koff as i32`, where `koff` is a select between two constants, so
+    LLVM folds it to a select between two integer constants and no
+    runtime convert exists. Everything else is int->int or int->float
+    (`e as f32`, `vcvtdq2ps`), neither of which a range hint affects.
+    Clamps on plain FP values are not removable by range information —
+    the clamp *is* the operation.
 14. **`f32::to_int_unchecked` where the range is guaranteed**: lowers to
     plain vcvttps2dq (vectorizes), unlike the saturating `as i32` that
     de-vectorized exp2_checked's rejected variant. codegen_check
@@ -2250,6 +2314,23 @@ an idea revisits a rejection, the differing mechanism is stated.
     before it's clear this is even a net win in principle, let alone
     worth the implementation risk (this exact code path has a documented
     bug history, see the "log_2 denormal path" rejected entry).
+    **Rejected on the op count 2026-07-28, without building it.**
+    `denormal_rescale!` is already **4 ops** and provably minimal:
+    1 compare, 1 multiply, 2 selects, and every one of them is load-bearing
+    (the `koff` select cannot become a post-hoc `r - 24.0` because `koff`
+    folds into the *pre-combine* integer exponent `k`, where it is exact,
+    whereas subtracting 24 from an already-rounded log result is not).
+    An exact-shift normalize needs **lzcnt + a shift-count subtract +
+    the variable shift + a mask + an exponent-field OR, and still a
+    compare and selects to gate it against normal inputs** — 7-8 ops,
+    strictly more. The only way that loses-on-op-count could still win is
+    the idea #12 port-migration premise, and #14 **measured** that premise
+    failing on a closely related construction (+13.2% on `exp2_checked`,
+    because the int ops contend for the same ports as the FP ops they
+    displace). Two independent reasons, no measurement needed.
+    - Note this is *not* the same conclusion as #12b, which shipped: that
+      one wins by **deleting a mask**, not by moving work to integer
+      ports, and it needs no lzcnt.
 22. **Toolchain-bump re-screen list**: tag the rejections that were pure
     scheduling artifacts (pre_offset dead-add removal, ln/log10
     trailing-fma fuse +1cyc, reduce_pi depth-2 rebalance) and re-measure
@@ -2473,6 +2554,31 @@ an idea revisits a rejection, the differing mechanism is stated.
     is *not* bounded the way its name suggests, so any bit-derivation
     scheme needs the same large-magnitude fallback this idea already
     plans for `qh`, on both words.
+    **Rejected 2026-07-28 on a derivation, and the premise turns out to
+    be false besides.** The premise — "after a magic-round, k sits in the
+    low mantissa bits" — does not hold here: `round_x_over_pi` produces
+    `qh = p0.round()` and `ql = rem.round_ties_even()`, i.e. two
+    `vroundps`, **not** a magic add. There are no magic bits to read, so
+    the idea would have to *add* a magic round first.
+    - Even granting that, the op count loses. The shipped
+      `parity(q) = fma(-2.0, (q*0.5).floor(), q)` is **3 ops and
+      uniformly correct at every magnitude** — for `|q| >= 2^24`,
+      `q*0.5` is exact, `floor` is the identity, and it returns 0, which
+      is right because every f32 there is an even integer. A
+      bit-derivation must handle three magnitude regimes, and the
+      general form needs `(M >> (150 - E)) & 1`: extract the exponent
+      (shift + and), form the shift count (sub), rebuild the implicit
+      mantissa (and + or), variable-shift, mask — **7 integer ops** to
+      replace 3 FP ops, on a CPU where IDEAS.md's own "parity() via
+      integer bit-ops" entry already measured FP-port ops winning.
+    - The magic-round shortcut is only valid for `|q| < 2^22`, and `qh`
+      reaches 2^22 at `|x| ~ 1.3e7` — which is *inside* `sin_checked`'s
+      accurate range, the whole reason `sin_checked` exists. So the cheap
+      path would break exactly the function it was meant to speed up.
+    - The final XOR combine is also already optimal: `pq == pl` +select
+      (2 ops) versus the bitwise `(pq.to_bits() ^ pl.to_bits()) << 8`
+      (also 2 ops, and it does produce the right `SIGN_MASK`) — a wash,
+      so there is nothing to take there either.
 47. **Fast-tier reduction upgrade via two_prod**: replace the bounded-q
     PI_A..D 4-fma chain with one two_prod(q, PI_HI) + a PI_LO word —
     exact at any q, could push the fast tier's ~1.3e7 cliff far out at
@@ -2765,8 +2871,34 @@ an idea revisits a rejection, the differing mechanism is stated.
     poly for exp2 (16/32-entry exact 2^(j/N) hi words) — distinct from
     the rejected compare-select tree; screen the gather's mca cost
     first; likely lives in the simd/slice tier.
+    **Screened and rejected 2026-07-28, in about a minute, by asking
+    llvm-mca to price the one instruction the idea rests on** —
+    `echo 'vgatherdps %ymm1, (%rax,%ymm2,4), %ymm0' | llvm-mca
+    -mcpu=native`. On this target, Block RThroughput for one ymm op:
+    `vfmadd231ps` **0.5**, `vmovups` 0.5, `vpermps`/`vpermi2ps` 1.0,
+    `vgatherdps` **4.0**.
+    - Decisive without implementing anything: one `vgatherdps` costs 4
+      cycles per 8 elements, while the *entire* degree-5 Horner it would
+      replace is 5 `vfmadd` = **2.5 cycles per 8 elements**. The gather
+      alone is 1.6x the whole polynomial, and a LUT scheme still needs a
+      degree-2/3 poly on top. Trading 3 fma for one gather is +2.5 cyc
+      per 8 elements on a function (`exp2`) costing 0.841 cyc/elem in
+      total — a ~37% regression.
+    - Reusable: for any "replace arithmetic with a table" idea, price the
+      table instruction against the arithmetic *first*. A one-line
+      llvm-mca run on a single instruction is the cheapest screen in this
+      file.
 90. **Same gather screen for log_2** (mantissa-segment table +
-    low-degree poly).
+    low-degree poly). **Falls with #89 on the same number**: log_2's
+    degree-9 Estrin is ~10 ops, about 5 cycles per 8 elements, so even
+    replacing *six* of its fma with one gather is a net loss.
+    - What this does **not** kill: `vpermi2ps` at RThroughput **1.0**
+      holds a 16-entry table in two ymm registers with no memory access
+      at all — cheaper than 2 fma. So idea #163's in-register LUT is the
+      one table technique that prices well on this CPU, and it stays
+      gated on the simd tier only because it is unreachable from scalar
+      autovectorized code, not because it is slow. That reorders the two
+      LUT ideas' priority.
 91. **Slice tier × rejected-global-flags interaction**: per-function
     zmm-width and interleave=2 re-tests become possible via
     #[target_feature] once the slice tier exists — two documented
@@ -3044,7 +3176,13 @@ an idea revisits a rejection, the differing mechanism is stated.
 125. **Integer-domain parity pipeline end-to-end** for
      sin_checked/cos_checked (parities as bits, XOR combine, direct
      sign mask) — composes #45/#46; deletes the float compare+select
-     flip.
+     flip. **Dead 2026-07-28: both components it composes are now
+     rejected.** #45 was already rejected (`rem` is unbounded, real
+     wrong-sign catastrophe), and #46 is rejected above on a derivation
+     — 7 integer ops against 3 FP ops, plus the magic-round shortcut is
+     invalid exactly inside `sin_checked`'s accurate range. The third
+     piece, the XOR combine, measures as a wash on its own. Nothing left
+     to compose.
 #### Batch 2: roots / hypot / geometry
 
 136. **normalize2/normalize3 *slice* kernels** (rhypot + scales — the
@@ -3068,7 +3206,20 @@ an idea revisits a rejection, the differing mechanism is stated.
      per-call isn't.
 157. **remainder_checked/remainder_wide consolidation screen** after the
      ties-even fix (#80): can one tier serve both contracts, or does
-     wide's 6.5x cost keep them split? Screen only.
+     wide's 6.5x cost keep them split? Screen only. **Answered
+     2026-07-28: the cost keeps them split, and the current table makes
+     that unambiguous.** `remainder_checked` 1.544 cyc/elem against
+     `remainder_wide` 8.186 — a **5.3x** gap, and 142 instructions
+     against 47. Consolidating upward makes every `remainder_checked`
+     caller pay 5.3x for a `|x/y| > 2^24` contract almost none of them
+     need; consolidating downward silently drops that contract. This is
+     precisely the fast/checked/wide split the crate uses everywhere
+     else (`sin`/`sin_checked`, `exp2`/`exp2_checked`), so the answer is
+     "keep them split" for the same reason those stay split.
+     - The interesting question the screen *does* surface is a different
+       one, not in this file: `remainder_wide` is the crate's 3rd most
+       expensive function and its `Df32` chain has never been attacked
+       on its own terms. That is a live target, unlike consolidation.
 
 #### Batch 2: AVX-512 simd-tier instruction ideas
 (all unreachable from scalar autovectorized code — natural once the
