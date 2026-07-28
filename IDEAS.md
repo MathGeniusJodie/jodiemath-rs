@@ -2324,6 +2324,62 @@ an idea revisits a rejection, the differing mechanism is stated.
       a backlog entry proposes *a transform* plus *a reason it should
       win*, disproving the reason does not disprove the transform.
 
+12c. **`exp2_field_split` via the same maskless `<< 23` form — built,
+    measured, and then REVERTED on a contract question, not a
+    measurement.** This is the largest single perf lever found in this
+    sweep and it is sitting there pre-verified; it needs one judgement
+    call, not more work.
+    - Construction: `half = fma(k, 0.5, EXP2INT_MAGIC)`, `lo = from_bits(
+      half.to_bits() << 23)`, `hi = exp2int_field!(k - (half - MAGIC))`,
+      return `(hi, lo)`. **6 ops against the shipped form's 8.**
+    - Measured: **23 throughput regions shrink, none grow**, whole file
+      356675 -> 353982. `exp` **60 -> 55 (-8.3%)**, `exp_checked` 64 ->
+      59, `cosh`/`cosh_checked` -5, `sinh`/`sinh_checked` -5, `expm1` -5,
+      `powf_checked` 251 -> 245, `norm_pdf`/`tanh_grad`/`sigmoid_grad`
+      -5 each, `erfc_accurate`/`erfcx_checked` -5, `compound` -4.
+    - **In-domain accuracy is untouched** — verified two ways, and both
+      agree. (a) The two constructions are bit-identical for every `k` in
+      `[-200, 200)`, which covers every in-domain `k` for every caller
+      (`exp2_checked` clamps to `[-151, 128]`). (b) The real fuzz over
+      16 function groups comes back digit-for-digit identical (`exp`
+      0.0707/3, `exp_checked` 0.0369/3, `expm1` 0.1291/5, ...).
+      `saturation_pins`, `denormal_audit`, `edgecheck`, `special_matrix`
+      and 27 tests all pass.
+    - **Why it was reverted anyway.** The magic that carries the `+127`
+      bias must be `≡ 127 (mod 512)`, hence **odd**, which flips the
+      round-half-to-even tie-break, so for odd `k` the two halves come
+      out exchanged. Returning them swapped restores the original pairing
+      exactly *within* `[-200, 200)` — but not outside it, and the
+      unchecked tiers do not clamp. Concretely `cosh(2048)` goes from
+      `+inf` to `1.0666397e35`. That input is far outside `cosh`'s
+      documented domain and contractually garbage either way, but the old
+      value happened to be the *mathematically correct* one, and the new
+      one is a finite plausible-looking number. That is the opposite
+      direction from #12b's own justification (there, garbage became
+      *more* obviously garbage), and this crate has a consistent history
+      of paying to avoid plausible-looking wrong output.
+    - 55 `worst_corpus` entries move, **all out-of-domain, all on
+      unchecked tiers** (`cosh`, `sinh`, `exp`, `expm1`,
+      `exp_m1_over_x`, and the two `_throughput` siblings). Zero move on
+      any `_checked` tier, because those clamp `k` into the range where
+      the two forms agree.
+    - **The variant that would be free, for whoever takes this up**:
+      apply the new split only where the caller already clamps `k`, via a
+      `const` generic (`exp2_field_split<const CLAMPED: bool>`, the same
+      idiom `round_x_over_pi::<HALF>` already uses). That captures ~15 of
+      the 23 regions — `exp_checked`, `exp2_checked`, `exp10_checked`,
+      `sinh_checked`, `cosh_checked`, `powf_checked`, `erfc_accurate`,
+      `erfcx_*`, `norm_pdf`, `tanh_grad`, `sigmoid_grad`, `compound` —
+      with *provably zero* behavioural change anywhere, and leaves
+      `exp`/`sinh`/`cosh`/`expm1` on the current form. The cost is two
+      instantiations of a subtle bit-trick.
+    - Methodology note on my own error, worth keeping: I verified the
+      swap over `k in [-200, 200)` and called it bit-identical. It is —
+      but `cosh(2048)` needs `k ~ 2954`, and the unchecked tiers reach
+      there. **State the range a bit-trick was verified over, and check
+      that every caller is actually inside it**, especially when the
+      callers include tiers that deliberately do not clamp.
+
 12. **Exponent fields from magic-round bits via integer ops**: after any
     magic-round, k already sits in kb's low mantissa bits —
     `((kb_bits + C) << 23) & EXPONENT_MASK` replaces the `(k+383)`
