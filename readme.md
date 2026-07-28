@@ -42,21 +42,21 @@ cbrt_accurate_unchecked (+) | 0.000 |     1     | (bit-identical to cbrt_accurat
   log10_unchecked (+)   |    0.255   |     3     | (bit-identical to log10 on its domain)
                   log1p |    0.097   |     4     |  0.000  |    0
                 log2p1  |    0.102   |     3     | (no std log2p1)
-        exp (in-domain) |    0.075   |     3     |  0.000  |    1
-            exp_checked |    0.039   |     3     |  0.000  |    1
-      expm1 (in-domain) |    0.130   |     6     |  0.000  |    0
-          expm1_checked |    0.068   |     6     |  0.000  |    0
-exp_m1_over_x (in-domain)| 0.073   |     6     | (no std exp_m1_over_x)
+        exp (in-domain) |    0.071   |     3     |  0.000  |    1
+            exp_checked |    0.037   |     3     |  0.000  |    1
+      expm1 (in-domain) |    0.129   |     5     |  0.000  |    0
+          expm1_checked |    0.067   |     5     |  0.000  |    0
+exp_m1_over_x (in-domain)| 0.071   |     5     | (no std exp_m1_over_x)
                 exp2m1  |    0.077   |     4     | (no std exp2m1)
-       sinh (in-domain) |    0.082   |     5     |  0.000  |    1
-       cosh (in-domain) |    0.059   |     5     |  0.000  |    0
-sinh_throughput (in-domain)| 0.082   |     5     |  0.000  |    1
-cosh_throughput (in-domain)| 0.051   |     4     |  0.000  |    0
-       sinh_checked (all f32) | 0.043 |     5     |  0.000  |    1
-       cosh_checked (all f32) | 0.031 |     5     |  0.000  |    0
+       sinh (in-domain) |    0.078   |     4     |  0.000  |    1
+       cosh (in-domain) |    0.052   |     4     |  0.000  |    0
+sinh_throughput (in-domain)| 0.080   |     4     |  0.000  |    1
+cosh_throughput (in-domain)| 0.049   |     3     |  0.000  |    0
+       sinh_checked (all f32) | 0.041 |     4     |  0.000  |    1
+       cosh_checked (all f32) | 0.027 |     4     |  0.000  |    0
        tanh (in-domain) |    0.145   |     5     |  0.000  |    0
-                sigmoid |    0.093   |     4     | (no std sigmoid)
-       softplus (|x|<80)|    0.077   |     4     | (no std softplus)
+                sigmoid |    0.091   |     3     | (no std sigmoid)
+       softplus (|x|<80)|    0.075   |     3     | (no std softplus)
 logaddexp (|a|,|b|<80)|    0.141   |  ~1e3-1e5, heavy-tailed (real, narrow cancellation -- see its own doc comment) | (no std logaddexp)
                   asinh |    0.149   |     3     | 
                   acosh |    0.060   |     4     |  0.000  |    1
