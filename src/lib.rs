@@ -32,6 +32,30 @@ fn fma(a: f32, b: f32, c: f32) -> f32 {
     a.mul_add(b, c)
 }
 
+// `2^k` as a bare exponent field, for an integer-valued `k` in
+// `[-127, 128]` -- the range each caller's own domain contract already
+// guarantees. `k = 128` deliberately yields `+inf` (field 255, mantissa
+// 0), which is how the unchecked exp2 family overflows, and `k = -127`
+// yields `+0.0`.
+//
+// The magic constant is `1.5*2^23 + 127`, so `k + MAGIC` lands in the
+// ulp-1 binade `[2^23, 2^24)` with `k + 127` sitting in the low 9 bits
+// -- a single `<< 23` then moves those into the exponent field with a
+// zero sign bit and a zero mantissa, needing no mask. That is the whole
+// saving over the older `(k + 383.0) << 8 & EXPONENT_MASK` form: `+383`
+// lands in the `2^8` binade, whose exponent field (135) is odd, so the
+// shift carries a 1 into the sign bit that a mask then has to clear.
+// Folding the `+127` into the magic constant rather than adding it to
+// the bits is what keeps this at two ops.
+//
+// Macro, not a fn -- see exp_r_poly!.
+const EXP2INT_MAGIC: f32 = 12583039.0; // 1.5 * 2^23 + 127
+macro_rules! exp2int_field {
+    ($k:expr) => {
+        f32::from_bits(($k + EXP2INT_MAGIC).to_bits() << 23)
+    };
+}
+
 /// Round to the nearest integer (ties-to-even), for `|x| <= 2^22`
 /// (backlog idea #185): the magic-constant idiom this crate uses
 /// throughout its own reductions (`exp`'s `k`, `sinpi`'s `q`'s cheaper
@@ -365,8 +389,13 @@ pub fn log_2_unchecked(x: f32) -> f32 {
 /// exp2 without domain checks: valid for x in [-126, 128), i.e. normal
 /// (non-denormal, finite, nonzero) results only. Outside that range the
 /// exponent construction wraps around and the result is garbage (including
-/// for nan). Use exp2_checked for full-range handling; this version is
-/// ~2.7 ns faster in serial latency.
+/// for nan) -- and note the garbage is not even sign-correct: the wrapped
+/// exponent field can land in the sign bit, so an out-of-domain call can
+/// return a *negative* value from a function that is mathematically
+/// positive everywhere. That is deliberate (it makes a domain violation
+/// unmistakable rather than plausible-looking) but it means `exp2(x) >= 0`
+/// is not an invariant you can lean on here. Use exp2_checked for
+/// full-range handling; this version is ~2.7 ns faster in serial latency.
 #[doc(alias = "exp2f")]
 #[inline(always)]
 #[allow(clippy::approx_constant)] // g0's constant term is a fitted minimax
@@ -382,7 +411,7 @@ pub fn exp2(x: f32) -> f32 {
     // represent (NaN for a legit input). See IDEAS.md §exp/exp2.
     let k = x.floor();
     let f = x - k;
-    let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
+    let exp2int = exp2int_field!(k);
     // Q(f) = (2^f - 1)/f, degree 5, grouped into 3 balanced pairs (g0, g1,
     // g2) instead of two degree-2 Horner halves: same 6 coefficients and
     // the same 4-deep fma critical path, but the combine only ever needs
@@ -405,7 +434,7 @@ pub fn exp2(x: f32) -> f32 {
 #[inline(always)]
 #[allow(clippy::approx_constant)]
 pub fn exp2_kf(k: f32, f: f32) -> f32 {
-    let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
+    let exp2int = exp2int_field!(k);
     let q = exp2_q_poly!(f);
     fma(q, exp2int * f, exp2int)
 }
@@ -653,7 +682,7 @@ pub fn exp10_checked(x: f32) -> f32 {
 // coefficient near ln(2), not ln(2) itself (bit pattern deliberately differs)
 pub fn exp10(x: f32) -> f32 {
     let (k, f) = exp10_reduction!(x);
-    let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
+    let exp2int = exp2int_field!(k);
     let q = exp2_q_poly!(f);
     fma(q, exp2int * f, exp2int)
 }
@@ -2214,7 +2243,7 @@ pub fn exp_narrow(x: f32) -> f32 {
     let r = fma(-k, LN2_HI, x);
     let r = fma(-k, LN2_LO, r);
     let p = exp_r_poly!(r);
-    let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
+    let exp2int = exp2int_field!(k);
     p * exp2int
 }
 
@@ -2284,7 +2313,7 @@ pub fn expm1_narrow(x: f32) -> f32 {
     let r = fma(-k, LN2_HI, x);
     let r = fma(-k, LN2_LO, r);
     let p = exp_r_poly!(r);
-    let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
+    let exp2int = exp2int_field!(k);
     let b = fma(p, exp2int, -1.0);
     if x.abs() < 0.5 { a } else { b }
 }
@@ -2391,7 +2420,7 @@ pub fn exp_m1_over_x_narrow(x: f32) -> f32 {
     let r = fma(-k, LN2_HI, x);
     let r = fma(-k, LN2_LO, r);
     let p = exp_r_poly!(r);
-    let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
+    let exp2int = exp2int_field!(k);
     let b = fma(p, exp2int, -1.0) / x;
     if x.abs() < 0.5 { a } else { b }
 }
@@ -2546,7 +2575,7 @@ fn exp_pos_neg_narrow_half(x: f32) -> (f32, f32) {
     let o = fma(c[3], r4, fma(c[1], r2, 0.5));
     let p_pos = fma(r, o, e);
     let p_neg = fma(-r, o, e);
-    let t = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
+    let t = exp2int_field!(k);
     // reciprocal via bit-subtraction, same trick exp_pos_neg_core! uses
     // for t1n/t2n: exact for any power-of-two field.
     let tn = f32::from_bits(0x7F00_0000u32.wrapping_sub(t.to_bits()));
@@ -2826,7 +2855,7 @@ pub fn tanh(x: f32) -> f32 {
     let l2 = fma(D3, rh, D2);
     let r0 = fma(l1, rh2, l0);
     let p = fma(l2, rh4, r0);
-    let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
+    let exp2int = exp2int_field!(k);
     let b = fma(p, exp2int, -1.0);
 
     let e = if xc.abs() < 0.25 { a } else { b };
@@ -2910,7 +2939,7 @@ pub fn sigmoid(x: f32) -> f32 {
     let t2 = fma(k, LN2_LO, t1);
     let r = -t2;
     let p = exp_r_poly!(r);
-    let exp2int = f32::from_bits(((k + 383_f32).to_bits() << 8) & EXPONENT_MASK);
+    let exp2int = exp2int_field!(k);
     let e = p * exp2int;
     1.0 / (1.0 + e)
 }

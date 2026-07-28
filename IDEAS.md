@@ -2102,6 +2102,66 @@ an idea revisits a rejection, the differing mechanism is stated.
 
 #### Codegen & micro-optimizations
 
+12b. **The `<< 23` half of #12, done right — shipped 2026-07-28, and the
+    win is the *mask*, not the ports.** #12 framed this as moving work
+    onto less-contended integer ports, and that framing is what made it
+    look dead after #14 measured the port premise failing. The actual
+    saving has nothing to do with ports: it is that the `<< 8` form
+    **needs a mask and the `<< 23` form does not**.
+    - Why: `(k + 383.0)` lands in the `2^8` binade, whose biased exponent
+      field is 135 — an *odd* number — so `<< 8` shifts that field's low
+      bit straight into the sign bit, and `& EXPONENT_MASK` exists purely
+      to clear it. Choose a magic in the `2^23` binade instead (field 150,
+      even) and the bit that lands in position 31 is one the construction
+      already controls. Folding the `+127` exponent bias into the magic
+      constant rather than adding it to the bits is the second half: the
+      whole thing becomes `f32::from_bits((k + 12583039.0).to_bits() << 23)`
+      — **2 ops against 3**, and no integer add at all, so #14's
+      port-pressure finding never comes into play.
+    - `12583039.0 = 1.5*2^23 + 127`. For integer `k`, `k + MAGIC` is exact
+      in the ulp-1 binade `[2^23, 2^24)` and puts `k + 127` in the low 9
+      bits; `<< 23` moves those into the exponent field with a zero sign
+      bit and a zero mantissa. Verified bit-identical to the old form for
+      **every `k` in [-127, 128]**, which includes `k = 128 -> +inf` (how
+      the unchecked tier overflows) and `k = -127 -> +0.0`.
+    - That range is the licence, and it was checked by sweeping every f32
+      in each site's own documented domain rather than argued: `exp2`
+      `[-126,128]`, `exp10` `[-127,127]`, the `exp_narrow` family
+      `[-126,127]`, `exp_pos_neg_narrow_half` `[-126,126]`, and the two
+      *clamped* sites `tanh` `[-126,127]` and `sigmoid` `[-126,128]`
+      (total, so those two cannot leave it for any input at all).
+    - 9 call sites, deduped into one `exp2int_field!` macro (macro, not a
+      fn — the +32% shared-fn-boundary precedent). **14 public functions
+      get smaller** with no other region moving: `exp2` **41 -> 38**
+      instructions (-7.3%), `sigmoid` 55 -> 51 (-7.3%), `exp10` 63 -> 60,
+      `exp_narrow` 47 -> 44, `tanh` 82 -> 79, plus `expm1_narrow`,
+      `exp_m1_over_x_narrow`, `sinh_narrow`, `cosh_narrow`, `silu`,
+      `softplus`, `logsigmoid`, `logaddexp`, `erf`. Whole file 363164 ->
+      360429.
+    - **The cost, stated plainly: out-of-domain garbage changes flavour
+      and can now be negative.** Dropping the mask drops the accidental
+      guarantee that the field construction was non-negative, so e.g.
+      `exp2(-200)` goes from `+7.6e-6` to `-7.2e16`. Both are nonsense —
+      the true value is ~6e-61 — but only one of them *looks* like an
+      answer, and `powf_unchecked`'s own doc already names "bare `exp2`
+      silently wraps around into plausible-looking garbage" as a hazard.
+      Taken as an improvement on that axis too, and `exp2`'s doc now says
+      so explicitly, because `exp2(x) >= 0` was a real (if unpromised)
+      invariant that no longer holds off-domain.
+    - `worst_corpus` moves **135 entries, and the pattern is the proof**:
+      every one is in `exp2`/`exp10`/`exp_narrow`/`expm1_narrow`/
+      `exp_m1_over_x_narrow`/`sinh_narrow`/`cosh_narrow` — the seven
+      *unclamped* tiers — at an input outside that tier's domain (checked
+      individually, not sampled). **Zero** entries move in `tanh`,
+      `sigmoid`, `silu`, `softplus`, `logsigmoid`, `logaddexp` or `erf`,
+      the total/clamped functions that share the same construction. Blessed.
+      All 10 gates pass.
+    - Generalizable, and it is the reason this sat unfound: #12's own
+      framing named the wrong mechanism, so the measurement that killed
+      the named mechanism (#14, ports) was allowed to kill the idea. When
+      a backlog entry proposes *a transform* plus *a reason it should
+      win*, disproving the reason does not disprove the transform.
+
 12. **Exponent fields from magic-round bits via integer ops**: after any
     magic-round, k already sits in kb's low mantissa bits —
     `((kb_bits + C) << 23) & EXPONENT_MASK` replaces the `(k+383)`
