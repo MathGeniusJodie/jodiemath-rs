@@ -1327,6 +1327,26 @@ what shipped.
     environment swing), which is exactly why the asm-level check was the
     decisive evidence — reach for the opcode histogram, not the
     stopwatch, when mca reports something structurally impossible.
+  - **The `coshm1` row is not just occasionally wrong on a delta, it is
+    wrong in absolute terms — established 2026-07-28 from a *static*
+    comparison, no A/B needed.** `coshm1` is literally
+    `sinh_checked(x*0.5)` squared and doubled, and the two throughput
+    regions' opcode histograms are the same instruction for instruction
+    apart from `coshm1`'s **+4 `vmulps`, +2 `vaddps`, -2 `vmovups`,
+    -1 `vbroadcastss`** (99 -> 102 instructions), both 100% packed, both
+    16 elements wide, neither containing a divide or a sqrt. mca prices
+    them at **2.340 vs 4.700 cyc/elem** — 2.0x apart for 3% more
+    instructions, i.e. 2.65 IPC against 1.36 IPC on near-identical
+    streams. So the earlier +61.6% delta was not a one-off: this
+    function's whole row is mispriced, and its *level* should not be
+    compared against any other row's.
+  - Cheap standing check that finds rows like this without an A/B:
+    divide each `*_throughput` row by its region's instruction count.
+    Functions dominated by `vsqrtps`/`vdivps` (`rsqrt`, `rhypot`,
+    `normalize2/3/4`, `sqrt1pm1`, `pow_3_2`) correctly come out high,
+    and everything else lands in a tight band around 1.3-2.4 cyc per
+    100 instructions — `coshm1` at 4.61 is the only row that is an
+    outlier without a divide or a sqrt to explain it.
 - **exp_pos_neg: return halves pre-scaled by 0.5 for plain sinh/cosh
   too, via a multiply** (idea #32, the *plain-multiply* relocation `exp_pos_neg_checked_half`
   already ships -- not the rejected bit-trick variant above): lower risk
@@ -2545,6 +2565,54 @@ an idea revisits a rejection, the differing mechanism is stated.
         which is outside `exp_narrow`'s `[-87.68, 88.38]` domain. Clamping
         at `-87` instead would freeze `norm_pdf` at ~`6.4e-39` forever —
         the same freeze bug `erfc`'s own doc comment records.
+
+54h. **`srgb_to_linear`/`linear_to_srgb`: the toe's guard licenses a
+    stripped `log_2`** — a sixth hit, **shipped 2026-07-28**, and the
+    reason it is worth recording separately is that #54b's sweep
+    declared itself closed while these two were still standing. The
+    sweep had been run over sites that call `log1p`/`ln`/`exp_checked`/
+    `sqrt` directly; these reach `log_2` one level down, through
+    `powf_pos`, so a grep of the kernel names missed them.
+    - Both are piecewise: a linear toe below the seam, a power curve
+      above. The power arm's value is *discarded* for every input below
+      the seam — which is exactly the range where its base could be
+      zero, negative or denormal — so `log_2`'s `denormal_rescale!`, its
+      `x == 0.0 -> -inf` spec and its `x <= 0.0` select all compute
+      results nothing can observe. Only `!(x < inf)`'s `x*x` survives,
+      because `+inf`/NaN *do* flow through the outer select.
+      `powf_pos`'s own two overrides go too: `y == 0.0` is a compile-time
+      constant at both call sites, and `x == 1.0` is redundant because
+      `log_2(1)` is exactly `0.0`, so the general formula already
+      returns exactly `1.0` there.
+    - The licence is subtler than #54c-#54g's and worth stating in the
+      form that generalizes: every arm is still *evaluated* for every
+      input (branchless), so what makes this sound is not that the bad
+      inputs never arrive, it is that the caller's own select provably
+      throws the answer away when they do. `+inf`/NaN are the exception
+      precisely because they *don't* get thrown away.
+    - **Bit-identical to the `powf_pos` composition over all 2^32 inputs
+      for both functions** (checked directly against the old formulation,
+      not inferred). All 9 standing gates pass, `worst_corpus` unmoved.
+    - Screened by instruction count *first*, deliberately — mca's
+      throughput column is not trustworthy in this neighbourhood (see the
+      `coshm1` note below, and note `srgb_to_linear` was itself priced
+      +20% over `powf_pos` for +3 instructions). `srgb_to_linear_
+      throughput` **163 -> 132** instructions (-19.0%),
+      `linear_to_srgb_throughput` **164 -> 134** (-18.3%), latency
+      regions -1154 and -550, whole-file total 363164 -> 361399. **No
+      other region in the file moved by a single instruction**, so
+      nothing downstream pays for it.
+    - mca then agreed, in direction and roughly in size, on both axes:
+      `srgb_to_linear` **4.772 -> 3.666 (-23.2%)** throughput, latency
+      108.02 -> 105.02; `linear_to_srgb` **4.285 -> 3.411 (-20.4%)**,
+      latency 111.92 -> **83.69 (-25.2%)**. Exactly 2 of 145 rows moved,
+      matching the asm diff. Worth noting as the healthy case: when the
+      instruction count and mca agree, neither needed arbitration — it is
+      only when they *disagree* that the asm wins.
+    - Reusable: sweep by *reachability*, not by call-site grep. A
+      composite that calls a composite that calls the general kernel is
+      the same lever, one indirection further out — and `powf_pos`/
+      `powf`/`exp_checked` are the wrappers most likely to hide one.
 56. **Slice-tier FTZ/DAZ via MXCSR**: a slice entry point can set
     FTZ/DAZ around its own loop and restore — gets the FTZ
     feature-flag idea's win without a global cargo feature.

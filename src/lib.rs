@@ -292,6 +292,25 @@ macro_rules! log_family_wrapper_no_denormal {
     };
 }
 
+// `log_family_wrapper!` for callers whose own outer select *discards* this
+// value entirely unless the argument is positive and normal, so only
+// `log_family_edges!`'s inf/NaN arm survives -- the zero/negative selects
+// and the denormal rescale all compute results nothing can observe. Note
+// what the licence is and isn't: every arm here is still *evaluated* for
+// every input (branchless), so this is sound only when the caller's select
+// provably drops the result for zero/negative/denormal arguments. `+inf`
+// and NaN are the exception that keeps one arm alive -- they flow through
+// the outer select, so `x*x` still has to turn them into `+inf`/NaN.
+macro_rules! log_family_wrapper_discarded_unless_normal {
+    ($x:expr, $normal:ident) => {
+        if !($x < f32::INFINITY) {
+            $x * $x
+        } else {
+            $normal($x, 0.0)
+        }
+    };
+}
+
 #[doc(alias = "log2f")]
 #[doc(alias = "log2")]
 #[inline(always)]
@@ -5091,21 +5110,34 @@ pub fn rootn(x: f32, n: i32) -> f32 {
 /// is only worth it if this measures as a real hot path. Domain `c>=0`
 /// (matching `powf_pos`'s own contract) -- the standard sRGB channel
 /// range.
+///
+/// Spelled out rather than calling `powf_pos` so the toe's own guard can
+/// pay for itself: the power arm's value is discarded for every `c` below
+/// `0.04045`, which is exactly the range where its base could be
+/// zero/negative/denormal, so `log_2`'s wrapper collapses to the inf/NaN
+/// arm alone (see `log_family_wrapper_discarded_unless_normal!`).
+/// `powf_pos`'s two overrides go too: `y == 0.0` is a constant here, and
+/// `x == 1.0` is redundant because `log_2(1) * y` is exactly `0`.
 #[inline(always)]
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
 pub fn srgb_to_linear(c: f32) -> f32 {
     let low = c * (1.0 / 12.92);
-    let high = powf_pos((c + 0.055) * (1.0 / 1.055), 2.4);
+    let b = (c + 0.055) * (1.0 / 1.055);
+    let high = exp2_checked(log_family_wrapper_discarded_unless_normal!(b, log_2_normal) * 2.4);
     if c <= 0.04045 { low } else { high }
 }
 
 /// linear -> sRGB (backlog idea #146), the inverse transfer function:
 /// linear below `0.0031308`, `1.055*l^(1/2.4) - 0.055` above it. See
-/// `srgb_to_linear`'s own doc comment for the composition rationale and
-/// domain contract (`l>=0`).
+/// `srgb_to_linear`'s own doc comment for the composition rationale, the
+/// domain contract (`l>=0`), and why the power arm is spelled out instead
+/// of calling `powf_pos`.
 #[inline(always)]
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
 pub fn linear_to_srgb(l: f32) -> f32 {
     let low = l * 12.92;
-    let high = fma(1.055, powf_pos(l, 1.0 / 2.4), -0.055);
+    let p = exp2_checked(log_family_wrapper_discarded_unless_normal!(l, log_2_normal) * (1.0 / 2.4));
+    let high = fma(1.055, p, -0.055);
     if l <= 0.0031308 { low } else { high }
 }
 
