@@ -2103,6 +2103,16 @@ what shipped.
     branch crossover, where `pi/2 - sqrt(1-a)*P(a)` cancels and
     `ulp(1.2975)/ulp(0.2734)` amplifies the product's own rounding 4x.
     No coefficient can move a chain floor.
+  - **`atan_poly`'s 14.2x is the table's top ratio and is *already
+    closed*** — the ratio is a relative measure and here the absolute is
+    negligible. Its idealised weighted error is **0.228 ulp**, i.e. the
+    entire fit budget is a fifth of an ulp, so recovering 14x of it
+    cannot move `atan`'s real max of 4. Idea #8 already quantified this
+    from the other direction with a full joint nonlinear refit of all six
+    rational coefficients: ~99% of `atan`'s observed error is rounding
+    chain. **Read the ratio and the absolute together** — a large ratio
+    on a poly whose absolute error is already far under 1 ulp is not a
+    lead, and this is the one row in the table where they disagree.
   - **Methodology: the stride-subsample trap applies to *search*, not
     just verification.** A stride-32 real-chain coordinate descent on
     `asin_poly` converged to a candidate that beat the shipped
