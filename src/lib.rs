@@ -3463,16 +3463,21 @@ pub fn atanh(x: f32) -> f32 {
 // pi/2: `1.5707964` parses to the same bits as
 // `std::f32::consts::FRAC_PI_2` (0x3fc90fdb) -- `1.5707963` is one digit
 // short of round-trip precision and parses one ulp LOW, which alone cost
-// acos most of its average error before being caught. Current: acos max
-// ulp 5, avg 0.0650 (exhaustive, scored as the whole formula).
+// acos most of its average error before being caught. The other six are a
+// minimax fit of `acos(x)/sqrt(1-x)` weighted by `sqrt(1-x)/ulp(acos(x))`
+// -- the weight that makes "minimax" mean the ulp error of the *shipped*
+// combine, which peaks as x -> 1 -- then polished by coordinate descent
+// scored on the real exhaustive sweep over all of [-1,1] (both signs; the
+// `+PI` branch has its own error structure). Current: acos max ulp 4, avg
+// 0.0555 (exhaustive, scored as the whole formula).
 #[inline(always)]
 fn acos_poly(x: f32) -> f32 {
-    let u = 2.2960447e-3f32;
-    let u = fma(u, x, -1.1146237e-2);
-    let u = fma(u, x, 2.690034e-2);
-    let u = fma(u, x, -4.8802484e-2);
-    let u = fma(u, x, 8.875553e-2);
-    let u = fma(u, x, -2.1458574e-1);
+    let u = 2.34696e-3f32;
+    let u = fma(u, x, -1.1324962e-2);
+    let u = fma(u, x, 2.7140902e-2);
+    let u = fma(u, x, -4.895824e-2);
+    let u = fma(u, x, 8.880409e-2);
+    let u = fma(u, x, -2.145914e-1);
     fma(u, x, 1.5707964)
 }
 
