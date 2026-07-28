@@ -1997,15 +1997,25 @@ pub fn log10_unchecked(x: f32) -> f32 {
 /// auto-vectorizing): log1p is odd and monotonic through the origin, so
 /// for every nonzero x `normal`'s sign already equals x's, making the
 /// select a no-op everywhere except the singular zero point.
+// `log1p` without its trailing `x == 0.0` signed-zero select -- correct
+// for every other input, and the whole function for callers whose own
+// select already discards this value at zero. Macro, not a fn -- see
+// exp_r_poly!.
+macro_rules! log1p_nonzero {
+    ($x:expr) => {{
+        let u = 1.0 + $x;
+        let c = $x - (u - 1.0);
+        let corr = c / u;
+        let corr = if corr.is_finite() { corr } else { 0.0 };
+        log_family_wrapper_no_denormal!(u, ln_normal) + corr
+    }};
+}
+
 #[doc(alias = "log1pf")]
 #[allow(clippy::neg_cmp_op_on_partial_ord)]
 #[inline(always)]
 pub fn log1p(x: f32) -> f32 {
-    let u = 1.0 + x;
-    let c = x - (u - 1.0);
-    let corr = c / u;
-    let corr = if corr.is_finite() { corr } else { 0.0 };
-    let normal = log_family_wrapper_no_denormal!(u, ln_normal) + corr;
+    let normal = log1p_nonzero!(x);
     if x == 0.0 { x } else { normal }
 }
 
@@ -2056,7 +2066,12 @@ pub fn log1pmx(x: f32) -> f32 {
     let q = fma(q, x, C1);
     let q = fma(q, x, 1.0);
     let small = -0.5 * x2 * q;
-    let big = log1p(x) - x;
+    // `log1p(x)` minus its trailing signed-zero select: that select only
+    // ever fires at `x == 0.0`, where the poly arm above is selected
+    // instead, so it can never reach the result. Everything else `log1p`
+    // does is still live -- `u = 1+x` really is `0`/negative/`+inf` on
+    // this arm's own domain.
+    let big = log1p_nonzero!(x) - x;
     let normal = if x.abs() < 0.5 { small } else { big };
     if x == f32::INFINITY { f32::NEG_INFINITY } else { normal }
 }

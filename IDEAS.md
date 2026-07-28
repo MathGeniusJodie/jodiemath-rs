@@ -2613,6 +2613,22 @@ an idea revisits a rejection, the differing mechanism is stated.
       composite that calls a composite that calls the general kernel is
       the same lever, one indirection further out — and `powf_pos`/
       `powf`/`exp_checked` are the wrappers most likely to hide one.
+    - The reachability re-sweep turned up exactly one other live site,
+      and it is deliberately small: `log1pmx`'s direct arm is
+      `log1p(x) - x` under an `|x| >= 0.5` guard, so `log1p`'s trailing
+      `x == 0.0` signed-zero select can never reach the result.
+      `log1pmx_throughput` **155 -> 151** instructions (-2.6%), latency
+      region -25, nothing else moves. Taken because it costs no
+      duplication — `log1p`'s body became a `log1p_nonzero!` macro that
+      `log1p` itself wraps with the one select — not because -2.6% would
+      justify a copied body on its own. Everything else `log1p` does is
+      genuinely live on that arm: `u = 1+x` really is `0`, negative and
+      `+inf` there.
+    - Screened and found *closed* on the re-sweep: `rootn`, `xlog1py`,
+      `compound` and `powf`/`signed_pow` all feed the general kernel an
+      unconstrained argument (`|x|`, `y`, `x` respectively), so none of
+      the edge arms are dead; `pow_2_3`/`rcbrt`/`pow_3_2` bottom out in
+      `cbrt`/`sqrt`, which supply their own special cases for free.
 56. **Slice-tier FTZ/DAZ via MXCSR**: a slice entry point can set
     FTZ/DAZ around its own loop and restore — gets the FTZ
     feature-flag idea's win without a global cargo feature.
