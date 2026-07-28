@@ -2044,6 +2044,72 @@ what shipped.
     its avg/max are sampled, not exhaustive. Measured 0.8076/60 ->
     0.8070/60; treat +-0.01% avg and +-1 max there as no signal and rest
     the site on the structural argument (strictly one rounding fewer).
+- **Crate-wide poly headroom screen — run 2026-07-28, and this table is
+  the answer to "is there any fit left anywhere".** Metric: exact-
+  arithmetic error of the shipped f32 coefficients, weighted by the final
+  combine's own sensitivity `|d(result)/dP| / ulp(result)`, against the
+  same-degree ulp-weighted LP minimax optimum **re-quantised to f32**.
+  Ratio = headroom. Idea #1's `acos_poly` result generalised into a
+  screen that costs seconds per poly.
+
+  | poly | callers | cur | LP(f32) | ratio | outcome |
+  |---|---|---|---|---|---|
+  | `atan_poly` | atan, atan2, atand, atanpi | 0.228 | 0.016 | 14.2x | untried; abs error already << 1 ulp |
+  | `asin_poly` | asin, asind | 1.869 | 0.191 | 9.8x | **REJECT** — headroom is fake, see below |
+  | `asin_small` | asin, asind | 1.104 | 0.117 | 9.4x | REJECT (real chain) |
+  | `asinpi_poly` | asinpi | 0.781 | 0.088 | 8.9x | **SHIPPED** |
+  | `dawson_central_ratio` | dawson | 60.1 | 8.35 | 7.2x | REJECT (axis trade) |
+  | `erfc_rational` | erfc, erfcx, norm_cdf | 15.1 | 2.70 | 5.6x | REJECT (axis trade) |
+  | `cbrt_corr` | cbrt tiers, rcbrt | 2.99 | 0.789 | 3.8x | REJECT (axis trade) |
+  | `erfinv_tail_poly` | erfinv, erfc_inv, probit | 28.6 | 8.44 | 3.4x | **SHIPPED** |
+  | `asinpi_small` | asinpi | 1.882 | 0.676 | 2.8x | **SHIPPED** |
+  | **`ln_normal`** | ln, log1p, asinh, acosh, atanh, logit, softplus... | 1.101 | 0.389 | **2.8x** | **untried — best remaining lead** |
+  | `tan_poly` | tanpi, tan2pi | 8.87 | 3.55 | 2.5x | **SHIPPED** |
+  | `acos_poly` | acos, acosd | 3.185 | 1.584 | 2.0x | shipped (idea #1) |
+  | `acospi_poly` | acospi | 3.001 | 1.614 | 1.9x | **SHIPPED** |
+  | `log10_normal` | log10, log10p1 | 0.931 | 0.760 | 1.2x | no headroom |
+  | `exp2_q_poly_centered` | exp10_checked | 0.140 | 0.133 | 1.05x | **exhausted** |
+  | `erf_poly` | erf | 0.831 | 0.819 | 1.01x | **exhausted** |
+  | `exp_r_poly` | exp, expm1, tanh, sigmoid, sinh, cosh... | 1.354 | 1.353 | 1.00x | **exhausted** (c0/c1 pinned to 1) |
+  | `erfinv_central_poly` | erfinv, erfc_inv, probit | 0.503 | 0.503 | 1.00x | **exhausted** (floor is f32(sqrt(pi)/2)) |
+  | `erf_pade` | erf | 0.871 | 0.891 | 0.98x | **exhausted** |
+  | `log1pmx_Q` | log1pmx | 0.337 | 0.351 | 0.96x | **exhausted** |
+  | `LOG2_COEFFS` | log_2, log2_df, log2p1 | 0.287 | 0.307 | 0.93x | **exhausted** |
+  | `sinf_poly` | sin, cos, sind, cospi, tan, sinc... | 0.166 | 0.206 | 0.81x | **exhausted — closes idea #49** |
+  | `log1p_unit_Q` | asinh, acosh | 0.072 | 0.360 | 0.20x | **exhausted** |
+
+  - **Ratio < 1 means the shipped coefficients already beat a freshly
+    quantised LP optimum** — the fingerprint of prior real-chain or
+    coordinate-descent tuning. Nine polys are now closed on a number.
+  - **The ratio predicts headroom; a second question predicts whether it
+    converts — what objective produced the shipped coefficients.**
+    - *real-chain / coordinate-descent tuned* (`asin_poly`, `sinf_poly`,
+      `log1pmx`, `LOG2_COEFFS`): ratio <= 1, nothing to take.
+    - *least-squares tuned* (`cbrt_corr`, `dawson_central_ratio`,
+      `erfc_rational`): a minimax refit **always** trades avg for max —
+      3 of 3 here, no exceptions. `cbrt` gets max 3->2 for avg
+      0.2813 -> 0.3765 (+34%); `erfc` gets avg 0.3055 -> 0.2258 for max
+      109 -> **121**; `dawson` max 61 -> 13 for avg 0.806 -> 2.993.
+    - *a rescale of another poly's coefficients* (`acospi_poly`,
+      `asinpi_poly` — both were `acos_poly`/`asin_poly` divided by pi),
+      or an LS fit whose error concentrates where the weight is high but
+      the sample density is low (`erfinv_tail_poly`, `tan_poly`):
+      **wins on both axes.** All four ships are in this class.
+  - **`asin_poly`'s 9.8x is the table's largest headroom and is entirely
+    fake** — worth knowing before anyone trusts the ratio alone. Real-
+    chain simulation over all 16106127 f32 in `[0.27, 1)`: shipped max 6
+    / avg 0.87462, ulp-weighted minimax max **8** / avg 1.17783.
+    `asin`'s exhaustive worst case is `x = 0.27004012`, *exactly* the
+    branch crossover, where `pi/2 - sqrt(1-a)*P(a)` cancels and
+    `ulp(1.2975)/ulp(0.2734)` amplifies the product's own rounding 4x.
+    No coefficient can move a chain floor.
+  - **Methodology: the stride-subsample trap applies to *search*, not
+    just verification.** A stride-32 real-chain coordinate descent on
+    `asin_poly` converged to a candidate that beat the shipped
+    coefficients *on its own subsample* (max 6->5, avg 0.930->0.815) and
+    lost on the full 16.1M sweep (max 6->**7**, avg 0.875->0.911). Never
+    descend on a subsample of a domain you can enumerate — the descent
+    finds precisely the points you skipped.
 - **Standing ulp-weighted minimax fit infrastructure**: weight coefficient
   fits by 1/ulp(f(x)) instead of plain relative error as a reusable,
   built-in tool rather than a one-off per-function LP script (the ad hoc

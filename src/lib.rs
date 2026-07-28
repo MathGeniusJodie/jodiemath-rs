@@ -921,15 +921,19 @@ pub fn sinc_unnormalized(x: f32) -> f32 {
     if x == 0.0 { 1.0 } else { normal }
 }
 
-// tan(pi*e) = e * Q(e^2) (idea #128), e in [-0.25, 0.25], degree 5,
+// tan(t) = t * Q(t^2), `t = pi*e` with e in [-0.25, 0.25], degree 5,
 // Estrin-grouped with the top pair folded in at the `u^2` level so `u^4`
-// is never formed (exp_r_poly!'s own fold). Real least-squares fit
-// (scipy) of tan(pi*e)/e against e^2, not a transcription of any
-// published algorithm's constants.
+// is never formed (exp_r_poly!'s own fold), leading coefficient pinned to
+// exactly 1.0. An ulp-weighted minimax (LP) fit of tan(t)/t against t^2
+// -- weighted by `|d tanpi / d Q| / ulp(tanpi)` for whichever of
+// `tan_core`'s two branches (direct `t*Q`, reflected `1/(t*Q)`) binds
+// harder at each point, then coordinate-descended over the f32
+// quantisation. Not a transcription of any published algorithm's
+// constants.
 #[inline(always)]
 fn tan_poly(u: f32) -> f32 {
     let c: [f32; 6] =
-        [1.0, 0.33335323, 0.13294287, 0.056705125, 0.013512152, 0.019691950];
+        [1.0, 0.33335274, 0.13290501, 0.056999072, 0.012793141, 0.020254191];
     let u2 = u * u;
     let l0 = fma(c[1], u, c[0]);
     let l1 = fma(c[3], u, c[2]);
@@ -950,7 +954,7 @@ fn tan_poly(u: f32) -> f32 {
 // swamps the tiny quantity being computed. Both forms are Sterbenz-exact
 // *given their own inputs*, so this isn't about avoiding rounding in the
 // subtraction itself, only about which domain has finer-grained ulps to
-// subtract in to begin with. Found by fuzzing (max ulp 11 vs 356266+
+// subtract in to begin with. Found by fuzzing (max ulp 8 vs 356266+
 // for the exact same reflection formula, differing only in this
 // subtract-then-scale vs scale-then-subtract order).
 //
@@ -3541,28 +3545,32 @@ pub fn acosd(x: f32) -> f32 {
     acos(x) * (180.0 / std::f32::consts::PI)
 }
 
-// acos(x)/pi, coefficients each rescaled by 1/pi (backlog idea #85,
-// tested individually per asinpi's own "neither verdict generalizes"
-// finding). acos_poly's own trailing term (1.5707964, its own fit
-// target for FRAC_PI_2) happens to rescale to exactly 0.5 in f32 --
-// the idea's own "pi/2-derived constants become exact" claim holds
-// here at least once.
+// acos(x)/pi as its own degree-6 minimax poly (backlog idea #85 gives
+// the half-turn form; the coefficients are not acos_poly's rescaled by
+// 1/pi -- that rescale was the starting point and a dedicated fit beats
+// it). Fitted as an ulp-weighted minimax (LP) of `acos(a)/(pi*sqrt(1-a))`
+// against `a`, weighted by the `sqrt(1-a)*P(a)` combine's own sensitivity
+// `sqrt(1-a)/ulp(acospi)` for whichever of the two halves (`y` and
+// `1-y`) binds harder, then coordinate-descended over the f32
+// quantisation. The trailing term stays pinned to exactly 0.5, which is
+// what makes acospi(0) exact.
 #[inline(always)]
 fn acospi_poly(x: f32) -> f32 {
-    let u = 7.308537e-4f32;
-    let u = fma(u, x, -3.5479574e-3);
-    let u = fma(u, x, 8.562644e-3);
-    let u = fma(u, x, -1.5534312e-2);
-    let u = fma(u, x, 2.8251762e-2);
-    let u = fma(u, x, -6.830476e-2);
+    let u = 7.5414003e-4f32;
+    let u = fma(u, x, -3.6262998e-3);
+    let u = fma(u, x, 8.662372e-3);
+    let u = fma(u, x, -1.55939115e-2);
+    let u = fma(u, x, 2.8268332e-2);
+    let u = fma(u, x, -6.830643e-2);
     fma(u, x, 5e-1)
 }
 
 /// acos(x)/pi (backlog idea #85), the C23 half-turn convenience family.
-/// Verified: folded gives avg/max ulp 0.0536/5 vs the naive
-/// `acos(x) * (1.0 / PI)` composite's 0.0595/5 -- a real win on average
-/// ulp with no mca cost (identical to plain acos), same verdict as
-/// asinpi's own 1/pi fold and the opposite of asind's RAD_TO_DEG fold.
+/// Verified (exhaustive): a dedicated poly gives avg/max ulp 0.0438/3 vs
+/// the naive `acos(x) * (1.0 / PI)` composite's 0.0595/5 -- a real win on
+/// both axes with no mca cost (identical instruction stream to plain
+/// acos), same verdict as asinpi's own 1/pi fold and the opposite of
+/// asind's RAD_TO_DEG fold.
 #[inline(always)]
 pub fn acospi(x: f32) -> f32 {
     let a = x.abs();
@@ -3638,12 +3646,13 @@ pub fn asind(x: f32) -> f32 {
     asin(x) * (180.0 / std::f32::consts::PI)
 }
 
-// asin(x)/pi, coefficients each rescaled by 1/pi (backlog idea #85, the
-// half-turn sibling of idea #123's degree fold): NOT assumed safe just
+// asin(x)/pi, seeded by rescaling each coefficient by 1/pi (backlog idea
+// #85, the half-turn sibling of idea #123's degree fold) and then refit
+// in half-turn space directly: NOT assumed safe just
 // because idea #123's own RAD_TO_DEG fold measured worse for asind --
 // verified separately since it's a different constant, not just a
 // relabeling. Real exhaustive fuzz (pilot-tested here before extending
-// to acospi/atanpi/atan2pi): folded gives avg/max ulp 0.2397/7 vs the
+// to acospi/atanpi/atan2pi): folded gives avg/max ulp 0.2375/7 vs the
 // plain `asin(x)/PI` composite's 0.2440/9 -- a real win on *both* axes
 // here, unlike asind's fold (worse on max ulp there). Plausible reason
 // for the opposite verdict: `1/pi` (~0.318) keeps rescaled coefficients
@@ -3655,22 +3664,28 @@ pub fn asind(x: f32) -> f32 {
 fn asinpi_small(x: f32) -> f32 {
     let x2 = x * x;
     let c0 = 0.31830987f32;
-    let c1 = 0.05305167f32;
-    let c2 = 0.023855051f32;
-    let c3 = 0.01509998f32;
+    let c1 = 0.053056117f32;
+    let c2 = 0.023659006f32;
+    let c3 = 0.017134449f32;
     let p = fma(fma(fma(c3, x2, c2), x2, c1), x2, c0);
     x * p
 }
 
+// asin's `0.5 - sqrt(1-a)*P(a)` branch in half-turns, degree 6 over
+// a in [0.27, 1). Seeded from `asin_poly`'s coefficients rescaled by
+// 1/pi, then refit as an ulp-weighted minimax (LP) of
+// `acos(a)/(pi*sqrt(1-a))` -- weight `sqrt(1-a)/ulp(asinpi)`, the
+// combine's own sensitivity -- and coordinate-descended over the f32
+// quantisation.
 #[inline(always)]
 fn asinpi_poly(x: f32) -> f32 {
-    let u = 0.0004181678f32;
-    let u = fma(u, x, -0.0024396966);
-    let u = fma(u, x, 0.0070038144);
-    let u = fma(u, x, -0.014429043);
-    let u = fma(u, x, 0.027837943);
-    let u = fma(u, x, -0.06822732);
-    fma(u, x, 0.4999943)
+    let u = 0.00047981358f32;
+    let u = fma(u, x, -0.0026602724);
+    let u = fma(u, x, 0.0073212385);
+    let u = fma(u, x, -0.014663323);
+    let u = fma(u, x, 0.027931212);
+    let u = fma(u, x, -0.068246327);
+    fma(u, x, 0.49999586)
 }
 
 /// asin(x)/pi (backlog idea #85), the C23 half-turn convenience family.
@@ -4086,23 +4101,26 @@ fn erfinv_central_poly(u: f32) -> f32 {
 }
 
 // erfinv's tail branch: `erfinv(x) = sign(x)*sqrt(w)*Q(w)`,
-// `w = -ln(1-x^2)`, for `|x| > 0.7` -- same idea as the central branch,
-// a real least-squares fit of `erfinv(x)/sqrt(w)` against `w` over
-// `w` in `[-ln(1-0.7^2), -ln(1-x_max^2)]` (`x_max` = the largest f32
-// below 1.0, so the fit's own domain exactly matches what an f32 caller
-// can ever actually reach).
+// `w = -ln(1-x^2)`, for `|x| > 0.7`. An ulp-weighted minimax (LP) fit of
+// `erfinv(x)/sqrt(w)` against `w` over `w` in
+// `[-ln(1-0.7^2), -ln(1-x_max^2)]` (`x_max` = the largest f32 below 1.0,
+// so the fit's own domain exactly matches what an f32 caller can ever
+// actually reach), weighted by the `sqrt(w)*Q` combine's own sensitivity
+// `sqrt(w)/ulp(erfinv)` and then coordinate-descended over the f32
+// quantisation -- a plain least-squares fit left ~3.4x more idealized
+// error than the same degree can reach.
 #[inline(always)]
 fn erfinv_tail_poly(w: f32) -> f32 {
     let c: [f32; 9] = [
-        8.8625765e-1,
-        1.037216e-2,
-        -2.0767662e-4,
-        -1.0906254e-4,
-        1.8217208e-5,
-        -1.4934789e-6,
-        7.075622e-8,
-        -1.8477235e-9,
-        2.0643756e-11,
+        8.862468e-1,
+        1.0395482e-2,
+        -2.2551943e-4,
+        -1.02430866e-4,
+        1.6865362e-5,
+        -1.3347174e-6,
+        6.0056976e-8,
+        -1.4636747e-9,
+        1.4956567e-11,
     ];
     let w2 = w * w;
     let w4 = w2 * w2;
