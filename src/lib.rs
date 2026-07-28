@@ -150,16 +150,21 @@ macro_rules! log_family_normal {
 // diff. The same reasoning applies to every other shared-body macro in
 // this file. Each caller keeps its own reduction (`k`/`r`) and exponent
 // reconstruction/final combine around this, since those differ.
+//
+// The top coefficient pair folds in at the `r^2` level rather than its
+// own `r^4` one (`ln_normal`'s trick, and `exp2_q_poly!`'s): `r^4` is
+// never formed, so this is one plain multiply cheaper than the balanced
+// 4-way split at the same fma critical-path depth, and one rounding
+// fewer on the shared power.
 macro_rules! exp_r_poly {
     ($r:expr) => {{
         let c: [f32; 4] = [4.9999300e-1, 1.6667245e-1, 4.1883811e-2, 8.3009899e-3];
         let r2 = $r * $r;
-        let r4 = r2 * r2;
         let l0 = $r + 1.0;
         let l1 = fma(c[1], $r, c[0]);
         let l2 = fma(c[3], $r, c[2]);
-        let r0 = fma(l1, r2, l0);
-        fma(l2, r4, r0)
+        let m = fma(l2, r2, l1);
+        fma(m, r2, l0)
     }};
 }
 
@@ -231,10 +236,12 @@ macro_rules! exp_pos_neg_core {
             4.188372e-2 * 0.5,
             8.300987e-3 * 0.5,
         ];
+        // Each half is Horner in `r^2`, not a leading `c*r^4` term: `r^4`
+        // is never formed, one plain multiply cheaper across both halves
+        // at the same fma critical-path depth. Same fold as exp_r_poly!.
         let r2 = r * r;
-        let r4 = r2 * r2;
-        let e = fma(c[2], r4, fma(c[0], r2, 0.5));
-        let o = fma(c[3], r4, fma(c[1], r2, 0.5));
+        let e = fma(fma(c[2], r2, c[0]), r2, 0.5);
+        let o = fma(fma(c[3], r2, c[1]), r2, 0.5);
         let p_pos = fma(r, o, e);
         let p_neg = fma(-r, o, e);
         let (t1, t2) = exp2_field_split(k);
@@ -915,19 +922,20 @@ pub fn sinc_unnormalized(x: f32) -> f32 {
 }
 
 // tan(pi*e) = e * Q(e^2) (idea #128), e in [-0.25, 0.25], degree 5,
-// Estrin-grouped. Real least-squares fit (scipy) of tan(pi*e)/e against
-// e^2, not a transcription of any published algorithm's constants.
+// Estrin-grouped with the top pair folded in at the `u^2` level so `u^4`
+// is never formed (exp_r_poly!'s own fold). Real least-squares fit
+// (scipy) of tan(pi*e)/e against e^2, not a transcription of any
+// published algorithm's constants.
 #[inline(always)]
 fn tan_poly(u: f32) -> f32 {
     let c: [f32; 6] =
         [1.0, 0.33335323, 0.13294287, 0.056705125, 0.013512152, 0.019691950];
     let u2 = u * u;
-    let u4 = u2 * u2;
     let l0 = fma(c[1], u, c[0]);
     let l1 = fma(c[3], u, c[2]);
     let l2 = fma(c[5], u, c[4]);
-    let r0 = fma(l1, u2, l0);
-    fma(l2, u4, r0)
+    let r0 = fma(l2, u2, l1);
+    fma(r0, u2, l0)
 }
 
 // tan(pi*e) (idea #128, tanpi only -- the same direct-poly idea applied
@@ -2578,9 +2586,8 @@ fn exp_pos_neg_narrow_half(x: f32) -> (f32, f32) {
         8.300987e-3 * 0.5,
     ];
     let r2 = r * r;
-    let r4 = r2 * r2;
-    let e = fma(c[2], r4, fma(c[0], r2, 0.5));
-    let o = fma(c[3], r4, fma(c[1], r2, 0.5));
+    let e = fma(fma(c[2], r2, c[0]), r2, 0.5);
+    let o = fma(fma(c[3], r2, c[1]), r2, 0.5);
     let p_pos = fma(r, o, e);
     let p_neg = fma(-r, o, e);
     let t = exp2int_field!(k);
@@ -4209,9 +4216,11 @@ pub fn norm_pdf(x: f32) -> f32 {
 }
 
 // dawson's central branch (backlog idea #138): `x*P(u)/Q(u)`, `u=x^2`,
-// degree 5/5, Estrin-grouped. Real least-squares fit (scipy) of
-// `dawsn(x)/x` against `u` over `|x| <= 4`, not a transcription of any
-// published algorithm's constants.
+// degree 5/5, Estrin-grouped with each side's top pair folded in at the
+// `u^2` level so `u^4` is never formed (exp_r_poly!'s own fold, applied
+// to the numerator and the denominator alike). Real least-squares fit
+// (scipy) of `dawsn(x)/x` against `u` over `|x| <= 4`, not a
+// transcription of any published algorithm's constants.
 #[inline(always)]
 fn dawson_central_ratio(u: f32) -> f32 {
     let pc: [f32; 6] = [
@@ -4224,32 +4233,33 @@ fn dawson_central_ratio(u: f32) -> f32 {
     ];
     let qc: [f32; 6] = [1.0, 0.6068863, 0.17250682, 0.029904548, 0.0033391602, 0.00026631297];
     let u2 = u * u;
-    let u4 = u2 * u2;
     let pl0 = fma(pc[1], u, pc[0]);
     let pl1 = fma(pc[3], u, pc[2]);
     let pl2 = fma(pc[5], u, pc[4]);
-    let pr0 = fma(pl1, u2, pl0);
-    let num = fma(pl2, u4, pr0);
+    let pr0 = fma(pl2, u2, pl1);
+    let num = fma(pr0, u2, pl0);
     let ql0 = fma(qc[1], u, qc[0]);
     let ql1 = fma(qc[3], u, qc[2]);
     let ql2 = fma(qc[5], u, qc[4]);
-    let qr0 = fma(ql1, u2, ql0);
-    let den = fma(ql2, u4, qr0);
+    let qr0 = fma(ql2, u2, ql1);
+    let den = fma(qr0, u2, ql0);
     num / den
 }
 
 // dawson's tail branch: `R(v)/(2x)`, `v=1/x^2`, degree 4, Estrin-grouped
-// -- a real least-squares fit of `2*x*dawsn(x)` against `v` over `|x| >
-// 4` (`v` in `[0, 1/16]`), matching the `1 + v/2 + O(v^2)` asymptotic
-// shape but fit directly rather than truncated from that series.
+// with the odd top coefficient folded in at the `v^2` level so `v^4` is
+// never formed (exp_r_poly!'s own fold) -- a real least-squares fit of
+// `2*x*dawsn(x)` against `v` over `|x| > 4` (`v` in `[0, 1/16]`),
+// matching the `1 + v/2 + O(v^2)` asymptotic shape but fit directly
+// rather than truncated from that series.
 #[inline(always)]
 fn dawson_tail_poly(v: f32) -> f32 {
     let c: [f32; 5] = [1.0, 0.4999613, 0.7583368, 1.4159758, 14.885198];
     let v2 = v * v;
     let l0 = fma(c[1], v, c[0]);
     let l1 = fma(c[3], v, c[2]);
-    let r0 = fma(l1, v2, l0);
-    fma(c[4], v2 * v2, r0)
+    let r0 = fma(c[4], v2, l1);
+    fma(r0, v2, l0)
 }
 
 /// Dawson's function `F(x) = exp(-x^2) * integral_0^x exp(t^2) dt`

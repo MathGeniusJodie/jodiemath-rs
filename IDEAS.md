@@ -1932,10 +1932,74 @@ what shipped.
   zmm-width win found (and rejected as a global default) above.
 - **remainder_checked beyond 2^24**: double-float q like sin_checked's
   reduction. Only worth it if a real use case needs it.
-- **Automated evaluation-order search per poly**: fma reassociation is a
-  per-poly coin flip (acos_poly's Estrin cost accuracy, atan_poly's cost
-  throughput). Could enumerate Horner/Estrin groupings and score
-  automatically.
+- **Automated evaluation-order search per poly** — **swept 2026-07-28;
+  4 of 6 sites shipped**, and the useful part is that the winning axis
+  was not the one this entry names. The Horner<->Estrin axis really is
+  exhausted (`acos_poly`, `atan_poly`, `erfc_rational`, `log_2`,
+  `asin_small`/`sinh_small` all previously rejected). The unswept axis is
+  the one `ln_normal` and `exp2_q_poly!` already use and nobody
+  generalized: **fold the top coefficient group in one level lower so
+  `x^4` is never formed at all.**
+  - `l0 + l1*x2 + l2*x4` becomes `l0 + (l1 + l2*x2)*x2`. Algebraically
+    identical, **same fma critical-path depth**, one plain multiply
+    fewer — *and* one rounding fewer, since `fl(x2*x2)` no longer exists.
+    So unlike a Horner/Estrin swap this is expected to help accuracy
+    rather than trade it, which is exactly what happened.
+  - Shipped at 4 sites: `exp_r_poly!` (20 callers),
+    `exp_pos_neg_core!` + `exp_pos_neg_narrow_half` (7),
+    `dawson_central_ratio` + `dawson_tail_poly`, and `tan_poly`.
+    **Whole file 360429 -> 358643 instructions; 29 throughput regions
+    shrink and not one grows.** `exp` 62->60, `exp_checked` 66->64,
+    `expm1` 86->84, `tanpi` 89->85, `dawson` 82->78.
+  - Accuracy improves across the board: `cosh`/`cosh_narrow` avg
+    **-11.9%**, `cosh_checked` **-11.7%**, `exp`/`exp_narrow`/
+    `exp_checked` **-5.2%**, `sinh` -4.5%, `coshm1` -3.7%, `logaddexp`
+    -3.0%. Max ulp *drops* on eleven functions: `expm1` and
+    `exp_m1_over_x` 6->5, `sinh`/`cosh`/`cosh_checked` 5->4, `sigmoid`
+    and `softplus`/`logsigmoid` 4->3, `coshm1` 12->9, `tanpi`/`tan2pi`
+    11->10. Exhaustive where it mattered: `norm_pdf` 0.0881/67 ->
+    **0.0876/66**. Nothing regresses. 215 `worst_corpus` entries move,
+    every one inside the changed families. All 9 gates, 27 tests pass.
+  - **Two sites rejected, both mechanistically, which is what turns this
+    into a rule.** `erf_poly` is degree 6 with an odd leading
+    coefficient, so the fold cannot stay flat — it costs **+1
+    critical-path level**, and `erf_throughput` is 68-79%
+    dependency-bound, so it shows up directly (+3.2%). `erfinv` is the
+    one region in the sweep that is genuinely *resource*-bound (86%
+    resource pressure): dropping `u4*u4` freed registers, LLVM responded
+    by folding 22 `{1to8}` broadcast-memory operands into the fmas, and
+    **instructions fell 177->164 while uops rose 19400->20300** — fewer
+    instructions, more uops, real regression (`probit` +21.8%,
+    `erfc_inv` +25.3%).
+  - **Rule: the fold wins iff it keeps critical-path depth AND does not
+    raise uop count.** Instruction count alone is not sufficient, and
+    `erfinv` is the counterexample that proves it.
+  - **Still unswept, found while checking the sweep's coverage**: `tanh`
+    carries a standalone rescaled copy of `exp_r_poly` (coefficients
+    scaled by `2^degree` for `rh = r/2`) that still forms `rh4` for a
+    single use. Verified untouched — `tanh_throughput`'s assembly is
+    byte-identical across this change. See its own entry below.
+  - Not opportunities, checked and ruled out: the degree-8/9 Estrin
+    chains (`log_family_normal!`, `ln_normal`, `log1p_unit`,
+    `erfinv_central_poly`) use `s4` **twice**, so it is genuinely shared
+    — those already apply this same trick one level up, which is where
+    the idea came from.
+  - **Methodology, and this is the sharpest instance of it in the file:
+    `cos2pi`'s avg ulp moved 0.0737 -> 0.1172 (+59%) and its max moved
+    51472 -> 3294199 (64x) on BYTE-IDENTICAL assembly.** Same for
+    `norm_cdf`'s max (264 -> 276, true exhaustive value 295 both sides)
+    and `gelu`'s avg. The quick fuzz is unseeded, and for a
+    cancellation-dominated metric a handful of near-zero samples landing
+    differently moves the mean and the max by orders of magnitude. Three
+    of four apparent regressions evaporated on one check: **diff the
+    function's assembly before interpreting any accuracy delta.** If the
+    region did not change, the delta is not real, full stop.
+  - Caveat on `dawson`'s numbers, mine and anyone else's: the harness
+    caps that group at 2M samples even in `thorough` mode (no sleef
+    bucket — the reference is a hand-rolled Simpson's quadrature), so
+    its avg/max are sampled, not exhaustive. Measured 0.8076/60 ->
+    0.8070/60; treat +-0.01% avg and +-1 max there as no signal and rest
+    the site on the structural argument (strictly one rounding fewer).
 - **Standing ulp-weighted minimax fit infrastructure**: weight coefficient
   fits by 1/ulp(f(x)) instead of plain relative error as a reusable,
   built-in tool rather than a one-off per-function LP script (the ad hoc
