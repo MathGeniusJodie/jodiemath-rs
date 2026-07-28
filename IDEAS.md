@@ -3166,6 +3166,30 @@ an idea revisits a rejection, the differing mechanism is stated.
          computes both arms, so this buys a full `ln` on *every* call to
          extend a band most callers never touch. Screen the mca cost
          before building it.
+       - **Screened 2026-07-28, and the cost estimate above is wrong by
+         about 5x — in the idea's favour.** "A full `ln` on every call"
+         would be `ln`'s 1.611 cyc/elem on top of `exp_m1_over_x`'s
+         1.798, i.e. +56-89%, far outside this crate's precedent for
+         totality (`exp -> exp_checked` pays +30%). But a full `ln` is
+         not what the arm needs: it is only ever *selected* over
+         `x` in `[88.7228, 93.2582]`, and across that whole band
+         `ln(x)` ranges over `[4.4856, 4.5354]` — a span of **0.05**.
+         An absolute error `d` in the exponent is a relative error `d` in
+         the result, so f32 accuracy needs `ln(x)` to ~6e-8 absolute over
+         a 4.5-wide interval, which a degree-4/5 minimax in `(x - 91)`
+         supplies in **~4 fma**. Estimated ~+0.3 cyc/elem, ~+17%, and it
+         is a *new* function so nothing existing regresses.
+       - That is the "guard is the licence" lever (#54b) again, one more
+         level out, and worth naming as a general move: **when a branch
+         is only selected on a narrow band, it does not need the general
+         kernel — it needs a kernel fitted to the band.** #38's fused
+         `log1p_unit` and #54b's dropped `sqrt` are the same shape. The
+         reason it was missed here is that the entry reached for `ln` by
+         name and then priced `ln`.
+       - Not built: `exp_m1_over_x_checked` does not exist yet, so this
+         is new API surface rather than an improvement to a shipped
+         function, and that is a scope call rather than a measurement.
+         The screen above is the part that was missing.
 114. **FTZ-mode minimal exp2_checked/exp_checked** (rides the MXCSR
      slice-tier idea #56): lower clamp −151→−126 and the
      denormal-rounding half of the split's job disappears; same cascade
