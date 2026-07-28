@@ -20,8 +20,8 @@ cbrt_accurate_unchecked (+) | 0.000 |     1     | (bit-identical to cbrt_accurat
           exp10_checked |    0.008   |     1     | (no std exp10)
                    log2 |    0.003   |     3     |  0.000  |    1
    log2_unchecked (+)   |    0.006   |     3     | (bit-identical to log2 on its domain)
-        sin (|x|<1.3e7) |    0.065   |   1183    |  0.003  |    1
-        cos (|x|<1.3e7) |    0.293   |   2780    |  0.002  |    1
+        sin (|x|<1.3e7) |    0.059   |    219    |  0.003  |    1
+        cos (|x|<1.3e7) |    0.289   |   2769    |  0.002  |    1
  sin_checked (|x|<=1e6) |    0.036   |     2     |  0.000  |    1
  cos_checked (|x|<=1e6) |    0.081   |     3     |  0.000  |    1
         sinpi (all f32) |    0.197   |     2     | (no std sinpi)

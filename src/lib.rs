@@ -730,13 +730,21 @@ fn sinf_poly(x: f32) -> f32 {
     sinf_poly_raw(x).copysign(x)
 }
 
-// pi split into pieces with trailing zero bits so q*PI_A and q*PI_B are
-// exact for moderate |q|, keeping the reduced argument accurate in a
-// relative sense near the zeros of sin (Cody-Waite with fma).
+// pi split four ways for Cody-Waite reduction with fma. PI_A and PI_B
+// carry only 8 and 9 significant bits: the trailing zeros keep the first
+// two `x - q*PI_x` steps exactly representable for every |q| the
+// magic-round `q` is defined over, so neither of them rounds at all.
+// PI_C and PI_D then take the full f32 width, because from there on a
+// step's rounding is only half an ulp *of the residual itself* (harmless
+// even at sin's zeros, where the residual is what the answer is), while
+// what the four words together fail to capture of pi is an absolute
+// error scaled by q -- an unbounded *relative* one near those zeros, and
+// the term that actually binds. So the tail words spend their bits on
+// pi, not on trailing zeros.
 const PI_A: f32 = 3.140625;
 const PI_B: f32 = 0.0009670257568359375;
-const PI_C: f32 = 6.277114152908325e-7;
-const PI_D: f32 = 1.2154201256553421e-10;
+const PI_C: f32 = 6.278329465203569e-7;
+const PI_D: f32 = 1.0780605906948477e-14;
 const FRAC_1_PI: f32 = std::f32::consts::FRAC_1_PI;
 
 // 1.5 * 2^23; adding this to |v| < 2^22 rounds v to the nearest integer

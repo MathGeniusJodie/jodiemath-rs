@@ -2845,10 +2845,53 @@ an idea revisits a rejection, the differing mechanism is stated.
 106. **Caller-profile-weighted alternate coefficient sets** behind a
      cargo feature (e.g. sin weighted toward [−2π,2π]) — same shapes
      and cost, different literals.
-107. **PI_A..D bit-allocation joint refit**: keep all 4 words but
-     re-search each word's trailing-zero budget jointly with downstream
-     error — distinct from the rejected word-*dropping* attempts (3-word
-     chain, fitted 3.5-word split), which reduced total precision.
+107. **PI_A..D bit-allocation joint refit** — **shipped 2026-07-28, and
+     it is the largest free accuracy win in this file**: `sin`'s
+     exhaustive `|x| <= 1e6` max ulp **58 -> 3**, `cos`'s **88 -> 3**,
+     avg -12.6% / -6.2%, for **provably zero perf change** (the whole
+     `mca_target.s` differs in 24 lines, all of them `.long` rodata
+     constants — not one instruction moves).
+     - Only `PI_C`/`PI_D` change, to full f32 width:
+       `PI_C = 6.278329465203569e-7` (`0x3528885a`),
+       `PI_D = 1.0780605906948477e-14` (`0x284234c5`). `PI_A`/`PI_B` were
+       already optimal — their 8 and 9 significant bits keep steps 1 and 2
+       exactly representable with 32x and 3.4x margin, and widening either
+       one regresses (it breaks that exactness, which the closed form
+       predicts and the fuzz confirms).
+     - **Root cause, and it is embarrassing in a useful way: these were
+       Sleef's `PI_Af..PI_Df`, designed for Sleef's own
+       `TRIGRANGEMAXf = 39000`, i.e. `|q| <= ~12400`.** This crate reuses
+       them at `|q| <= 2^22` — 340x larger. `PI_C`'s 9-bit budget buys a
+       step-3 exactness window of `|r| <= 0.031` that nothing needs, and
+       pays for it with a residual `delta_4 = pi - sum(PI_i)` of
+       -2.435e-18. Widening `PI_C`/`PI_D` drops `delta_4` to -1.906e-22
+       (12800x), putting `q*delta_4` far under the half-ulp-of-`r` floor.
+     - The mechanism to remember: a rounding *inside* the chain costs half
+       an ulp **of the residual**, which is harmless even at sin's zeros
+       because there the residual *is* the answer. What `delta_4` costs is
+       an **absolute** error scaled by `q`, which near a zero is unbounded
+       *relative* error. Those are not the same currency, and the shipped
+       split was spending bits on the wrong one.
+     - Does **not** move the in-domain max (`sin` 219, `cos` 2769) and
+       cannot: that comes from `FRAC_1_PI`'s own 1.28e-8 error making `q`
+       off by one past ~1.3e7, pushing `r` outside `sinf_poly`'s fit. All
+       15 screened candidates hit the same in-domain max. Off-domain
+       (`[1.32e7, 1e9]`) both splits are equally garbage.
+     - **Methodology warning, and it is a sharp one: the 100M quick fuzz
+       reported the baseline `|x|<=1e6` max as 4, where the exhaustive
+       truth is 58.** A 14x under-report. The failing points are a thin
+       set that random sampling essentially never lands on, so for this
+       bucket quick-fuzz max is not merely noisy — it is systematically
+       optimistic. Use `thorough` for any max claim about the fast trig
+       tier.
+     - Search: 15 splits (`n1 in {8,12,16,24}`, `n2 in {9..16,24}`,
+       `n3 in {9,12,13,16,20,24}`) scored on the real sin/cos fuzz via a
+       runtime-constant screener; monotone improving in `n3`. `8_11_24_24`
+       measures 0.3% better still but cuts step-2's exactness margin from
+       3.4x to 1.46x for that, and changes a third constant — declined.
+     - `worst_corpus` moves 18 entries, all `sin`/`cos`/`tan`; every
+       in-domain one moves **to 0 ulp** against an 80-digit reference.
+       Blessed. All 10 gates pass.
 110. **±few-ulp exhaustive scan of every non-poly literal** (clamp
      bounds, seed constants, magic offsets, branch thresholds) scored on
      the real fuzz — #3's sibling for non-coefficient constants.
