@@ -1974,11 +1974,25 @@ what shipped.
   - **Rule: the fold wins iff it keeps critical-path depth AND does not
     raise uop count.** Instruction count alone is not sufficient, and
     `erfinv` is the counterexample that proves it.
-  - **Still unswept, found while checking the sweep's coverage**: `tanh`
-    carries a standalone rescaled copy of `exp_r_poly` (coefficients
-    scaled by `2^degree` for `rh = r/2`) that still forms `rh4` for a
-    single use. Verified untouched — `tanh_throughput`'s assembly is
-    byte-identical across this change. See its own entry below.
+  - **A fifth site, missed by the sweep and found by checking its
+    coverage — and it is the most interesting one.** `tanh` carries a
+    *standalone* rescaled copy of `exp_r_poly` (coefficients scaled by
+    `2^degree` for `rh = r/2`), so a grep for the macro does not find it;
+    it still formed `rh4` for a single use. Folding it:
+    `tanh_throughput` **79 -> 77** (exactly -2 `vmulps`), latency region
+    -64, nothing else moves, exactly 1 `worst_corpus` entry moves.
+    - **Exhaustive: `tanh` avg 0.1457 -> 0.1452, max ulp 6 -> 5.**
+    - That is worth noticing against idea #169, which studied `tanh`'s
+      max-6 band at length and closed all three of its levers — a wider
+      Pade fit (disqualified: idealized error alone would be 42 ulp), a
+      dedicated third branch (measured +39.6% throughput), and a seam
+      retune (the seam is already optimal). All three tried to *fit* the
+      error better. This removes a rounding instead, and gets the 6 -> 5
+      that none of them could, while making the function cheaper.
+    - Reusable: when a poly is copied rather than shared, a
+      macro/function-name grep will miss it. Sweep by *shape* — here,
+      "forms a fourth power and uses it once" — not by call site. Same
+      lesson as #54h's reachability sweep, one abstraction over.
   - Not opportunities, checked and ruled out: the degree-8/9 Estrin
     chains (`log_family_normal!`, `ln_normal`, `log1p_unit`,
     `erfinv_central_poly`) use `s4` **twice**, so it is genuinely shared

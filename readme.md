@@ -54,7 +54,7 @@ sinh_throughput (in-domain)| 0.082   |     5     |  0.000  |    1
 cosh_throughput (in-domain)| 0.051   |     4     |  0.000  |    0
        sinh_checked (all f32) | 0.043 |     5     |  0.000  |    1
        cosh_checked (all f32) | 0.031 |     5     |  0.000  |    0
-       tanh (in-domain) |    0.146   |     6     |  0.000  |    0
+       tanh (in-domain) |    0.145   |     5     |  0.000  |    0
                 sigmoid |    0.093   |     4     | (no std sigmoid)
        softplus (|x|<80)|    0.077   |     4     | (no std softplus)
 logaddexp (|a|,|b|<80)|    0.141   |  ~1e3-1e5, heavy-tailed (real, narrow cancellation -- see its own doc comment) | (no std logaddexp)

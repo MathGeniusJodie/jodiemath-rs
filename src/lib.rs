@@ -2864,12 +2864,11 @@ pub fn tanh(x: f32) -> f32 {
     const D2: f32 = 16.0 * 4.1883811e-2;
     const D3: f32 = 32.0 * 8.3009899e-3;
     let rh2 = rh * rh;
-    let rh4 = rh2 * rh2;
     let l0 = fma(2.0, rh, 1.0);
     let l1 = fma(D1, rh, D0);
     let l2 = fma(D3, rh, D2);
-    let r0 = fma(l1, rh2, l0);
-    let p = fma(l2, rh4, r0);
+    let m = fma(l2, rh2, l1);
+    let p = fma(m, rh2, l0);
     let exp2int = exp2int_field!(k);
     let b = fma(p, exp2int, -1.0);
 

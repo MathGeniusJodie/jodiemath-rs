@@ -9371,7 +9371,7 @@ tanh 80000001 80000001
 tanh 007fffff 007fffff
 tanh 7f7fffff 3f800000
 tanh ff7fffff bf800000
-tanh 3e800000 3e7acbf4
+tanh 3e800000 3e7acbf1
 tanh be800000 be7acbf5
 tanh 3e8a3d71 3e86f9d5
 tanh be8a3d71 be86f9d6
