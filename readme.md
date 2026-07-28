@@ -271,77 +271,88 @@ theoretical cost from llvm-mca (-mcpu=native, 100 iterations)
 --------------------|----------------|------------------
 cbrt                |          35.06 |             1.629
 cbrt_unchecked      |          35.06 |             0.906
-cbrt_accurate       |          59.06 |             3.129
-cbrt_accurate_unchecked |          59.06 |             2.067
-rcbrt               |          46.30 |             1.666
+cbrt_accurate       |          63.00 |             3.129
+cbrt_accurate_unchecked |          63.00 |             2.067
+rcbrt               |          60.03 |             1.666
 exp2                |          35.00 |             0.854
-exp2_checked        |          43.06 |             1.399
+exp2_checked        |          47.00 |             1.399
 exp10               |          52.00 |             1.461
-exp10_checked       |          51.06 |             1.897
+exp10_checked       |          55.00 |             1.897
 log2                |          34.23 |             1.584
 log2_unchecked      |          34.23 |             0.958
-sin                 |          46.00 |             1.151
+sin                 |          48.00 |             1.151
 sin_checked         |         117.02 |             5.232
-cos                 |          54.00 |             1.406
+cos                 |          56.00 |             1.406
 cos_checked         |         122.00 |             4.603
 sinpi               |          42.02 |             1.133
 cospi               |          51.00 |             1.283
 tanpi               |          78.88 |             2.031
 sinc                |          53.02 |             1.256
-sind                |          46.00 |             1.151
-cosd                |          54.00 |             1.406
+sind                |          48.00 |             1.151
+cosd                |          56.00 |             1.406
 tand                |          70.02 |             2.533
-ln                  |          52.86 |             1.611
+ln                  |          44.14 |             1.611
 ln_unchecked        |          34.06 |             1.018
-log10               |          56.86 |             1.635
+log10               |          48.14 |             1.635
 log10_unchecked     |          38.22 |             1.113
 log1p               |          47.24 |             1.857
 log2p1              |          48.14 |             1.886
 exp                 |          42.00 |             1.230
-exp_checked         |          46.06 |             1.607
+exp_checked         |          50.00 |             1.607
 expm1               |          70.00 |             1.620
-expm1_checked       |          74.06 |             1.556
+expm1_checked       |          78.00 |             1.556
 exp_m1_over_x       |          82.00 |             1.720
-exp2m1              |          76.06 |             1.843
+exp2m1              |          80.00 |             1.843
 sinh                |          51.00 |             1.780
 cosh                |          50.00 |             1.647
 sinh_throughput     |          62.00 |             1.943
 cosh_throughput     |          61.00 |             1.616
-sinh_checked        |          55.06 |             2.274
-cosh_checked        |          54.06 |             1.943
-tanh                |          81.73 |             1.731
-sigmoid             |          57.06 |             1.222
-softplus            |          72.14 |             2.449
-logaddexp           |          72.14 |             2.449
-asinh               |          81.20 |             4.136
+sinh_checked        |          59.00 |             2.274
+cosh_checked        |          58.00 |             1.943
+tanh                |          85.64 |             1.731
+sigmoid             |          61.00 |             1.222
+softplus            |          74.11 |             2.449
+logaddexp           |          74.11 |             2.449
+asinh               |          69.41 |             4.136
 acosh               |          89.08 |             3.828
-atanh               |          69.42 |             2.903
-asin                |          59.03 |             0.968
-acos                |          37.11 |             0.820
-atan                |          61.09 |             1.491
-atan_latency        |          59.11 |             1.591
-atan2               |          61.28 |             1.694
+atanh               |          96.83 |             2.903
+asin                |          60.99 |             0.968
+acos                |          39.99 |             0.820
+atan                |          61.27 |             1.491
+atan_latency        |          61.99 |             1.591
+atan2               |          67.19 |             1.694
 tan                 |          71.02 |             2.532
-erf                 |          76.11 |             2.037
+erf                 |          83.98 |             2.037
 erfc                |          64.00 |             2.437
-erfcx               |          39.36 |             2.278
+erfcx               |          62.02 |             2.278
 hypot               |          21.11 |             0.766
 hypot_checked       |          57.19 |             1.178
 rhypot              |          32.02 |             1.389
 rsqrt               |          28.00 |             1.381
 pown                |         176.00 |             3.805
-powf                |         102.99 |             5.651
+powf                |         104.95 |             5.651
 powf_unchecked      |          79.05 |             3.095
-powf_checked        |         130.33 |             9.105
+powf_checked        |         153.00 |             9.105
 powf_checked_unchecked |         129.74 |             7.234
 remainder           |          34.11 |                 ? (*)
 remainder_unchecked |          33.00 |             0.646
-remainder_checked   |          40.22 |             1.357
+remainder_checked   |          45.17 |             1.357
 remainder_ieee      |          29.11 |                 ? (*)
-remainder_wide      |         161.30 |             7.688
+remainder_wide      |         171.17 |             7.688
 fmod                |          29.11 |                 ? (*)
 fmod_unchecked      |          28.00 |             0.643
 ```
+The latency column jumped for 65 of these rows on 2026-07-28 -- **not a
+regression, a harness fix** (backlog idea #198). The serial chain's `mix()`
+step used to clear the sign bit, which let LLVM prove the value was
+non-negative and fold away every function's sign-handling work
+(`copysign`/`mulsign`, `abs`, sign selects) before it was ever measured.
+`erfcx_checked` was under-reported by 2.6x (41.00 -> 104.98), `atanh` by
+39%, `rcbrt`/`pow_2_3` by ~30%. `mix()` now carries the sign through, which
+makes it data-dependent and unfoldable. Throughput is unaffected -- it never
+used `mix()` -- and zero throughput rows moved, which is the check that the
+fix did what it claims.
+
 (*) remainder/remainder_ieee/fmod: throughput no longer measurable via
 llvm-mca after their 2026-07-09 zero/nan fix (backlog idea #85's own
 follow-up) -- LLVM branch-specializes these short functions' vectorized

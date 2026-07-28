@@ -145,7 +145,7 @@ macro_rules! log_family_normal {
 // Deliberately a macro, not a fn: a fn-based sharing attempt caused a
 // real, reproduced +32% mca regression on an unrelated caller purely
 // from the new function-call boundary's scheduling side effects (see
-// IDEAS.md §hyperbolics). A macro is pure textual substitution with no
+// graveyard.md §hyperbolics). A macro is pure textual substitution with no
 // boundary at all -- verified equivalent via a full pre/post assembly
 // diff. The same reasoning applies to every other shared-body macro in
 // this file. Each caller keeps its own reduction (`k`/`r`) and exponent
@@ -415,7 +415,7 @@ pub fn exp2(x: f32) -> f32 {
     // and rejected here and on every other exp2_q_poly! caller, each for
     // its own reason -- here, round can land k=128 inside the promised
     // [-126,128) domain, which this single-field construction can't
-    // represent (NaN for a legit input). See IDEAS.md §exp/exp2.
+    // represent (NaN for a legit input). See graveyard.md §exp/exp2.
     let k = x.floor();
     let f = x - k;
     let exp2int = exp2int_field!(k);
@@ -462,7 +462,7 @@ pub fn exp2_checked(x: f32) -> f32 {
     // x + 383 double-counts the integer part when x + 383 rounds up across
     // an integer (e.g. x = 4.9999999). k=round(x) was tried and rejected
     // here too (perf and max-ulp regression, no structural savings) --
-    // see IDEAS.md §exp/exp2.
+    // see graveyard.md §exp/exp2.
     let xs = x.clamp(-151.0, 128.0);
     let k = xs.floor();
     let f = xs - k;
@@ -606,7 +606,7 @@ pub fn frexp(x: f32) -> (f32, i32) {
 /// saturation boundary the round convention allows `f < 0`, so `2^f < 1`
 /// can pull `t1*t2 = 2^128`'s product back *under* `f32::MAX`, giving
 /// `exp10_checked(inf)` a finite result -- a contract violation only
-/// edgecheck.rs's special-value pins caught. See IDEAS.md §exp/exp2.
+/// edgecheck.rs's special-value pins caught. See graveyard.md §exp/exp2.
 ///
 /// The leading `x` clamp bound is `[-45.154503, 38.53184]` (backlog idea
 /// #113), not an arbitrarily-wide safety net: these are the exact bit-
@@ -683,7 +683,7 @@ pub fn exp10_checked(x: f32) -> f32 {
 /// (see `exp10_checked`'s own doc comment) stays in `[-126,128)`.
 /// Skipping the floor-adjust was tried and rejected here for the same
 /// reason as plain `exp2` (round can land k=128 at the domain edge,
-/// which a single field can't represent) -- see IDEAS.md §exp/exp2.
+/// which a single field can't represent) -- see graveyard.md §exp/exp2.
 #[inline(always)]
 #[allow(clippy::approx_constant)] // g0's constant term is a fitted minimax
 // coefficient near ln(2), not ln(2) itself (bit pattern deliberately differs)
@@ -2815,7 +2815,7 @@ pub fn cosh_throughput(x: f32) -> f32 {
 /// (`tanh(50)`/`tanh(f32::MAX)` returned NaN where std saturates to 1).
 /// An abs/mulsign restructuring was tried and rejected -- it still
 /// needed a clamp to be safe, so it did no work the clamp alone doesn't
-/// (see IDEAS.md §hyperbolics). `f32::clamp` returns NaN unchanged
+/// (see graveyard.md §hyperbolics). `f32::clamp` returns NaN unchanged
 /// (unlike `.max`/`.min`), so NaN propagation isn't broken, and the
 /// clamp is lossless even for in-range-but-large x: any x past the
 /// boundary already has a true tanh value of exactly `+-1.0f32` many
@@ -3498,7 +3498,7 @@ fn acos_poly(x: f32) -> f32 {
 /// Dedicated asin-only copy of `acos_poly`'s shape (same 7-coefficient
 /// Horner form, same `sqrt(1-x)*poly` combine, independently tuned),
 /// decoupling asin from acos's protected coefficients: every joint refit
-/// attempt died protecting acos's accuracy (see IDEAS.md §asin/acos), so
+/// attempt died protecting acos's accuracy (see graveyard.md §asin/acos), so
 /// not sharing coefficients means acos can't regress no matter what this
 /// poly converges to. Fit against `acos(x)/sqrt(1-x)` restricted to
 /// asin's actual domain for this branch, `x` in `[0.25, 1)` -- the
@@ -3586,7 +3586,7 @@ pub fn acospi(x: f32) -> f32 {
 // the next Taylor term is ~4.6e-7 relative), while an equal-degree minimax
 // fit spreads that error for a lower max ulp at identical op count. Nearer
 // |x|=1 the series would converge slowly (asin's sqrt singularity), so the
-// other branch takes over there. See IDEAS.md §asin/acos/atan.
+// other branch takes over there. See graveyard.md §asin/acos/atan.
 #[inline(always)]
 fn asin_small(x: f32) -> f32 {
     let x2 = x * x;
@@ -3705,7 +3705,7 @@ pub fn asinpi(x: f32) -> f32 {
 // least-squares fit and coordinate-descent tuned. Current: atan avg/max
 // ulp 0.068/4, atan2 0.069/3 (exhaustive). Numerator and denominator
 // evaluate in parallel, so the depth cost over a lower-degree form is
-// one fma, not two. See IDEAS.md §asin/acos/atan for the fit history
+// one fma, not two. See graveyard.md §asin/acos/atan for the fit history
 // (including the "zero-move trap" of coordinate-descending a new
 // coefficient from 0.0).
 #[inline(always)]
