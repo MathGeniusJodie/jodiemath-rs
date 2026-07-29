@@ -10,7 +10,7 @@
 // undiluted by the integer exponent (m in [2^-0.5, 2^0.5), i.e. k == 0;
 // outside it |log2(x)| >= 0.5 divides the same absolute error down).
 // Random (x, y) pairs hit that corner with vanishing probability -- the
-// standard fuzz reports powf_checked at 2 ulp where the real worst case
+// standard fuzz reports powf at 2 ulp where the real worst case
 // is twice that -- so this picks y from x instead of drawing it, which
 // makes the search exhaustive over the band rather than statistical.
 //
@@ -72,7 +72,7 @@ fn main() {
     for target in [127.9f64, 64.0, -64.0, -125.9] {
         for (i, (name, f)) in [
             ("powf", &powf as &dyn Fn(f32, f32) -> f32),
-            ("powf_checked", &powf_checked),
+            ("powf_unchecked", &powf_unchecked),
         ]
         .into_iter()
         .enumerate()
@@ -83,5 +83,5 @@ fn main() {
         }
         println!();
     }
-    println!("worst over all sweeps:  powf {}  powf_checked {}", worst[0], worst[1]);
+    println!("worst over all sweeps:  powf {}  powf_unchecked {}", worst[0], worst[1]);
 }

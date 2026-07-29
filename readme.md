@@ -18,8 +18,8 @@ cbrt_accurate_unchecked |    0.000   |     1     | (bit-identical to cbrt_accura
            exp2_checked |    0.014   |     1     |  0.000  |    1
                   exp10 |    0.031   |     2     | (no std exp10)
           exp10_checked |    0.008   |     1     | (no std exp10)
-                   log2 |    0.003   |     3     |  0.000  |    1
-   log2_unchecked (+)   |    0.006   |     3     | (bit-identical to log2 on its domain)
+                   log2 |    0.003   |     1     |  0.000  |    1
+   log2_unchecked (+)   |    0.006   |     1     | (bit-identical to log2 on its domain)
          sin (|x|<=1e6) |    0.036   |     3     |  0.002  |    1
          cos (|x|<=1e6) |    0.078   |     3     |  0.002  |    1
  sin_checked (|x|<=1e6) |    0.036   |     2     |  0.000  |    1
@@ -76,10 +76,9 @@ hypot_unchecked (bounded, +) | 0.034 |     1     | (bit-identical to hypot on it
        hypot_checked |    0.015   |     1     | (no std comparison needed, no domain restriction)
                 rhypot |    0.065   |     2     | (no std rhypot)
                   rsqrt |    0.260   |     1     | (no std rsqrt)
-        powf (in-domain)|    0.181   |  >=312 (s)|  0.000  |    1
-    powf_unchecked (+)  |    0.363   |  >=312 (s)| (bit-identical to powf on its domain)
-        powf_checked (in-domain)|  0.019   |   3 (s)  | (no std comparison needed, same domain as powf)
-powf_checked_unchecked (+)|    0.038   |   3 (s)  | (bit-identical to powf_checked on its domain)
+        powf (in-domain)|    0.019   |   3 (s)  |  0.000  |    1
+    powf_unchecked (+)  |    0.039   |   3 (s)  | (bit-identical to powf on its domain)
+                powf_pos|    0.039   |   3 (s)  | (bit-identical to powf for x > 0, see its doc comment)
         remainder (|x/y|<1000, near-tie excluded) | 0.000 | 0 | (no std comparison needed)
 remainder_unchecked (+) |    0.000   |     0     | (bit-identical to remainder on its domain)
     remainder_checked (|x/y|<1e7, near-tie excluded) | 0.000 | 0 | (no std comparison needed)
@@ -93,8 +92,20 @@ remainder_unchecked (+) |    0.000   |     0     | (bit-identical to remainder o
 lives in one corner -- `|y*log2(x)|` just inside the largest finite
 exponent, `x` inside the single octave where log2's own relative error is
 undiluted by the integer exponent -- which random pairs essentially never
-hit. The blind fuzz reports `powf_checked` at 2 ulp; pinning `y` to `x`
-and sweeping that octave exhaustively finds 4.
+hit. The blind fuzz reports `powf` at 2 ulp; pinning `y` to `x` and
+sweeping that octave exhaustively finds 3.
+
+There is no `powf_checked`. There used to be: `powf` computed
+`exp2_checked(log_2(x)*y)` through a single f32 and measured **>=292 ulp**,
+with a separate opt-in tier carrying `log2(x)` as a double-float for the
+3 ulp above. That split is gone -- the double-float route *is* `powf` now.
+The old fast route had no useful accuracy/speed curve to sit on: its error
+is `y`-amplified, so it is not "approximate", it is wrong by hundreds of
+ulp at ordinary inputs like `(1.21, 464.7)`, and a compensated multiply
+recovers only ~13% of that because the multiply is not where the error is.
+The cost of the merge is real and is in the benchmark tables below --
+`powf` is ~19% slower in latency and ~50% in throughput than the old
+inaccurate one, and 15-18% *faster* than the checked tier it replaces.
 
 # benchmarks
 Run on i5-1145G7, -C target-cpu=native (now set in .cargo/config.toml)
@@ -133,8 +144,8 @@ cbrt_accurate_unchecked| 21.6 ns | 23.7 ns | 1.1x
  exp2_checked | 14.8 ns | 12.8 ns | 0.9x
         exp10 | 16.4 ns |    -    |  -
 exp10_checked | 17.6 ns |    -    |  -
-         log2 | 12.3 ns | 13.9 ns | 1.1x
-log2_unchecked | 11.8 ns |    -    |  -
+      log2 (r)| 14.4 ns | 14.2 ns | 1.0x
+log2_unchecked (r)| 13.4 ns |    -    |  -
           sin | 16.3 ns | 17.1 ns | 1.0x
   sin_checked | 37.1 ns | 17.1 ns | 0.5x
            ln | 12.9 ns | 12.6 ns | 1.0x
@@ -180,10 +191,8 @@ hypot_unchecked | 6.2 ns  |    -    |  -
   hypot_checked | 18.2 ns | 11.2 ns | 0.6x
        rhypot | 8.9 ns  |    -    |  -
         rsqrt | 7.5 ns  |    -    |  -
-      powf (*)(r)| 21.4 ns | 16.9 ns | 0.8x
-powf_unchecked (r)| 18.8 ns | 16.9 ns | 0.9x
- powf_checked (r)| 33.4 ns | 16.9 ns | 0.5x
-powf_checked_unchecked (r)| 30.3 ns | 16.9 ns | 0.6x
+      powf (*)(r)| 42.7 ns | 23.9 ns | 0.6x
+powf_unchecked (r)| 39.2 ns | 23.9 ns | 0.6x
  remainder (*)| 10.7 ns |    -    |  -
 remainder_unchecked| 9.3 ns  |    -    |  -
 remainder_checked| 13.0 ns |    -    |  -
@@ -204,24 +213,21 @@ the whole thing with a single `x*x` multiply, so the old "3.2 ns" was
 never measuring std's actual powf cost at all. All four functions (plus
 `std powf`) now use a `black_box`'d 2nd argument for an honest number.
 
-(r) the powf block in both tables (including its own `std powf` reference
-column) was re-recorded in a *later* sitting than the rest, for
-`powf_checked`'s atanh-form log2 -- so those rows are comparable to each
-other but read ~11-15% fast against the rows around them. The unchanged
-`powf` row is the conversion factor: same code, 24.0 -> 21.4 ns latency
-and 1.37 -> 1.13 ns throughput, with `std powf` moving the same way
-(19.3 -> 16.9, 6.45 -> 5.42).
+(r) the powf and log2 rows in both tables (including their own `std`
+reference columns) were re-recorded in a *later*, slower sitting than the
+rest -- this machine's documented 3-9x environment swing, not a
+regression. They are comparable to each other and to their own `std`
+columns, and read ~40% slow against the rows around them: `std powf` is
+23.9/7.74 ns here against 16.9/5.42 in the sitting the rest of the table
+comes from, and `std log2` 14.2 against 13.9. Do not subtract across
+sittings; the llvm-mca table below needs no such caveat and is the
+cross-session reference.
 
-Do not read `powf_checked`'s own cost off this table by subtracting across
-sittings. Measured properly -- both binaries built once, then run
-alternately, min of 6 each -- the atanh-form log2 costs it **-2.6%
-latency** (34.3 -> 33.4 ns; it is *faster*) and **+6.8% throughput**
-(1.76 -> 1.88 ns), and `powf_checked_unchecked` -2.6% / +8.5%. That
-interleaving is what makes the numbers trustworthy on a machine that
-throttles this much: the three rows whose code did *not* change (`powf`,
-`powf_unchecked`, `std powf`) came back within 0.4% across the same runs,
-which is the noise floor the deltas above are measured against. llvm-mca,
-which needs no sitting caveat at all, agrees on both signs.
+`powf`'s own move is real and is the price of it now being the
+double-float route: against the 3-ulp `powf_checked` it replaces, llvm-mca
+puts it at **-18.1% latency** (152.89 -> 125.17 cyc) and **-14.7%
+throughput** (9.918 -> 8.459 cyc/elem); against the >=292-ulp formula it
+replaces, +19.3% and +49.7%.
 
 ```
 Throughput (independent array evals over [f32; 4096], examples/quickbench.rs; lower is better)
@@ -238,8 +244,8 @@ cbrt_accurate_unchecked| 0.65 ns | 4.46 ns | 6.8x
  exp2_checked | 0.46 ns | 2.95 ns | 6.4x
         exp10 | 0.41 ns |    -    |  -
 exp10_checked | 0.53 ns |    -    |  -
-         log2 | 0.49 ns | 3.87 ns | 7.8x
-log2_unchecked | 0.30 ns |    -    |  -
+      log2 (r)| 0.51 ns | 3.86 ns | 7.6x
+log2_unchecked (r)| 0.34 ns |    -    |  -
           sin | 0.33 ns | 4.15 ns | 12.8x
   sin_checked | 1.63 ns | 4.15 ns | 2.5x
            ln | 0.53 ns | 3.41 ns | 6.5x
@@ -285,10 +291,8 @@ hypot_unchecked | 0.21 ns |    -    |  -
   hypot_checked | 0.38 ns | 2.55 ns | 6.7x
        rhypot | 0.36 ns |    -    |  -
         rsqrt | 0.35 ns |    -    |  -
-      powf (*)(r)| 1.13 ns | 5.42 ns | 4.8x
-powf_unchecked (r)| 0.70 ns | 5.42 ns | 7.7x
- powf_checked (r)| 1.88 ns | 5.42 ns | 2.9x
-powf_checked_unchecked (r)| 1.42 ns | 5.42 ns | 3.8x
+      powf (*)(r)| 2.27 ns | 7.74 ns | 3.4x
+powf_unchecked (r)| 1.89 ns | 7.74 ns | 4.1x
  remainder (*)| 0.23 ns |    -    |  -
 remainder_unchecked| 0.17 ns |    -    |  -
 remainder_checked| 0.34 ns |    -    |  -
@@ -314,9 +318,9 @@ rcbrt               |          60.03 |             1.666
 exp2                |          35.00 |             0.854
 exp2_checked        |          47.00 |             1.399
 exp10               |          52.00 |             1.461
-exp10_checked       |          55.00 |             1.897
-log2                |          34.23 |             1.584
-log2_unchecked      |          34.23 |             0.958
+exp10_checked       |          55.00 |             1.657
+log2                |          38.06 |             1.583
+log2_unchecked      |          38.06 |             1.021
 sin                 |          48.00 |             1.151
 sin_checked         |         117.02 |             5.232
 cos                 |          56.00 |             1.406
@@ -333,19 +337,19 @@ ln_unchecked        |          34.06 |             1.018
 log10               |          48.14 |             1.635
 log10_unchecked     |          38.22 |             1.113
 log1p               |          47.24 |             1.857
-log2p1              |          48.14 |             1.886
-exp                 |          42.00 |             1.230
-exp_checked         |          50.00 |             1.607
-expm1               |          70.00 |             1.620
+log2p1              |          51.36 |             1.876
+exp                 |          42.00 |             1.195
+exp_checked         |          50.00 |             1.466
+expm1               |          69.00 |             1.604
 expm1_checked       |          78.00 |             1.556
-exp_m1_over_x       |          82.00 |             1.720
+exp_m1_over_x       |          81.00 |             1.639
 exp2m1              |          80.00 |             1.843
-sinh                |          51.00 |             1.780
-cosh                |          50.00 |             1.647
+sinh                |          51.00 |             1.720
+cosh                |          50.00 |             1.606
 sinh_throughput     |          62.00 |             1.943
 cosh_throughput     |          61.00 |             1.616
-sinh_checked        |          59.00 |             2.274
-cosh_checked        |          58.00 |             1.943
+sinh_checked        |          59.00 |             1.974
+cosh_checked        |          58.00 |             1.938
 tanh                |          85.64 |             1.731
 sigmoid             |          61.00 |             1.222
 softplus            |          74.11 |             2.449
@@ -366,10 +370,8 @@ hypot               |          21.11 |             0.766
 hypot_checked       |          57.19 |             1.178
 rhypot              |          32.02 |             1.389
 rsqrt               |          28.00 |             1.381
-powf                |         104.95 |             5.651
-powf_unchecked      |          79.05 |             3.095
-powf_checked        |         152.89 |             9.918
-powf_checked_unchecked |      128.77 |             7.255
+powf                |         125.17 |             8.459
+powf_unchecked      |         117.28 |             6.509
 remainder           |          34.11 |                 ? (*)
 remainder_unchecked |          33.00 |             0.646
 remainder_checked   |          45.17 |             1.357
@@ -378,6 +380,17 @@ remainder_wide      |         171.17 |             7.688
 fmod                |          29.11 |                 ? (*)
 fmod_unchecked      |          28.00 |             0.643
 ```
+
+The exp family's throughput rows moved without any of those functions
+changing: `exp2_field_split` (which every `_checked`-style exponent
+reconstruction shares) now builds both power-of-two words off
+`exp2int_field!`'s magic constant instead of the older `+383 << 8 & mask`
+pair, two ops and three constants cheaper per call. Provably identical
+output -- `t1` is an exact power of two either way, so
+`fma(q, t1*f, t1) * t2` carries the same mantissa and still rounds once,
+in the final multiply -- and worth -13.2% on `sinh_checked`, -12.7% on
+`exp10_checked`, -8.8% on `exp_checked`, down through -1.0% on `expm1`,
+with no row up.
 
 (*) remainder/remainder_ieee/fmod: throughput no longer measurable via
 llvm-mca after their 2026-07-09 zero/nan fix (backlog idea #85's own
@@ -401,7 +414,7 @@ instead.
   payload, both signs -- a few minutes). Runs on half the machine's cores at low OS scheduling priority
   (`nice`) so it doesn't compete with foreground work while iterating; refuses to run in a debug build.
 - `cargo run --release --example quickbench [filter]` - latency (serial dependency chain) + throughput, min of 7 reps
-- `cargo run --release --example edgecheck` - bit-exact checks of edge cases (0, -0, denormals, inf, nan, domain boundaries)
+- `cargo run --release --example edgecheck` - bit-exact checks of edge cases (0, -0, denormals, inf, nan, domain boundaries); exits nonzero if any pin fails
 - `cargo run --release --example tune` - coordinate-descent ulp tuning of polynomial coefficients
 - `cargo run --release --example mca` - theoretical latency/throughput straight from llvm-mca's scheduler
   model for the host CPU (requires `llvm-mca` on PATH). No wall-clock timing, so no thermal-throttling

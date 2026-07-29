@@ -605,10 +605,18 @@ open. Two rules that recur often enough to state up front:
   (0.0061/3 both), and a 1.63B-sample strided sweep found only 7
   bit-differing outputs (~4e-9 of the domain). `log2_df`'s extra
   double-float precision only matters once something *downstream*
-  amplifies the preserved low-order bits (e.g. `powf_checked`'s multiply
-  by y) — collapsing straight back to a single f32 with no such
-  amplification lands on the same correctly-rounded result almost every
-  time.
+  amplifies the preserved low-order bits (e.g. `powf`'s multiply by y) —
+  collapsing straight back to a single f32 with no such amplification
+  lands on the same correctly-rounded result almost every time.
+  **Both halves of this went stale and the conclusion is now wrong.** It
+  was measured against the *pre-atanh* `log2_df`, which was itself only
+  ~2^-23 relative (see the powf entry in §cbrt/powf — that is the same
+  category error that held `powf_checked` at 203 ulp), so "identical to
+  log_2" said nothing about a real double-float log2. And `log_2` itself
+  is max 1 now, not 3, so there is even less left to take. The re-read:
+  this entry never tested what it claimed to, and the thing that actually
+  fixed `log_2` was free — see idea #202's peel, which needed no extra
+  precision at all, only a different place to put the leading term.
 
 ### sin / cos / tan / sinpi / cospi / sind / cosd / tanpi / tand
 
@@ -3938,3 +3946,119 @@ worked, which is what makes the next one findable. The code itself is in
        `erfinv` was 86% resource-pressure-bound and its regression was
        real, while three same-shaped "regressions" at 50-90%
        register-dependency-bound were not).
+
+202. **powf absorbs powf_checked; log_2 peels its leading term
+     (2026-07-29).** `powf_checked`/`powf_checked_unchecked` are gone,
+     not deprecated: `powf` *is* the double-float route now
+     (`exp2_checked_df(log2_df(ax) * y)`), >=292 -> **3 max ulp**
+     (`examples/powfsearch.rs`), avg 0.181 -> 0.019. Against the checked
+     tier it replaces, mca latency **-18.1%** (152.89 -> 125.17) and
+     throughput **-14.7%** (9.918 -> 8.459); against the inaccurate
+     formula it replaces, +19.3% / +49.7%. The tiering was never a real
+     speed/accuracy curve -- the fast route's error is `y`-amplified, so
+     it is wrong by hundreds of ulp at ordinary inputs, not "approximate".
+     Five mechanisms, each measured separately, and the last three
+     generalise:
+
+     - **Route degenerate `ax` through the formula, not a fallback.**
+       `powf_checked` decided `ax == 0`/`inf`/NaN with an
+       `is_safe`/`zero_or_inf`/`edge_mag` tree (~13 ops) because it needs
+       the sign of `y` as well. Two selects on the log2 *high word only*
+       (`-inf` for `+0`, `x*x` for `+inf`/NaN, ~5 ops) do the same job,
+       because `exp2_checked_df`'s clamp already saturates each case
+       correctly and the low word can be arbitrary -- every path that
+       reads it ends at the guard that already exists for overflow.
+     - **A `{+1,-1,NaN}` sign multiplier beats a select tree.**
+       `powf_sign_combine!` was ~28 vector ops, most of them from
+       `y_int || x == 0.0 || x.is_infinite()`: a compound `||` compiles to
+       a hand-assembled AVX-512 mask (`korb`/`kmovd`/`cmovnel`), the same
+       trap `powf_checked`'s own `is_safe` comment documents. Rebuilt at
+       ~20, every compare feeding exactly one blend. Two structural
+       simplifications fell out: `parity(y)` alone separates even/odd/
+       non-integer, so the separate `y == y.trunc()` test is redundant;
+       and pinning `mag` to `1.0` when `ax == 1.0` subsumes *both* the
+       `pow(1,y)` and `pow(-1,+-inf)` overrides. `ax + ax == ax` picks out
+       `+0` and `+inf` (the C99-exempt magnitudes) in one compare, and
+       `y - y != 0.0` tests infinite y with no constants at all.
+     - **The exact denominator was free all along.** `log2_df`'s quotient
+       refinement needs `s - th*d` against the *exact* `d = m + 1`, which
+       `m + 1` is not, and it was carrying a `(dh, dl)` split for it. But
+       `d == s + 2` exactly, so `s - th*(s+2) == (s - 2*th) - th*s`, and
+       `s - 2*th` is itself Sterbenz-exact (`s/(2*th)` is `d/2`, in
+       `[0.854, 1.207]`). Two fma, against four ops for the split; `d`
+       survives only as the Newton step's operand, where approximate was
+       always enough. Bit-identical output, -2 ops.
+     - **Guard the correction, not the corrected value.**
+       `exp2_checked_df` ended in `fma(result, c, result)` +
+       `is_finite`-select. Moving the correction onto `p` (the pre-`t2`
+       partial product, always finite and *normal*) and the guard onto `c`
+       (ready long before the poly) took **-10.3%** off the region's
+       simulated throughput on its own, purely by getting two ops off the
+       end of the dependency chain. It also fixed a denormal-output
+       rounding (the correction used to be applied *after* the mantissa
+       bits were gone) and, once the guard became `xs == v.0` instead of
+       `c.is_finite()`, a real overflow bug: `powf(f32::MAX, 1.0000001)`
+       clamps `128.0000153` to `128`, and a negative correction then
+       pulled the answer back to `f32::MAX` where it must be `inf`.
+     - **`exp2_field_split` on `exp2int_field!`'s magic**, replacing
+       `(k + 383) << 8 & EXPONENT_MASK` per word: -2 ops, -3 constants,
+       shared by ~15 functions. `sinh_checked` **-13.2%** throughput,
+       `exp10_checked` -12.7%, `exp_checked` -8.8%, `exp_m1_over_x`
+       -4.7%, down to `expm1` -1.0%, no row up. The two forms break ties
+       oppositely (the magics differ in parity), so `k1` differs by 1 for
+       odd `k` -- unobservable, because `t1` is an exact power of two and
+       `fma(q, t1*f, t1)` is exactly `t1 * fma(q, f, 1)` with the same
+       mantissa either way, and the single rounding into the denormal
+       range still happens in the final `* t2`. Verified over every
+       reachable `k` against 4096 mantissas, bit for bit.
+
+     **`log_2`: max 3 -> 1 ulp** (matching std's own max), avg 0.0031 ->
+     0.0028, exhaustively, with one instruction and one uOp *fewer*.
+     Latency +11.2%, throughput -0.1% (`log2`) / +6.6% (`log2_unchecked`).
+     The 3 was never the fit -- the degree-9 `P(s)` fit at 4.1e-9 was 16x
+     tighter than it needed to be. Written `k + s*P(s)`, the answer for
+     `x` near 1 (`k == 0`) simply *is* `s*P(s)`, so all three of `P`'s
+     full-weight evaluation roundings landed on the result at ~2^-24 each.
+     Peeling the leading `log2(e)*s` out of the polynomial demotes every
+     one: what is left reaches the answer scaled by `s^2/log2(1+s) <=
+     0.21`. Three things had to be right at once, and each was measured:
+     - the peeled `Q` is fitted by an **ulp-weighted LP against
+       `s^2/log2(1+s)`**, not by dropping a term off `P`; degree 8, since
+       degree 7's 2.6e-8 fit (~0.44 ulp) lands back on max 2;
+     - **`k` joins last, in its own rounding.** Threading it through the
+       peeled combine (`fma(s, LOG2_E, fma(s2, q, k))`) rounds twice at
+       `k`'s scale and costs **40x on the average** (0.0031 -> 0.1249)
+       while still reaching max 2. Likewise `fma(s2, q, s * LOG2_E)`,
+       which looks cheaper because `s*LOG2_E` starts early: it rounds the
+       leading term on its own at full weight, which is the one thing the
+       peel exists to prevent;
+     - the `s^2` factor rides into the poly's own low group
+       (`a = s2 * l0`) instead of multiplying the finished `Q`, which is
+       what keeps the whole thing three Estrin levels deep. Multiplying
+       afterwards costs a second level and a further +11% latency.
+
+     Two things that did **not** work, both measured:
+     - **Multiplicative correction in `log2_df`** (`hi * (1 + w)` via a
+       `from_quick_fma`, replacing the `+ corr` two-sum): 2 ops cheaper,
+       and **3 -> 10 max ulp**. Two separate reasons, and the second is
+       the interesting one: the low word needs the same `(1 + w)` factor
+       (~2^-30.7 on its own), *and* `w = u*G(u)` carries `u`'s full
+       relative error where the absolute form only exposed `G`'s ~0.0176
+       log-derivative to it. The absolute form's exactly-reconstructed
+       `t^3 = th^2*(th + 3*tl)` prefactor is load-bearing, not
+       bookkeeping. Fixing both costs more than the restructure saves.
+     - **Dropping `log2_df`'s Newton step** for a degree-5 minimax seed
+       (2^-20, one level shallower, one op fewer): powf latency -3.6%,
+       throughput -2.2%, and **3 -> 4 max ulp** -- via the same `u`
+       sensitivity above, not via `t` (whose `e^2` error is 2^-40 there,
+       far past enough). Also Estrin-splitting `LOG2_ATANH_G` and
+       regrouping to `(uh*gp) * t3`: a real level off the chain and -2.5%
+       latency, at +2.2% throughput and +3 uOps.
+
+     Harness note: `powf_checked`/`powf_checked_unchecked` are removed
+     from `accuracy.rs`, `edgecheck.rs`, `mca.rs`/`mca_target.rs`,
+     `quickbench.rs`, `unchecked_parity.rs`, `special_matrix2.rs` and
+     `powfsearch.rs` (which now sweeps `powf` against `powf_unchecked`).
+     `log_family_normal!` is gone with them -- it had exactly one caller
+     left, `log_2_normal`, since `ln_normal`/`log10_normal` grew their own
+     copies.

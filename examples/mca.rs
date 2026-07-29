@@ -250,8 +250,6 @@ fn main() {
         "linear_to_srgb",
         "signed_pow",
         "powf_unchecked",
-        "powf_checked",
-        "powf_checked_unchecked",
         "remainder",
         "remainder_unchecked",
         "remainder_checked",

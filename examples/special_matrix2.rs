@@ -83,12 +83,6 @@ fn main() {
             exempt: &[],
         },
         Case {
-            name: "powf_checked",
-            jodie: powf_checked,
-            reference: f64::powf,
-            exempt: &[],
-        },
-        Case {
             name: "fmod",
             jodie: fmod,
             reference: |x, y| x % y,

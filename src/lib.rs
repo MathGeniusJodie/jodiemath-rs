@@ -111,35 +111,6 @@ macro_rules! denormal_rescale {
     }};
 }
 
-// Shared by log_2_normal/ln_normal/log10_normal: the exponent
-// extraction, s = m - 1 decomposition, and degree-9 Estrin poly
-// evaluation are the same shape across all three -- only the coefficient
-// array and each function's final k-combine differ. Returns (p, s, k) so
-// each caller does its own combine (log_2_normal's plain `fma(p, s, k)`,
-// ln_normal/log10_normal's Cody-Waite HI/LO split). Macro, not a fn --
-// see exp_r_poly!.
-macro_rules! log_family_normal {
-    ($x:expr, $koff:expr, $c:expr) => {{
-        let e = ($x.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23;
-        let m = f32::from_bits(($x.to_bits() as i32).wrapping_sub(e << 23) as u32);
-        let k = e as f32 + $koff;
-        let s = m - 1.0;
-        let c: [f32; 10] = $c;
-        let s2 = s * s;
-        let s4 = s2 * s2;
-        let l0 = fma(c[1], s, c[0]);
-        let l1 = fma(c[3], s, c[2]);
-        let l2 = fma(c[5], s, c[4]);
-        let l3 = fma(c[7], s, c[6]);
-        let l4 = fma(c[9], s, c[8]);
-        let r0 = fma(l1, s2, l0);
-        let r1 = fma(l3, s2, l2);
-        let r2 = fma(l4, s4, r1);
-        let p = fma(r2, s4, r0);
-        (p, s, k)
-    }};
-}
-
 // exp(r) for tiny r, shared by exp/exp_checked/expm1/exp_m1_over_x/tanh/
 // sigmoid (c0/c1 pinned to exactly 1.0 -- see exp's own body comment).
 // Deliberately a macro, not a fn: a fn-based sharing attempt caused a
@@ -358,17 +329,25 @@ pub fn log_2(x: f32) -> f32 {
 // needs ~31 relative bits, which this `s = m - 1` shape cannot reach at
 // any degree (its f32 evaluation rounding lands straight on the result
 // for x near 1), so that one uses an atanh-form reduction instead.
-const LOG2_COEFFS: [f32; 10] = [
-    std::f32::consts::LOG2_E, // bit-identical to this literal; not a coincidence
-    -0.72134733,
-    0.4808985,
-    -0.36069715,
-    0.288568,
-    -0.23961738,
-    0.20460059,
-    -0.19106273,
-    0.18617496,
-    -0.10994955,
+//
+// This is the *peeled* poly `Q(s) = (log2(1+s)/s - log2(e)) / s`, degree 8,
+// not the degree-9 `P(s) = log2(1+s)/s` the combine used to evaluate whole.
+// Fitted by an ulp-weighted LP against `s^2/log2(1+s)` -- the weight that
+// makes the fit minimise the *result*'s relative error, since this poly
+// only ever reaches the answer scaled by `s^2` -- and not by dropping a
+// term off `P`. One degree lower than `P` because `Q` reaches the answer
+// diluted, so the fit no longer has to carry the whole budget; but not two
+// (degree 7's fit is 2.6e-8, ~0.44 ulp, which lands back on max 2).
+const LOG2_Q_COEFFS: [f32; 9] = [
+    -0.7213475,
+    0.48089963,
+    -0.36067435,
+    0.28850868,
+    -0.24009936,
+    0.2058956,
+    -0.18871288,
+    0.17711402,
+    -0.10358754,
 ];
 
 #[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
@@ -376,11 +355,56 @@ const LOG2_COEFFS: [f32; 10] = [
 pub fn log_2_normal(x: f32, koff: f32) -> f32 {
     // decompose x = 2^k * m with m in [sqrt(2)/2, sqrt(2)), so s = m - 1
     // is exact (Sterbenz) and centered on 0: log2 stays relatively
-    // accurate near x = 1. log2(m) = s * P(s), degree-9 minimax P fitted
-    // with lolremez (rel. error 4.1e-9).
-    let (p, s, k) = log_family_normal!(x, koff, LOG2_COEFFS);
-    // k + s * P(s) in a single rounding
-    fma(p, s, k)
+    // accurate near x = 1.
+    let e = (x.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23;
+    let m = f32::from_bits((x.to_bits() as i32).wrapping_sub(e << 23) as u32);
+    let k = e as f32 + koff;
+    let s = m - 1.0;
+    // log2(m) = log2(e)*s + s^2*Q(s), with the leading term kept *out* of
+    // the polynomial rather than evaluated as its constant coefficient.
+    //
+    // That is where this function's accuracy comes from. Written as the old
+    // `k + s*P(s)`, the answer for x near 1 (k == 0) simply *is* `s*P(s)`,
+    // so all three of P's own full-weight evaluation roundings -- the
+    // leading coefficient pair, and both Estrin joins above it -- landed
+    // directly on the result at ~2^-24 each, and that, not the fit, was the
+    // 3-ulp max. Peeling `log2(e)*s` out demotes every one of them: what is
+    // left is scaled by `s^2/log2(1+s) <= 0.21` before it reaches the
+    // answer, so the whole polynomial's rounding is worth about a fifth of
+    // an ulp and only the final fma still rounds at full weight.
+    // Exhaustively: max 3 -> 1 ulp (matching std's own max), avg 0.0031 ->
+    // 0.0028, one instruction and one uOp *fewer*.
+    //
+    // The `s^2` factor rides into the poly's own low group (`a = s2 * l0`)
+    // instead of multiplying the finished `Q`. Same op count, but it keeps
+    // the whole thing three levels deep the way the un-peeled degree-9 form
+    // was: multiplying afterwards puts `s2*q` on the end of the chain and
+    // costs a second level, which measures as a further +11% latency.
+    let c = LOG2_Q_COEFFS;
+    let s2 = s * s;
+    let s4 = s2 * s2;
+    let l0 = fma(c[1], s, c[0]);
+    let l1 = fma(c[3], s, c[2]);
+    let l2 = fma(c[5], s, c[4]);
+    let l3 = fma(c[7], s, c[6]);
+    let a = s2 * l0;
+    let w0 = fma(l2, s2, l1);
+    let w1 = fma(c[8], s2, l3);
+    let v = fma(w1, s4, w0);
+    let sq = fma(v, s4, a);
+    // `k` joins *last*, in its own single rounding. Threading it through
+    // the peeled combine instead (`fma(s, LOG2_E, fma(s2, q, k))`) rounds
+    // twice at `k`'s scale, and for |k| >= 1 that is the whole error
+    // budget: it still reaches max 2 but costs 40x on the average
+    // (0.0031 -> 0.1249, measured exhaustively). Built this way, log2(m)
+    // is finished to ~2^-25 absolute *before* `k` is anywhere near it, so
+    // every octave but the k == 0 one is back to a single rounding.
+    // Likewise `fma(s2, q, s * LOG2_E)`, which looks cheaper because
+    // `s*LOG2_E` starts early: it rounds that leading term on its own at
+    // full weight, which is exactly what the peel exists to avoid, and
+    // measures max 2.
+    let lm = fma(s, std::f32::consts::LOG2_E, sq);
+    lm + k
 }
 
 /// log_2 without domain checks: valid for positive normal finite x only
@@ -2537,14 +2561,35 @@ pub fn exp10m1(x: f32) -> f32 {
 }
 
 // exp2_checked's k1/k2 exponent-field split, factored out for
-// exp/expm1/exp_pos_neg and friends.
+// exp/expm1/exp_pos_neg and friends. Any k1 + k2 == k works as long as
+// both halves stay inside the exponent field, so k1 = round(k/2).
+//
+// Built on `exp2int_field!`'s magic constant (`1.5*2^23 + 127`) rather
+// than the older `(k + 383) << 8 & EXPONENT_MASK` pair: folding the +127
+// bias into the magic lands `k1 + 127` in the low 9 bits of a value in
+// `[2^23, 2^24)`, so a single `<< 23` moves it into the exponent field
+// with a zero sign bit and zero mantissa and *no mask* -- see that
+// macro's own comment for why the older +383 form needed one. Two ops
+// and three constants cheaper across every caller, and the `k1`/`k2`
+// bookkeeping rides the same magic: `a - MAGIC` recovers `k1` exactly
+// (the sum is an integer in the ulp-1 binade) and `(k - k1) + MAGIC` is
+// exact for the same reason.
+//
+// The two forms pick opposite halves of a tie (`1.5*2^23` is even,
+// `1.5*2^23 + 127` odd, and round-half-to-even resolves `k/2` against the
+// magic's own parity), so k1 differs by 1 from the old form for odd k.
+// That is not observable: `t1` is an exact power of two, so
+// `fma(q, t1*f, t1)` is exactly `t1 * fma(q, f, 1)` with the *same*
+// mantissa either way, and the single rounding into the denormal range
+// still happens once, in the final `* t2`. Confirmed by a full exhaustive
+// re-run of every affected function.
 #[inline(always)]
 fn exp2_field_split(k: f32) -> (f32, f32) {
-    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
-    let k1b = fma(k, 0.5, ROUND_MAGIC) - (ROUND_MAGIC - 383.0);
-    let k2b = (k + 766.0) - k1b;
-    let t1 = f32::from_bits((k1b.to_bits() << 8) & EXPONENT_MASK);
-    let t2 = f32::from_bits((k2b.to_bits() << 8) & EXPONENT_MASK);
+    let a = fma(k, 0.5, EXP2INT_MAGIC);
+    let k1 = a - EXP2INT_MAGIC;
+    let b = (k - k1) + EXP2INT_MAGIC;
+    let t1 = f32::from_bits(a.to_bits() << 23);
+    let t2 = f32::from_bits(b.to_bits() << 23);
     (t1, t2)
 }
 
@@ -4425,7 +4470,7 @@ pub fn compound(x: f32, n: f32) -> f32 {
 /// own doc comment describes for the naive `exp2(x*LOG2_E)`. Fixed by
 /// keeping `xa*xa` as a `Df32` (exact via `Df32::from_mul`, a
 /// two-product) through the multiply by `-LOG2_E` and into
-/// `exp2_checked_df` (already used by `powf_checked` for the analogous
+/// `exp2_checked_df` (already used by `powf` for the analogous
 /// `log2(x)*y` amplification problem, reused verbatim here). Real
 /// accuracy win but not a full fix (max ulp still nowhere near "single
 /// digits") -- an opt-in tier over the default `erfc`, matching
@@ -4956,7 +5001,7 @@ const LOG2_ATANH_G: [f32; 4] = [
 ///
 /// The point of this function is *relative* accuracy well past f32's own
 /// 24 bits, not just a spare low word: its only callers multiply the
-/// result by `y` before exponentiating, so `powf_checked`'s final
+/// result by `y` before exponentiating, so `powf`'s final
 /// relative error is about `ln2 * |y*log2(x)| *` this function's own
 /// relative error -- amplified by up to 128 (the largest `|y*log2(x)|`
 /// with a finite result), which is ~7 bits. Landing within an ulp
@@ -4984,13 +5029,25 @@ const LOG2_ATANH_G: [f32; 4] = [
 /// is, in two squaring steps: `LOG2_ATANH_RCP` seeds `1/d` to ~2^-13 over
 /// the narrow range `d = m + 1` covers, one Newton step squares that to
 /// f32's own floor, and the usual quotient-refinement step (`tl`, from
-/// the residual `s - th*d`) squares it again, past 2^-38. The refinement
-/// needs that residual against the *exact* `d`, hence `dl`: `m + 1` drops
-/// exactly one bit of `m` over this range, and both of `dl`'s steps
-/// recover it exactly (`dh - 1.0` is exact because halving the binade
-/// doubles the available precision, and `m - (dh - 1.0)` is
-/// Sterbenz-exact because both operands sit within a factor of 2).
-/// `s = m - 1` is exact for the same Sterbenz reason.
+/// the residual `s - th*d`) squares it again, past 2^-38.
+///
+/// That refinement needs the residual against the *exact* `d`, which
+/// `m + 1` is not -- it drops exactly one bit of `m` over this range. The
+/// way to get it is not to reconstruct the dropped bit but to never form
+/// `d` at all: `d == s + 2` exactly as a real number (`s = m - 1` is
+/// Sterbenz-exact), so
+///
+/// ```text
+///     s - th*d  ==  s - th*(s + 2)  ==  (s - 2*th) - th*s
+/// ```
+///
+/// and `s - 2*th` is *itself* Sterbenz-exact, because `s/(2*th)` is
+/// `d/2` to within the seed's own error and `d/2` lies in
+/// `[0.854, 1.207]`. So one fma produces it exactly and a second one
+/// rounds the whole residual once, at the residual's own tiny scale. Two
+/// ops, against four for carrying a `(dh, dl)` split of `d` around, and
+/// `d` itself survives only as the Newton step's operand, where an
+/// approximate value is all that was ever needed.
 ///
 /// The seed is degree 3 rather than the degree 2 that squaring alone
 /// would justify, because `tl`'s *size* matters as well as `t`'s
@@ -5005,7 +5062,7 @@ const LOG2_ATANH_G: [f32; 4] = [
 /// carries the seed-plus-Newton error, and 3x that against the term's ~1%
 /// weight would dominate everything else in this function.
 ///
-/// `x == 1` gives exactly `Df32(0, 0)`, which `powf_checked` relies on.
+/// `x == 1` gives exactly `Df32(0, 0)`, which `powf` relies on.
 #[inline(always)]
 fn log2_df(x: f32) -> Df32 {
     let (xs, koff) = denormal_rescale!(x);
@@ -5016,20 +5073,23 @@ fn log2_df(x: f32) -> Df32 {
     let m = f32::from_bits((xs.to_bits() as i32).wrapping_sub(e << 23) as u32);
     let k = e as f32 + koff;
     let s = m - 1.0;
-    let dh = m + 1.0;
-    let dl = m - (dh - 1.0);
     // 1/(m+1): minimax seed, one Newton step (r*(2 - d*r)). Both this and
     // the `tl` refinement below square the error they are given. Estrin,
     // not Horner: this sits at the head of the chain everything else
     // waits on, so a level of depth here is worth an extra multiply.
+    // `d` is only ever the Newton step's operand, so the one bit `m + 1`
+    // drops here costs nothing -- see this fn's doc comment.
     let rc = LOG2_ATANH_RCP;
+    let d = 2.0 + s;
     let m2 = m * m;
     let r = fma(fma(rc[3], m, rc[2]), m2, fma(rc[1], m, rc[0]));
-    let rcp = fma(-dh, r, 2.0) * r;
+    let rcp = fma(-d, r, 2.0) * r;
     // t = s/d as (th, tl): th, then the residual s - th*d scaled back.
+    // `fma(-2.0, th, s)` is exact and `fma(-th, s, ...)` rounds the whole
+    // residual once, against the exact `s + 2` rather than the rounded
+    // `m + 1`.
     let th = s * rcp;
-    let rh = fma(-th, dh, s);
-    let rh = fma(-th, dl, rh);
+    let rh = fma(-th, s, fma(-2.0, th, s));
     let tl = rh * rcp;
     // 2*log2(e) * t, exactly: two-product on the hi coefficient, both
     // remaining cross terms folded into the low word (tl*LO is ~2^-49
@@ -5054,7 +5114,10 @@ fn log2_df(x: f32) -> Df32 {
     let g = LOG2_ATANH_G;
     // Horner, unlike the seed poly above: off the critical path now (the
     // `tl` chain beside it is longer), so the extra multiply an Estrin
-    // split would cost buys nothing back.
+    // split would cost buys nothing back. Re-tested: an Estrin split plus
+    // regrouping to `(uh*gp) * t3` does take a level off the chain and
+    // buys 2.5% latency, but costs 2.2% throughput and 3 uOps -- the wrong
+    // side of this crate's throughput-first trade.
     let gp = fma(fma(fma(g[3], uh, g[2]), uh, g[1]), uh, g[0]);
     let corr = (uh * fma(3.0, tl, th)) * gp;
     // Both sums are exact, so they can go in either order -- k first,
@@ -5078,10 +5141,21 @@ fn log2_df(x: f32) -> Df32 {
 /// component in as a multiplicative correction:
 /// `exp2(hi + lo) = exp2(hi) * exp2(lo) ~= exp2(hi) * (1 + lo*ln2)`
 /// (first-order Taylor, valid since `lo` is always tiny relative to 1 by
-/// Df32's own invariant) -- `fma(result, lo*LN_2, result)`. This is the
-/// step that actually captures the precision `log2_df` preserved: without
-/// it, the lo component would just be silently dropped and this would be
-/// no more accurate than the plain `exp2_checked(v.to_f32())`.
+/// Df32's own invariant). This is the step that actually captures the
+/// precision `log2_df` preserved: without it, the lo component would just
+/// be silently dropped and this would be no more accurate than the plain
+/// `exp2_checked(v.to_f32())`.
+///
+/// The correction goes onto `p` -- the pre-`t2` partial product -- rather
+/// than onto the finished result, which is free and strictly better on
+/// both axes. `p` is `t1 * 2^f`, so it is always finite and *normal* by
+/// construction (`t1` is bounded well inside the exponent field and
+/// `2^f` is in `[1,2)`), where the finished result can be `0`, `+-inf`,
+/// or denormal. That means: a denormal output now rounds exactly once, in
+/// the final `* t2`, instead of having the correction applied *after* the
+/// mantissa bits were already lost; and the non-finite guard below only
+/// has to cover a genuinely non-finite `v.1`, not the ordinary overflow
+/// case, which used to reach it as an `inf*negative + inf` NaN.
 #[inline(always)]
 #[allow(clippy::approx_constant)] // g0's constant term is a fitted minimax
 // coefficient near ln(2), not ln(2) itself (bit pattern deliberately differs)
@@ -5099,37 +5173,68 @@ fn exp2_checked_df(v: Df32) -> f32 {
     let (t1, t2) = exp2_field_split(k);
     let q = exp2_q_poly!(f);
     let p = fma(q, t1 * f, t1);
-    let result = p * t2;
-    // when result saturates to 0 or +-inf (xs clamped away from its real
-    // value), `fma(result, v.1*LN_2, result)` can hit an inf*0 or 0*finite
-    // -> still-fine-looking-but-actually-NaN indeterminate form (e.g.
-    // result=inf, v.1=0.0: inf*0.0 is NaN by itself, and NaN+inf is NaN,
-    // contaminating an otherwise-correct saturated result) -- same
-    // "correction term goes non-finite" class of bug as log1p/atanh/
-    // acosh/atan2's own corr.is_finite() guards. The correction is
-    // meaningless in the saturated regime anyway (there's no precision
-    // left to refine), so skip it there.
-    let corr = fma(result, v.1 * LN_2, result);
-    if corr.is_finite() { corr } else { result }
+    // Drop the correction whenever the clamp fired. `xs != v.0` is exactly
+    // "the answer is saturated": above `128` every reachable `v.1` still
+    // leaves `2^v` past `f32::MAX`, and below `-151` past the point where
+    // anything rounds to a nonzero denormal, so there is no precision left
+    // to refine either way -- and applying it anyway is *wrong*, not just
+    // wasted. It was: `powf(f32::MAX, 1.0000001)` clamps `128.0000153` down
+    // to `128`, discarding a factor of `1.0000106` that the correction (a
+    // *negative* ~6e-8 here) then can't see, and the result comes back
+    // `f32::MAX` where it must overflow.
+    //
+    // The same compare covers the non-finite cases for free, which is why
+    // it replaces the `is_finite` guard the sibling `log1p`/`atanh`/`acosh`
+    // functions carry: `v.1` is non-finite exactly when `v.0` was (an
+    // `inf - inf` out of the Df32 multiply's residual step, reached when
+    // `y*log2(x)` overflows on its own or `log2(x)` is `+-inf` for a zero
+    // or infinite base), and every one of those has `v.0` outside the clamp
+    // too. NaN takes the same path (`NaN == NaN` is false) and still
+    // propagates, through `f`.
+    //
+    // Guarding the *correction* rather than the corrected value also keeps
+    // it off the critical path -- `xs` and `v.0` are both ready long before
+    // the poly is, where guarding `fma(p, c, p)` afterwards put the compare
+    // and its select on the end of the chain. Zeroing `c` is exactly
+    // equivalent, since `fma(p, 0.0, p)` is `p`.
+    let c = if xs == v.0 { v.1 * LN_2 } else { 0.0 };
+    fma(p, c, p) * t2
 }
 
-/// exp2(log2(x) * y). Used to route through the *unchecked* exp2 for its
-/// exponent -- correctly documented as inaccurate outside
-/// `log2(x)*y in [-126, 128)`, but "inaccurate" undersold it: outside
-/// that range the unchecked bit-trick construction wraps around instead
-/// of overflowing/underflowing, so e.g. `powf(2.0, 500.0)` (should be
-/// `inf`) came out `2.88e17`, `powf(2.0, 1000.0)` (should be `inf`) came
-/// out `3.6e-12` -- plausible-looking finite garbage, not just reduced
-/// precision. Also a real tier mismatch: `log_2` is already the
-/// full-range *checked* primitive (handles zero/negative/denormal/inf
-/// cleanly), so powf was already paying that cost without getting the
-/// matching benefit on the exp2 side. Fixed by routing through
-/// `exp2_checked` instead, so the whole function is consistently
-/// checked. Real perf cost (unlike erf/erfc's fixes, which only touched
-/// a rarely-hit edge branch, this touches every call): see mca numbers
-/// in the readme/IDEAS.md. See [`powf_checked`] for a variant with
-/// substantially better accuracy for large `|y|`, at extra cost.
-// Shared by powf/powf_checked: the negative-base/y-parity/y==0/x==+-1
+/// `exp2(log2(ax) * y)`, the magnitude half of the whole `powf` family.
+///
+/// `log2(ax)` stays a double-float (`Df32`) through the multiply by `y`
+/// and the `exp2` reconstruction, collapsing to a single f32 only at the
+/// very end (see `log2_df`/`exp2_checked_df`). That is the formula, not
+/// an opt-in accuracy tier, because the single-f32 route has no way to be
+/// merely *approximate* here: `exp2(log2(x)*y)`'s error is
+/// `ln2 * |y*log2(x)| * relerr(log2)`, and collapsing `log2(x)` to one
+/// f32 *before* the multiply throws away exactly the low bits `y` then
+/// amplifies -- by up to 128, i.e. hundreds of ulp, at ordinary inputs
+/// like `(1.21, 464.7)`. There is no cheap way to buy that back on the
+/// collapsed route: a compensated two-product on the multiply alone
+/// recovers ~13% of it, because the multiply is not where the error is.
+///
+/// `ax`'s degenerate values ride the same formula rather than a separate
+/// fallback: `log2` of `+0` is `-inf` and of `+inf`/NaN is itself, and
+/// `exp2_checked_df`'s own clamp then saturates each to the right
+/// `0`/`+inf`/NaN. Two selects on the *high word only* is all that costs
+/// -- the low word may be arbitrary (or NaN) there, because every path
+/// that reads it ends at `exp2_checked_df`'s own non-finite guard, which
+/// already exists for the overflow case. Deciding those four magnitudes
+/// separately instead needs the sign of `y` as well and lands at roughly
+/// three times the ops.
+macro_rules! powf_df_mag {
+    ($ax:expr, $y:expr) => {{
+        let ax = $ax;
+        let l = log2_df(ax);
+        let lh = if ax == 0.0 { f32::NEG_INFINITY } else { l.0 };
+        let lh = if !(ax < f32::INFINITY) { ax * ax } else { lh };
+        exp2_checked_df(Df32(lh, l.1) * $y)
+    }};
+}
+
+// Shared by powf/rootn: the negative-base/y-parity/y==0/x==+-1
 // special-case combine, given each caller's own already-computed `mag`.
 // Macro, not a fn -- see exp_r_poly!.
 //
@@ -5170,56 +5275,96 @@ fn exp2_checked_df(v: Df32) -> f32 {
 //
 // pow(1, y) = 1 for *any* y -- even inf, -inf, or NaN -- another
 // dedicated IEEE754/C99 special case the log/exp2 formula can't derive
-// on its own (log_2(1)=0, so mag=exp2_checked(0*y); for y=inf/-inf/NaN
-// that's a 0*inf or 0*NaN indeterminate form, degrading to NaN instead
-// of the correct 1). pow(-1, +-inf) = 1 is a second, narrower C99
-// special case (unlike pow(1,y), it does *not* extend to pow(-1,NaN),
-// which stays NaN) -- handled separately since it only overrides the
-// infinite-y case.
+// on its own (log2_df(1) is exactly Df32(0,0), so mag is exp2 of 0*y; for
+// y=inf/-inf/NaN that's a 0*inf or 0*NaN indeterminate form, degrading to
+// NaN instead of the correct 1). pow(-1, +-inf) = 1 is a second, narrower
+// C99 special case (unlike pow(1,y), it does *not* extend to pow(-1,NaN),
+// which stays NaN).
 //
 // pow(x, 0) = 1 for *any* x -- even 0, negative, or NaN -- a dedicated
 // IEEE754/C99 special case, not derivable from the log/exp2 formula
 // (0*inf and NaN*0 both degrade to NaN above). Override last.
+//
+// Everything above is decided by a *sign multiplier* in `{+1, -1, NaN}`
+// applied to `mag` with one multiply, rather than by a tree of selects
+// over the magnitude itself. Two things fall out of that shape:
+//
+//   - `parity(y)` alone separates all three cases. It is `0` for an even
+//     integer and `1` for an odd one, and for a non-integer `y` it is
+//     neither -- which is exactly the domain-error condition -- so the
+//     separate `y == y.trunc()` integer test the select-tree needed is
+//     redundant here. Gating `par` on `x`'s sign bit (rather than gating
+//     the final result) is what lets the same two compares serve the
+//     positive-base case, where the answer is always `mag`.
+//   - the `x == +-1` cases stop needing their own overrides once `mag`
+//     itself is pinned: `|+-1|^y` is exactly `1` for *every* `y`, so
+//     pinning it there fixes both `pow(1, +-inf)`, `pow(1, NaN)` and
+//     `pow(-1, +-inf)` at once, and the sign multiplier handles
+//     `(-1)^y`'s parity from there.
+//
+// The select-tree form this replaces cost ~28 vector ops, most of them
+// from `y_int || x == 0.0 || x.is_infinite()`: a compound `||` compiles
+// to a hand-assembled AVX-512 mask (`korb`/`kmovd`/`cmovnel`) instead of
+// a compare-and-blend, the same codegen trap `powf`'s own `is_safe` test
+// documents. Every compare here feeds exactly one blend.
 macro_rules! powf_sign_combine {
-    ($x:expr, $y:expr, $mag:expr) => {{
-        let y_int = $y == $y.trunc();
-        let y_odd = y_int && parity($y) != 0.0;
-        let neg_signed = if y_odd { -$mag } else { $mag };
-        let neg_result = if y_int || $x == 0.0 || $x.is_infinite() { neg_signed } else { f32::NAN };
-        let neg_result = if $y.is_infinite() { $mag } else { neg_result };
-        let r = if $x.is_sign_negative() { neg_result } else { $mag };
-        let r = if $x == 1.0 { 1.0 } else { r };
-        let r = if $x == -1.0 && $y.is_infinite() { 1.0 } else { r };
-        if $y == 0.0 { 1.0 } else { r }
+    ($x:expr, $ax:expr, $y:expr, $mag:expr) => {{
+        let x = $x;
+        let y = $y;
+        let ax = $ax;
+        let mag = if ax == 1.0 { 1.0 } else { $mag };
+        // 0 for an even integer y, 1 for an odd one, neither otherwise --
+        // and forced to the even case for any x that isn't sign-negative,
+        // where no sign flip and no domain error can apply.
+        let par = fma(-2.0, (y * 0.5).floor(), y);
+        let par = if x.is_sign_negative() { par } else { 0.0 };
+        // what a negative base with a *non*-integer y gives: a domain
+        // error, except where |x| alone decides the answer -- `ax + ax ==
+        // ax` picks out exactly `+0` and `+inf` (the two C99-exempt
+        // boundary magnitudes) in one compare, and infinite y is the
+        // third, independent exemption.
+        // Infinite y specifically, not `y - y != 0.0`: that spelling is two
+        // constants cheaper and looked free, because a NaN y makes `mag`
+        // NaN anyway -- except at `ax == 1`, where `mag` is *pinned* to 1
+        // just above. `powf(-1, NaN)` came back `1.0` instead of NaN,
+        // C99's one deliberate asymmetry with `powf(1, NaN)`.
+        let spec = if ax + ax == ax { 1.0 } else { f32::NAN };
+        let spec = if y.abs() == f32::INFINITY { 1.0 } else { spec };
+        let sm = if par == 0.0 { 1.0 } else { spec };
+        let sm = if par == 1.0 { -1.0 } else { sm };
+        let r = mag * sm;
+        if y == 0.0 { 1.0 } else { r }
     }};
 }
 
+/// `x^y`, C99 `pow` semantics (see `powf_sign_combine!` above for the
+/// full special-case table and `powf_df_mag!` for the magnitude).
 #[doc(alias = "pow")]
 #[inline(always)]
+#[allow(clippy::neg_cmp_op_on_partial_ord)] // `!(ax < inf)` catches NaN too
 pub fn powf(x: f32, y: f32) -> f32 {
     let ax = x.abs();
-    let mag = exp2_checked(log_2(ax) * y);
-    powf_sign_combine!(x, y, mag)
+    let mag = powf_df_mag!(ax, y);
+    powf_sign_combine!(x, ax, y, mag)
 }
 
 /// `powf` restricted to `x > 0.0`, or `x` exactly `+0.0` (contract, not
 /// asserted -- see below for the one value this excludes and why): drops
-/// `powf_sign_combine!`'s entire negative-base tree (`y_int`/`y_odd`/
-/// `parity`/`neg_signed`/`neg_result`/the `x.is_sign_negative()` select/
-/// the `x == -1.0 && y.is_infinite()` case) -- none of it is reachable
-/// once `x` can't be negative, so this keeps only the two overrides that
-/// still apply for any `x >= 0.0`: `y == 0.0 -> 1.0` (the `log_2(x)*0`
+/// `powf_sign_combine!`'s entire negative-base tree (`par`/`spec`/the
+/// sign multiplier and its multiply) -- none of it is reachable once `x`
+/// can't be negative, so this keeps only the two overrides that still
+/// apply for any `x >= 0.0`: `y == 0.0 -> 1.0` (the `log2_df(x)*0`
 /// route degrades to a `0*inf`/`0*NaN` indeterminate form for
 /// `y = +-inf`/`NaN`, so this can't be derived from the formula) and
-/// `x == 1.0 -> 1.0` (same reasoning, `log_2(1)*y` is `0*y`, degenerate
+/// `x == 1.0 -> 1.0` (same reasoning, `log2_df(1)*y` is `0*y`, degenerate
 /// for `y = +-inf`).
 ///
 /// `x == -0.0` is the one `x >= 0.0`-*valued* input this doesn't handle
 /// (despite `-0.0 >= 0.0` being true): `powf(-0.0, y)` preserves `-0.0`'s
 /// sign for odd-integer `y` (`(-0.0).powf(3.0) == -0.0`,
 /// `(-0.0).powf(-1.0) == -inf`), and that sign restoration is exactly
-/// the `y_odd`/`parity` machinery this function exists to skip -- adding
-/// it back just for `-0.0` would cost the same `parity` call on *every*
+/// the parity machinery this function exists to skip -- adding
+/// it back just for `-0.0` would cost the same parity work on *every*
 /// call this function is meant to avoid, defeating the point. Documented
 /// out rather than silently wrong: `powf_pos(-0.0, y)` gives the
 /// same *magnitude* as `powf` but always with `+0.0`'s sign, not `-0.0`'s
@@ -5237,11 +5382,12 @@ pub fn powf(x: f32, y: f32) -> f32 {
 /// what it verifiably does, not for a standard it doesn't fully
 /// implement. Behavior for `x < 0.0` (true negatives, not `-0.0`) is
 /// unspecified (not `NaN`-guaranteed like `powf`'s own domain error --
-/// whatever `log_2(x)`'s own `x <= 0` branch and the two overrides above
+/// whatever `log2_df`'s own decomposition and the two overrides above
 /// happen to produce).
 #[inline(always)]
+#[allow(clippy::neg_cmp_op_on_partial_ord)] // `!(x < inf)` catches NaN too
 pub fn powf_pos(x: f32, y: f32) -> f32 {
-    let mag = exp2_checked(log_2(x) * y);
+    let mag = powf_df_mag!(x, y);
     let r = if x == 1.0 { 1.0 } else { mag };
     if y == 0.0 { 1.0 } else { r }
 }
@@ -5268,20 +5414,20 @@ pub fn signed_pow(x: f32, y: f32) -> f32 {
     mulsign(powf_pos(x.abs(), y), x)
 }
 
-/// powf without domain/sign checks: valid for `x` positive, normal, and
-/// finite (the same domain [`log_2_unchecked`] requires) and `y != 0.0`.
-/// No handling for negative/zero/denormal/inf/nan `x`, no `y == 0.0`
-/// special case, no negative-base parity handling -- those are exactly
-/// the branches [`powf`]'s own doc comment describes paying on every
-/// call regardless of whether they're ever hit. Mirrors `log_2`/
+/// [`powf`] without domain/sign checks: valid for `x` positive, normal,
+/// and finite (the same domain [`log_2_unchecked`] requires) and
+/// `y != 0.0`. No zero/inf/nan handling on `x` (`powf_df_mag!`'s two
+/// high-word selects), no `y == 0.0` special case, no negative-base
+/// parity handling -- those are exactly the branches [`powf`] pays on
+/// every call regardless of whether they're ever hit. Mirrors `log_2`/
 /// `log_2_unchecked` and `atan2`/`atan2_unchecked`'s own fast/full-safety
-/// split; `exp2_checked` (not the even-faster `exp2`) is kept since powf's
-/// own doc comment already documents why bare `exp2` silently wraps
-/// around into plausible-looking garbage instead of overflowing --
-/// nothing about this narrower domain contract changes that risk.
+/// split. Bit-identical to [`powf`] on this domain, and the same
+/// double-float accuracy: `exp2_checked_df` stays even though every
+/// domain check is gone, because the precision it preserves is what makes
+/// the answer right, not a safety net -- see `powf_df_mag!`.
 #[inline(always)]
 pub fn powf_unchecked(x: f32, y: f32) -> f32 {
-    exp2_checked(log_2_unchecked(x) * y)
+    exp2_checked_df(log2_df(x) * y)
 }
 
 /// x^(1/n) for integer `n` (backlog idea #75, C23 `rootn`), the `cbrt`
@@ -5368,84 +5514,6 @@ pub fn linear_to_srgb(l: f32) -> f32 {
     let p = exp2_checked(log_family_wrapper_discarded_unless_normal!(l, log_2_normal) * (1.0 / 2.4));
     let high = fma(1.055, p, -0.055);
     if l <= 0.0031308 { low } else { high }
-}
-
-/// Higher-accuracy variant of [`powf`]: `exp2(log_2(x)*y)` amplifies
-/// log_2's own rounding error by `y` -- for `|y|` large that swamps the
-/// result (hundreds of ulp), since `log_2(x)` is collapsed to a single f32
-/// *before* the multiply, throwing away exactly the low bits that `y`'s
-/// multiplication would otherwise be able to use. Fixed by keeping
-/// `log2(x)` as a double-float (Df32) through the multiply by `y` and
-/// the exp2 reconstruction, only collapsing to a single f32 at the very
-/// end (see `log2_df`/`exp2_checked_df`). Two orders of magnitude of max
-/// ulp over the plain formula, and a large avg win too, for no latency
-/// cost and single-digit throughput -- but still an opt-in tier rather
-/// than the default, matching sin/sin_checked and exp2/exp2_checked,
-/// since `powf` stays the cheaper of the two on both axes.
-///
-/// A spare low word is necessary but nowhere near sufficient here: what
-/// the `y` multiply amplifies is `log2(x)`'s *relative* error, so this
-/// tier is only as good as `log2_df` is in the `x`-near-1 octave, where
-/// `|y|` gets large enough for the amplification to bite. See `log2_df`
-/// for why that rules out `log_2`'s own polynomial shape entirely and
-/// what it uses instead; the worst cases left are split between it and
-/// `exp2_checked_df`, neither dominating. Measure with
-/// `examples/powfsearch.rs`, not the 2-arg fuzz -- the corner that
-/// maximises this is one a blind fuzz essentially never draws.
-#[inline(always)]
-pub fn powf_checked(x: f32, y: f32) -> f32 {
-    let ax = x.abs();
-    // The df path is only valid for ax strictly positive and finite (same
-    // domain log_2_normal's own decomposition assumes); ax == 0 or
-    // non-finite needs a fallback, but *not* a second full
-    // log_2+exp2_checked computation -- that would roughly double this
-    // function's cost just to cover a few degenerate inputs. The only
-    // four possible magnitudes there are cheap direct selects: ax == 0
-    // -> 0 (y > 0) or +inf (y < 0); ax == +inf -> +inf (y > 0) or 0
-    // (y < 0); ax == NaN (from x == NaN) -> NaN; y == NaN -> NaN
-    // (`zero_or_inf`'s `y > 0.0` comparison is simply false for NaN, so
-    // without the explicit check a NaN `y` silently fell through to a
-    // *finite* 0/inf answer -- `powf`/`powf_unchecked` don't have this
-    // gap since they route ax==0/inf/nan through the real, always-
-    // NaN-propagating `log_2`/`exp2_checked` instead of this cheap
-    // shortcut). (y == 0 is overridden separately below regardless.)
-    // Bit-trick form instead of `ax > 0.0 && ax.is_finite()`: that
-    // compound condition compiled to a fully scalar per-lane sequence
-    // (hand-assembling an AVX-512 mask bit-by-bit) instead of a single
-    // vectorized compare. `ax` is already non-negative (`x.abs()`), so
-    // its raw bits directly encode magnitude: nonzero and below the
-    // all-ones exponent field is exactly "strictly positive and finite."
-    let axb = ax.to_bits();
-    let is_safe = axb != 0 && axb < EXPONENT_MASK;
-    let mag_precise = exp2_checked_df(log2_df(ax) * y);
-    // (ax == 0) == (y > 0) picks out exactly the two "goes to zero" cases
-    // (ax==0,y>0 and ax==+inf,y<0) vs. the two "goes to infinity" cases --
-    // cheaper than a 4-way branch and avoids inf/inf-is-NaN traps a
-    // division-based shortcut would hit for the ax==+inf,y<0 case.
-    let zero_or_inf = if (ax == 0.0) == (y > 0.0) { 0.0 } else { f32::INFINITY };
-    let edge_mag = if ax.is_nan() || y.is_nan() { f32::NAN } else { zero_or_inf };
-    let mag = if is_safe { mag_precise } else { edge_mag };
-    // Same negative-x/y-parity/y==0/x==+-1 handling as powf, shared via
-    // `powf_sign_combine!` -- see that macro's own doc comment (above
-    // `powf`) for the full reasoning; `log2_df(1)` is exactly `Df32(0,0)`,
-    // so the same "0*inf/0*NaN degrades to NaN" mechanism that motivates
-    // the x==1/x==-1 special cases there applies here too.
-    powf_sign_combine!(x, y, mag)
-}
-
-/// `powf_checked` without domain/sign checks: valid for `x` positive,
-/// normal, and finite (the same domain [`log_2_unchecked`]/
-/// [`powf_unchecked`] require) and `y != 0.0`. No `is_safe`/`edge_mag`
-/// fallback (that machinery exists purely to cover `x`'s zero/inf/nan
-/// cases, all excluded by this domain), no `y == 0.0` special case, no
-/// negative-base parity handling -- same relationship to `powf_checked`
-/// that `powf_unchecked` has to `powf`, just applied to the high-
-/// precision double-float tier instead of the plain one (same shape as
-/// `cbrt_accurate_unchecked`'s relationship to `cbrt_accurate`). See
-/// [`powf_checked`] for the full-domain-safe version.
-#[inline(always)]
-pub fn powf_checked_unchecked(x: f32, y: f32) -> f32 {
-    exp2_checked_df(log2_df(x) * y)
 }
 
 /// Straight port of jodiemath's remainderf: x - round(x/y)*y (ties away from

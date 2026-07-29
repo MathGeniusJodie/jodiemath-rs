@@ -358,8 +358,6 @@ fn main() {
     bench!("linear_to_srgb", linear_to_srgb, Band::Half);
     bench!("std powf", move |x: f32| x.powf(powf_y));
     bench!("powf_unchecked", move |x: f32| powf_unchecked(x, powf_y));
-    bench!("powf_checked", move |x: f32| powf_checked(x, powf_y));
-    bench!("powf_checked_unchecked", move |x: f32| powf_checked_unchecked(x, powf_y));
     bench!("rootn", |x: f32| rootn(x, 3));
     // black_box'd 2nd arg, same reasoning as powf just above.
     let remainder_y = std::hint::black_box(3.0);

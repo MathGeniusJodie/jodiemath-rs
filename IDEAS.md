@@ -105,7 +105,45 @@ the bar by construction if they find anything.
   found no benefit (log_2's error is rounding-chain-dominated, not
   fit-dominated) — this discrete formulation is the one remaining
   unexplored lever. `exp2`'s own reduction is infeasible regardless (2^29
-  distinct values).
+  distinct values). **Much less attractive now**: the rounding chain was
+  the diagnosis and it has been fixed (max 3 -> 1, see graveyard #202's
+  peel), so what is left is 1 ulp against std's own 1, i.e. at most a
+  correctly-rounded-vs-faithful distinction.
+
+- **Peel the leading term out of `ln_normal`/`log10_normal` too**
+  (graveyard #202's log_2 lever, transplanted). Both are the same
+  `k*c + s*P(s)` shape with the same rounding-chain-dominated 3-ulp max
+  that `log_2` had, and both currently evaluate their leading coefficient
+  *inside* `P`, so for `x` near 1 all of `P`'s full-weight roundings land
+  straight on the answer. `ln` is the more promising of the two by some
+  margin: its leading coefficient is exactly `1.0`, so the peeled form is
+  `ln(m) = s + s^2*Q(s)` with an **exact** leading term -- strictly
+  better than `log_2`'s, which still rounds `s*log2(e)`. Reuse all three
+  things that had to be right there: an ulp-weighted LP fit of `Q`
+  (weight `s^2/ln(1+s)`, *not* a term dropped off `P`); `k`'s Cody-Waite
+  combine joining last so it keeps its single rounding; and the `s^2`
+  factor riding into the poly's own low group so the shape stays three
+  Estrin levels deep. Budget the +1 dependency level as certain (log_2
+  paid +11% latency for it at flat throughput). Big blast radius --
+  `ln`/`log10`/`log1p`/`log2p1`/`asinh`/`acosh`/`atanh`/`compound`/
+  `logit`/`xlogy`/`xlog1py`/`softplus`/`logaddexp`/`logsigmoid`/`clog`
+  all route through these -- so it wants its own exhaustive pass per
+  function, which is why it was not done alongside `log_2`.
+
+- **`rootn` is now the family's odd one out**: 43-45 max ulp at `|n|<=3`,
+  where `powf` is 3. It is still `exp2_checked(log_2(ax) / n)`, i.e. the
+  single-f32 route `powf` just left, and its error is the same
+  `y`-amplified one (`|log2(x)/n|` reaches ~63 at n=2). The df route
+  fixes it, but not for free and not by simply multiplying by `1/n as
+  f32` -- that constant's own 2^-24 error is amplified right back, so it
+  needs `log2_df(ax) / (n as f32)` through `Df32`'s real division (a
+  hardware `divps` plus ~5 ops). Worth doing only if a caller cares;
+  `rootn` gets *more* accurate as `|n|` grows, so the bad region is
+  exactly the small `n` a caller could write as `cbrt`/`sqrt` instead.
+  `srgb_to_linear`/`linear_to_srgb` (13/7 max ulp) sit on the same
+  fence with the same fix available and a much stronger case for leaving
+  them alone -- their exponent is a constant `2.4`, so the amplification
+  is bounded and their inputs are `[0,1]`.
 
 - **Ulp-staircase-aware LP grids**: densify fit grids near output
   power-of-2 boundaries where ulp weight steps 2x. Complements the

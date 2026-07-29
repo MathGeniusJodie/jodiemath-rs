@@ -1,7 +1,23 @@
 use jodiemath_rs::*;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+/// Every `FAIL` this harness prints also bumps `FAILURES`, which `main`
+/// turns into a nonzero exit status. It used to only print: a real
+/// `powf(-1, NaN)` regression printed `FAIL` in the middle of ~1200 lines
+/// of `ok` and the process still exited 0, so a scripted
+/// `cargo run --example edgecheck; echo $?` read clean. Pinning something
+/// here is only a regression guard if the guard can fail the run.
+static FAILURES: AtomicU32 = AtomicU32::new(0);
+
+fn fail() {
+    FAILURES.fetch_add(1, Ordering::Relaxed);
+}
 
 fn check(name: &str, got: f32, want: f32) {
     let ok = (got.is_nan() && want.is_nan()) || (got.to_bits() == want.to_bits());
+    if !ok {
+        fail();
+    }
     println!("{} {:30} got {:e} (0x{:08x}) want {:e}", if ok { "ok  " } else { "FAIL" }, name, got, got.to_bits(), want);
 }
 
@@ -15,6 +31,9 @@ fn check_known_1ulp(name: &str, got: f32, want: f32) {
 }
 
 fn check_finite(name: &str, got: f32) {
+    if !got.is_finite() {
+        fail();
+    }
     println!("{} {:30} got {:e} (0x{:08x}) (finite)", if got.is_finite() { "ok  " } else { "FAIL" }, name, got, got.to_bits());
 }
 
@@ -26,6 +45,9 @@ fn check_finite(name: &str, got: f32) {
 /// it; this closes that gap as a permanent regression guard.
 fn check_bounded(name: &str, got: f32, bound: f32) {
     let ok = got.is_finite() && got.abs() <= bound;
+    if !ok {
+        fail();
+    }
     println!(
         "{} {:30} got {:e} (0x{:08x}) (bounded by {bound})",
         if ok { "ok  " } else { "FAIL" },
@@ -39,6 +61,9 @@ fn check_bounded(name: &str, got: f32, bound: f32) {
 /// `erfc`'s own `[0,2]`, not centered on zero) instead of `|got| <= bound`.
 fn check_range(name: &str, got: f32, lo: f32, hi: f32) {
     let ok = got.is_finite() && got >= lo && got <= hi;
+    if !ok {
+        fail();
+    }
     println!(
         "{} {:30} got {:e} (0x{:08x}) (in [{lo},{hi}])",
         if ok { "ok  " } else { "FAIL" },
@@ -86,6 +111,9 @@ fn check_seam(name: &str, f: impl Fn(f32) -> f32, threshold: f32) {
     let slope_below = (f(threshold) - f(threshold - step)) / step;
     let slope_above = (f(threshold + step) - f(threshold)) / step;
     let ok = gap < 500;
+    if !ok {
+        fail();
+    }
     println!(
         "{} {:30} value gap {gap} ulp at threshold {threshold:e}, one-sided slopes {slope_below:e} / {slope_above:e}",
         if ok { "ok  " } else { "FAIL" },
@@ -94,6 +122,17 @@ fn check_seam(name: &str, f: impl Fn(f32) -> f32, threshold: f32) {
 }
 
 fn main() {
+    real_main();
+    let n = FAILURES.load(Ordering::Relaxed);
+    if n == 0 {
+        println!("\nall edge cases pass");
+    } else {
+        println!("\n{n} FAILED edge case(s) -- see the FAIL lines above");
+    }
+    std::process::exit((n != 0) as i32);
+}
+
+fn real_main() {
     // The metric itself, before anything that uses it: NaN vs NaN scores
     // 0 regardless of payload/sign, one-sided NaN scores maximal. Every
     // ulp sweep in this repo depends on this, and `accuracy.rs`'s
@@ -1821,57 +1860,22 @@ fn main() {
     check("signed_pow(nan,3)", signed_pow(f32::NAN, 3.0), f32::NAN);
     check("signed_pow(2,nan)", signed_pow(2.0, f32::NAN), f32::NAN);
     check("signed_pow(-1,inf)", signed_pow(-1.0, f32::INFINITY), -1.0);
-    // powf_checked shares powf's special-case handling on top of its
-    // double-float-precision magnitude for large |y| -- same edge cases
-    // should hold identically, plus a couple more that exercise the
-    // is_safe/edge_mag fallback split (ax == 0/+inf/NaN) specifically.
-    check("powf_checked(2,3)", powf_checked(2.0, 3.0), 8.0);
-    check("powf_checked(2,1000)", powf_checked(2.0, 1000.0), f32::INFINITY);
-    check("powf_checked(2,-1000)", powf_checked(2.0, -1000.0), 0.0);
-    check("powf_checked(-2,3)", powf_checked(-2.0, 3.0), -8.0);
-    check("powf_checked(-2,3.5)", powf_checked(-2.0, 3.5), f32::NAN);
-    check("powf_checked(0,0)", powf_checked(0.0, 0.0), 1.0);
-    check("powf_checked(0,5)", powf_checked(0.0, 5.0), 0.0);
-    check("powf_checked(0,-5)", powf_checked(0.0, -5.0), f32::INFINITY);
-    check("powf_checked(inf,5)", powf_checked(f32::INFINITY, 5.0), f32::INFINITY);
-    check("powf_checked(inf,-5)", powf_checked(f32::INFINITY, -5.0), 0.0);
-    check("powf_checked(nan,5)", powf_checked(f32::NAN, 5.0), f32::NAN);
-    check("powf_checked(2,nan)", powf_checked(2.0, f32::NAN), f32::NAN);
-    check("powf_checked(0,nan)", powf_checked(0.0, f32::NAN), f32::NAN);
-    check("powf_checked(inf,nan)", powf_checked(f32::INFINITY, f32::NAN), f32::NAN);
-    check("powf_checked(-0,3)", powf_checked(-0.0, 3.0), -0.0);
-    check("powf_checked(-0,-1)", powf_checked(-0.0, -1.0), f32::NEG_INFINITY);
-    check("powf_checked(-0,0.5)", powf_checked(-0.0, 0.5), 0.0);
-    check("powf_checked(-0,-0.5)", powf_checked(-0.0, -0.5), f32::INFINITY);
-    check("powf_checked(-inf,0.5)", powf_checked(f32::NEG_INFINITY, 0.5), f32::INFINITY);
-    check("powf_checked(-2,inf)", powf_checked(-2.0, f32::INFINITY), f32::INFINITY);
-    check("powf_checked(1,inf)", powf_checked(1.0, f32::INFINITY), 1.0);
-    check("powf_checked(1,-inf)", powf_checked(1.0, f32::NEG_INFINITY), 1.0);
-    check("powf_checked(1,nan)", powf_checked(1.0, f32::NAN), 1.0);
-    check("powf_checked(-1,inf)", powf_checked(-1.0, f32::INFINITY), 1.0);
-    check("powf_checked(-1,-inf)", powf_checked(-1.0, f32::NEG_INFINITY), 1.0);
-    check("powf_checked(-1,nan)", powf_checked(-1.0, f32::NAN), f32::NAN);
-    // the actual point of powf_checked: a large-|y| case where the plain
-    // formula's error is large (see powf_checked's own doc comment).
-    // Pinned against an independent Decimal-precision Python reference
-    // (true value ~1.1009300443688705e-35), not against whatever this
-    // crate happened to return: the pin is the correctly-rounded f32,
-    // which powf_checked now hits to within 0.25 ulp.
+    // powf's double-float magnitude: the large-|y| corner the plain
+    // `exp2(log_2(x)*y)` formula used to miss by hundreds of ulp. Pinned
+    // against an independent Decimal-precision Python reference (true
+    // value ~1.1009300443688705e-35), not against whatever this crate
+    // happened to return: the pin is the correctly-rounded f32, which
+    // powf hits to within 0.25 ulp.
+    check("powf(0.86967933,576.48004)", powf(0.86967933, 576.48004), 1.10093e-35);
+    // powf_unchecked: contract is x positive/normal/finite, y != 0.0 --
+    // must match powf inside that domain (verified more thoroughly via
+    // examples/unchecked_parity.rs; permanent regression guard).
+    check("powf_unchecked(2,3)", powf_unchecked(2.0, 3.0), powf(2.0, 3.0));
+    check("powf_unchecked(2,1000)", powf_unchecked(2.0, 1000.0), powf(2.0, 1000.0));
     check(
-        "powf_checked(0.86967933,576.48004)",
-        powf_checked(0.86967933, 576.48004),
-        1.10093e-35,
-    );
-    // powf_checked_unchecked: contract is x positive/normal/finite, y !=
-    // 0.0 -- must match powf_checked inside that domain (verified more
-    // thoroughly via a 50M-sample fuzz, not preserved in-repo; permanent
-    // regression guard).
-    check("powf_checked_unchecked(2,3)", powf_checked_unchecked(2.0, 3.0), powf_checked(2.0, 3.0));
-    check("powf_checked_unchecked(2,1000)", powf_checked_unchecked(2.0, 1000.0), powf_checked(2.0, 1000.0));
-    check(
-        "powf_checked_unchecked(0.86967933,576.48004)",
-        powf_checked_unchecked(0.86967933, 576.48004),
-        powf_checked(0.86967933, 576.48004),
+        "powf_unchecked(0.86967933,576.48004)",
+        powf_unchecked(0.86967933, 576.48004),
+        powf(0.86967933, 576.48004),
     );
     check("remainder(5,3)", remainder(5.0, 3.0), -1.0);
     check("remainder(4,2)", remainder(4.0, 2.0), 0.0);

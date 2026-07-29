@@ -664,24 +664,6 @@ throughput_fn!(thr_powf_unchecked, "powf_unchecked_throughput", {
     move |x: f32| powf_unchecked(x, y)
 });
 
-latency_fn!(lat_powf_checked, "powf_checked_latency", {
-    let y = black_box(2.0);
-    move |x: f32| powf_checked(x, y)
-});
-throughput_fn!(thr_powf_checked, "powf_checked_throughput", {
-    let y = black_box(2.0);
-    move |x: f32| powf_checked(x, y)
-});
-
-latency_fn!(lat_powf_checked_unchecked, "powf_checked_unchecked_latency", {
-    let y = black_box(2.0);
-    move |x: f32| powf_checked_unchecked(x, y)
-});
-throughput_fn!(thr_powf_checked_unchecked, "powf_checked_unchecked_throughput", {
-    let y = black_box(2.0);
-    move |x: f32| powf_checked_unchecked(x, y)
-});
-
 // black_box'd 2nd arg, same reasoning as powf above.
 latency_fn!(lat_remainder, "remainder_latency", {
     let y = black_box(3.0);
@@ -926,8 +908,6 @@ fn main() {
         lat_linear_to_srgb, thr_linear_to_srgb;
         lat_signed_pow, thr_signed_pow;
         lat_powf_unchecked, thr_powf_unchecked;
-        lat_powf_checked, thr_powf_checked;
-        lat_powf_checked_unchecked, thr_powf_checked_unchecked;
         lat_remainder_unchecked, thr_remainder_unchecked;
         lat_fmod_unchecked, thr_fmod_unchecked;
         lat_remainder_checked, thr_remainder_checked;

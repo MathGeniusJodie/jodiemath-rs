@@ -145,13 +145,6 @@ fn main() {
         x >= f32::MIN_POSITIVE && x.is_finite() && y != 0.0 && (-126.0..128.0).contains(&(x.log2() * y))
     };
     ok &= check2("powf / powf_unchecked", N, pow_domain, powf, powf_unchecked);
-    ok &= check2(
-        "powf_checked / powf_checked_unchecked",
-        N,
-        pow_domain,
-        powf_checked,
-        powf_checked_unchecked,
-    );
 
     // hypot's own contract: bit-identical to hypot_unchecked whenever
     // neither argument is infinite (NaN is fine either way -- both share
