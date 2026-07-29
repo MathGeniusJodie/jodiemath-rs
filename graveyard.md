@@ -575,11 +575,31 @@ open. Two rules that recur often enough to state up front:
   the real multiply's data-dependent renormalization.
 - **koff-free unchecked-log fast path**: confirmed no-op via `--emit=asm`
   — LLVM already inlines `koff=0.0` through, no dead add anywhere.
+- **`log_family_edges!` non-negative variant for powf/powf_pos/rootn**:
+  those callers pass `x.abs()` (or contract for `x >= 0`), which makes the
+  domain-error arm unreachable — `x <= 0.0` can only mean `x == 0.0`, so
+  the `-inf`-vs-`NaN` select collapses. The transform is real and the two
+  instructions *do* disappear (`powf_throughput` 217 → 215), but mca
+  throughput got 1.1% **worse** and latency stayed flat: another
+  removing-an-op-reschedules-worse artifact, so not worth a new macro plus
+  a call-site indirection. Worth re-screening on a toolchain bump — this
+  is the exact shape that flipped for `round_x_over_pi`'s dead add.
 - **log_2: atanh-form reduction `t=(m-1)/(m+1)`**: 1000x tighter in the
   underlying continuous math, but worse for real — accuracy slightly
   worse (log_2 already deep in f32-rounding-noise territory) and latency
   +43% (the division depends on `s` from the first step with nothing to
   overlap it against, unlike cbrt's early-starting reciprocal).
+  **Still rejected for `log_2` itself, but the transform shipped in
+  `log2_df`** (see §cbrt/powf below) — a third instance of the "rejection
+  rejects one implementation" rule, with both halves of this entry going
+  stale for the *other* caller. Accuracy: a single f32 output has nothing
+  to spend 1000x tighter math on, but `log2_df`'s output is amplified ~7
+  bits by `powf_checked`'s `y`, so there the extra bits are exactly what
+  is short. Latency: the division was never load-bearing — `d = m+1`
+  spans a factor of 1.41, narrow enough that a degree-3 minimax seed plus
+  one Newton step beats it, and the quotient-refinement step squares
+  whatever error is left anyway. Do not read this entry as "the atanh
+  form costs a division."
 - **ln_accurate/log2_accurate tier from log2_df**: no measurable accuracy
   benefit — 20M-sample fuzz gave identical avg/max ulp to plain `log_2`
   (0.0061/3 both), and a 1.63B-sample strided sweep found only 7
@@ -1769,7 +1789,58 @@ open. Two rules that recur often enough to state up front:
   error (e.g. -312→-270 ulp at the first found worst point). The only real
   fix is a higher-precision log2 in the first place — which already exists
   as `powf_checked`'s `log2_df`/`exp2_checked_df` route, at the real extra
-  cost that tier already pays.
+  cost that tier already pays. **The diagnosis held; the last clause was
+  wrong** — `log2_df` was *not* in fact a higher-precision log2, only a
+  log2 with a spare low word, which is not the same thing and left
+  `powf_checked` at ≥203 ulp. See the shipped entry below. Still true for
+  plain `powf`, which has no way to buy relative precision cheaply and
+  stays a fast tier at ~292.
+- **powf_checked: atanh-form `log2_df`** — **SHIPPED**, ≥203 → 3 max ulp
+  (`examples/powfsearch.rs`), avg 0.046 → 0.019, for *no* latency cost
+  (mca -0.1%, interleaved wall-clock -2.6%) and +7-9% throughput. The bug was a category error worth remembering: a
+  double-float carrying the *rounding error of the last two operations*
+  reads like a higher-precision result but is not one. `log2_df` was
+  `k + two_product(p, s)` over `log_2`'s own degree-9 poly, so it captured
+  the final multiply and add exactly — while `P(s)` itself was still
+  evaluated in plain f32, and for `x` near 1 (`k == 0`, exactly where
+  large `|y|` makes the amplification bite) the result *is* `s*P(s)`, so
+  `P`'s own evaluation rounding sat on the answer at ~2^-23 relative with
+  nothing downstream able to recover it. The 1.5x that `powf_checked`
+  beat `powf` by was the multiply and the collapse; the poly's rounding
+  was common to both. Fixed by changing the *shape*, not the bookkeeping:
+  see `log2_df`'s doc comment. Generalises — any `_df`/`_checked` tier
+  whose extra precision comes from EFT bookkeeping around an f32 kernel
+  is capped by that kernel, and the way to check is to score the df
+  against f64 in *relative* terms over the octave where the exponent is
+  zero, which is where a cancelling `k` stops hiding it.
+
+  The first working version cost +14% latency / +24% throughput; a
+  separate pass took that to zero and +7-9% **without touching a single
+  coefficient**, purely by rescheduling, and the three levers generalise
+  to any double-float kernel here:
+  - **Feed the seed poly the un-offset variable.** The reciprocal seed
+    fitted in `d = m+1` had to wait on that add; refitted in `m` (an
+    affine change of variable, so *the same fit*) it starts a level
+    earlier, and `d` is still computed for later use where it is off the
+    path. Free.
+  - **A correction term's poly argument may be sloppy even when its
+    prefactor may not.** `t^3 * G(t^2)` was entirely downstream of the
+    refined quotient. But `G` varies ~2% across its whole range, so it
+    can take the *unrefined* `th^2` and lose nothing — and the prefactor
+    gets its refinement without a squaring, via
+    `t^3 = th^2 * (th + 3*tl)` (dropping `3*th*tl^2`, ~2^-44 relative).
+    The whole correction now runs *beside* the refinement chain with one
+    fma downstream of it instead of five ops. This was most of the win.
+  - **Exact two-sums commute, so order them by operand readiness.**
+    `(k + hi) + corr` instead of `k + (hi + corr)`: `hi` is ready long
+    before `corr`, both orders keep the `quick_two_sum` precondition, and
+    the result is identical.
+
+  Two things that did *not* work, both measured: Estrin-splitting the
+  correction poly (it had already left the critical path, so the extra
+  multiply bought nothing), and the reverse — Horner-ing the *seed* poly
+  to save that multiply, which made **both** metrics worse, the usual
+  "removing an op let the scheduler pick worse elsewhere."
 - **ln/log10 fuse trailing fma, re-tested**: duplicate of an
   already-logged idea, initially mismeasured as a win from a stale
   baseline instead of a fresh re-measurement; re-verified as a real,

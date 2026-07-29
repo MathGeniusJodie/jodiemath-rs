@@ -354,10 +354,10 @@ pub fn log_2(x: f32) -> f32 {
 /// negative, denormal, inf, or nan input (those are the caller's job, see
 /// log_2). Called directly with an out-of-domain x, this returns a
 /// plausible-looking but wrong finite value rather than NaN/-inf.
-// Shared by log_2_normal and log2_df -- both compute log2 itself (one in
-// single-float, one in double-float form), so unlike ln_normal/log10_normal
-// (each independently minimax-fitted for their own target), these two
-// callers use the exact same degree-9 poly, not just a scaled variant.
+// log_2_normal's own poly, and only its own: the double-float `log2_df`
+// needs ~31 relative bits, which this `s = m - 1` shape cannot reach at
+// any degree (its f32 evaluation rounding lands straight on the result
+// for x near 1), so that one uses an atanh-form reduction instead.
 const LOG2_COEFFS: [f32; 10] = [
     std::f32::consts::LOG2_E, // bit-identical to this literal; not a coincidence
     -0.72134733,
@@ -4916,31 +4916,161 @@ pub fn clog(re: f32, im: f32) -> (f32, f32) {
     (log_mag, carg(re, im))
 }
 
+/// `2*log2(e)` split into a double-float: the atanh form's leading
+/// coefficient (see `log2_df`), which has to carry more than f32's own
+/// 24 bits since it multiplies the *whole* result.
+const LOG2E_2_HI: f32 = 2.885390043258667;
+const LOG2E_2_LO: f32 = 3.851926067000022e-8;
+
+/// Minimax fit of `1/(m+1)` over `m` in `[2^-0.5, 2^0.5]` -- only a seed:
+/// one Newton step squares its error and the quotient refinement squares
+/// it again, so this is nowhere near a 24-bit fit and does not need to
+/// be. See `log2_df` for why it is degree 3 anyway.
+///
+/// In `m` rather than in `d = m + 1` (the same fit either way, since the
+/// two differ by an affine change of variable) so that the seed does not
+/// have to wait on the `m + 1` add: this poly is the head of the whole
+/// function's dependency chain, and `d` is still wanted later, where it
+/// is off the critical path.
+const LOG2_ATANH_RCP: [f32; 4] = [
+    0.9356114864349365,
+    -0.6780579090118408,
+    0.29953840374946594,
+    -0.057135023176670074,
+];
+
+/// `2*log2(e) * (atanh(t) - t) / t^3` in `u = t^2`, over `u` in
+/// `[0, (3-2*sqrt(2))^2]` -- the atanh series past its own leading term
+/// (see `log2_df`).
+const LOG2_ATANH_G: [f32; 4] = [
+    0.9617967009544373,
+    0.5770797729492188,
+    0.4119008779525757,
+    0.3365967571735382,
+];
+
 /// log2(x) as a double-float (Df32) instead of a collapsed f32, for
 /// positive finite x only (same domain log_2_normal assumes -- callers
-/// must guard zero/negative/inf/nan themselves). Reuses log_2_normal's
-/// exact decomposition and poly (`s = m - 1`, `P(s)`).
+/// must guard zero/negative/inf/nan themselves). Denormal input is
+/// handled the same way log_2's wrapper does (scale up, offset k).
 ///
-/// `p * s` (the poly correction) is combined with the exact integer
-/// exponent `k` via `Df32::from_mul(p, s)` (an exact two-product,
-/// keeping `p*s`'s own rounding error as the Df32's low word) added to
-/// `k` -- NOT a plain `p * s` single multiply inside `Df32::from_add(k,
-/// p*s)`: that two-sum only captures the rounding error of the *add*,
-/// while `p*s` was already rounded before it ran, so its error never
-/// enters either Df32 word. Harmless when `k` is large, but for `x` near
-/// 1 (`k=0`, a common case) adding exactly `0` is itself lossless --
-/// making the "double-float" result silently no more accurate than a
-/// single f32 multiply, defeating the point of this function relative to
-/// `log_2_normal`'s single-rounding `fma(p,s,k)`. The two-product form
-/// cut powf_checked's near-1 worst cases substantially (the poly's own
-/// ~2.7e-9 fit error is the separate, remaining contributor). Denormal
-/// input is handled the same way log_2's wrapper does (scale up,
-/// offset k).
+/// The point of this function is *relative* accuracy well past f32's own
+/// 24 bits, not just a spare low word: its only callers multiply the
+/// result by `y` before exponentiating, so `powf_checked`'s final
+/// relative error is about `ln2 * |y*log2(x)| *` this function's own
+/// relative error -- amplified by up to 128 (the largest `|y*log2(x)|`
+/// with a finite result), which is ~7 bits. Landing within an ulp
+/// therefore needs ~31 bits here.
+///
+/// That rules out `log_2_normal`'s shape (`k + s*P(s)` with `s = m - 1`),
+/// however carefully its two roundings are captured as a low word: `P(s)`
+/// is itself evaluated in f32, and for `x` near 1 -- exactly where `|y|`
+/// is large enough to matter -- `k` is 0 and the result *is* `s*P(s)`, so
+/// `P`'s own evaluation rounding lands directly on the result as a ~2^-24
+/// relative error that no amount of low-word bookkeeping downstream can
+/// recover. `|s|` reaches 0.414, so peeling terms off `P` doesn't fix it
+/// either: each peeled term only buys ~2.3 bits, and 3+ of them would
+/// each need their own exact double-float accumulation.
+///
+/// The atanh form reduces the argument instead. With `t = (m-1)/(m+1)`,
+/// `log2(m) = 2*log2(e) * atanh(t)` and `|t| <= 3-2*sqrt(2) ~ 0.1716`, so
+/// the series past the leading `t` term is only ~1% of the result: one
+/// exactly-accumulated term (`2*log2(e) * t`, a two-product against a
+/// double-float coefficient) plus a *plain f32* correction for the rest
+/// clears 31 bits, where the `s*P(s)` form needs four. Everything the
+/// correction's own rounding costs is scaled by that ~1%.
+///
+/// `t` has to be built to double-float accuracy without a division, and
+/// is, in two squaring steps: `LOG2_ATANH_RCP` seeds `1/d` to ~2^-13 over
+/// the narrow range `d = m + 1` covers, one Newton step squares that to
+/// f32's own floor, and the usual quotient-refinement step (`tl`, from
+/// the residual `s - th*d`) squares it again, past 2^-38. The refinement
+/// needs that residual against the *exact* `d`, hence `dl`: `m + 1` drops
+/// exactly one bit of `m` over this range, and both of `dl`'s steps
+/// recover it exactly (`dh - 1.0` is exact because halving the binade
+/// doubles the available precision, and `m - (dh - 1.0)` is
+/// Sterbenz-exact because both operands sit within a factor of 2).
+/// `s = m - 1` is exact for the same Sterbenz reason.
+///
+/// The seed is degree 3 rather than the degree 2 that squaring alone
+/// would justify, because `tl`'s *size* matters as well as `t`'s
+/// accuracy: `tl` sets how far the returned low word sits below the high
+/// one, and `exp2_checked_df` folds that low word in as a first-order
+/// term, so a low word one part in 2^-19 rather than ~1 ulp leaves a
+/// visible second-order remainder. Cheaper than renormalizing after the
+/// fact, which is the other way to fix it.
+///
+/// The correction term cubes its argument, which *triples* its relative
+/// error, so it uses the refined `th + tl` and not `th` -- `th` alone
+/// carries the seed-plus-Newton error, and 3x that against the term's ~1%
+/// weight would dominate everything else in this function.
+///
+/// `x == 1` gives exactly `Df32(0, 0)`, which `powf_checked` relies on.
 #[inline(always)]
 fn log2_df(x: f32) -> Df32 {
     let (xs, koff) = denormal_rescale!(x);
-    let (p, s, k) = log_family_normal!(xs, koff, LOG2_COEFFS);
-    Df32::from_f32(k) + Df32::from_mul(p, s)
+    // Same decomposition log_family_normal! does, spelled out (like
+    // ln_normal/log10_normal's own copies) since nothing else here is
+    // shared with the s = m - 1 poly form: m in [2^-0.5, 2^0.5), k exact.
+    let e = (xs.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23;
+    let m = f32::from_bits((xs.to_bits() as i32).wrapping_sub(e << 23) as u32);
+    let k = e as f32 + koff;
+    let s = m - 1.0;
+    let dh = m + 1.0;
+    let dl = m - (dh - 1.0);
+    // 1/(m+1): minimax seed, one Newton step (r*(2 - d*r)). Both this and
+    // the `tl` refinement below square the error they are given. Estrin,
+    // not Horner: this sits at the head of the chain everything else
+    // waits on, so a level of depth here is worth an extra multiply.
+    let rc = LOG2_ATANH_RCP;
+    let m2 = m * m;
+    let r = fma(fma(rc[3], m, rc[2]), m2, fma(rc[1], m, rc[0]));
+    let rcp = fma(-dh, r, 2.0) * r;
+    // t = s/d as (th, tl): th, then the residual s - th*d scaled back.
+    let th = s * rcp;
+    let rh = fma(-th, dh, s);
+    let rh = fma(-th, dl, rh);
+    let tl = rh * rcp;
+    // 2*log2(e) * t, exactly: two-product on the hi coefficient, both
+    // remaining cross terms folded into the low word (tl*LO is ~2^-49
+    // relative and is dropped).
+    let hi = th * LOG2E_2_HI;
+    let lo = fma(th, LOG2E_2_HI, -hi);
+    let lo = fma(th, LOG2E_2_LO, lo);
+    let lo = fma(tl, LOG2E_2_HI, lo);
+    // 2*log2(e) * (atanh(t) - t) = t^3 * G(t^2), the ~1% correction --
+    // built to run *beside* the `tl` chain above rather than after it,
+    // which is where this function's latency used to go. Both halves
+    // start from `th` alone:
+    //   - G's argument may be sloppy. G varies by only ~2% across the
+    //     whole range of t^2, so feeding it `th^2` instead of the refined
+    //     t^2 moves it by ~2% of th's own error -- nothing. Only the t^3
+    //     prefactor needs the refinement.
+    //   - and it gets it without waiting for a squaring: t^3 is
+    //     th^2 * (th + 3*tl) to within 3*th*tl^2, which is ~2^-44
+    //     relative. So `uh` is ready early and only the one fma below is
+    //     downstream of `tl`.
+    let uh = th * th;
+    let g = LOG2_ATANH_G;
+    // Horner, unlike the seed poly above: off the critical path now (the
+    // `tl` chain beside it is longer), so the extra multiply an Estrin
+    // split would cost buys nothing back.
+    let gp = fma(fma(fma(g[3], uh, g[2]), uh, g[1]), uh, g[0]);
+    let corr = (uh * fma(3.0, tl, th)) * gp;
+    // Both sums are exact, so they can go in either order -- k first,
+    // because `hi` is ready long before `corr` is and this puts that
+    // two-sum beside the correction instead of after it. Both keep the
+    // quick form's precondition: |k| >= 1 > |hi| whenever k != 0 (and
+    // k == 0 makes its two-sum exact on its own), then |k + hi| is either
+    // >= 0.5 or exactly `hi`, and `corr` is ~1% of `hi` in both cases.
+    let p = Df32::from_quick_add(k, hi);
+    let q = Df32::from_quick_add(p.0, corr);
+    // corr is far larger than `lo` (~1% of hi, vs ~1 ulp), which is why
+    // it joins as its own exact two-sum rather than being added into
+    // `lo`: that would round the pair at corr's scale and cost ~7 bits.
+    // Both residuals are ulp-scale by construction, so this last add is
+    // lossless to well past what the result needs.
+    Df32(q.0, q.1 + (p.1 + lo))
 }
 
 /// exp2 of a double-float argument, reusing exp2_checked's own clamp/
@@ -5247,12 +5377,21 @@ pub fn linear_to_srgb(l: f32) -> f32 {
 /// multiplication would otherwise be able to use. Fixed by keeping
 /// `log2(x)` as a double-float (Df32) through the multiply by `y` and
 /// the exp2 reconstruction, only collapsing to a single f32 at the very
-/// end (see `log2_df`/`exp2_checked_df`). A large accuracy win over the
-/// plain formula on both avg and max ulp, at a real mca cost
-/// (double-float bookkeeping isn't free) -- kept as an opt-in tier
-/// rather than the default, matching sin/sin_checked and
-/// exp2/exp2_checked. The remaining max-ulp cases are dominated by
-/// `log2_df`'s fit error for `x` near 1, not by `exp2_checked_df`.
+/// end (see `log2_df`/`exp2_checked_df`). Two orders of magnitude of max
+/// ulp over the plain formula, and a large avg win too, for no latency
+/// cost and single-digit throughput -- but still an opt-in tier rather
+/// than the default, matching sin/sin_checked and exp2/exp2_checked,
+/// since `powf` stays the cheaper of the two on both axes.
+///
+/// A spare low word is necessary but nowhere near sufficient here: what
+/// the `y` multiply amplifies is `log2(x)`'s *relative* error, so this
+/// tier is only as good as `log2_df` is in the `x`-near-1 octave, where
+/// `|y|` gets large enough for the amplification to bite. See `log2_df`
+/// for why that rules out `log_2`'s own polynomial shape entirely and
+/// what it uses instead; the worst cases left are split between it and
+/// `exp2_checked_df`, neither dominating. Measure with
+/// `examples/powfsearch.rs`, not the 2-arg fuzz -- the corner that
+/// maximises this is one a blind fuzz essentially never draws.
 #[inline(always)]
 pub fn powf_checked(x: f32, y: f32) -> f32 {
     let ax = x.abs();

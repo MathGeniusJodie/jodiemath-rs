@@ -248,10 +248,15 @@ the bar by construction if they find anything.
 Tooling, feature flags, and portability. None of these change an existing
 function's speed or accuracy directly; several unblock ideas above.
 
-93. **2-arg importance-sampling harness** for powf/atan2/hypot/
-    remainder: structured lattices near known-hard manifolds (e.g.
-    y·log2(x) near integers) — better worst-case discovery than
-    uniform sampling.
+93. **2-arg importance-sampling harness** for atan2/hypot/remainder:
+    structured lattices near known-hard manifolds — better worst-case
+    discovery than uniform sampling. *powf is done*
+    (`examples/powfsearch.rs`): deriving `y` from `x` to pin
+    `|y·log2(x)|` at the largest finite exponent, then sweeping the
+    `k == 0` octave exhaustively, found twice the max ulp the blind
+    10M-sample fuzz reported. The pattern to copy is that the manifold
+    was read off the *error model* (`ln2·|y·log2(x)|·relerr(log2)`, one
+    factor per argument) rather than guessed.
 
 95. **accuracy.rs per-branch attribution mode**: report which select
     arm produced each worst case — speeds every future refit's

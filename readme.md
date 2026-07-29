@@ -76,10 +76,10 @@ hypot_unchecked (bounded, +) | 0.034 |     1     | (bit-identical to hypot on it
        hypot_checked |    0.015   |     1     | (no std comparison needed, no domain restriction)
                 rhypot |    0.065   |     2     | (no std rhypot)
                   rsqrt |    0.260   |     1     | (no std rsqrt)
-        powf (in-domain)|    0.181   |  >=312    |  0.000  |    1
-    powf_unchecked (+)  |    0.363   |  >=312    | (bit-identical to powf on its domain)
-        powf_checked (in-domain)|  0.046   |  >=203    | (no std comparison needed, same domain as powf)
-powf_checked_unchecked (+)|    0.046   |  >=203    | (bit-identical to powf_checked on its domain)
+        powf (in-domain)|    0.181   |  >=312 (s)|  0.000  |    1
+    powf_unchecked (+)  |    0.363   |  >=312 (s)| (bit-identical to powf on its domain)
+        powf_checked (in-domain)|  0.019   |   3 (s)  | (no std comparison needed, same domain as powf)
+powf_checked_unchecked (+)|    0.038   |   3 (s)  | (bit-identical to powf_checked on its domain)
         remainder (|x/y|<1000, near-tie excluded) | 0.000 | 0 | (no std comparison needed)
 remainder_unchecked (+) |    0.000   |     0     | (bit-identical to remainder on its domain)
     remainder_checked (|x/y|<1e7, near-tie excluded) | 0.000 | 0 | (no std comparison needed)
@@ -88,6 +88,13 @@ remainder_unchecked (+) |    0.000   |     0     | (bit-identical to remainder o
                    fmod (|x/y|<1000, near-int excluded) | 0.000 | 0 | (matches Rust's `%`)
         fmod_unchecked (+) |    0.000   |     0     | (bit-identical to fmod on its domain)
 ```
+(s) from `examples/powfsearch.rs`, not from the fuzz above. powf's error is
+`ln2 * |y*log2(x)| * (relative error of the log2 feeding exp2)`, so its max
+lives in one corner -- `|y*log2(x)|` just inside the largest finite
+exponent, `x` inside the single octave where log2's own relative error is
+undiluted by the integer exponent -- which random pairs essentially never
+hit. The blind fuzz reports `powf_checked` at 2 ulp; pinning `y` to `x`
+and sweeping that octave exhaustively finds 4.
 
 # benchmarks
 Run on i5-1145G7, -C target-cpu=native (now set in .cargo/config.toml)
@@ -173,10 +180,10 @@ hypot_unchecked | 6.2 ns  |    -    |  -
   hypot_checked | 18.2 ns | 11.2 ns | 0.6x
        rhypot | 8.9 ns  |    -    |  -
         rsqrt | 7.5 ns  |    -    |  -
-      powf (*)| 24.0 ns | 19.3 ns | 0.8x
-powf_unchecked | 21.1 ns | 19.3 ns | 0.9x
- powf_checked | 38.6 ns | 19.3 ns | 0.5x
-powf_checked_unchecked| 35.0 ns | 19.3 ns | 0.6x
+      powf (*)(r)| 21.4 ns | 16.9 ns | 0.8x
+powf_unchecked (r)| 18.8 ns | 16.9 ns | 0.9x
+ powf_checked (r)| 33.4 ns | 16.9 ns | 0.5x
+powf_checked_unchecked (r)| 30.3 ns | 16.9 ns | 0.6x
  remainder (*)| 10.7 ns |    -    |  -
 remainder_unchecked| 9.3 ns  |    -    |  -
 remainder_checked| 13.0 ns |    -    |  -
@@ -196,6 +203,25 @@ dramatically for a related but distinct reason, confirmed via
 the whole thing with a single `x*x` multiply, so the old "3.2 ns" was
 never measuring std's actual powf cost at all. All four functions (plus
 `std powf`) now use a `black_box`'d 2nd argument for an honest number.
+
+(r) the powf block in both tables (including its own `std powf` reference
+column) was re-recorded in a *later* sitting than the rest, for
+`powf_checked`'s atanh-form log2 -- so those rows are comparable to each
+other but read ~11-15% fast against the rows around them. The unchanged
+`powf` row is the conversion factor: same code, 24.0 -> 21.4 ns latency
+and 1.37 -> 1.13 ns throughput, with `std powf` moving the same way
+(19.3 -> 16.9, 6.45 -> 5.42).
+
+Do not read `powf_checked`'s own cost off this table by subtracting across
+sittings. Measured properly -- both binaries built once, then run
+alternately, min of 6 each -- the atanh-form log2 costs it **-2.6%
+latency** (34.3 -> 33.4 ns; it is *faster*) and **+6.8% throughput**
+(1.76 -> 1.88 ns), and `powf_checked_unchecked` -2.6% / +8.5%. That
+interleaving is what makes the numbers trustworthy on a machine that
+throttles this much: the three rows whose code did *not* change (`powf`,
+`powf_unchecked`, `std powf`) came back within 0.4% across the same runs,
+which is the noise floor the deltas above are measured against. llvm-mca,
+which needs no sitting caveat at all, agrees on both signs.
 
 ```
 Throughput (independent array evals over [f32; 4096], examples/quickbench.rs; lower is better)
@@ -259,10 +285,10 @@ hypot_unchecked | 0.21 ns |    -    |  -
   hypot_checked | 0.38 ns | 2.55 ns | 6.7x
        rhypot | 0.36 ns |    -    |  -
         rsqrt | 0.35 ns |    -    |  -
-      powf (*)| 1.37 ns | 6.45 ns | 4.7x
-powf_unchecked | 0.79 ns | 6.45 ns | 8.2x
- powf_checked | 1.99 ns | 6.45 ns | 3.2x
-powf_checked_unchecked| 1.47 ns | 6.45 ns | 4.4x
+      powf (*)(r)| 1.13 ns | 5.42 ns | 4.8x
+powf_unchecked (r)| 0.70 ns | 5.42 ns | 7.7x
+ powf_checked (r)| 1.88 ns | 5.42 ns | 2.9x
+powf_checked_unchecked (r)| 1.42 ns | 5.42 ns | 3.8x
  remainder (*)| 0.23 ns |    -    |  -
 remainder_unchecked| 0.17 ns |    -    |  -
 remainder_checked| 0.34 ns |    -    |  -
@@ -342,8 +368,8 @@ rhypot              |          32.02 |             1.389
 rsqrt               |          28.00 |             1.381
 powf                |         104.95 |             5.651
 powf_unchecked      |          79.05 |             3.095
-powf_checked        |         153.00 |             9.105
-powf_checked_unchecked |      129.74 |             7.234
+powf_checked        |         152.89 |             9.918
+powf_checked_unchecked |      128.77 |             7.255
 remainder           |          34.11 |                 ? (*)
 remainder_unchecked |          33.00 |             0.646
 remainder_checked   |          45.17 |             1.357
@@ -395,6 +421,10 @@ and documented-bound drift.
   `-- --bless` regenerates; an intentional accuracy change is *expected* to fail this, and the diff is
   meant to be eyeballed. Note a pass is not "nothing changed": see the file header for two measured cases
   that slip through (a 1-ulp coefficient nudge, and a seam move where both branches agree at the corpus point).
+- `cargo run --release --example powfsearch` - adversarial worst case for `powf`/`powf_checked`, where a
+  blind 2-arg fuzz is structurally weak: their error is `ln2 * |y*log2(x)| * relerr(log2)`, maximised only
+  where both factors are extreme at once, so this derives `y` from `x` to pin the first and sweeps the
+  octave that maximises the second exhaustively instead of sampling. Finds twice the max ulp the fuzz does.
 - `cargo run --release --example special_matrix` - +-0/+-inf/NaN in/out matrix over every public 1-arg
   function, asserting NaN propagation and quietness (the `_unchecked`/`_approx` tiers that promise nothing
   off-domain are exempted by name, so a *new* function inheriting garbage NaN behaviour still fails).
