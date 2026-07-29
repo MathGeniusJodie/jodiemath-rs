@@ -88,11 +88,9 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(|s| s.as_str()) == Some("latencyn") {
         // idea #78 spot-check: single-chain vs 4-independent-chain latency
-        // for a spread of functions with different codegen shapes (pown's
-        // fully-unrolled branchy loop, exp2's short balanced-Estrin chain,
-        // sinh's branch-selected two-branch combine, acos's plain Horner).
-        bench_latency("pown", |x: f32| pown(x, black_box(5)));
-        bench_latency_n("pown", |x: f32| pown(x, black_box(5)));
+        // for a spread of functions with different codegen shapes (exp2's
+        // short balanced-Estrin chain, sinh's branch-selected two-branch
+        // combine, acos's plain Horner).
         bench_latency("exp2", exp2);
         bench_latency_n("exp2", exp2);
         bench_latency("sinh", sinh);
@@ -317,27 +315,7 @@ fn main() {
     bench!("powf_unchecked", move |x: f32| powf_unchecked(x, powf_y));
     bench!("powf_checked", move |x: f32| powf_checked(x, powf_y));
     bench!("powf_checked_unchecked", move |x: f32| powf_checked_unchecked(x, powf_y));
-    {
-        // black_box'd once, not per-call -- see pown's own mca_target.rs
-        // comment for why that placement matters.
-        let n = black_box(5);
-        bench!("pown", |x: f32| pown(x, n));
-        bench!("pown_small", |x: f32| pown_small(x, n));
-        bench!("pown_small_accurate", |x: f32| pown_small_accurate(x, n));
-        bench!("pown_16", |x: f32| pown_16(x, n));
-        bench!("rootn", |x: f32| rootn(x, 3));
-    }
-    {
-        // pown_16's own distinct value proposition: an exponent beyond
-        // pown_small's |n|<=255 contract (pown_small isn't valid here at
-        // all), still well inside pown_16's |n|<=65535.
-        let n = black_box(1000);
-        bench!("pown (n=1000)", |x: f32| pown(x, n));
-        bench!("pown_16 (n=1000)", |x: f32| pown_16(x, n));
-    }
-    // N baked in at compile time (not black_box'd -- that's the whole
-    // point of pown_const, unlike pown/pown_small above).
-    bench!("pown_const<5>", |x: f32| pown_const::<5>(x));
+    bench!("rootn", |x: f32| rootn(x, 3));
     // black_box'd 2nd arg, same reasoning as powf just above.
     let remainder_y = std::hint::black_box(3.0);
     bench!("remainder", move |x: f32| remainder(x, remainder_y));

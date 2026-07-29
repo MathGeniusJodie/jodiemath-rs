@@ -100,51 +100,6 @@ fn check2(
     }
 }
 
-// Same shape as check2, but for (f32, i32) pairs like pown/pown_small --
-// n is generated within the pair's own contracted range rather than as a
-// raw bit pattern (an arbitrary i32 would almost never land in |n|<=255).
-#[must_use]
-fn check_pown(
-    name: &str,
-    n_samples: u64,
-    n_range: std::ops::RangeInclusive<i32>,
-    checked: impl Fn(f32, i32) -> f32,
-    unchecked: impl Fn(f32, i32) -> f32,
-) -> bool {
-    let mut rng = Rng(0x9E3779B97F4A7C15 ^ (name.len() as u64 + 7));
-    let mut checked_count = 0u64;
-    let mut mismatches = 0u64;
-    let mut first_mismatch: Option<(f32, i32, f32, f32)> = None;
-    let span = (*n_range.end() - *n_range.start()) as u64 + 1;
-    for _ in 0..n_samples {
-        let x = rng.next_f32();
-        if !x.is_finite() || x == 0.0 {
-            continue;
-        }
-        let n = n_range.start() + (rng.next_u32() as u64 % span) as i32;
-        checked_count += 1;
-        let a = checked(x, n);
-        let b = unchecked(x, n);
-        if a.to_bits() != b.to_bits() && !(a.is_nan() && b.is_nan()) {
-            mismatches += 1;
-            if first_mismatch.is_none() {
-                first_mismatch = Some((x, n, a, b));
-            }
-        }
-    }
-    if mismatches > 0 {
-        let (x, n, a, b) = first_mismatch.unwrap();
-        println!(
-            "MISMATCH {name}: {mismatches}/{checked_count} in-domain samples differ; first at x={x:e} n={n} checked={a:e} (0x{:08x}) unchecked={b:e} (0x{:08x})",
-            a.to_bits(), b.to_bits()
-        );
-        false
-    } else {
-        println!("ok       {name}: {checked_count} in-domain samples, bit-identical");
-        true
-    }
-}
-
 fn main() {
     const N: u64 = 50_000_000;
     let mut ok = true;
@@ -204,11 +159,6 @@ fn main() {
     // differs between the two).
     let hypot_domain = |x: f32, y: f32| !x.is_infinite() && !y.is_infinite();
     ok &= check2("hypot / hypot_unchecked", N, hypot_domain, hypot, hypot_unchecked);
-
-    // pown_small's own contract: bit-identical to pown whenever |n| <= 255
-    // (its own doc comment claims this "confirmed over 50M generated
-    // samples", but this pair was never added to this standing test).
-    ok &= check_pown("pown / pown_small", N, -255..=255, pown, pown_small);
 
     // remainder_wide's own contract: bit-identical to remainder_checked
     // (not to plain remainder) throughout remainder_checked's own

@@ -179,72 +179,8 @@ the bar by construction if they find anything.
   centered-variable refits (already rejected, that only moved the origin).
   A nonlinear transform changes curvature matching.
 
-## Open: new API and tiers
-
-Additive -- these add a function rather than improving one, so they do not
-clear a "speed up or improve an existing function" bar and were deliberately
-left alone. Listed with whatever measurement exists.
-
-- **Batch/slice API tier** (`exp2_slice` etc.): lets the crate own
-  vectorization instead of the caller's loop; natural home for a fast
-  sincos too. Also enables `is_x86_feature_detected` runtime
-  multiversioning at the slice level (per-call dispatch is un-inlinable,
-  per-slice is free).
-
-- **remainder_checked beyond 2^24**: double-float q like sin_checked's
-  reduction. Only worth it if a real use case needs it.
-
-- **Vectorized Payne-Hanek "exact" tier** for sin/cos: full-range correct
-  reduction via a 2/pi mantissa product with a per-lane variable shift.
-  Big job, optional given the graceful-degradation contract.
-
-- **sinh_accurate/cosh_accurate tier**: Df32 through the exp combine —
-  only if a user asks; max 5 is comfortably documented already.
-
-- **lgamma (Stirling + reflection)**: big job, listed for completeness —
-  the largest gap vs. libm's function set that fits this crate's
-  branchless style.
-
-41. **logaddexp2** (base-2 sibling, ML/audio) — near-free variant of
-    whatever #39 lands on.
-
-73. **powf_mid tier**: 1.5-word log2 (k + one two_prod hi/lo pair, no
-    full Df32 arithmetic) through the y multiply + a single
-    multiplicative correction — targets powf's y-amplified error at a
-    fraction of powf_checked's +61% throughput cost.
-
-76. **Constant-base powf slice**: precompute log2_df(x) once per slice;
-    per-element work drops to a Df32 multiply + exp2 (slice-tier
-    candidate, fixed-base workloads).
-
-82. **Const-y remainder/fmod slice variant**: precompute 1/y,
-    `q = round(x * (1/y))` — trades the per-element division for a
-    multiply; the changed q rounding needs an accuracy screen
-    (slice-tier candidate).
-
-87. **Public Df32 module** (log2_df/exp2_checked_df/two_prod etc.) for
-    power users composing their own accurate kernels. Partially done:
-    the EFT primitives themselves (two_prod/two_sum/quick_two_sum) went
-    public via #184; what remains is the Df32 *type* and the df-suffixed
-    kernels (log2_df/exp2_checked_df), which is the larger API decision.
-
 99. **tgamma** companion to the lgamma entry (Lanczos/Stirling, shares
     machinery).
-
-100. **Bessel j0/j1** (Cephes-style two-region rational + trig
-     composition — big job, listed for completeness like lgamma).
-
-148. **Softmax / logsumexp / normalize slice reductions** (max-pass +
-     exp-pass + sum + scale in one fused traversal) — slice-tier
-     flagship, plus a rotate2d(sincos) demo kernel.
-
-154. **Const-arg slice family generalization**: const-y remainder
-     (#82), const-base powf (#76), const-base log (precompute
-     1/log2(b)) — one shared design decision.
-
-155. **powf slice integer-y dispatch**: slice checks all-y-integral once
-     and routes to the pown path — per-slice dispatch is free where
-     per-call isn't.
 
 182. **Compensated-Estrin generic infra** (EFT-based poly evaluation) as
      reusable machinery for future _accurate tiers — compensated-Horner
@@ -253,9 +189,6 @@ left alone. Listed with whatever measurement exists.
 
 183. **Full Df32/Df32 division primitive** (div_to_f32 exists) — needed
      by future rational _accurate tiers.
-
-187. **n-ary logaddexp slice reduction** (tree or max+sum-exp) — pairs
-     with #148.
 
 188. **_approx tier new members**: exp2_approx/log2_approx/rsqrt_approx
      now have real doc-comment error bounds (max relative/absolute
@@ -315,34 +248,6 @@ left alone. Listed with whatever measurement exists.
 Tooling, feature flags, and portability. None of these change an existing
 function's speed or accuracy directly; several unblock ideas above.
 
-- **Domain-specific fast-math contract tiers**: a `finite-math-only` cargo
-  feature gating away every inf/nan select in checked functions
-  (complements the FTZ/DAZ idea above, which only covers denormals).
-
-- **Auto-generated `_unchecked` variants via macro**: every checked/
-  unchecked pair is hand-maintained; a macro emitting both from one body
-  with cfg'd guards removes drift risk.
-
-- **Stochastic rounding harness mode**: run accuracy sweeps with the final
-  fma's rounding perturbed ±1 ulp to measure how close each function sits
-  to a rounding boundary — identifies which maxes are "one lucky rounding"
-  vs. structural, prioritizing refit targets.
-
-- **Interval-arithmetic self-audit build**: a cfg that swaps f32 for an
-  interval type in the `_normal` cores to machine-verify "this add is
-  exact / Sterbenz applies" claims scattered through the comments —
-  several past bugs (pre_offset, e3 sign) were exactly wrong claims of
-  this kind.
-
-56. **Slice-tier FTZ/DAZ via MXCSR**: a slice entry point can set
-    FTZ/DAZ around its own loop and restore — gets the FTZ
-    feature-flag idea's win without a global cargo feature.
-
-92. **simd-tier division-free kernels via vrcpps/vrsqrtps + NR**
-    (atan_poly's denominator, sigmoid/tanh's final division, rcbrt, an
-    rsqrt_fast) — unreachable from scalar autovectorized code, natural
-    once an explicit core::simd tier exists.
-
 93. **2-arg importance-sampling harness** for powf/atan2/hypot/
     remainder: structured lattices near known-hard manifolds (e.g.
     y·log2(x) near integers) — better worst-case discovery than
@@ -357,90 +262,7 @@ function's speed or accuracy directly; several unblock ideas above.
     wall-clock *direction* disagreement (sincos_checked) and the
     documented 3-9x environment swing.
 
-105. **Gappa (or hand-rolled interval) certificates** for the crate's
-     exactness claims (Sterbenz subtractions, exact po2 multiplies,
-     k*LN2_HI) — the machine-checkable version of the interval
-     self-audit entry; several past bugs were exactly wrong claims of
-     this kind.
-
-114. **FTZ-mode minimal exp2_checked/exp_checked** (rides the MXCSR
-     slice-tier idea #56): lower clamp −151→−126 and the
-     denormal-rounding half of the split's job disappears; same cascade
-     deletes denormal_rescale from the log family and cbrt — scope #56
-     to capture all of it.
-
-158. **vgetexpps/vgetmantps log core**: exponent + mantissa extraction
-     in two instructions with denormals handled natively — replaces the
-     whole wrapping_sub bit-trick *and* denormal_rescale in a simd-tier
-     log family.
-
-159. **vscalefps exp core**: x·2^k in one instruction with correct
-     overflow/underflow/denormal semantics — replaces exp2_field_split
-     and most of its clamp machinery.
-
-160. **vreduceps/vrndscaleps**: fraction extraction (x − round-to-scale)
-     in one instruction — replaces floor+subtract in the exp2-family
-     reductions.
-
-161. **vfixupimmps**: table-driven special-value patching (zero/inf/nan
-     selects in one instruction) — collapses log_family_wrapper's select
-     chain.
-
-162. **vrangeps** for clamp pairs (single-instruction bounded
-     magnitude).
-
-163. **vpermi2ps in-register 32-entry LUTs** (two zmm registers hold the
-     whole table, no memory gather) — revisits the LUT idea (#89)
-     without vgatherdps' latency; the modern fast-table technique.
-
-170. **Worst-pocket auto-bisection**: given a fuzz argmax, exhaustively
-     map the surrounding error pocket's shape and width — refit
-     diagnosis tool.
-
-172. **wgpu/GPU compute sweeps** for 2-arg functions — makes the
-     importance-sampling lattices (#93) orders of magnitude denser.
-
-173. **Round-trip contract measurement**: published ulp bounds for
-     exp(ln x), powf(powf(x,y),1/y), sin(asin x) pairs.
-
-174. **Auto-generated rustdoc accuracy tables from harness output** —
-     the readme's quickbench numbers already drifted once; generated
-     docs can't go stale.
-
-176. **no_std/core-only feature**: most rounding already uses magic-add
-     tricks; audit the residual std surface (floor/round/trunc/sqrt) and
-     gate via core intrinsics or libm fallback.
-
-177. **C ABI export layer** (#[no_mangle] extern "C") — drop-in libm
-     comparison target and FFI consumers.
-
 178. **NEON/aarch64 re-audit**: fma is native there, but every
      mca-derived scheduling decision in this crate is Tiger-Lake-
      specific — the decided tradeoffs (division-vs-poly, Estrin
      groupings) need re-measuring before claiming portability.
-
-179. **WASM relaxed-simd gate** (f32x4.relaxed_madd): without it the
-     fma compile_error! fires — document/feature-gate the story.
-
-181. **strict-ieee cargo feature**: swaps the documented convention
-     divergences (remainder's ties-away, fmod's uncorrected quotient)
-     for slower std-matching forms — escape hatch instead of a doc
-     caveat.
-
-192. **Caller-side FTZ/DAZ behavior test**: callers often run with FTZ
-     set globally; document and test what each denormal-handling path
-     actually does under inherited MXCSR state.
-
-193. **Rayon-parallel accuracy sweeps**: the exhaustive 2^32 runs are
-     embarrassingly parallel — hours → minutes changes what's feasible
-     to verify per idea.
-
-195. **Per-function error-budget ledger**: reduction X + poly Y +
-     combine Z ulp, from the round-off audits (several exist ad hoc for
-     expm1/sinh/tanh/erfc) — makes attack selection data-driven instead
-     of re-derived each session.
-
-200. **Auto-tune CI loop**: a scheduled job re-runs the tune.rs
-     coordinate descent (LP-seeded) on every poly and files a PR when a
-     real fuzz-verified improvement appears — automates the crate's
-     single most-repeated manual win pattern.

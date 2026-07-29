@@ -10,9 +10,9 @@ All functions auto-vectorize, it's a hard requirement
                         | jodie avg  | jodie max | std avg | std max
 ------------------------|------------|-----------|---------|--------
                    cbrt |    0.281   |     3     |    0    |    0
-     cbrt_unchecked (+) |    0.282   |     3     | (bit-identical to cbrt on its domain)
+         cbrt_unchecked |    0.282   |     3     | (bit-identical to cbrt on its domain)
           cbrt_accurate |    0.000   |     1     |    0    |    0
-cbrt_accurate_unchecked (+) | 0.000 |     1     | (bit-identical to cbrt_accurate on its domain)
+cbrt_accurate_unchecked |    0.000   |     1     | (bit-identical to cbrt_accurate on its domain)
                   rcbrt |    0.418   |     5     | (no std rcbrt)
                    exp2 |    0.026   |     1     |  0.000  |    1
            exp2_checked |    0.014   |     1     |  0.000  |    1
@@ -20,8 +20,8 @@ cbrt_accurate_unchecked (+) | 0.000 |     1     | (bit-identical to cbrt_accurat
           exp10_checked |    0.008   |     1     | (no std exp10)
                    log2 |    0.003   |     3     |  0.000  |    1
    log2_unchecked (+)   |    0.006   |     3     | (bit-identical to log2 on its domain)
-        sin (|x|<1.3e7) |    0.059   |    219    |  0.003  |    1
-        cos (|x|<1.3e7) |    0.289   |   2769    |  0.002  |    1
+         sin (|x|<=1e6) |    0.036   |     3     |  0.002  |    1
+         cos (|x|<=1e6) |    0.078   |     3     |  0.002  |    1
  sin_checked (|x|<=1e6) |    0.036   |     2     |  0.000  |    1
  cos_checked (|x|<=1e6) |    0.081   |     3     |  0.000  |    1
         sinpi (all f32) |    0.197   |     2     | (no std sinpi)
@@ -29,34 +29,34 @@ cbrt_accurate_unchecked (+) | 0.000 |     1     | (bit-identical to cbrt_accurat
         tanpi (all f32) |    0.386   | 3.6e6 (near a pole of tanpi -- tiny denominator, huge ulp) | (no std tanpi)
         sind (|x|<4.7e7)|    0.124   |     2     | (no std sind)
         cosd (|x|<4.7e7)|    0.073   |     2     | (no std cosd)
-     tand (|x|<4.7e7)|    0.177   |     3     | (no std tand)
-         sinc (|x|<1e6)|    0.094   |     4     | (no std sinc)
+        tand (|x|<4.7e7)|    0.177   |     3     | (no std tand)
+          sinc (|x|<1e6)|    0.094   |     4     | (no std sinc)
 ```
 
 ```
-                        | jodie avg  | jodie max | std avg | std max
-------------------------|------------|-----------|---------|--------
-                     ln |    0.117   |     3     |  0.000  |    1
-    ln_unchecked (+)    |    0.235   |     3     | (bit-identical to ln on its domain)
-                  log10 |    0.127   |     3     |  0.000  |    0
-  log10_unchecked (+)   |    0.255   |     3     | (bit-identical to log10 on its domain)
-                  log1p |    0.097   |     4     |  0.000  |    0
-                log2p1  |    0.102   |     3     | (no std log2p1)
-        exp (in-domain) |    0.071   |     3     |  0.000  |    1
-            exp_checked |    0.037   |     3     |  0.000  |    1
-      expm1 (in-domain) |    0.129   |     5     |  0.000  |    0
-          expm1_checked |    0.067   |     5     |  0.000  |    0
-exp_m1_over_x (in-domain)| 0.071   |     5     | (no std exp_m1_over_x)
-                exp2m1  |    0.077   |     4     | (no std exp2m1)
-       sinh (in-domain) |    0.078   |     4     |  0.000  |    1
-       cosh (in-domain) |    0.052   |     4     |  0.000  |    0
-sinh_throughput (in-domain)| 0.080   |     4     |  0.000  |    1
-cosh_throughput (in-domain)| 0.049   |     3     |  0.000  |    0
+                         | jodie avg  | jodie max | std avg | std max
+-------------------------|------------|-----------|---------|--------
+                      ln |    0.117   |     3     |  0.000  |    1
+     ln_unchecked (+)    |    0.235   |     3     | (bit-identical to ln on its domain)
+                   log10 |    0.127   |     3     |  0.000  |    0
+   log10_unchecked (+)   |    0.255   |     3     | (bit-identical to log10 on its domain)
+                   log1p |    0.097   |     4     |  0.000  |    0
+                 log2p1  |    0.102   |     3     | (no std log2p1)
+         exp (in-domain) |    0.071   |     3     |  0.000  |    1
+             exp_checked |    0.037   |     3     |  0.000  |    1
+       expm1 (in-domain) |    0.129   |     5     |  0.000  |    0
+           expm1_checked |    0.067   |     5     |  0.000  |    0
+exp_m1_over_x (in-domain)|    0.071   |     5     | (no std exp_m1_over_x)
+                 exp2m1  |    0.077   |     4     | (no std exp2m1)
+        sinh (in-domain) |    0.078   |     4     |  0.000  |    1
+        cosh (in-domain) |    0.052   |     4     |  0.000  |    0
+sinh_throughput (in-domain)| 0.080    |     4     |  0.000  |    1
+cosh_throughput (in-domain)| 0.049    |     3     |  0.000  |    0
        sinh_checked (all f32) | 0.041 |     4     |  0.000  |    1
        cosh_checked (all f32) | 0.027 |     4     |  0.000  |    0
-       tanh (in-domain) |    0.145   |     5     |  0.000  |    0
-                sigmoid |    0.091   |     3     | (no std sigmoid)
-       softplus (|x|<80)|    0.075   |     3     | (no std softplus)
+        tanh (in-domain) |    0.145   |     5     |  0.000  |    0
+                 sigmoid |    0.091   |     3     | (no std sigmoid)
+        softplus (|x|<80)|    0.075   |     3     | (no std softplus)
 logaddexp (|a|,|b|<80)|    0.141   |  ~1e3-1e5, heavy-tailed (real, narrow cancellation -- see its own doc comment) | (no std logaddexp)
                   asinh |    0.149   |     3     | 
                   acosh |    0.060   |     4     |  0.000  |    1
@@ -76,9 +76,6 @@ hypot_unchecked (bounded, +) | 0.034 |     1     | (bit-identical to hypot on it
        hypot_checked |    0.015   |     1     | (no std comparison needed, no domain restriction)
                 rhypot |    0.065   |     2     | (no std rhypot)
                   rsqrt |    0.260   |     1     | (no std rsqrt)
-          pown (|n|<=8) |    0.158   |    11     | (no std pown)
-         pown (|n|<=64) |    0.209   |    90     | (no std pown)
-   pown_small (|n|<=255)|    0.216   |   304     | (bit-identical to pown on its domain)
         powf (in-domain)|    0.181   |  >=312    |  0.000  |    1
     powf_unchecked (+)  |    0.363   |  >=312    | (bit-identical to powf on its domain)
         powf_checked (in-domain)|  0.046   |  >=203    | (no std comparison needed, same domain as powf)
@@ -156,9 +153,6 @@ hypot_unchecked |  5.0 ns |     -   |  -
   hypot_checked | 19.9 ns | 11.9 ns | 0.6x
        rhypot |  7.7 ns |     -   |  -
         rsqrt |  6.7 ns |     -   |  -
-         pown | 50.3 ns |     -   |  -
-   pown_small | 15.3 ns |     -   |  -
- pown_const<N>|  4.2 ns |     -   |  -
       powf (*)| 22.2 ns | 16.9 ns | 0.8x
 powf_unchecked | 18.7 ns | 16.8 ns | 0.9x
  powf_checked | 34.4 ns | 16.9 ns | 0.5x
@@ -245,9 +239,6 @@ hypot_unchecked | 0.17 ns  |     -    |  -
   hypot_checked | 0.40 ns  |  2.72 ns | 6.8x
        rhypot | 0.31 ns  |     -    |  -
         rsqrt | 0.31 ns  |     -    |  -
-         pown | 1.24 ns  |     -    |  -
-   pown_small | 0.22 ns  |     -    |  -
- pown_const<N>| 0.05 ns  |     -    |  -
       powf (*)| 1.16 ns  |  5.43 ns | 4.7x
 powf_unchecked | 0.70 ns  |  5.86 ns | 8.3x
  powf_checked | 1.79 ns  |  5.43 ns | 3.0x
@@ -272,7 +263,7 @@ theoretical cost from llvm-mca (-mcpu=native, 100 iterations)
 cbrt                |          35.06 |             1.629
 cbrt_unchecked      |          35.06 |             0.906
 cbrt_accurate       |          63.00 |             3.129
-cbrt_accurate_unchecked |          63.00 |             2.067
+cbrt_accurate_unchecked |      63.00 |             2.067
 rcbrt               |          60.03 |             1.666
 exp2                |          35.00 |             0.854
 exp2_checked        |          47.00 |             1.399
@@ -329,11 +320,10 @@ hypot               |          21.11 |             0.766
 hypot_checked       |          57.19 |             1.178
 rhypot              |          32.02 |             1.389
 rsqrt               |          28.00 |             1.381
-pown                |         176.00 |             3.805
 powf                |         104.95 |             5.651
 powf_unchecked      |          79.05 |             3.095
 powf_checked        |         153.00 |             9.105
-powf_checked_unchecked |         129.74 |             7.234
+powf_checked_unchecked |      129.74 |             7.234
 remainder           |          34.11 |                 ? (*)
 remainder_unchecked |          33.00 |             0.646
 remainder_checked   |          45.17 |             1.357
@@ -342,24 +332,14 @@ remainder_wide      |         171.17 |             7.688
 fmod                |          29.11 |                 ? (*)
 fmod_unchecked      |          28.00 |             0.643
 ```
-The latency column jumped for 65 of these rows on 2026-07-28 -- **not a
-regression, a harness fix** (backlog idea #198). The serial chain's `mix()`
-step used to clear the sign bit, which let LLVM prove the value was
-non-negative and fold away every function's sign-handling work
-(`copysign`/`mulsign`, `abs`, sign selects) before it was ever measured.
-`erfcx_checked` was under-reported by 2.6x (41.00 -> 104.98), `atanh` by
-39%, `rcbrt`/`pow_2_3` by ~30%. `mix()` now carries the sign through, which
-makes it data-dependent and unfoldable. Throughput is unaffected -- it never
-used `mix()` -- and zero throughput rows moved, which is the check that the
-fix did what it claims.
 
 (*) remainder/remainder_ieee/fmod: throughput no longer measurable via
 llvm-mca after their 2026-07-09 zero/nan fix (backlog idea #85's own
 follow-up) -- LLVM branch-specializes these short functions' vectorized
 loop on the harness's own shared black_box'd `y`, producing multiple
-physical exit paths that corrupt llvm-mca's region parser (same class
-of harness limitation as `pown_small`'s own precedent; confirmed via a
-standalone `--emit=asm` probe with genuinely per-lane-varying inputs
+physical exit paths that corrupt llvm-mca's region parser (the same
+class of harness limitation `ldexp`/`frexp`/`rootn` document too;
+confirmed via a standalone `--emit=asm` probe with genuinely per-lane-varying inputs
 that the real functions still vectorize cleanly, no scalar fallback).
 See the throughput table above for their real wall-clock numbers
 instead.

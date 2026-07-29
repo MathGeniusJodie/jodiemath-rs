@@ -49,7 +49,7 @@ open. Two rules that recur often enough to state up front:
 - **`-C llvm-args=-force-vector-interleave=N` global sweep**: N=4/8
   bit-identical to default (loop already fully unrolled). N=2 gave real
   but mixed results (~60% of ~70 functions improved, several regressed,
-  `pown` catastrophically +165.6%). No per-function scoping on stable
+  one catastrophically at +165.6%). No per-function scoping on stable
   Cargo, so a single catastrophic outlier vetoes crate-wide adoption.
 - **PGO (+BOLT) probe on bench binaries**: inconclusive — this machine is
   too thermally noisy for wall-clock PGO-vs-baseline comparison (same
@@ -58,10 +58,11 @@ open. Two rules that recur often enough to state up front:
   (inlining/layout) at all.
 - **Force zmm-width AVX-512 globally (`-C target-feature=-prefer-256-bit`)**:
   real, near-universal win (60/70 functions improved, median -19.4%) but
-  `exp_checked` (+88.3%) and `pown` (+84.5%) regressed severely — Tiger
-  Lake only has one 512-bit-wide FMA port, and functions with a long serial
-  poly chain lose the free cross-copy ILP masking the default double-unrolled
-  ymm build gets. No per-function RUSTFLAGS scoping on stable Cargo, so the
+  `exp_checked` (+88.3%) and one other function (+84.5%) regressed
+  severely — Tiger Lake only has one 512-bit-wide FMA port, and functions
+  with a long serial poly chain lose the free cross-copy ILP masking the
+  default double-unrolled ymm build gets. No per-function RUSTFLAGS
+  scoping on stable Cargo, so the
   catastrophic outliers veto crate-wide adoption despite the lopsided win
   ratio.
 - **Integer fixed-point poly evaluation** (mantissa reductions, freeing FMA
@@ -1849,26 +1850,6 @@ open. Two rules that recur often enough to state up front:
 - **Small-poly Estrin audit, asin_small/sinh_small**: not bit-exact,
   measured backwards on every axis for both functions (sinh: worse
   latency+throughput+accuracy; asin: max ulp regressed 9→10).
-- **`pown` large-|n| overflow, fix attempts**: `pown(0.997296, -32767)`
-  returns `inf` instead of the true finite `3.4025991e38` — 14 compounded
-  squaring-rounding steps push the intermediate just over `f32::MAX` while
-  the true answer sits just under it (~10.2% of a structured
-  boundary-focused sweep hit this). A `Df32`-precision-only fix doesn't
-  help (buys back precision, not range — a `Df32` pair is already
-  `(inf, x)` once its primary word overflows). A pure exponent-tracking
-  range-extension fix also fails alone (renormalizing doesn't reduce the
-  number of rounding events, just relabels the same error at a different
-  threshold). The combined precision+range fix (`WideFloat`: Df32 mantissa
-  + tracked exponent) works correctness-wise and was eventually made to
-  auto-vectorize (needs 4-iteration loop groups, not 8, and several
-  codegen fixes for saturating-cast/scalar-fallback traps) — but the real
-  `mca` numbers are decisive: latency ~11x (1922 vs 176 cyc), throughput
-  ~30x (115 vs 3.8 cyc/elem). Fully rejected on cost, not feasibility. A
-  cheaper reciprocal-only Df32 seed (option 2) barely touches the original
-  bug (6/18k cases fixed) though it does halve max ulp on the existing
-  documented |n|≤8/64 ranges — also separately blocked by an mca-tooling
-  limitation (llvm-mca can't parse the region once LLVM hoists n's sign
-  branch outside the loop). `pown` remains unfixed for large |n|.
 - **remainder_wide vs remainder_checked "bit-identical" claim**: two real,
   narrow exceptions found via denser standing-test re-runs (not fixed,
   both documented and excluded from the test domain instead): (1) denormal
@@ -3863,9 +3844,7 @@ worked, which is what makes the next one findable. The code itself is in
        `exp_checked` 46.06 = ~102, consistent), `powf`/`powf_pos`/
        `powf_unchecked`/`signed_pow` are all `exp2(y*log2(x))` with the
        log on `x`, and `diff_of_products`/`cross2` take `x` as a live fma
-       operand. `pown`'s invariant `n` is `black_box`ed so its
-       bit-testing loop cannot constant-fold (that case has its own
-       `pown_const` regions, asserted separately by codegen_check).
+       operand.
 
 201. **Two more harness facts, both learned the expensive way
      2026-07-28** while running several experiments in parallel:

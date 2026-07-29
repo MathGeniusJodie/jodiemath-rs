@@ -98,14 +98,6 @@ impl Df32 {
         Self(s, lo)
     }
     #[inline(always)]
-    pub fn square(self) -> Self {
-        let p = self.0 * self.0;
-        let e = fma(self.0, self.0, -p);
-        //let lo = fma(self.1, self.0, e) + fma(self.0, self.1, self.1 * self.1);
-        let lo = fma(self.0, self.1 * 2., e);
-        Self(p, lo)
-    }
-    #[inline(always)]
     pub fn quick_add_df(self, rhs: Self) -> Self {
         let (s, e) = quick_two_sum(self.0, rhs.0);
         let (s, e) = quick_two_sum(s, e + self.1 + rhs.1);

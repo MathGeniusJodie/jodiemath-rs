@@ -499,7 +499,7 @@ throughput_fn!(thr_hypot, "hypot_throughput", |x: f32| hypot(x, 1.0));
 // doesn't fit latency_fn!/throughput_fn!'s Fn(f32)->f32 shape -- see
 // quickbench.rs for those instead (an adapter closure works there;
 // clog's own branching also risks the multi-exit-path region-marker
-// corruption already documented for pown_small/ldexp/frexp/rootn, not
+// corruption already documented for ldexp/frexp/rootn, not
 // worth the risk for a function whose cost is just its already-measured
 // constituents).
 latency_fn!(lat_cabs, "cabs_latency", |x: f32| cabs(x, 1.0));
@@ -554,7 +554,7 @@ throughput_fn!(thr_normalize4, "normalize4_throughput", |x: f32| {
 // computes w=c*d and e=fma(-c,d,w) from those operands alone -- with literal
 // constants LLVM folds both to compile-time values and the chain collapses to
 // one fma + one add, understating the real 1 mul + 2 fma + 1 add cost. Same
-// reasoning as pown's `n`/powf's `y` above.
+// reasoning as powf's `y` above.
 latency_fn!(lat_diff_of_products, "diff_of_products_latency", {
     let b = black_box(1.7);
     let c = black_box(2.3);
@@ -584,7 +584,7 @@ throughput_fn!(thr_cross2, "cross2_throughput", {
 latency_fn!(lat_rsqrt, "rsqrt_latency", rsqrt);
 throughput_fn!(thr_rsqrt, "rsqrt_throughput", rsqrt);
 
-// black_box'd 2nd arg, same reasoning as pown's `n` below and atan2/hypot
+// black_box'd 2nd arg, same reasoning as powf's `y` above and atan2/hypot
 // above: a literal `2.0` exponent is a compile-time-known even integer,
 // letting LLVM fold away powf's y==0.0/y_int/y_odd branches entirely and
 // understating its real branchy cost.
@@ -634,45 +634,6 @@ throughput_fn!(thr_powf_unchecked, "powf_unchecked_throughput", {
     move |x: f32| powf_unchecked(x, y)
 });
 
-// black_box'd n, computed *once* before the loop/chain (not per-call
-// inside the closure -- that placement let LLVM see through it and
-// simplify pown's fixed 32-iteration loop away, undercounting the
-// realistic "runtime exponent, unknown at compile time" cost this
-// function is actually built for, see its own doc comment).
-latency_fn!(lat_pown, "pown_latency", {
-    let n = black_box(5);
-    move |x: f32| pown(x, n)
-});
-throughput_fn!(thr_pown, "pown_throughput", {
-    let n = black_box(5);
-    move |x: f32| pown(x, n)
-});
-
-// pown_small deliberately NOT wired up here: with only 8 unrolled
-// iterations (vs pown's 32), LLVM's cost model chooses to branch-
-// specialize on the shared black_box'd `n` this harness uses (cheap
-// enough to be worth it at this trip count, unlike pown's 32) instead of
-// emitting the uniform blend/select pown gets -- confirmed correct and
-// still fully vectorized for the harder, realistic per-lane-varying-`n`
-// case (checked directly via a standalone --emit=asm probe: proper
-// AVX-512 masked selects, no scalar fallback), but the branch-specialized
-// shared-n form has multiple return paths, each carrying its own copy of
-// this macro's inline-asm END marker, which corrupts llvm-mca's region
-// parser ("found an invalid region end directive"). A harness limitation
-// specific to this trip count + shared-n combination, not a code
-// correctness issue -- see quickbench.rs for pown_small's real wall-clock
-// numbers instead.
-
-// pown_const<N>: idea #153, standing codegen verification (not just
-// doc-comment "advice") that the const-generic exponent really does
-// constant-fold the whole 32-iteration bit-testing loop away, for a
-// representative small positive N (few bits set), a multi-bit positive N,
-// and a negative N (reciprocal path). codegen_check.rs asserts these
-// regions contain no branch/loop-back instruction at all.
-latency_fn!(lat_pown_const3, "pown_const3_latency", pown_const::<3>);
-latency_fn!(lat_pown_const7, "pown_const7_latency", pown_const::<7>);
-latency_fn!(lat_pown_const_neg5, "pown_const_neg5_latency", pown_const::<-5>);
-
 latency_fn!(lat_powf_checked, "powf_checked_latency", {
     let y = black_box(2.0);
     move |x: f32| powf_checked(x, y)
@@ -696,8 +657,8 @@ latency_fn!(lat_remainder, "remainder_latency", {
     let y = black_box(3.0);
     move |x: f32| remainder(x, y)
 });
-// remainder_throughput deliberately NOT wired up here (same reasoning as
-// pown_small's own precedent above): after the x==0.0 zero/nan fix
+// remainder_throughput deliberately NOT wired up here: after the
+// x==0.0 zero/nan fix
 // (backlog idea #85's own follow-up, 2026-07-09), LLVM branch-specializes
 // this short function's vectorized loop on the shared black_box'd `y`,
 // producing multiple physical return paths that each carry their own
@@ -935,7 +896,6 @@ fn main() {
         lat_linear_to_srgb, thr_linear_to_srgb;
         lat_signed_pow, thr_signed_pow;
         lat_powf_unchecked, thr_powf_unchecked;
-        lat_pown, thr_pown;
         lat_powf_checked, thr_powf_checked;
         lat_powf_checked_unchecked, thr_powf_checked_unchecked;
         lat_remainder_unchecked, thr_remainder_unchecked;
@@ -952,8 +912,5 @@ fn main() {
     black_box(lat_fmod_checked(black_box(1.234)));
     black_box(lat_rem_euclid(black_box(1.234)));
     black_box(lat_div_euclid(black_box(1.234)));
-    black_box(lat_pown_const3(black_box(1.234)));
-    black_box(lat_pown_const7(black_box(1.234)));
-    black_box(lat_pown_const_neg5(black_box(1.234)));
     black_box(&arr_out);
 }

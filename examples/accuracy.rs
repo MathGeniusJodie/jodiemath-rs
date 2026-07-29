@@ -647,6 +647,10 @@ fn main() {
         report("sin (in-domain)", &s, t0);
         let s = measure!(sin_domain, |x: f32| x.sin(), sin_ref);
         report("std sin (in-domain)", &s, t0);
+        // std on the same |x|<=1e6 restriction the readme's row quotes, so
+        // both columns of that row come from the same input set.
+        let s = measure!(|x: f32| x.abs() <= 1e6, |x: f32| x.sin(), sin_ref);
+        report("std sin |x|<=1e6", &s, t0);
         for (name, hi) in [
             ("sin_checked |x|<=pi/4", std::f32::consts::FRAC_PI_4),
             ("sin_checked |x|<=10", 10.0),
@@ -693,6 +697,9 @@ fn main() {
         report("cos (in-domain)", &s, t0);
         let s = measure!(cos_domain, |x: f32| x.cos(), cos_ref);
         report("std cos (in-domain)", &s, t0);
+        // std on the same |x|<=1e6 restriction the readme's row quotes.
+        let s = measure!(|x: f32| x.abs() <= 1e6, |x: f32| x.cos(), cos_ref);
+        report("std cos |x|<=1e6", &s, t0);
         for (name, hi) in [
             ("cos_checked |x|<=pi/4", std::f32::consts::FRAC_PI_4),
             ("cos_checked |x|<=10", 10.0),
@@ -1858,75 +1865,6 @@ fn main() {
             n_samples,
             t0.elapsed().as_secs_f64(),
         );
-    }
-    if run("pown") {
-        // pown(x, n) takes an i32 exponent, not the f32/f64 pair shape
-        // the rest of this harness is built around (SIMD reference via
-        // sleef) -- it's also a plain repeated-multiply algorithm with
-        // no fitted approximation to verify at SIMD width, so a simple
-        // scalar random sweep against f64::powi is sufficient ground
-        // truth here, no vectorized reference needed.
-        //
-        // Two ranges, since exponentiation-by-squaring's accumulated
-        // rounding grows with |n| (each squaring/multiply step is its
-        // own correctly-rounded op, but there are ~log2(|n|) of them) --
-        // small n (the overwhelmingly common real use: squares, cubes,
-        // reciprocals) is near-perfect; large n degrades gracefully,
-        // same characteristic any repeated-squaring algorithm has, not a
-        // bug to chase further for a utility function like this one.
-        let pown_sweep = |f: &dyn Fn(f32, i32) -> f32, lo: i32, hi: i32, label: &str| {
-            let mut sum = 0u64;
-            let mut max = 0u64;
-            let mut worst = (0.0f32, 0i32);
-            let n_samples = 20_000_000u64;
-            for _ in 0..n_samples {
-                let x = f32::from_bits(rand::rng().random::<u32>());
-                let n: i32 = rand::rng().random_range(lo..=hi);
-                if !x.is_finite() || x == 0.0 {
-                    continue;
-                }
-                let got = f(x, n);
-                let want = (x as f64).powi(n) as f32;
-                let d = ulp_diff(got, want);
-                sum += d;
-                if d > max {
-                    max = d;
-                    worst = (x, n);
-                }
-            }
-            println!(
-                "{:24} avg ulp {:>10.4}  max ulp {:>10}  worst x={:e},n={} ({:>12} samples, {:>7.2}s elapsed)",
-                label,
-                sum as f64 / n_samples as f64,
-                max,
-                worst.0,
-                worst.1,
-                n_samples,
-                t0.elapsed().as_secs_f64(),
-            );
-        };
-        pown_sweep(&pown, -8, 8, "pown (|n|<=8)");
-        pown_sweep(&pown, -64, 64, "pown (|n|<=64)");
-        // pown_small's own contract (|n| <= 255) -- bit-identical to pown
-        // whenever both are in-domain, so this also doubles as a
-        // regression check on the two shared |n|<=8/|n|<=64 buckets.
-        pown_sweep(&pown_small, -8, 8, "pown_small (|n|<=8)");
-        pown_sweep(&pown_small, -64, 64, "pown_small (|n|<=64)");
-        pown_sweep(&pown_small, -255, 255, "pown_small (|n|<=255)");
-        // pown_small_accurate: Df32-compensated squaring chain (see its
-        // own doc comment), same |n|<=255 contract as pown_small -- real
-        // improvement expected (avg/max ulp roughly halved on the
-        // dense-|n| bucket), not a full fix.
-        pown_sweep(&pown_small_accurate, -8, 8, "pown_small_accurate (|n|<=8)");
-        pown_sweep(&pown_small_accurate, -64, 64, "pown_small_accurate (|n|<=64)");
-        pown_sweep(&pown_small_accurate, -255, 255, "pown_small_accurate (|n|<=255)");
-        // pown_16 (backlog idea #77): |n| <= 65535 contract -- bit-identical
-        // to pown whenever both are in-domain, so the shared |n|<=8/|n|<=64
-        // buckets also double as a regression check, same as pown_small's
-        // own entries above.
-        pown_sweep(&pown_16, -8, 8, "pown_16 (|n|<=8)");
-        pown_sweep(&pown_16, -64, 64, "pown_16 (|n|<=64)");
-        pown_sweep(&pown_16, -65535, 65535, "pown_16 (|n|<=65535)");
     }
     if run("rootn") {
         // x^(1/n) (backlog idea #75): reference matches the documented

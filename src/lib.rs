@@ -523,8 +523,8 @@ pub fn exp2_checked(x: f32) -> f32 {
 /// bit-exactly).
 ///
 /// Not wired into `examples/mca.rs`/`mca_target.rs`: this function's own
-/// multi-exit-path branching (matching `pown_small`'s own documented
-/// harness limitation) corrupts llvm-mca's inline-asm region markers
+/// multi-exit-path branching (the same documented harness limitation
+/// `frexp`/`rootn` have) corrupts llvm-mca's inline-asm region markers
 /// for the *whole* assembly file, not just this region -- confirmed by
 /// removing it restores every other function's mca numbers. Use
 /// quickbench for this one.
@@ -4392,8 +4392,9 @@ pub fn xlog1py(x: f32, y: f32) -> f32 {
 }
 
 /// (1+x)^n (backlog idea #72), the compound-interest/growth-rate
-/// kernel: `pown((1.0+x), n)` (or `powf`) forms `1.0+x` as its own
-/// first step, losing exactly the low-order bits of a small `x` the
+/// kernel: raising `1.0+x` to the `n`th power directly (via `powf`)
+/// forms `1.0+x` as its own first step, losing exactly the low-order
+/// bits of a small `x` the
 /// same way a naive `exp(x)-1` loses them for `expm1` -- routing
 /// through `n*log1p(x)` instead keeps `x`'s own precision intact all
 /// the way through the exponent. `exp_checked` (not the unchecked
@@ -5180,7 +5181,7 @@ pub fn powf_unchecked(x: f32, y: f32) -> f32 {
 /// Not wired into `examples/mca.rs`/`mca_target.rs`: this function's own
 /// multi-exit-path branching (`n==0`/`n==1`/negative-even-domain-error)
 /// corrupts llvm-mca's inline-asm region markers for the whole assembly
-/// file, the same documented harness limitation `pown_small`/`ldexp`
+/// file, the same documented harness limitation `ldexp`/`frexp`
 /// already have. Use quickbench for this one too.
 #[inline(always)]
 pub fn rootn(x: f32, n: i32) -> f32 {
@@ -5237,177 +5238,6 @@ pub fn linear_to_srgb(l: f32) -> f32 {
     let p = exp2_checked(log_family_wrapper_discarded_unless_normal!(l, log_2_normal) * (1.0 / 2.4));
     let high = fma(1.055, p, -0.055);
     if l <= 0.0031308 { low } else { high }
-}
-
-/// x^n for integer `n` (`i32`), via exponentiation by squaring. Each
-/// step is a single correctly-rounded f32 multiply -- no poly, no log/
-/// exp composition -- so this sidesteps `powf`'s own "amplifies log_2's
-/// rounding error by y" issue (see its own doc comment) entirely for
-/// integer exponents.
-///
-/// Fully unrolled and branchless -- NOT a data-dependent `while` loop
-/// (trip count = `n`'s bit length): that only auto-vectorized when `n`
-/// was a compile-time constant, a genuine violation of this crate's
-/// "every public function must auto-vectorize" requirement for the
-/// realistic "same exponent, varying base" calling pattern (confirmed
-/// via `--emit=asm`: zero vector instructions). This design instead runs
-/// exactly 32 iterations, squaring `base` unconditionally every step and
-/// selecting per bit of `n` -- a fixed operation sequence, so it
-/// vectorizes even for per-lane-*varying* `n`. Real cost: always pays
-/// for 32 squarings + selects regardless of how small `n` is -- a
-/// deliberate throughput-for-correctness trade.
-///
-/// `n=0` gives `1.0` for any `x` (including `0.0`, matching `powf`'s own
-/// convention) for free: every one of the 31 iterations selects the
-/// "don't multiply" branch, since `n`'s bits are all zero. Negative `x`
-/// needs no special-casing either -- integer powers of a negative base
-/// are always well-defined (unlike `powf`'s general real-exponent
-/// case), so plain repeated multiplication already gets the sign right.
-// Shared by pown/pown_small/pown_const -- the exponentiation-by-squaring
-// body itself (invert-if-negative, then square-and-select loop); only
-// the iteration count differs (32 to cover i32::MIN's full range, 8 for
-// pown_small's narrower |n|<=255 contract) along with whether `n` is a
-// runtime i32 or a const generic. Macro, not a fn -- see exp_r_poly!.
-macro_rules! pown_body {
-    ($x:expr, $n:expr, $iters:expr) => {{
-        let mut base = if $n < 0 { 1.0 / $x } else { $x };
-        let un = $n.unsigned_abs();
-        let mut result = 1.0f32;
-        for i in 0..$iters {
-            let bit_set = (un >> i) & 1 == 1;
-            result = if bit_set { result * base } else { result };
-            base *= base;
-        }
-        result
-    }};
-}
-
-#[inline(always)]
-pub fn pown(x: f32, n: i32) -> f32 {
-    // Invert x *before* the squaring loop (not the final result after)
-    // when n is negative -- computing x^|n| first and reciprocating at
-    // the end can overflow at an intermediate squaring step even when
-    // the true (small) final answer wouldn't (e.g. pown(1.8e19, -2):
-    // 1.8e19^2 alone overflows f32 even though its reciprocal doesn't).
-    // Squaring the already-small reciprocal avoids that, and also
-    // handles 0^negative (`1.0/0.0 = inf`, then `inf^n = inf`) and
-    // inf^negative (`1.0/inf = 0`, then `0^n = 0`) for free.
-    // 32, not 31: i32::MIN's magnitude is exactly 2^31, needing bit
-    // index 31 (a 0..31 range returned 1.0 instead of the correct 0.0
-    // for pown(2.0, i32::MIN)).
-    pown_body!(x, n, 32u32)
-}
-
-/// `pown` restricted to `|n| <= 255`: same exponentiation-by-squaring
-/// algorithm, but only 8 unrolled iterations instead of 32 (`255` is
-/// `2^8-1`, so bit index 8 and above are always zero within this
-/// contract, unlike `pown`'s own need to cover `i32::MIN`'s `2^31`) --
-/// 4x fewer squarings/selects for what's overwhelmingly the common case
-/// (small integer exponents). Bit-identical to `pown` whenever the
-/// contract holds; several times faster on both latency and throughput
-/// (wall-clock).
-///
-/// Still fully vectorizes for the harder per-lane-*varying* n case
-/// (confirmed via `--emit=asm`: AVX-512 masked selects, no scalar
-/// fallback) -- but isn't wired into `examples/mca.rs`/`mca_target.rs`:
-/// with only 8 iterations, LLVM branch-specializes on the harness's
-/// shared/uniform-`n` shape, and the multi-exit-path function corrupts
-/// llvm-mca's inline-asm region markers. A harness limitation, not a
-/// code correctness issue; use quickbench for this one.
-#[inline(always)]
-pub fn pown_small(x: f32, n: i32) -> f32 {
-    pown_body!(x, n, 8u32)
-}
-
-/// `pown` restricted to `|n| <= 65535` (backlog idea #77): same lever as
-/// `pown_small` above, one tier wider -- 16 unrolled iterations instead
-/// of 32 (`65535` is `2^16-1`), for callers whose exponents exceed
-/// `pown_small`'s `|n| <= 255` contract but still don't need `pown`'s
-/// full `i32::MIN`-covering range. Bit-identical to `pown` whenever the
-/// contract holds. Same harness limitation as `pown_small` (LLVM
-/// branch-specializes the multi-exit-path body against mca's
-/// uniform-`n` shape) -- not wired into `examples/mca.rs`/
-/// `mca_target.rs`; use quickbench for this one too.
-#[inline(always)]
-pub fn pown_16(x: f32, n: i32) -> f32 {
-    pown_body!(x, n, 16u32)
-}
-
-/// `pown_small`, but with `base`'s own repeated-squaring chain carried in
-/// `Df32` (compensated, mantissa-only) instead of plain `f32`: each
-/// squaring's rounding error is exactly recovered instead of silently
-/// discarded, so it doesn't compound across up to 8 squarings the way
-/// `pown_small`'s plain form does. NOT the already-rejected `WideFloat`
-/// approach (Df32 mantissa *and* tracked exponent, needed there only to
-/// fix `pown`'s large-`|n|` *overflow* bug near `i32::MIN`-scale
-/// exponents, 32 iterations deep) -- `|n| <= 255` never approaches that
-/// specific *bug's* regime (a finite true answer computed via an
-/// intermediate that overflows), so plain Df32 mantissa compensation is
-/// sufficient here, no exponent tracking needed. `result` itself stays a
-/// single f32 (no general `Df32*Df32` multiply exists in this crate, and
-/// none is needed): each multiply-in step uses `base`'s full `.0+.1`
-/// precision via one compensated `fma` (`result*base.0 + result*base.1`),
-/// recovering the accuracy `base`'s own squaring chain would otherwise
-/// have lost, without carrying `result`'s own multiplies in double
-/// precision too.
-///
-/// `base` genuinely does overflow to `+-inf` partway through the loop
-/// for `|x| > 1` once enough squarings have piled up (same as
-/// `pown_small`'s own plain-f32 `base`) -- harmless there (`inf*inf=inf`
-/// stays correctly infinite), but `Df32::square`'s error term
-/// (`fma(inf,inf,-inf)`) is a genuine `inf-inf` NaN, which would
-/// silently poison every later iteration once folded into `result` via
-/// the compensated `fma` above (`fma(result, NaN, ...)` is NaN). Fixed
-/// by collapsing `base` back to a plain (zero-error-term) `Df32` the
-/// moment its high word stops being finite, discarding only the
-/// already-meaningless low word, not the (still correct) `+-inf`/value
-/// itself.
-///
-/// A second, subtler overflow interaction survives that fix: once
-/// `result` itself has already overflowed to `+-inf` from an earlier
-/// iteration's plain `result*base.0` (matching `pown_small`'s own
-/// behavior exactly -- not a bug on its own), the *next* iteration's
-/// compensation term `result*base.1` becomes `inf*0.0` (`base.1` being
-/// exactly the placeholder above) -- a genuine indeterminate-form NaN,
-/// this time from `result`'s side rather than `base`'s. Guarded by
-/// skipping the compensated `fma` (using plain `result*base.0` instead)
-/// whenever `base.1` is exactly `0.0`; the branchless `if` here is a
-/// select, not an arithmetic combine, so the discarded (potentially NaN)
-/// `fma` branch never reaches `result`.
-#[inline(always)]
-pub fn pown_small_accurate(x: f32, n: i32) -> f32 {
-    let mut base = if n < 0 { Df32::from_f32(1.0 / x) } else { Df32::from_f32(x) };
-    let un = n.unsigned_abs();
-    let mut result = 1.0f32;
-    for i in 0..8u32 {
-        let bit_set = (un >> i) & 1 == 1;
-        let plain = result * base.0;
-        let multiplied = if base.1 == 0.0 { plain } else { fma(result, base.1, plain) };
-        result = if bit_set { multiplied } else { result };
-        let squared = base.square();
-        base = if squared.0.is_finite() { squared } else { Df32::from_f32(squared.0) };
-    }
-    result
-}
-
-/// `pown` with a compile-time-known exponent: same algorithm as `pown`,
-/// but with `N` as a const generic instead of a runtime `i32`, so
-/// `N.unsigned_abs()` and `N < 0` are compile-time constants and the
-/// whole 32-iteration bit-testing loop is expected to constant-fold away
-/// entirely, leaving only the exact minimal sequence of multiplies this
-/// specific exponent needs (no runtime branch or select at all) -- the
-/// "same exponent, hard-coded at the call site" pattern (`x*x*x`-style
-/// cubes/squares/reciprocals) that motivated `pown`'s own square-and-
-/// multiply redesign in the first place, taken to its logical conclusion
-/// once the exponent doesn't need to vary per call. Monomorphized generics
-/// don't automatically guarantee LLVM finishes the constant folding, only
-/// that it has enough information to -- `examples/codegen_check.rs` holds
-/// a standing assertion (for N=3, 7, -5) that this really does fold to a
-/// branch/loop-free multiply sequence, instead of leaving that as manual
-/// `--emit=asm` advice.
-#[inline(always)]
-pub fn pown_const<const N: i32>(x: f32) -> f32 {
-    pown_body!(x, N, 32u32)
 }
 
 /// Higher-accuracy variant of [`powf`]: `exp2(log_2(x)*y)` amplifies
