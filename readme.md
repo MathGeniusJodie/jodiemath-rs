@@ -91,79 +91,99 @@ remainder_unchecked (+) |    0.000   |     0     | (bit-identical to remainder o
 
 # benchmarks
 Run on i5-1145G7, -C target-cpu=native (now set in .cargo/config.toml)
+
+Both wall-clock tables below were re-recorded together in one sitting (min
+over 28 reps), so their rows are comparable to each other but not to older
+copies of this table -- std's own numbers moved too, glibc 2.43's `asinhf`
+in particular being ~3x faster than whatever was last recorded here.
+
+The re-record was forced by a benchmark fix. quickbench's dependency chain
+and its throughput input array were both hardcoded to `|x|` in `[2,4)`,
+which is *outside the domain* of `asin`/`acos`/`atanh`. libm takes its
+domain check and returns NaN in a couple of ns, while this crate's
+branchless versions compute the full result either way -- so those three
+published "0.2x vs std" on latency while measuring an early `ret`. In
+domain they are 1.1-1.4x *ahead* of std, and their throughput win had been
+undersold by roughly 2x. Every benched function now names its own input
+`Band` (examples/support/mca_common.rs), and quickbench walks the chain
+untimed first and complains on stderr if the band ever leaves the domain --
+which is how `log1pmx` turned up as a fourth case, out of domain via its
+own negative output rather than its magnitude. The llvm-mca table further
+down needed no change: its numbers came back bit-identical, since llvm-mca
+reads the instruction stream and never sees a value.
 ```
 Serial latency (dependency chain, examples/quickbench.rs; lower is better)
               | jodie   | std     | improvement
 --------------|---------|---------|------------
-         cbrt | 12.9 ns | 22.0 ns | 1.7x
-cbrt_unchecked| 10.1 ns | 21.2 ns | 2.1x
-cbrt_accurate | 17.0 ns | 22.0 ns | 1.3x
-cbrt_accurate_unchecked| 18.7 ns | 27.2 ns | 1.5x
-        rcbrt | 15.5 ns |     -   |  -
-          cos | 12.7 ns | 12.8 ns | 1.0x
-  cos_checked | 30.3 ns | 12.8 ns | 0.4x
-         exp2 |  8.5 ns | 13.3 ns | 1.6x
- exp2_checked | 13.3 ns | 13.3 ns | 1.0x
-        exp10 | 12.1 ns |     -   |  -
-exp10_checked | 17.5 ns |     -   |  -
-         log2 | 13.1 ns | 14.9 ns | 1.1x
-log2_unchecked |  8.5 ns |     -   |  -
-          sin | 10.9 ns | 12.9 ns | 1.2x
-  sin_checked | 29.2 ns | 12.9 ns | 0.4x
-           ln | 15.3 ns | 14.5 ns | 0.9x
-  ln_unchecked |  8.8 ns |     -   |  -
-        log10 | 14.3 ns | 16.6 ns | 1.2x
-log10_unchecked|  8.8 ns |     -   |  -
-        log1p | 16.5 ns | 21.1 ns | 1.3x
-       log2p1 | 12.8 ns |     -   |  -
-          exp |  9.9 ns |  9.5 ns | 1.0x
-  exp_checked | 12.0 ns |  9.5 ns | 0.8x
-        expm1 | 11.3 ns | 13.7 ns | 1.2x
-exp_m1_over_x | 12.8 ns |     -   |  -
-       exp2m1 | 11.5 ns |     -   |  -
-         sinh | 14.0 ns | 14.0 ns | 1.0x
-         cosh | 13.8 ns | 14.0 ns | 1.0x
- sinh_checked | 21.5 ns | 14.0 ns | 0.7x
- cosh_checked | 20.1 ns | 14.0 ns | 0.7x
-         tanh | 17.7 ns | 16.5 ns | 0.9x
-      sigmoid | 15.4 ns |     -   |  -
-     softplus | 24.7 ns |     -   |  -
-   logaddexp | 24.5 ns |     -   |  -
-        asinh | 43.7 ns | 86.3 ns | 2.0x
-        acosh | 35.1 ns | 27.0 ns | 0.8x
-        atanh | 23.2 ns |  4.2 ns | 0.2x
-         asin | 19.4 ns |  4.1 ns | 0.2x
-         acos | 13.0 ns |  4.0 ns | 0.3x
-         atan | 14.0 ns | 19.3 ns | 1.4x
- atan_latency | 14.6 ns |     -   |  -
-      atan2 (*) | 23.6 ns | 29.9 ns | 1.3x
-atan2_unchecked | 18.1 ns |     -   |  -
-          tan | 23.5 ns | 27.3 ns | 1.2x
-        sinpi |  9.0 ns |     -   |  -
-        cospi | 10.7 ns |     -   |  -
-        tanpi | 16.0 ns |     -   |  -
-         sind | 10.8 ns |     -   |  -
-         cosd | 12.6 ns |     -   |  -
-         tand | 17.3 ns |     -   |  -
-          erf | 21.0 ns |     -   |  -
-         erfc | 21.6 ns |     -   |  -
-        erfcx | 13.4 ns |     -   |  -
-      hypot (*) |  5.1 ns | 13.9 ns | 2.7x
-hypot_unchecked |  5.0 ns |     -   |  -
-  hypot_checked | 19.9 ns | 11.9 ns | 0.6x
-       rhypot |  7.7 ns |     -   |  -
-        rsqrt |  6.7 ns |     -   |  -
-      powf (*)| 22.2 ns | 16.9 ns | 0.8x
-powf_unchecked | 18.7 ns | 16.8 ns | 0.9x
- powf_checked | 34.4 ns | 16.9 ns | 0.5x
-powf_checked_unchecked| 38.1 ns | 17.1 ns | 0.4x
- remainder (*)|  8.6 ns |     -   |  -
-remainder_unchecked|  8.0 ns |     -   |  -
-remainder_checked| 12.3 ns |     -   |  -
-   remainder_ieee|  7.1 ns |     -   |  -
-   remainder_wide| 45.4 ns |     -   |  -
-         fmod|  7.6 ns |     -   |  -
-fmod_unchecked|  6.6 ns |     -   |  -
+         cbrt | 15.8 ns | 23.7 ns | 1.5x
+cbrt_unchecked| 14.1 ns | 23.7 ns | 1.7x
+cbrt_accurate | 22.6 ns | 23.7 ns | 1.0x
+cbrt_accurate_unchecked| 21.6 ns | 23.7 ns | 1.1x
+        rcbrt | 22.4 ns |    -    |  -
+          cos | 18.3 ns | 16.4 ns | 0.9x
+  cos_checked | 37.9 ns | 16.4 ns | 0.4x
+         exp2 | 11.1 ns | 12.8 ns | 1.1x
+ exp2_checked | 14.8 ns | 12.8 ns | 0.9x
+        exp10 | 16.4 ns |    -    |  -
+exp10_checked | 17.6 ns |    -    |  -
+         log2 | 12.3 ns | 13.9 ns | 1.1x
+log2_unchecked | 11.8 ns |    -    |  -
+          sin | 16.3 ns | 17.1 ns | 1.0x
+  sin_checked | 37.1 ns | 17.1 ns | 0.5x
+           ln | 12.9 ns | 12.6 ns | 1.0x
+  ln_unchecked | 11.0 ns |    -    |  -
+        log10 | 12.2 ns | 14.5 ns | 1.2x
+log10_unchecked| 10.8 ns |    -    |  -
+        log1p | 15.4 ns | 17.1 ns | 1.1x
+       log2p1 | 13.4 ns |    -    |  -
+          exp | 11.2 ns | 10.5 ns | 0.9x
+  exp_checked | 12.8 ns | 10.5 ns | 0.8x
+        expm1 | 11.5 ns | 15.0 ns | 1.3x
+exp_m1_over_x | 15.3 ns |    -    |  -
+       exp2m1 | 12.4 ns |    -    |  -
+         sinh | 13.5 ns | 15.7 ns | 1.2x
+         cosh | 13.3 ns | 15.8 ns | 1.2x
+ sinh_checked | 16.9 ns | 15.7 ns | 0.9x
+ cosh_checked | 15.9 ns | 15.8 ns | 1.0x
+         tanh | 15.9 ns | 17.3 ns | 1.1x
+      sigmoid | 15.8 ns |    -    |  -
+     softplus | 18.3 ns |    -    |  -
+   logaddexp | 18.8 ns |    -    |  -
+        asinh | 23.8 ns | 22.8 ns | 1.0x
+        acosh | 20.2 ns | 22.1 ns | 1.1x
+        atanh | 20.3 ns | 22.2 ns | 1.1x
+         asin | 12.8 ns | 15.5 ns | 1.2x
+         acos | 12.1 ns | 16.6 ns | 1.4x
+         atan | 15.9 ns | 21.6 ns | 1.4x
+ atan_latency | 16.5 ns |    -    |  -
+      atan2 (*) | 20.6 ns | 26.7 ns | 1.3x
+atan2_unchecked | 20.4 ns |    -    |  -
+          tan | 19.3 ns | 22.8 ns | 1.2x
+        sinpi | 12.8 ns |    -    |  -
+        cospi | 15.5 ns |    -    |  -
+        tanpi | 15.2 ns |    -    |  -
+         sind | 15.8 ns |    -    |  -
+         cosd | 18.2 ns |    -    |  -
+         tand | 22.9 ns |    -    |  -
+          erf | 16.2 ns |    -    |  -
+         erfc | 17.2 ns |    -    |  -
+        erfcx | 10.9 ns |    -    |  -
+      hypot (*) | 6.0 ns  | 11.2 ns | 1.9x
+hypot_unchecked | 6.2 ns  |    -    |  -
+  hypot_checked | 18.2 ns | 11.2 ns | 0.6x
+       rhypot | 8.9 ns  |    -    |  -
+        rsqrt | 7.5 ns  |    -    |  -
+      powf (*)| 24.0 ns | 19.3 ns | 0.8x
+powf_unchecked | 21.1 ns | 19.3 ns | 0.9x
+ powf_checked | 38.6 ns | 19.3 ns | 0.5x
+powf_checked_unchecked| 35.0 ns | 19.3 ns | 0.6x
+ remainder (*)| 10.7 ns |    -    |  -
+remainder_unchecked| 9.3 ns  |    -    |  -
+remainder_checked| 13.0 ns |    -    |  -
+   remainder_ieee| 9.2 ns  |    -    |  -
+   remainder_wide| 46.1 ns |    -    |  -
+         fmod| 9.1 ns  |    -    |  -
+fmod_unchecked| 7.3 ns  |    -    |  -
 ```
 (*) atan2/hypot/powf/remainder's jodie numbers jumped here vs. older
 recordings of this table -- not a regression, a benchmark fix: a literal
@@ -181,75 +201,75 @@ never measuring std's actual powf cost at all. All four functions (plus
 Throughput (independent array evals over [f32; 4096], examples/quickbench.rs; lower is better)
               | jodie    | std     | improvement
 --------------|----------|---------|------------
-         cbrt | 0.37 ns  | 3.93 ns | 10.6x
-cbrt_unchecked| 0.25 ns  | 4.04 ns | 16.2x
-cbrt_accurate | 0.67 ns  | 3.93 ns | 5.9x
-cbrt_accurate_unchecked| 0.55 ns  | 5.27 ns | 9.6x
-        rcbrt | 0.39 ns  |     -    |  -
-          cos | 0.27 ns  | 3.41 ns | 12.6x
-  cos_checked | 1.61 ns  | 3.41 ns | 2.1x
-         exp2 | 0.23 ns  | 3.13 ns | 13.7x
- exp2_checked | 0.48 ns  | 3.13 ns | 6.6x
-        exp10 | 0.33 ns  |     -   |  -
-exp10_checked | 0.57 ns  |     -   |  -
-         log2 | 0.53 ns  | 4.10 ns | 7.8x
-log2_unchecked | 0.23 ns  |     -    |  -
-          sin | 0.22 ns  | 3.10 ns | 14.4x
-  sin_checked | 1.49 ns  | 3.10 ns | 2.1x
-           ln | 0.55 ns  | 3.82 ns | 7.0x
-  ln_unchecked | 0.26 ns  |     -    |  -
-        log10 | 0.53 ns  | 5.30 ns | 10.1x
-log10_unchecked| 0.26 ns  |     -    |  -
-        log1p | 0.60 ns  | 6.28 ns | 10.4x
-       log2p1 | 0.54 ns  |     -    |  -
-          exp | 0.31 ns  | 2.47 ns | 8.0x
-  exp_checked | 0.39 ns  | 2.47 ns | 6.3x
-        expm1 | 0.46 ns  | 5.56 ns | 12.1x
-exp_m1_over_x | 0.44 ns  |     -    |  -
-       exp2m1 | 0.49 ns  |     -    |  -
-         sinh | 0.58 ns  | 5.62 ns | 9.7x
-         cosh | 0.50 ns  | 5.55 ns | 11.2x
- sinh_checked | 0.81 ns  | 5.62 ns | 6.9x
- cosh_checked | 0.73 ns  | 5.55 ns | 7.6x
-         tanh | 0.64 ns  | 5.23 ns | 8.2x
-      sigmoid | 0.43 ns  |     -    |  -
-     softplus | 1.33 ns  |     -    |  -
-   logaddexp | 1.36 ns  |     -    |  -
-        asinh | 2.19 ns  | 41.42 ns | 18.9x
-        acosh | 1.32 ns  |  6.17 ns | 4.7x
-        atanh | 0.79 ns  |  4.54 ns | 5.7x
-         asin | 0.46 ns  |  4.01 ns | 8.7x
-         acos | 0.26 ns  |  4.01 ns | 15.6x
-         atan | 0.33 ns  |  6.32 ns | 19.2x
- atan_latency | 0.36 ns  |     -    |  -
-  atan2 (*) | 0.65 ns  | 13.06 ns | 20.2x
-atan2_unchecked | 0.48 ns  |     -    |  -
-          tan | 0.76 ns  |  9.07 ns | 11.9x
-        sinpi | 0.18 ns  |     -    |  -
-        cospi | 0.25 ns  |     -    |  -
-        tanpi | 0.65 ns  |     -    |  -
-         sind | 0.24 ns  |     -    |  -
-         cosd | 0.31 ns  |     -    |  -
-         tand | 0.58 ns  |     -    |  -
-          erf | 0.70 ns  |     -    |  -
-         erfc | 0.84 ns  |     -    |  -
-        erfcx | 0.78 ns  |     -    |  -
-  hypot (*) | 0.17 ns  |  2.42 ns | 14.2x
-hypot_unchecked | 0.17 ns  |     -    |  -
-  hypot_checked | 0.40 ns  |  2.72 ns | 6.8x
-       rhypot | 0.31 ns  |     -    |  -
-        rsqrt | 0.31 ns  |     -    |  -
-      powf (*)| 1.16 ns  |  5.43 ns | 4.7x
-powf_unchecked | 0.70 ns  |  5.86 ns | 8.3x
- powf_checked | 1.79 ns  |  5.43 ns | 3.0x
-powf_checked_unchecked| 1.88 ns  |  6.32 ns | 3.4x
- remainder (*)| 0.16 ns  |     -    |  -
-remainder_unchecked| 0.15 ns  |     -    |  -
-remainder_checked| 0.29 ns  |     -    |  -
-   remainder_ieee| 0.17 ns  |     -    |  -
-   remainder_wide| 1.76 ns  |     -    |  -
-         fmod| 0.15 ns  |     -    |  -
-fmod_unchecked| 0.15 ns  |     -    |  -
+         cbrt | 0.51 ns | 4.46 ns | 8.7x
+cbrt_unchecked| 0.32 ns | 4.46 ns | 14.1x
+cbrt_accurate | 0.91 ns | 4.46 ns | 4.9x
+cbrt_accurate_unchecked| 0.65 ns | 4.46 ns | 6.8x
+        rcbrt | 0.55 ns |    -    |  -
+          cos | 0.39 ns | 3.65 ns | 9.5x
+  cos_checked | 1.69 ns | 3.65 ns | 2.2x
+         exp2 | 0.26 ns | 2.95 ns | 11.4x
+ exp2_checked | 0.46 ns | 2.95 ns | 6.4x
+        exp10 | 0.41 ns |    -    |  -
+exp10_checked | 0.53 ns |    -    |  -
+         log2 | 0.49 ns | 3.87 ns | 7.8x
+log2_unchecked | 0.30 ns |    -    |  -
+          sin | 0.33 ns | 4.15 ns | 12.8x
+  sin_checked | 1.63 ns | 4.15 ns | 2.5x
+           ln | 0.53 ns | 3.41 ns | 6.5x
+  ln_unchecked | 0.31 ns |    -    |  -
+        log10 | 0.45 ns | 4.88 ns | 10.9x
+log10_unchecked| 0.31 ns |    -    |  -
+        log1p | 0.54 ns | 5.19 ns | 9.6x
+       log2p1 | 0.49 ns |    -    |  -
+          exp | 0.34 ns | 2.44 ns | 7.3x
+  exp_checked | 0.40 ns | 2.44 ns | 6.2x
+        expm1 | 0.46 ns | 5.51 ns | 12.0x
+exp_m1_over_x | 0.52 ns |    -    |  -
+       exp2m1 | 0.51 ns |    -    |  -
+         sinh | 0.49 ns | 6.21 ns | 12.6x
+         cosh | 0.42 ns | 6.18 ns | 14.7x
+ sinh_checked | 0.63 ns | 6.21 ns | 9.9x
+ cosh_checked | 0.53 ns | 6.18 ns | 11.7x
+         tanh | 0.47 ns | 5.57 ns | 11.7x
+      sigmoid | 0.32 ns |    -    |  -
+     softplus | 0.58 ns |    -    |  -
+   logaddexp | 0.60 ns |    -    |  -
+        asinh | 1.07 ns | 7.37 ns | 6.9x
+        acosh | 0.98 ns | 6.25 ns | 6.4x
+        atanh | 0.81 ns | 7.27 ns | 9.0x
+         asin | 0.26 ns | 6.22 ns | 23.7x
+         acos | 0.21 ns | 6.43 ns | 30.8x
+         atan | 0.35 ns | 6.83 ns | 19.3x
+ atan_latency | 0.40 ns |    -    |  -
+  atan2 (*) | 0.55 ns | 11.04 ns | 20.1x
+atan2_unchecked | 0.52 ns |    -    |  -
+          tan | 0.60 ns | 7.21 ns | 11.9x
+        sinpi | 0.35 ns |    -    |  -
+        cospi | 0.40 ns |    -    |  -
+        tanpi | 0.65 ns |    -    |  -
+         sind | 0.32 ns |    -    |  -
+         cosd | 0.44 ns |    -    |  -
+         tand | 0.79 ns |    -    |  -
+          erf | 0.56 ns |    -    |  -
+         erfc | 0.69 ns |    -    |  -
+        erfcx | 0.65 ns |    -    |  -
+  hypot (*) | 0.20 ns | 2.55 ns | 12.9x
+hypot_unchecked | 0.21 ns |    -    |  -
+  hypot_checked | 0.38 ns | 2.55 ns | 6.7x
+       rhypot | 0.36 ns |    -    |  -
+        rsqrt | 0.35 ns |    -    |  -
+      powf (*)| 1.37 ns | 6.45 ns | 4.7x
+powf_unchecked | 0.79 ns | 6.45 ns | 8.2x
+ powf_checked | 1.99 ns | 6.45 ns | 3.2x
+powf_checked_unchecked| 1.47 ns | 6.45 ns | 4.4x
+ remainder (*)| 0.23 ns |    -    |  -
+remainder_unchecked| 0.17 ns |    -    |  -
+remainder_checked| 0.34 ns |    -    |  -
+   remainder_ieee| 0.20 ns |    -    |  -
+   remainder_wide| 1.82 ns |    -    |  -
+         fmod| 0.20 ns |    -    |  -
+fmod_unchecked| 0.16 ns |    -    |  -
 ```
 (*) see the latency table's own footnote above -- same benchmark fix,
 not a regression. `powf`'s throughput ratio flips especially hard here

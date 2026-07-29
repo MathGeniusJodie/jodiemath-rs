@@ -11,15 +11,46 @@ const LAT_ITERS: u64 = 4_000_000;
 const TP_ARR: usize = 4096;
 const TP_PASSES: usize = 1024;
 const REPS: usize = 7;
+/// Chain seed. Only its mantissa survives the first `Band::mix`, so the same
+/// literal works for every band.
+const SEED: f32 = 1.234;
+/// How far `check_in_domain` walks the chain before declaring the band sound.
+const CHECK_ITERS: usize = 4096;
 
-fn bench_latency(name: &str, f: impl Fn(f32) -> f32) {
+/// Untimed pre-pass: walk the same chain `bench_latency` will time and shout
+/// if the function ever goes non-finite. A NaN means the band is outside the
+/// function's domain, which silently turns the row into a measurement of the
+/// *domain check* rather than the function -- for std that is an early `ret`
+/// a few ns long, so the comparison inverts. See `Band`'s own doc comment for
+/// the rows this actually happened to; `log1pmx` is the one this check caught
+/// on its own, and the one worth keeping the check around for: its magnitude
+/// was never the problem, its own negative output walked the chain past the
+/// `x > -1` edge, which is not something you spot by reading a domain off a
+/// signature.
+fn check_in_domain(name: &str, band: Band, f: impl Fn(f32) -> f32) {
+    let mut x = band.mix(SEED);
+    for _ in 0..CHECK_ITERS {
+        let y = f(x);
+        if !y.is_finite() {
+            eprintln!(
+                "!! {name}: f({x:e}) = {y} -- band is outside this function's domain, \
+                 the numbers below do not measure it. Pick a different Band."
+            );
+            return;
+        }
+        x = band.mix(y);
+    }
+}
+
+fn bench_latency(name: &str, band: Band, f: impl Fn(f32) -> f32) {
     let mut best = f64::INFINITY;
     for _ in 0..REPS {
-        // dependency chain; keep value in a sane domain by mixing back toward ~2.0
-        let mut x = 1.234_f32;
+        // dependency chain; `mix` keeps the value inside the band (and so
+        // inside the function's domain) without branching
+        let mut x = band.mix(SEED);
         let start = Instant::now();
         for _ in 0..LAT_ITERS {
-            x = mix(f(x));
+            x = band.mix(f(x));
         }
         black_box(x);
         let ns = start.elapsed().as_nanos() as f64 / LAT_ITERS as f64;
@@ -37,14 +68,14 @@ fn bench_latency(name: &str, f: impl Fn(f32) -> f32) {
 // concurrent work available, closer to how throughput callers (many
 // independent elements) sit between this and the single-chain extreme.
 const N_STREAMS: usize = 4;
-fn bench_latency_n(name: &str, f: impl Fn(f32) -> f32) {
+fn bench_latency_n(name: &str, band: Band, f: impl Fn(f32) -> f32) {
     let mut best = f64::INFINITY;
     for _ in 0..REPS {
-        let mut xs = [1.234_f32, 1.876, 1.456, 1.987];
+        let mut xs = [1.234_f32, 1.876, 1.456, 1.987].map(|s| band.mix(s));
         let start = Instant::now();
         for _ in 0..(LAT_ITERS / N_STREAMS as u64) {
             for x in xs.iter_mut() {
-                *x = mix(f(*x));
+                *x = band.mix(f(*x));
             }
         }
         black_box(xs);
@@ -57,11 +88,14 @@ fn bench_latency_n(name: &str, f: impl Fn(f32) -> f32) {
     );
 }
 
-fn bench_throughput(name: &str, f: impl Fn(f32) -> f32) {
-    // fixed-size arrays: no bounds checks, so the loop can auto-vectorize
+fn bench_throughput(name: &str, band: Band, f: impl Fn(f32) -> f32) {
+    // fixed-size arrays: no bounds checks, so the loop can auto-vectorize.
+    // Same band as the latency chain, for the same domain reason -- this
+    // array was hardcoded to [2,4) too.
+    let (lo, hi) = band.range();
     let mut input = [0f32; TP_ARR];
     for i in 0..TP_ARR {
-        input[i] = 2.0 + (i as f32) * (2.0 / TP_ARR as f32);
+        input[i] = lo + (i as f32) * ((hi - lo) / TP_ARR as f32);
     }
     let input = black_box(input);
     let mut out = [0f32; TP_ARR];
@@ -91,22 +125,31 @@ fn main() {
         // for a spread of functions with different codegen shapes (exp2's
         // short balanced-Estrin chain, sinh's branch-selected two-branch
         // combine, acos's plain Horner).
-        bench_latency("exp2", exp2);
-        bench_latency_n("exp2", exp2);
-        bench_latency("sinh", sinh);
-        bench_latency_n("sinh", sinh);
-        bench_latency("acos", acos);
-        bench_latency_n("acos", acos);
+        bench_latency("exp2", Band::Two, exp2);
+        bench_latency_n("exp2", Band::Two, exp2);
+        bench_latency("sinh", Band::Two, sinh);
+        bench_latency_n("sinh", Band::Two, sinh);
+        bench_latency("acos", Band::Half, acos);
+        bench_latency_n("acos", Band::Half, acos);
         return;
     }
     let filter = args.get(1).map(|s| s.as_str()).unwrap_or("");
     let run = |n: &str| filter.is_empty() || n.contains(filter);
 
+    // Third argument is the input `Band`. It defaults to `Band::Two` (|x| in
+    // [2,4)), which is only valid for functions defined there -- anything
+    // restricted to [-1,1], (0,1) or [0,1] must name its own band, or the row
+    // measures a domain check instead of the function. `check_in_domain`
+    // enforces that at runtime.
     macro_rules! bench {
         ($name:expr, $f:expr) => {
+            bench!($name, $f, Band::Two)
+        };
+        ($name:expr, $f:expr, $band:expr) => {
             if run($name) {
-                bench_latency($name, $f);
-                bench_throughput($name, $f);
+                check_in_domain($name, $band, $f);
+                bench_latency($name, $band, $f);
+                bench_throughput($name, $band, $f);
             }
         };
     }
@@ -122,8 +165,8 @@ fn main() {
     bench!("rcbrt", rcbrt);
     bench!("pow_3_2", pow_3_2);
     bench!("pow_2_3", pow_2_3);
-    bench!("smoothstep", move |x: f32| smoothstep(0.0, 1.0, x));
-    bench!("smootherstep", move |x: f32| smootherstep(0.0, 1.0, x));
+    bench!("smoothstep", move |x: f32| smoothstep(0.0, 1.0, x), Band::Half);
+    bench!("smootherstep", move |x: f32| smootherstep(0.0, 1.0, x), Band::Half);
     bench!("exp2", exp2);
     bench!("exp2_kf", |f: f32| exp2_kf(3.0, f));
     bench!("exp2_checked", exp2_checked);
@@ -175,7 +218,9 @@ fn main() {
     bench!("log10_unchecked", log10_unchecked);
     bench!("std log10", |x: f32| x.log10());
     bench!("log1p", log1p);
-    bench!("log1pmx", log1pmx);
+    // domain is x > -1, and log1pmx(x) is negative for every x, so the chain
+    // walks itself out of domain under Band::Two (caught by check_in_domain).
+    bench!("log1pmx", log1pmx, Band::Half);
     bench!("std log1p", |x: f32| x.ln_1p());
     bench!("log2p1", log2p1);
     bench!("exp", exp);
@@ -213,16 +258,16 @@ fn main() {
     bench!("std asinh", |x: f32| x.asinh());
     bench!("acosh", acosh);
     bench!("std acosh", |x: f32| x.acosh());
-    bench!("atanh", atanh);
-    bench!("std atanh", |x: f32| x.atanh());
-    bench!("asin", asin);
-    bench!("asind", asind);
-    bench!("asinpi", asinpi);
-    bench!("std asin", |x: f32| x.asin());
-    bench!("acos", acos);
-    bench!("std acos", |x: f32| x.acos());
-    bench!("acosd", acosd);
-    bench!("acospi", acospi);
+    bench!("atanh", atanh, Band::Half);
+    bench!("std atanh", |x: f32| x.atanh(), Band::Half);
+    bench!("asin", asin, Band::Half);
+    bench!("asind", asind, Band::Half);
+    bench!("asinpi", asinpi, Band::Half);
+    bench!("std asin", |x: f32| x.asin(), Band::Half);
+    bench!("acos", acos, Band::Half);
+    bench!("std acos", |x: f32| x.acos(), Band::Half);
+    bench!("acosd", acosd, Band::Half);
+    bench!("acospi", acospi, Band::Half);
     bench!("atan", atan);
     bench!("std atan", |x: f32| x.atan());
     bench!("atan_latency", atan_latency);
@@ -250,7 +295,7 @@ fn main() {
     bench!("erfc", erfc);
     bench!("norm_cdf", norm_cdf);
     bench!("norm_pdf", norm_pdf);
-    bench!("logit", logit);
+    bench!("logit", logit, Band::Half);
     bench!("compound", move |x: f32| compound(x, 5.0));
     bench!("xlogy", move |x: f32| xlogy(x, 2.0));
     bench!("xlog1py", move |x: f32| xlog1py(x, 1.0));
@@ -260,9 +305,9 @@ fn main() {
         m + e as f32
     });
     bench!("erfcx", erfcx);
-    bench!("erfinv", erfinv);
-    bench!("erfc_inv", erfc_inv);
-    bench!("probit", probit);
+    bench!("erfinv", erfinv, Band::Half);
+    bench!("erfc_inv", erfc_inv, Band::Half);
+    bench!("probit", probit, Band::Half);
     bench!("dawson", dawson);
     // black_box'd 2nd arg, same reasoning as atan2 above.
     let hypot_y = std::hint::black_box(1.0);
@@ -309,8 +354,8 @@ fn main() {
     // the real branchy cost. See readme.md's own todo note on this.
     let powf_y = std::hint::black_box(2.0);
     bench!("powf", move |x: f32| powf(x, powf_y));
-    bench!("srgb_to_linear", srgb_to_linear);
-    bench!("linear_to_srgb", linear_to_srgb);
+    bench!("srgb_to_linear", srgb_to_linear, Band::Half);
+    bench!("linear_to_srgb", linear_to_srgb, Band::Half);
     bench!("std powf", move |x: f32| x.powf(powf_y));
     bench!("powf_unchecked", move |x: f32| powf_unchecked(x, powf_y));
     bench!("powf_checked", move |x: f32| powf_checked(x, powf_y));

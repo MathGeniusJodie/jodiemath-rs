@@ -33,11 +33,31 @@ include!("support/mca_common.rs");
 // instead of silently wrong numbers.
 const _: () = assert!(CHAIN_LEN == 64);
 
+// Optional 4th argument is the input `Band`, defaulting to `Band::Two`
+// (|x| in [2,4)) exactly as this macro used to hardcode. Unlike quickbench's,
+// this file's band does not currently change any number: llvm-mca never sees
+// a runtime value, and switching the domain-restricted rows to `Band::Half`
+// left all ~150 regions **bit-identical**. The plausible mechanism for it to
+// matter -- the band is a compile-time constant, so LLVM's known-bits
+// analysis could in principle prove the chain's magnitude and fold an
+// `|x|`-threshold select (asin's `a < 0.27`, atanh's `a < 0.25`) out of the
+// measured region -- was measured and does not happen. The band is threaded
+// through anyway to keep this file's chain identical to quickbench's, per
+// mca_common.rs, and so that this stays true by construction rather than by
+// luck if LLVM's reasoning ever sharpens.
 macro_rules! latency_fn {
     ($fn_name:ident, $mca_name:literal, $f:expr) => {
+        latency_fn!($fn_name, $mca_name, $f, Band::Two);
+    };
+    ($fn_name:ident, $mca_name:literal, $f:expr, $band:expr) => {
         #[inline(never)]
         pub fn $fn_name(mut x: f32) -> f32 {
             let f = $f;
+            const BAND: Band = $band;
+            // Seed into the band *before* the region marker, so the first of
+            // the 64 chain steps sees an in-domain input like the other 63
+            // without this costing an instruction inside the measured region.
+            x = BAND.mix(x);
             // A bare marker comment has no data dependency, so LLVM is free
             // to hoist/sink pure register arithmetic across it (verified:
             // without the xmm0 operand below, most of the chain leaked
@@ -48,7 +68,7 @@ macro_rules! latency_fn {
                 core::arch::asm!(concat!("# LLVM-MCA-BEGIN ", $mca_name), inout("xmm0") x, options(nostack, preserves_flags));
             }
             seq!(_i in 0..64 {
-                x = mix(f(x));
+                x = BAND.mix(f(x));
             });
             unsafe {
                 core::arch::asm!("# LLVM-MCA-END", inout("xmm0") x, options(nostack, preserves_flags));
@@ -72,8 +92,8 @@ macro_rules! throughput_fn {
     };
 }
 
-// black_box, not a bare identity: mix() is idempotent once a value is
-// already in [2,4), so `mix(identity(x))` repeated 64x collapses to a
+// black_box, not a bare identity: Band::mix is idempotent once a value is
+// already in the band, so `mix(identity(x))` repeated 64x collapses to a
 // single mix at compile time (LLVM proves the chain is a no-op after the
 // first step) and undercounts the very bookkeeping overhead this baseline
 // is supposed to measure. black_box makes each step opaque so all 64 mixes
@@ -125,22 +145,32 @@ throughput_fn!(thr_pow_3_2, "pow_3_2_throughput", pow_3_2);
 latency_fn!(lat_pow_2_3, "pow_2_3_latency", pow_2_3);
 throughput_fn!(thr_pow_2_3, "pow_2_3_throughput", pow_2_3);
 
-latency_fn!(lat_smoothstep, "smoothstep_latency", {
-    let e0 = black_box(0.0);
-    let e1 = black_box(1.0);
-    move |x: f32| smoothstep(e0, e1, x)
-});
+latency_fn!(
+    lat_smoothstep,
+    "smoothstep_latency",
+    {
+        let e0 = black_box(0.0);
+        let e1 = black_box(1.0);
+        move |x: f32| smoothstep(e0, e1, x)
+    },
+    Band::Half
+);
 throughput_fn!(thr_smoothstep, "smoothstep_throughput", {
     let e0 = black_box(0.0);
     let e1 = black_box(1.0);
     move |x: f32| smoothstep(e0, e1, x)
 });
 
-latency_fn!(lat_smootherstep, "smootherstep_latency", {
-    let e0 = black_box(0.0);
-    let e1 = black_box(1.0);
-    move |x: f32| smootherstep(e0, e1, x)
-});
+latency_fn!(
+    lat_smootherstep,
+    "smootherstep_latency",
+    {
+        let e0 = black_box(0.0);
+        let e1 = black_box(1.0);
+        move |x: f32| smootherstep(e0, e1, x)
+    },
+    Band::Half
+);
 throughput_fn!(thr_smootherstep, "smootherstep_throughput", {
     let e0 = black_box(0.0);
     let e1 = black_box(1.0);
@@ -248,7 +278,7 @@ throughput_fn!(thr_log10_unchecked, "log10_unchecked_throughput", log10_unchecke
 latency_fn!(lat_log1p, "log1p_latency", log1p);
 throughput_fn!(thr_log1p, "log1p_throughput", log1p);
 
-latency_fn!(lat_log1pmx, "log1pmx_latency", log1pmx);
+latency_fn!(lat_log1pmx, "log1pmx_latency", log1pmx, Band::Half);
 throughput_fn!(thr_log1pmx, "log1pmx_throughput", log1pmx);
 
 latency_fn!(lat_log2p1, "log2p1_latency", log2p1);
@@ -369,25 +399,25 @@ throughput_fn!(thr_asinh, "asinh_throughput", asinh);
 latency_fn!(lat_acosh, "acosh_latency", acosh);
 throughput_fn!(thr_acosh, "acosh_throughput", acosh);
 
-latency_fn!(lat_atanh, "atanh_latency", atanh);
+latency_fn!(lat_atanh, "atanh_latency", atanh, Band::Half);
 throughput_fn!(thr_atanh, "atanh_throughput", atanh);
 
-latency_fn!(lat_asin, "asin_latency", asin);
+latency_fn!(lat_asin, "asin_latency", asin, Band::Half);
 throughput_fn!(thr_asin, "asin_throughput", asin);
 
-latency_fn!(lat_asind, "asind_latency", asind);
+latency_fn!(lat_asind, "asind_latency", asind, Band::Half);
 throughput_fn!(thr_asind, "asind_throughput", asind);
 
-latency_fn!(lat_asinpi, "asinpi_latency", asinpi);
+latency_fn!(lat_asinpi, "asinpi_latency", asinpi, Band::Half);
 throughput_fn!(thr_asinpi, "asinpi_throughput", asinpi);
 
-latency_fn!(lat_acos, "acos_latency", acos);
+latency_fn!(lat_acos, "acos_latency", acos, Band::Half);
 throughput_fn!(thr_acos, "acos_throughput", acos);
 
-latency_fn!(lat_acosd, "acosd_latency", acosd);
+latency_fn!(lat_acosd, "acosd_latency", acosd, Band::Half);
 throughput_fn!(thr_acosd, "acosd_throughput", acosd);
 
-latency_fn!(lat_acospi, "acospi_latency", acospi);
+latency_fn!(lat_acospi, "acospi_latency", acospi, Band::Half);
 throughput_fn!(thr_acospi, "acospi_throughput", acospi);
 
 latency_fn!(lat_atan, "atan_latency", atan);
@@ -438,7 +468,7 @@ throughput_fn!(thr_norm_cdf, "norm_cdf_throughput", norm_cdf);
 latency_fn!(lat_norm_pdf, "norm_pdf_latency", norm_pdf);
 throughput_fn!(thr_norm_pdf, "norm_pdf_throughput", norm_pdf);
 
-latency_fn!(lat_logit, "logit_latency", logit);
+latency_fn!(lat_logit, "logit_latency", logit, Band::Half);
 throughput_fn!(thr_logit, "logit_throughput", logit);
 
 latency_fn!(lat_compound, "compound_latency", {
@@ -480,12 +510,12 @@ throughput_fn!(thr_erfcx_accurate, "erfcx_accurate_throughput", erfcx_accurate);
 latency_fn!(lat_erfcx_checked, "erfcx_checked_latency", erfcx_checked);
 throughput_fn!(thr_erfcx_checked, "erfcx_checked_throughput", erfcx_checked);
 
-latency_fn!(lat_erfinv, "erfinv_latency", erfinv);
+latency_fn!(lat_erfinv, "erfinv_latency", erfinv, Band::Half);
 throughput_fn!(thr_erfinv, "erfinv_throughput", erfinv);
 
-latency_fn!(lat_erfc_inv, "erfc_inv_latency", erfc_inv);
+latency_fn!(lat_erfc_inv, "erfc_inv_latency", erfc_inv, Band::Half);
 throughput_fn!(thr_erfc_inv, "erfc_inv_throughput", erfc_inv);
-latency_fn!(lat_probit, "probit_latency", probit);
+latency_fn!(lat_probit, "probit_latency", probit, Band::Half);
 throughput_fn!(thr_probit, "probit_throughput", probit);
 
 latency_fn!(lat_dawson, "dawson_latency", dawson);
@@ -606,10 +636,10 @@ throughput_fn!(thr_powf_pos, "powf_pos_throughput", {
     move |x: f32| powf_pos(x, y)
 });
 
-latency_fn!(lat_srgb_to_linear, "srgb_to_linear_latency", srgb_to_linear);
+latency_fn!(lat_srgb_to_linear, "srgb_to_linear_latency", srgb_to_linear, Band::Half);
 throughput_fn!(thr_srgb_to_linear, "srgb_to_linear_throughput", srgb_to_linear);
 
-latency_fn!(lat_linear_to_srgb, "linear_to_srgb_latency", linear_to_srgb);
+latency_fn!(lat_linear_to_srgb, "linear_to_srgb_latency", linear_to_srgb, Band::Half);
 throughput_fn!(thr_linear_to_srgb, "linear_to_srgb_throughput", linear_to_srgb);
 
 // signed_pow's mulsign is a branchless bit operation (not a runtime
