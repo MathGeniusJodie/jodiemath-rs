@@ -2205,7 +2205,9 @@ pub fn log10p1(x: f32) -> f32 {
 /// the exponent construction produces garbage rather than a clamped/
 /// overflowed value. `expm1`, `sinh`, `cosh`, `sinh_throughput`, and
 /// `cosh_throughput` inherit this poly and the same domain limit;
-/// `powf`/`erf`/`erfc` route through `exp2_checked` and don't call this.
+/// `powf`/`erf` route through `exp2_checked` and don't call this, and
+/// `erfc`/`erfcx` route through [`exp_checked`], which is this poly and
+/// this reduction with the input clamped first.
 ///
 /// Scaling by `2^k` needs exp2_checked's k1/k2 split (not exp2's simpler
 /// single-field trick), even though this function is otherwise
@@ -4063,38 +4065,106 @@ pub fn erf(x: f32) -> f32 {
     if xa < 0.28 { a } else { b }
 }
 
-// Shared n/d rational (degree 4 in xa) behind both `erfc` and `erfcx`:
-// NaN-preserving clamp to |xa| <= 10 first (the comparison form lets NaN
-// pass through instead of being silently replaced), matching the domain
-// the coefficients were fit against.
+// erfcx(xa) for xa >= 0, shared by `erfc` and `erfcx` -- the scaled
+// complementary error function, i.e. erfc(xa)*exp(xa^2). Reciprocal
+// variable `v = 1/(2 + xa)` (so v in (0, 1/2], the whole half-line
+// compressed into a finite interval), then a degree-10 minimax
+// polynomial: `erfcx(xa) = v*P(v)`.
+//
+// The explicit `v` factor is what makes this exact on the *whole*
+// domain instead of needing a clamp: `erfcx(xa) ~ 1/(xa*sqrt(pi))` as
+// xa -> inf, and `v ~ 1/xa` there, so `P(0) = 1/sqrt(pi)` reproduces
+// the asymptote by construction rather than having to be fitted (it is
+// c0 below). Nothing here can overflow for any finite input, and `v` is
+// 0 at xa = inf, so `erfcx` and `erfc` saturate correctly with no domain
+// check at all. The old n/d rational this replaces was a degree-4/4 in
+// `xa` itself, which needed a hard clamp to |xa| <= 10 to keep its
+// denominator from overflowing -- and that clamp *froze* `erfcx` at
+// `erfc_rational(10)` forever past x=10 (unbounded relative error).
+//
+// c0 is one ulp *below* the correctly-rounded 1/sqrt(pi) (0x3f106eba,
+// not 0x3f106ebb), and that is deliberate: hardcoding it to the
+// correctly-rounded value costs `erfc` a full max ulp (exhaustive
+// 0.1993/7 free vs 0.2003/8 pinned), because the other ten coefficients
+// cannot re-absorb the constraint. What the 1-ulp-low c0 costs is 0.023
+// avg ulp out in the tail, where the result is c0*v and nothing else
+// (exhaustive x >= 20: 0.6245 -> 0.6478, max 4 either way). Both sweeps
+// are in `tune.rs`'s own note; do not "correct" it without re-running
+// them.
+//
+// Fitted by a relative-error Chebyshev LP over v in (0, 1/2] (an even
+// sampling of v is a `1/x` sampling of the tail, so the fit is
+// naturally weighted where the reciprocal variable resolves), then
+// coordinate-descent polished on the f32 grid against the exact
+// evaluation order below (`tune.rs`'s `erfcx` target), under the side
+// constraint that `xa = 0` (where `2+xa` and `1/2` are both exact)
+// reproduces `erfcx(0) = 1.0` bit-exactly. Estrin-grouped, 4 fma deep
+// instead of Horner's 10: the division is already on the critical path
+// ahead of it, and Horner measured only ~0.5 ulp better on max.
+//
+// Current: max ulp 5.9, avg 0.81 over a dense sweep of the whole
+// half-line (uniform in v, so uniform in the tail's own resolution).
+// The residual is dominated not by the fit (~0.5 ulp) but by forming
+// `v` itself: rounding `2+xa` and then the reciprocal costs ~2.3 ulp
+// that no polynomial can recover, since `erfcx` has a nonzero slope at
+// 0 while `v` is stationary in relative terms there. Compensating that
+// needs the exact residual of `2+xa` (4-6 more ops, correct ordering
+// included) for ~1.5 ulp -- measured, rejected on cost. Note this
+// standalone number is *not* monotone with the shipped functions': the
+// pinned-c0 variant scores better here and worse through `erfc`.
 #[inline(always)]
-fn erfc_rational(xa: f32) -> f32 {
-    let xa = if xa > 10.0 { 10.0 } else { xa };
-    let n = fma(f32::from_bits(0x35c42f59), xa, f32::from_bits(0x3daf42cd));
-    let n = fma(n, xa, f32::from_bits(0x3ee32e39));
-    let n = fma(n, xa, f32::from_bits(0x3f7a7525));
-    let n = fma(n, xa, 1.0);
-    let d = fma(f32::from_bits(0x3e1b69eb), xa, f32::from_bits(0x3f48fdde));
-    let d = fma(d, xa, f32::from_bits(0x3fe918da));
-    let d = fma(d, xa, f32::from_bits(0x4006d464));
-    let d = fma(d, xa, 1.0);
-    n / d
+fn erfcx_pos(xa: f32) -> f32 {
+    let v = 1.0 / (2.0 + xa);
+    let c: [f32; 11] = [
+        0.56418955, 1.1283774, 1.9749641, 2.807048, 2.975676, -3.7488432, 17.02367, -117.490135,
+        255.59447, -243.95302, 90.238014,
+    ];
+    let v2 = v * v;
+    let v4 = v2 * v2;
+    let p01 = fma(c[1], v, c[0]);
+    let p23 = fma(c[3], v, c[2]);
+    let p45 = fma(c[5], v, c[4]);
+    let p67 = fma(c[7], v, c[6]);
+    let t9 = fma(c[10], v, c[9]);
+    let t8 = fma(t9, v, c[8]);
+    let lo = fma(p23, v2, p01);
+    let hi = fma(p67, v2, p45);
+    v * fma(fma(t8, v4, hi), v4, lo)
 }
 
-/// A rational*gaussian tail, clamped to |x| <= 10 before evaluation
-/// (matching the C original) -- the polynomial (n/d, degree 4 in xa)
-/// still needs that bound to avoid overflowing for huge x, but the
-/// Gaussian factor no longer does: it used to be `exp(-xa*xa)`, which
-/// routes through the *unchecked* exp2 ([-126, 128) domain), and for
-/// |x| >= ~9.35 (xa*xa >= ~87.4) the exponent `-xa*xa*log2(e)` is already
-/// past -126, so the result was unreliable garbage for that whole tail
-/// instead of a clean 0. Fixed by calling `exp2_checked` directly on the
-/// same exponent instead of going through `exp` -- its wider [-151, 128)
-/// domain comfortably covers the full clamped range (xa in `[0,10]` means
-/// the exponent never goes below -100*log2(e) =~ -144.3, still inside
-/// exp2_checked's bound), and it's already the crate's existing
-/// correctly-rounded full-range primitive, no new code needed.
-/// Current: max ulp 109, avg 0.311 (|x| <= 10 sweep).
+/// `erfc(x) = exp(-x^2)*erfcx(|x|)` for `x >= 0`, reflected through
+/// `erfc(x) = 2 - erfc(-x)` for `x < 0`. Both factors need care:
+///
+/// The Gaussian factor is the one that used to dominate this function's
+/// error (max ulp 109). `exp(-x^2)` amplifies an *absolute* error in its
+/// exponent into a *relative* error in the result, and `x*x` alone --
+/// a single f32 rounding on a value up to 100 -- is already ~6e-6 of
+/// absolute exponent error, i.e. dozens of ulp, before any exponential
+/// runs. Fixed by keeping the square exactly: `x*x = p + pe` with
+/// `pe = fma(x, x, -p)` the exact residual, then `exp(-(p+pe)) =
+/// exp(-p)*exp(-pe) ~ exp(-p)*(1 - pe)` -- `|pe| <= 4e-6` here, so the
+/// dropped second-order term is under 1e-11, and the whole correction
+/// costs one extra fma folded into the `erfcx` factor. Routing through
+/// [`exp_checked`] rather than `exp2_checked` is the other half: the
+/// naive `exp2(-x*x*LOG2_E)` rounds a *second* time when it forms that
+/// product, and f32's own `LOG2_E` is not even precise enough to carry
+/// an exponent of magnitude ~144 (see `exp`'s doc comment) -- its
+/// Cody-Waite reduction handles both.
+///
+/// The `erfcx` factor is [`erfcx_pos`] (see its comment): a degree-10
+/// polynomial in `1/(2+|x|)`, ~0.5 ulp of fit error against the old
+/// rational's ~15.
+///
+/// No clamp on `x` anywhere except the one guarding `x*x` itself from
+/// overflowing to a non-finite exponent (`11` is far past where `erfc`
+/// has decayed under the smallest denormal, so it can only ever fire on
+/// inputs whose result is exactly `0.0`; `NaN > 11.0` is false, so NaN
+/// passes through it untouched and propagates).
+///
+/// Current: max ulp 7, avg 0.1993 (exhaustive sweep over `|x| <= 10`,
+/// which is where the f64 reference stops being usable -- past ~10.05
+/// the true `erfc` rounds to exactly `0.0` (or `2.0` for `x < 0`) and
+/// this returns exactly that, pinned in edgecheck). Was 109 / 0.3055.
 #[doc(alias = "erfcf")]
 #[inline(always)]
 pub fn erfc(x: f32) -> f32 {
@@ -4104,15 +4174,11 @@ pub fn erfc(x: f32) -> f32 {
     // condition z already resolved.
     let w = 1.0 - z;
     let xa = x.abs();
-    // The exponent term deliberately uses the *true*, unclamped `xa`,
-    // not erfc_rational's internal xa<=10 clamp: erfc_rational needs
-    // that bound to keep its rational polynomial from overflowing, but
-    // exp2_checked already saturates to 0 correctly for arbitrarily
-    // negative exponents. Using the clamped xa here instead froze the
-    // exponent for every xa>10, so erfc beyond ~10.02 returned the same
-    // tiny nonzero constant forever instead of reaching exactly 0.0f32
-    // well before x=11.
-    let y = exp2_checked(-(xa * xa) * LOG2_E) * erfc_rational(xa);
+    let xs = if xa > 11.0 { 11.0 } else { xa };
+    let p = xs * xs;
+    let pe = fma(xs, xs, -p);
+    let r = erfcx_pos(xa);
+    let y = exp_checked(-p) * fma(-r, pe, r);
     fma(y, z, w)
 }
 
@@ -4463,135 +4529,70 @@ pub fn compound(x: f32, n: f32) -> f32 {
     exp_checked(n * log1p_nonzero!(x))
 }
 
-/// Full-precision-exponent sibling of [`erfc`]: `erfc`'s own exponent
-/// term (`-xa*xa*LOG2_E`) rounds `xa*xa` to a single f32 before ever
-/// multiplying by `LOG2_E`, discarding exactly the low bits `exp2_checked`
-/// could otherwise use -- the same double-rounding class of error `exp`'s
-/// own doc comment describes for the naive `exp2(x*LOG2_E)`. Fixed by
-/// keeping `xa*xa` as a `Df32` (exact via `Df32::from_mul`, a
-/// two-product) through the multiply by `-LOG2_E` and into
-/// `exp2_checked_df` (already used by `powf` for the analogous
-/// `log2(x)*y` amplification problem, reused verbatim here). Real
-/// accuracy win but not a full fix (max ulp still nowhere near "single
-/// digits") -- an opt-in tier over the default `erfc`, matching
-/// `erfcx`/`erfcx_checked`'s own split (the "no perf penalty" bar
-/// doesn't apply here; `erfc` itself is untouched and pays nothing).
-#[inline(always)]
-pub fn erfc_accurate(x: f32) -> f32 {
-    let z = if x < 0.0 { -1.0 } else { 1.0 };
-    let w = 1.0 - z;
-    let xa = x.abs();
-    let exponent = Df32::from_mul(xa, xa) * (-LOG2_E);
-    let y = exp2_checked_df(exponent) * erfc_rational(xa);
-    fma(y, z, w)
-}
-
 /// erfcx(x) = e^(x^2)*erfc(x), the "scaled complementary error
-/// function". For x >= 0, this collapses to
-/// exactly `erfc_rational(x)` alone with *no exponential at all*: erfc's
-/// own construction is `exp(-x^2) * erfc_rational(x)`, so multiplying by
-/// `exp(x^2)` cancels the exponential exactly (not approximately --
-/// `exp(x^2)*exp(-x^2)` is algebraically 1, so this sidesteps the
-/// exponent computation entirely rather than computing and cancelling
-/// it). This is exactly what erfcx is *for*: the naive
-/// `exp(x*x)*erfc(x)` a caller might otherwise write already breaks
-/// down numerically before this function's own domain gets interesting
-/// -- `exp(x*x)` alone overflows f32 for `|x| >~ 9.3`, while `erfcx`'s
-/// true value there is still a small, well-behaved, easily-representable
-/// number (`erfcx(x) ~ 1/(x*sqrt(pi))` for large positive x).
+/// function". For `x >= 0` this is [`erfcx_pos`] alone, with *no
+/// exponential at all*: `erfc`'s own construction is
+/// `exp(-x^2)*erfcx_pos(x)`, so multiplying by `exp(x^2)` cancels the
+/// exponential exactly (algebraically, not numerically -- the exponent
+/// is never computed, let alone cancelled). This is exactly what erfcx
+/// is *for*: the naive `exp(x*x)*erfc(x)` a caller might otherwise
+/// write breaks down before this function's domain gets interesting --
+/// `exp(x*x)` alone overflows f32 for `|x| >~ 9.3`, while `erfcx`'s
+/// true value there is still a small, well-behaved number
+/// (`erfcx(x) ~ 1/(x*sqrt(pi))`).
+///
+/// Accurate over the *whole* positive half-line, not just `|x| <= 10`:
+/// the reciprocal variable `1/(2+x)` reproduces that `1/(x*sqrt(pi))`
+/// asymptote by construction and cannot overflow, so there is no domain
+/// clamp to freeze against (see [`erfcx_pos`]). The rational this
+/// replaced did freeze past `x = 10`, with relative error growing
+/// without bound (~10% at 11, ~99% at 20, ~895% at 100); that is fixed,
+/// and the separate `erfcx_checked` tier that used to paper over it with
+/// an asymptotic branch is gone with it.
 ///
 /// For x < 0, uses erfc's own reflection identity (`erfc(x) = 2 -
 /// erfc(-x)` for x<0) to derive `erfcx(x) = 2*exp(x^2) - erfcx(-x)` --
-/// unlike the x>=0 branch this does need one real `exp2_checked` call,
-/// because `erfcx` genuinely diverges to `+inf` for sufficiently
-/// negative x (`erfcx(-10) ~ 2*e^100`, far past `f32::MAX`) -- that's
-/// this function's true mathematical behavior, not an implementation
-/// gap, and `exp2_checked`'s own saturation makes it come out `+inf`
-/// correctly rather than wrapping to garbage.
+/// unlike the x>=0 branch this does need one real exponential, because
+/// `erfcx` genuinely diverges to `+inf` for sufficiently negative x
+/// (`erfcx(-10) ~ 2*e^100`, far past `f32::MAX`): that is this
+/// function's true mathematical behavior, not an implementation gap,
+/// and `exp_checked`'s saturation makes it come out `+inf` correctly
+/// rather than wrapping to garbage. `x*x` is split exactly the same way
+/// [`erfc`] splits it (`exp(p+pe) ~ exp(p)*(1+pe)`, folded into the
+/// already-needed `2*` scale as `2+2*pe`) -- that split, not the
+/// polynomial, is what used to hold this branch at max ulp 126. With it
+/// in place the negative branch is no longer where the worst case lives:
+/// that moved to the positive branch near zero, where it is
+/// [`erfcx_pos`]'s own `v`-formation floor. Written as a multiply rather
+/// than `fma(g, 2.0*pe, ...)` on purpose: `g` saturates to `+inf`, and
+/// `2+2*pe` is always positive, so `inf*(2+2*pe) = +inf` where a signed
+/// `pe` in the multiplicand could have given `inf - inf`. The branch
+/// diverges to `+inf` for `x < -9.382` (`x^2 > ~88.03`, where `2*e^(x^2)`
+/// leaves f32); `exp_checked`'s saturation makes that come out `+inf`
+/// rather than wrapping, and both sides of that boundary are pinned in
+/// edgecheck.
 ///
-/// Like `erfc`, `erfc_rational`'s |xa|<=10 fit domain means this is only
-/// verified accurate for `|x| <= 10` -- for x > 10, `erfc_rational`
-/// clamps its input to 10.0 and so *freezes* at `erfc_rational(10.0)`
-/// forever: unlike `erfc` (where the freeze is masked by the
-/// multiplicative `exp(-x^2)` factor correctly decaying to 0), `erfcx`
-/// has no such factor, so relative error grows *without bound* as x
-/// grows past 10. A verified asymptotic-tail fix exists but was rejected
-/// for a real throughput cost -- a precisely-scoped option for a
-/// wider-domain opt-in tier if a caller ever needs `|x| > 10`; see
-/// IDEAS.md.
+/// Current: max ulp 6, avg 0.2142 (exhaustive sweep over `|x| <= 10`).
+/// Was 126 / 0.3768. The rest of the domain is measured too, and this
+/// is the part that used to not exist: `|x| <= 20` is 6 / 0.2154, and
+/// `x >= 20` out to `f32::MAX` is **4 / 0.6478** over 1.04e9 samples,
+/// scored against the asymptotic series (`exp(x^2)` overflows f64 past
+/// x ~ 26.6, so the composed reference cannot reach there).
 ///
 /// mca's latency number for this function (see readme.md) is not
 /// trustworthy: this is a sign-dependent branch (`x >= 0.0`), and the
 /// latency harness's `mix()` step masks the sign bit away entirely, so
-/// the `x<0` arm (with its real `exp2_checked` call) is never exercised
-/// there. Only the throughput number (a real mixed-sign array) is
-/// meaningful here.
+/// the `x<0` arm (with its real exponential) is never exercised there.
+/// Only the throughput number (a real mixed-sign array) is meaningful.
 #[inline(always)]
 pub fn erfcx(x: f32) -> f32 {
     let xa = x.abs();
-    let r = erfc_rational(xa);
-    if x >= 0.0 { r } else { 2.0 * exp2_checked(x * x * LOG2_E) - r }
-}
-
-/// Full-precision-exponent sibling of [`erfcx`], same mechanism as
-/// [`erfc_accurate`] (see its own doc comment): `erfcx`'s `x < 0` branch
-/// rounds `x*x` to a single f32 before multiplying by `LOG2_E`, and this
-/// is the branch where `erfcx`'s own worst case actually lives (`x>=0`
-/// has no exponential at all, so nothing to improve there -- confirmed
-/// empirically, `erfcx`'s worst-case `x` sits consistently around
-/// `-9.2`, not on the positive side). Fixed identically: `Df32::from_mul`
-/// through the multiply by `-LOG2_E` and into `exp2_checked_df`. Real
-/// accuracy win, not a full fix; `erfcx` itself untouched.
-#[inline(always)]
-pub fn erfcx_accurate(x: f32) -> f32 {
-    let xa = x.abs();
-    let r = erfc_rational(xa);
-    if x >= 0.0 { r } else { 2.0 * exp2_checked_df(Df32::from_mul(x, x) * LOG2_E) - r }
-}
-
-/// Full-range sibling of [`erfcx`]: fixes the freeze [`erfcx`]'s own doc
-/// comment documents for `x > 10` (unbounded relative error, not just
-/// imprecision) by switching to the standard asymptotic expansion there
-/// instead of `erfc_rational`'s frozen `erfc_rational(10.0)`:
-/// `erfcx(x) ~ (1/(x*sqrt(pi))) * (1 - t + 3t^2 - 15t^3 + 105t^4 - 945t^5)`
-/// with `t = 1/(2x^2)` -- a genuine mathematical series (each coefficient
-/// is an exact odd double factorial, not a numerically fitted constant),
-/// so no fitting/lolremez work is needed, just enough terms for the
-/// worst case (`x=10`, `t=0.005`): the dropped `n=6` term is
-/// `10395*t^6 ~ 1.6e-10`, many orders below f32's ~1.2e-7 relative
-/// precision floor. Only the `x >= 0` side ever reaches this branch in
-/// practice -- for `x < -10`, `exp2_checked(x*x*LOG2_E)` already
-/// overflows to `+inf` well before the `10` boundary (`erfcx`'s own doc
-/// comment: `|x| >~ 9.3`), so the `- r` term vanishes into that infinity
-/// regardless of `r`'s own precision there, meaning the fix only needs
-/// to apply where the `10`-boundary select actually changes anything:
-/// `xa > 10`, both signs of `x` covered through the shared `r`.
-///
-/// Accurate against `scipy.special.erfcx` up to `x=200` (max rel error
-/// ~0.0002%) where the earlier rejected version was verified. Real mca
-/// cost accepted here (this is the opt-in tier the "no perf penalty"
-/// bar doesn't apply to, per IDEAS.md) -- `erfcx` itself is untouched
-/// and pays nothing.
-///
-/// The `x < 0` combine also gets `erfcx_accurate`'s own Df32-precision
-/// exponent fix (see its doc comment): the same rounding hole exists
-/// here for `xa` in `(0, 10]` (this tier's asymptotic branch only
-/// changes anything for `xa > 10`, so the negative side's own
-/// `erfc_rational`-driven combine below that bound is otherwise
-/// identical to plain `erfcx`'s, worst case at the same `x ~ -9.2`), so
-/// no longer bit-identical to `erfcx` for negative `x` in that range
-/// (still bit-identical for `x >= 0`, same `erfc_rational` call and
-/// selection).
-#[inline(always)]
-pub fn erfcx_checked(x: f32) -> f32 {
-    let xa = x.abs();
-    let r_near = erfc_rational(xa);
-    let t = 1.0 / (2.0 * xa * xa);
-    let s = fma(fma(fma(fma(fma(-945.0, t, 105.0), t, -15.0), t, 3.0), t, -1.0), t, 1.0);
-    const FRAC_1_SQRT_PI: f32 = 0.5641896;
-    let r_far = (s * FRAC_1_SQRT_PI) / xa;
-    let r = if xa > 10.0 { r_far } else { r_near };
-    if x >= 0.0 { r } else { 2.0 * exp2_checked_df(Df32::from_mul(x, x) * LOG2_E) - r }
+    let r = erfcx_pos(xa);
+    let xs = if xa > 11.0 { 11.0 } else { xa };
+    let p = xs * xs;
+    let pe = fma(xs, xs, -p);
+    let g = exp_checked(p) * fma(pe, 2.0, 2.0);
+    if x >= 0.0 { r } else { g - r }
 }
 
 /// 1/sqrt(x). Unlike most functions in this crate, no bit-trick seed or

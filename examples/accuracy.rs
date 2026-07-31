@@ -1275,19 +1275,19 @@ fn main() {
         // comment. Fixed now, so this measures the whole domain.
         let s = measure!(everywhere, erf, erf_u10);
         report("erf", &s, t0);
-        // erfc clamps to |x|<=10 before its own exp2 call; that clamp used
-        // to not fully protect exp2's unchecked domain (see erfc's doc
-        // comment), fixed by routing through exp2_checked instead -- the
-        // domain restriction here now only matches erfc's own clamp
-        // (previously it stopped short at 9.3 specifically to dodge the
-        // since-fixed bug).
+        // erfc/erfcx are now accurate over the whole real line (no fit
+        // clamp anywhere -- see erfcx_pos), but the f64 reference is the
+        // limit: sleef's erfc_u15 underflows to 0 well before f32's own
+        // domain ends, and erfcx_ref below composes exp(x^2), so both are
+        // only trustworthy while x^2 stays far from f64's ~709 exp
+        // overflow. |x| <= 10 keeps erfc_u15 above its own underflow, and
+        // is already past x ~ 10.05 where the true erfc rounds to exactly
+        // 0.0 (2.0 for x < 0) and this crate returns exactly that.
         let erfc_domain = |x: f32| x.abs() <= 10.0;
         let s = measure!(erfc_domain, erfc, erfc_u15);
         report("erfc", &s, t0);
-        let s = measure!(erfc_domain, erfc_accurate, erfc_u15);
-        report("erfc_accurate", &s, t0);
         // erfcx_ref: no sleef erfcx bucket, so compose exp(x^2)*erfc_u15(x)
-        // directly in f64 -- safe over this domain (x^2 <= 100 is nowhere
+        // directly in f64 -- safe over this domain (x^2 <= 400 is nowhere
         // near f64's own ~709 exp overflow point) and multiplication
         // doesn't lose relative precision the way addition/subtraction
         // would, so a tiny erfc(x) times a huge exp(x^2) is still an
@@ -1295,20 +1295,37 @@ fn main() {
         let erfcx_ref = |v: F64xN| exp_u10(v * v) * erfc_u15(v);
         let s = measure!(erfc_domain, erfcx, erfcx_ref);
         report("erfcx", &s, t0);
-        let s = measure!(erfc_domain, erfcx_accurate, erfcx_ref);
-        report("erfcx_accurate", &s, t0);
-        // erfcx_checked's own wider domain, extended past erfcx's |x|<=10
-        // fit boundary (see its doc comment) -- still safely inside where
-        // erfcx_ref's f64 `exp_u10(v*v)` doesn't itself overflow (v*v <=
-        // 400, nowhere near f64's ~709 exp overflow point), so the same
-        // reference stays trustworthy this far out; the asymptotic tail's
-        // own verified range (up to x=200, see erfcx_checked's doc
-        // comment) was checked separately against scipy.special.erfcx
-        // since sleef has no f64 exp headroom left to compose a reference
-        // that far.
-        let erfcx_checked_domain = |x: f32| x.abs() <= 20.0;
-        let s = measure!(erfcx_checked_domain, erfcx_checked, erfcx_ref);
-        report("erfcx_checked", &s, t0);
+        // erfcx's own wider domain: past |x|=10 the old rational froze,
+        // so this range used to belong to a separate `erfcx_checked` tier;
+        // the reciprocal-variable fit covers it directly now.
+        let erfcx_wide = |x: f32| x.abs() <= 20.0;
+        let s = measure!(erfcx_wide, erfcx, erfcx_ref);
+        report("erfcx (|x|<=20)", &s, t0);
+        // The rest of the domain, all the way to f32::MAX. `exp(x^2)` is
+        // unusable as a reference here (it overflows f64 past x~26.6), but
+        // that is exactly where the standard asymptotic series becomes an
+        // excellent reference in its own right:
+        //   erfcx(x) ~ 1/(x*sqrt(pi)) * sum (-1)^n (2n-1)!! / (2x^2)^n
+        // Truncating after the t^4 term leaves a relative error bounded by
+        // the first dropped term, 945*t^5 with t = 1/(2x^2): at the x=20
+        // left edge that is ~2.9e-12, ~5 orders of magnitude under f32's
+        // own ~6e-8 resolution, and it only shrinks as x grows. So this row
+        // measures this crate's error, not the reference's. Positive side
+        // only -- the negative side is `2*e^(x^2) - erfcx(|x|)`, which has
+        // genuinely overflowed to +inf for every x < -9.382 (pinned on
+        // both sides of that boundary in edgecheck) and carries no
+        // accuracy information out here.
+        let erfcx_tail_ref = |v: F64xN| {
+            let t = F64xN::splat(0.5) / (v * v);
+            let p = F64xN::splat(1.0)
+                - t * (F64xN::splat(1.0)
+                    - t * (F64xN::splat(3.0)
+                        - t * (F64xN::splat(15.0) - t * F64xN::splat(105.0))));
+            p / (v * F64xN::splat(std::f64::consts::PI.sqrt()))
+        };
+        let erfcx_tail = |x: f32| x >= 20.0 && x.is_finite();
+        let s = measure!(erfcx_tail, erfcx, erfcx_tail_ref);
+        report("erfcx (x>=20)", &s, t0);
     }
     if run("erfinv") {
         // No sleef erfinv bucket, so verify via round-trip through erf_u10

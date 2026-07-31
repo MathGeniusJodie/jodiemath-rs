@@ -123,7 +123,6 @@ fn main() {
         // and reported a meaningless 5.8e76 relative error).
         audit("sigmoid", sigmoid, |v| 1.0 / (1.0 + (-v).exp()), &lin(-105.0, -87.0, 300_000)),
         audit("erfc", erfc, |v| libm_erfc(v), &lin(9.0, 10.6, 300_000)),
-        audit("erfc_accurate", erfc_accurate, |v| libm_erfc(v), &lin(9.0, 10.6, 300_000)),
         audit("norm_pdf", norm_pdf, |v| (-0.5 * v * v).exp() / (2.0 * std::f64::consts::PI).sqrt(), &lin(12.0, 14.5, 300_000)),
         audit("tanh_grad", tanh_grad, |v| { let t = v.tanh(); 1.0 - t * t }, &lin(20.0, 45.0, 300_000)),
         audit("sigmoid_grad", sigmoid_grad, |v| { let s = 1.0 / (1.0 + (-v).exp()); s * (1.0 - s) }, &lin(60.0, 92.0, 300_000)),

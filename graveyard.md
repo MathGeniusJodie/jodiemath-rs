@@ -4062,3 +4062,87 @@ worked, which is what makes the next one findable. The code itself is in
      `log_family_normal!` is gone with them -- it had exactly one caller
      left, `log_2_normal`, since `ln_normal`/`log10_normal` grew their own
      copies.
+
+- **`erfc`/`erfcx` rebuilt on a reciprocal variable** — the entry that
+  closes a dozen failed attempts above. Both functions shared a degree-4/4
+  rational in `xa` (`erfc_rational`) that had to clamp `|xa| <= 10` to keep
+  its own denominator from overflowing. Everything tried against it — a
+  domain split, compensated Horner, a degree 5/5 bump, an ulp-weighted
+  refit, centered variables, threshold tightening — moved avg and left max
+  at ~109. **The reason none of them worked is that the rational's own fit
+  error was ~15 ulp**, which no better *evaluation* of that rational can
+  reach, and which nothing in the record had measured. That one number
+  reframes the whole family of rejections above.
+  - **What shipped**: `erfcx_pos(xa) = v*P(v)` with `v = 1/(2+xa)` and `P`
+    a degree-10 minimax polynomial, shared by both functions. Two
+    properties do the work. The reciprocal variable maps the whole
+    half-line into `v` in `(0, 1/2]`, so there is no clamp to place and
+    nothing to overflow. And the explicit leading `v` factor makes
+    `erfcx(xa) ~ 1/(xa*sqrt(pi))` fall out of `P(0) = 1/sqrt(pi)` **by
+    construction** rather than having to be fitted.
+  - **The second half is the Gaussian factor**, worth as much as the
+    polynomial. `exp(-x^2)` turns an *absolute* error in its exponent into
+    a *relative* error in the result, and `fl(x*x)` alone, on a value up
+    to 100, is ~6e-6 of absolute exponent error — dozens of ulp before any
+    exponential runs. Keep the square exactly (`p = x*x`,
+    `pe = fma(x,x,-p)`) and apply `exp(-(p+pe)) ~ exp(-p)*(1-pe)`, one fma
+    folded into the `erfcx` factor. Then route through `exp_checked`, not
+    `exp2_checked`: the naive `exp2(-x*x*LOG2_E)` rounds a *second* time
+    forming that product, and f32's own `LOG2_E` is not precise enough to
+    carry an exponent of magnitude ~144. Cody-Waite handles both.
+  - **Measured, exhaustive, both sides against the same harness**:
+    `erfc` 0.3055/109 -> **0.1993/7**, `erfcx` 0.3768/126 ->
+    **0.2142/6**. `erf` untouched and confirmed unmoved (0.3176/4).
+  - **`erfcx` is now correct on the whole real line**, which it never was:
+    the old clamp froze it at `erfc_rational(10)` forever past `x = 10`,
+    relative error growing without bound (~10% at 11, ~99% at 20, ~895% at
+    100). A new exhaustive `accuracy.rs` row measures `x >= 20` out to
+    `f32::MAX` against the asymptotic series (`exp(x^2)` overflows f64
+    past x~26.6, so the composed reference cannot reach there): **4 /
+    0.6478** over 1.04e9 samples.
+  - **Cost is real and was accepted rather than argued away**: `erfc`
+    throughput 2.437 -> 3.284 cyc/elem (**+34.8%**), latency 64.00 ->
+    70.36 (+9.9%); `erfcx` 2.278 -> 2.792 (**+22.6%**), 62.02 -> 69.97
+    (+12.8%). That breaks this crate's usual no-perf-penalty bar for a
+    pure accuracy fix, on an explicit instruction to make these two good.
+    The one favourable comparison: the retired `erfcx_checked` (the only
+    thing that used to be correct past `x = 10`) cost 104.98/3.126, so the
+    new `erfcx` does that job at **-33% latency and -10.7% throughput**.
+  - **Three functions deleted with it**: `erfc_accurate` (0.2452/13),
+    `erfcx_accurate` and `erfcx_checked` (both 0.3263/21) — the base
+    functions now beat all three on both axes, so a separate tier had
+    nothing left to offer. `tune.rs`'s four rational targets (`erfc_c`,
+    `erfc_c5`, `erfc_lo_c`, `erfc_hi_c`) collapsed into one `erfcx_pos_c`
+    matching the shipped Estrin order.
+  - **A constraint that looked free and was not, worth the entry on its
+    own.** `c0` *is* the asymptote — at large `xa` the result is `c0*v` and
+    nothing else — so hardcoding it to the correctly-rounded `1/sqrt(pi)`
+    (as `exp_r_c` does with its fixed 1.0s) looks like a strictly-better
+    idea with a free degree of freedom given up. Measured: it **costs
+    `erfc` a full max ulp** (0.1993/7 free vs 0.2003/8 pinned) because the
+    other ten coefficients cannot re-absorb the constraint. The shipped
+    `c0` is 1 ulp low and buys that ulp back; what it pays is 0.023 avg
+    ulp in the far tail (`x >= 20` avg 0.6245 -> 0.6478, max 4 either
+    way). Generalizes: pinning a coefficient to its mathematically exact
+    value is a real constraint on the fit, not a free correctness win.
+  - **What the residual is, so the next session does not chase it.**
+    `erfcx_pos`'s own max is ~5.9 ulp and **the fit is ~0.5 of that**. The
+    rest is forming `v`: rounding `2+xa` and then the reciprocal costs
+    ~2.3 ulp no polynomial can recover, because `erfcx` has a nonzero
+    slope at 0 while `v` is stationary in relative terms there.
+    Compensating it needs the exact residual of `2+xa` (4-6 more ops) for
+    ~1.5 ulp — measured, rejected on cost.
+  - **A rejected alternative worth recording**, because it looks like the
+    obvious upgrade: replacing `exp_checked(-p) * fma(-r,pe,r)` with a
+    `Df32` exponent (`exp2_checked_df(Df32::from_mul(xs,xs) * -LOG2_E)`)
+    made `erfc` **worse — max 23**, against 8 for the Cody-Waite form on
+    the same coefficients at the time. Same lesson as `log2_df`: EFT
+    bookkeeping around an f32 kernel is not higher precision, it is capped
+    by that kernel's own evaluation rounding, and here plain Cody-Waite
+    plus a one-fma exact-square correction beats it outright.
+  - Two stale facts found and fixed along the way: `erfcx`'s negative-side
+    overflow boundary is `|x| > 9.382` (`x^2 > 88.03`), not the `13.3` /
+    `176.7` that `edgecheck.rs` claimed; and `worst_corpus.golden` was
+    already stale at `3bad293` (42 entries across `cosh`/`exp`/`expm1`/
+    `exp_m1_over_x`/`log_2`, all out-of-domain garbage from the exp
+    reduction change, never re-blessed).

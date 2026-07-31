@@ -711,112 +711,42 @@ fn expm1_near0_deg5_c(x: f32, c: &[f32]) -> f32 {
     numer / denom
 }
 
-// erfc's rational*gaussian tail (see src/lib.rs's erfc): the 8 named
-// coefficients (4 for n, 4 for d) are tuned; the two Horner chains'
-// trailing "+1.0" leading terms are left fixed, matching the shipped
-// structure exactly (not changing the algebraic shape, only retuning
-// what's already parameterized).
+// erfcx_pos's degree-10 poly in the reciprocal variable (see src/lib.rs's
+// erfcx_pos): `erfcx(xa) = v*P(v)` with `v = 1/(2+xa)`. The evaluation
+// order below is the shipped Estrin grouping exactly, which is the point
+// -- descent against a different grouping tunes for roundings the shipped
+// code never makes.
+//
+// **All 11 coefficients are free, including `c0` -- deliberately, and
+// against the obvious argument.** `c0` is `P(0)`, and at large `xa` the
+// result *is* `c0*v` and nothing else, so `c0` alone carries the
+// `erfcx(xa) ~ 1/(xa*sqrt(pi))` asymptote and the tempting move is to
+// hardcode it to the correctly-rounded `1/sqrt(pi)` (0x3f106ebb) the way
+// `exp_r_c` hardcodes its own fixed 1.0s. That was tried and **measured
+// worse**: pinning it costs `erfc` a full max ulp (exhaustive 0.1993/7
+// free vs 0.2003/8 pinned), because the other ten coefficients cannot
+// re-absorb the constraint. The shipped `c0` is 1 ulp *below*
+// correctly-rounded and buys that ulp back; what it costs is 0.023 avg
+// ulp in the far tail (exhaustive `x >= 20`, 0.6245 -> 0.6478, max 4
+// either way). Do not "fix" it without re-running both sweeps.
+//
+// This replaced a family of four targets (`erfc_c`/`erfc_c5`/
+// `erfc_lo_c`/`erfc_hi_c`) for the degree-4/4 rational in `xa` that
+// `erfcx_pos` retired; see graveyard.md for what they measured.
 #[inline(always)]
-fn erfc_c(x: f32, c: &[f32]) -> f32 {
-    let z = if x < 0.0 { -1.0 } else { 1.0 };
-    let w = if x < 0.0 { 2.0 } else { 0.0 };
-    let xa = x.abs().min(10.0);
-    let n = fma(c[0], xa, c[1]);
-    let n = fma(n, xa, c[2]);
-    let n = fma(n, xa, c[3]);
-    let n = fma(n, xa, 1.0);
-    let d = fma(c[4], xa, c[5]);
-    let d = fma(d, xa, c[6]);
-    let d = fma(d, xa, c[7]);
-    let d = fma(d, xa, 1.0);
-    // n/d must round as its own standalone value first (matching real
-    // erfc_rational's return value), *then* multiply by the exponential --
-    // `exp2term * n / d` (found 2026-07-10) parses as `(exp2term*n)/d`, a
-    // different rounding order than the shipped `exp2_checked(...) *
-    // erfc_rational(xa)`. (The `.exp2()` vs `exp2_checked()` gap itself is
-    // a separate, already-documented, accepted limitation of this
-    // standalone probe -- see IDEAS.md.)
-    let rat = n / d;
-    let y = (-(xa * xa) * std::f32::consts::LOG2_E).exp2() * rat;
-    fma(y, z, w)
-}
-
-// idea #64: degree 5/5 bump of erfc_c's rational (10 named coefficients:
-// 5 for n, 5 for d, same "+1.0" fixed leading term convention). One extra
-// fma per chain over erfc_c.
-#[inline(always)]
-fn erfc_c5(x: f32, c: &[f32]) -> f32 {
-    let z = if x < 0.0 { -1.0 } else { 1.0 };
-    let w = if x < 0.0 { 2.0 } else { 0.0 };
-    let xa = x.abs().min(10.0);
-    let n = fma(c[0], xa, c[1]);
-    let n = fma(n, xa, c[2]);
-    let n = fma(n, xa, c[3]);
-    let n = fma(n, xa, c[4]);
-    let n = fma(n, xa, 1.0);
-    let d = fma(c[5], xa, c[6]);
-    let d = fma(d, xa, c[7]);
-    let d = fma(d, xa, c[8]);
-    let d = fma(d, xa, c[9]);
-    let d = fma(d, xa, 1.0);
-    let rat = n / d;
-    let y = (-(xa * xa) * std::f32::consts::LOG2_E).exp2() * rat;
-    fma(y, z, w)
-}
-
-// erfc_c's exact shape, but only ever evaluated/tuned for xa in [0,2] --
-// IDEAS.md's "erfc domain split" idea: a separate, domain-specific
-// rational per half should each need much less dynamic range to cover
-// than the single [0,10] fit.
-#[inline(always)]
-fn erfc_lo_c(x: f32, c: &[f32]) -> f32 {
-    let z = if x < 0.0 { -1.0 } else { 1.0 };
-    let w = if x < 0.0 { 2.0 } else { 0.0 };
-    let xa = x.abs().min(10.0);
-    let n = fma(c[0], xa, c[1]);
-    let n = fma(n, xa, c[2]);
-    let n = fma(n, xa, c[3]);
-    let n = fma(n, xa, 1.0);
-    let d = fma(c[4], xa, c[5]);
-    let d = fma(d, xa, c[6]);
-    let d = fma(d, xa, c[7]);
-    let d = fma(d, xa, 1.0);
-    // n/d must round as its own standalone value first (matching real
-    // erfc_rational's return value), *then* multiply by the exponential --
-    // `exp2term * n / d` (found 2026-07-10) parses as `(exp2term*n)/d`, a
-    // different rounding order than the shipped `exp2_checked(...) *
-    // erfc_rational(xa)`. (The `.exp2()` vs `exp2_checked()` gap itself is
-    // a separate, already-documented, accepted limitation of this
-    // standalone probe -- see IDEAS.md.)
-    let rat = n / d;
-    let y = (-(xa * xa) * std::f32::consts::LOG2_E).exp2() * rat;
-    fma(y, z, w)
-}
-
-// erfc_c's exact shape, tuned for xa in [2,10] instead.
-#[inline(always)]
-fn erfc_hi_c(x: f32, c: &[f32]) -> f32 {
-    let z = if x < 0.0 { -1.0 } else { 1.0 };
-    let w = if x < 0.0 { 2.0 } else { 0.0 };
-    let xa = x.abs().min(10.0);
-    let n = fma(c[0], xa, c[1]);
-    let n = fma(n, xa, c[2]);
-    let n = fma(n, xa, c[3]);
-    let n = fma(n, xa, 1.0);
-    let d = fma(c[4], xa, c[5]);
-    let d = fma(d, xa, c[6]);
-    let d = fma(d, xa, c[7]);
-    let d = fma(d, xa, 1.0);
-    // n/d must round as its own standalone value first (matching real
-    // erfc_rational's return value), *then* multiply by the exponential --
-    // `exp2term * n / d` (found 2026-07-10) parses as `(exp2term*n)/d`, a
-    // different rounding order than the shipped `exp2_checked(...) *
-    // erfc_rational(xa)`. (The `.exp2()` vs `exp2_checked()` gap itself is
-    // a separate, already-documented, accepted limitation of this
-    // standalone probe -- see IDEAS.md.)
-    let rat = n / d;
-    let y = (-(xa * xa) * std::f32::consts::LOG2_E).exp2() * rat;
-    fma(y, z, w)
+fn erfcx_pos_c(xa: f32, c: &[f32]) -> f32 {
+    let v = 1.0 / (2.0 + xa);
+    let v2 = v * v;
+    let v4 = v2 * v2;
+    let p01 = fma(c[1], v, c[0]);
+    let p23 = fma(c[3], v, c[2]);
+    let p45 = fma(c[5], v, c[4]);
+    let p67 = fma(c[7], v, c[6]);
+    let t9 = fma(c[10], v, c[9]);
+    let t8 = fma(t9, v, c[8]);
+    let lo = fma(p23, v2, p01);
+    let hi = fma(p67, v2, p45);
+    v * fma(fma(t8, v4, hi), v4, lo)
 }
 
 // exp's e^r poly (see src/lib.rs's exp) with c0 AND c1 both forced to
@@ -1700,85 +1630,50 @@ fn main() {
         let init = [0.5910557508468628, 1.128379225730896, 0.18571428954601288, 0.8571428656578064];
         tune("erf_near0", &erf_near0_c, &erf_ref, &grid, &init);
     }
-    if which == "erfc" {
-        // erfc's whole domain is xa in [0, 10] (clamped inside the
-        // function itself).
+    if which == "erfcx" {
+        // The fit variable is `v = 1/(2+xa)`, not `xa`, so the grid is
+        // built by sweeping `v` evenly over its whole range (0, 1/2] and
+        // mapping back -- an even sweep of `xa` would spend almost every
+        // sample in a sliver of `v` and leave the tail (small `v`, where
+        // the asymptote lives) unrepresented. `v` runs from 1/2 (xa = 0)
+        // down toward 0 (xa -> inf); the smallest `v` here corresponds to
+        // xa ~ 1e5, far past where the fit has anything left to resolve.
         let mut grid = vec![];
-        let mut b = 0.0f32.to_bits();
-        while b < 10.0f32.to_bits() {
-            grid.push(f32::from_bits(b));
-            grid.push(-f32::from_bits(b));
-            b += 3000;
+        for i in 1..=20000u32 {
+            let v = 0.5 * (i as f32) / 20000.0;
+            grid.push(1.0 / v - 2.0);
         }
+        // erfcx(xa) = exp(xa^2)*erfc(xa) in f64 while that is safe, and
+        // the standard asymptotic series past it (`exp(xa^2)` overflows
+        // f64 at xa ~ 26.6). The series' first dropped term is
+        // 945/(2*xa^2)^5, ~2.9e-12 relative at xa = 20 -- five orders
+        // under f32 resolution, so the seam is invisible at this scale.
+        // Same reference accuracy.rs's own `erfcx (x>=20)` row uses.
+        let erfcx_ref = |xa: f64| {
+            if xa < 20.0 {
+                (xa * xa).exp() * erfc_ref(xa)
+            } else {
+                let t = 0.5 / (xa * xa);
+                let p = 1.0 - t * (1.0 - t * (3.0 - t * (15.0 - t * 105.0)));
+                p / (xa * std::f64::consts::PI.sqrt())
+            }
+        };
+        // Seed: the shipped coefficients (a Chebyshev-basis relative-error
+        // LP over v, already coordinate-descent polished here). Descending
+        // from here is a no-op unless the grid or evaluation order
+        // changed -- which is exactly what makes it a useful regression
+        // check on a future reshape.
+        //
+        // The one property descent cannot see and cannot be given as an
+        // objective: the shipped coefficients also satisfy
+        // `erfcx_pos(0.0) == 1.0` bit-exactly (pinned in edgecheck.rs, and
+        // the reason `erfc(0)` and `erfcx(0)` are exact). Re-check any
+        // candidate this prints against that pin before shipping.
         let init = [
-            1.461691795157094e-6, 0.08557674288749695, 0.44371211528778076, 0.9783496856689453,
-            0.15177123248577118, 0.7851238250732422, 1.8210692405700684, 2.1067135334014893,
+            0.56418955, 1.1283774, 1.9749641, 2.807048, 2.975676, -3.7488432, 17.02367,
+            -117.490135, 255.59447, -243.95302, 90.238014,
         ];
-        tune("erfc", &erfc_c, &erfc_ref, &grid, &init);
-    }
-    if which == "erfc5" {
-        // idea #64: degree 5/5 bump. Seed from a real scipy/HiGHS minimax
-        // (Chebyshev) LP fit of the rational to erfcx(xa) over [0,10]
-        // (relative-residual objective, linear in the 10 coefficients
-        // since there's no p*q cross term) -- not zero-seeded, see this
-        // file's own zero-seed-trap lesson. The LP's numerator 5th-degree
-        // term converged to ~0 (headroom lives in the denominator), but
-        // both are left free here for tune()'s coordinate descent to
-        // confirm/exploit against the real scored objective.
-        let mut grid = vec![];
-        let mut b = 0.0f32.to_bits();
-        while b < 10.0f32.to_bits() {
-            grid.push(f32::from_bits(b));
-            grid.push(-f32::from_bits(b));
-            b += 3000;
-        }
-        let init = [
-            -1.2645128e-8, 0.038198419, 0.25173876, 0.7754892, 1.2765400, 0.067703754, 0.44622305,
-            1.4079921, 2.4890938, 2.4049246,
-        ];
-        tune("erfc5", &erfc_c5, &erfc_ref, &grid, &init);
-    }
-    if which == "erfcsplit" {
-        // scipy-derived seeds (least_squares fit of erfc(xa)*exp(xa^2)
-        // against the same degree-4/4 rational shape, per domain half --
-        // not zero-seeded, see this file's own zero-seed-trap lesson).
-        let mut grid_lo = vec![];
-        let mut b = 0.0f32.to_bits();
-        while b < 2.0f32.to_bits() {
-            grid_lo.push(f32::from_bits(b));
-            grid_lo.push(-f32::from_bits(b));
-            b += 600;
-        }
-        let init_lo = [
-            3.98038805e-5,
-            4.78439720e-2,
-            3.14573495e-1,
-            7.84393590e-1,
-            8.58997187e-2,
-            5.49311743e-1,
-            1.47290761e0,
-            1.91277270e0,
-        ];
-        tune("erfc_lo", &erfc_lo_c, &erfc_ref, &grid_lo, &init_lo);
-
-        let mut grid_hi = vec![];
-        let mut b = 2.0f32.to_bits();
-        while b < 10.0f32.to_bits() {
-            grid_hi.push(f32::from_bits(b));
-            grid_hi.push(-f32::from_bits(b));
-            b += 2400;
-        }
-        let init_hi = [
-            1.79230307e-7,
-            1.47984655e-1,
-            5.92738296e-1,
-            1.14808010e0,
-            2.62310450e-1,
-            1.05031439e0,
-            2.16933286e0,
-            2.27410184e0,
-        ];
-        tune("erfc_hi", &erfc_hi_c, &erfc_ref, &grid_hi, &init_hi);
+        tune("erfcx_pos", &erfcx_pos_c, &erfcx_ref, &grid, &init);
     }
     if which.contains("cbrt") {
         // one octave [1,2) is representative: the bit-trick seed's

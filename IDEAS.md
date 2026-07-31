@@ -95,9 +95,11 @@ examples:
 These would improve an existing function at zero perf cost, so they clear
 the bar by construction if they find anything.
 
-- **Sollya `fpminimax`**: not installed. Candidates: `acos_poly` (max 4),
-  erfc's n/d (max ~100, root cause already traced — a tighter fit alone
-  won't fix it).
+- **Sollya `fpminimax`**: not installed. Candidate: `acos_poly` (max 4).
+  (erfc's n/d used to be listed here as "max ~100, root cause already
+  traced — a tighter fit alone won't fix it". Both halves of that were
+  wrong: the rational's *own* fit error was ~15 ulp, and replacing it
+  with `erfcx_pos` took erfc 109 → 7. See graveyard.md.)
 
 - **True rlibm-style exhaustive rounding-interval LP** (not a continuous
   minimax stand-in) for `log_2`: input-multiplicity confirmed tractable
@@ -195,7 +197,9 @@ the bar by construction if they find anything.
 
 104. **True Remez exchange in-repo** (f64, certified equioscillation) —
      the LP is a discretized stand-in; Remez gives certificates and
-     better conditioning on rationals (atan_poly, erfc_rational).
+     better conditioning on rationals. `atan_poly` is the remaining
+     candidate; `erfc_rational` used to be the other and no longer
+     exists (see graveyard.md).
 
 106. **Caller-profile-weighted alternate coefficient sets** behind a
      cargo feature (e.g. sin weighted toward [−2π,2π]) — same shapes
@@ -209,24 +213,38 @@ the bar by construction if they find anything.
   fits by 1/ulp(f(x)) instead of plain relative error as a reusable,
   built-in tool rather than a one-off per-function LP script (the ad hoc
   version of this has already found real wins for exp_pos_neg/erf_poly and
-  real regressions for asin_poly/erfc — see rejected section for when it
-  does/doesn't transfer).
+  real regressions for asin_poly and for erfc's retired rational — see
+  graveyard.md for when it does/doesn't transfer).
 
 - **Per-function transformed-variable fit search**: fit in u=s/(s+2),
   u=s·(s+a), etc., searching over the transform family — distinct from
   centered-variable refits (already rejected, that only moved the origin).
-  A nonlinear transform changes curvature matching.
+  A nonlinear transform changes curvature matching. **Now has one shipped
+  precedent, so this is no longer speculative**: `erfcx_pos`'s
+  `v = 1/(2+x)` took erfc 109 → 7 and erfcx 126 → 6 where every
+  same-variable refit of the old rational had failed. The transferable
+  part is *why* it worked — a reciprocal variable maps the whole
+  half-line into a finite interval, and an explicit leading `v` factor
+  makes the function's own asymptote fall out of `P(0)` by construction
+  instead of having to be fitted. Any function with a `c/x` tail
+  (`erfcx`, `dawson`, `erfc_inv`'s tail, Mills-ratio shapes) is a
+  candidate; a function with no asymptote to reproduce is not.
 
 99. **tgamma** companion to the lgamma entry (Lanczos/Stirling, shares
     machinery).
 
 182. **Compensated-Estrin generic infra** (EFT-based poly evaluation) as
      reusable machinery for future _accurate tiers — compensated-Horner
-     was hand-rolled once (erfc, max stayed flat); infra makes the next
-     attempt nearly free to run.
+     was hand-rolled once (erfc's retired rational, max stayed flat);
+     infra makes the next attempt nearly free to run. **Weaker now**:
+     the crate no longer has any `_accurate` tier for it to serve
+     (`erfc_accurate`/`erfcx_accurate` were retired when the base
+     functions reached single digits), so this needs a caller before it
+     needs machinery.
 
 183. **Full Df32/Df32 division primitive** (div_to_f32 exists) — needed
-     by future rational _accurate tiers.
+     by future rational _accurate tiers. Same caveat as #182: no
+     rational `_accurate` tier remains in the crate.
 
 188. **_approx tier new members**: exp2_approx/log2_approx/rsqrt_approx
      now have real doc-comment error bounds (max relative/absolute

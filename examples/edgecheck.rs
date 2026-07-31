@@ -88,6 +88,28 @@ fn ulp_diff(a: f32, b: f32) -> u64 {
     (ord(a) - ord(b)).unsigned_abs()
 }
 
+/// Pin a value against an external reference (scipy) to within `tol` ulp,
+/// for a point in a region where this crate's own accuracy target is a few
+/// ulp anyway. A bit-exact `check` would be over-tight there -- it would
+/// fail on any future refit that trades one worst point for another -- but
+/// `check_finite` alone would let an arbitrarily large regression through,
+/// which is exactly the failure mode these pins exist to catch.
+fn check_ulp(name: &str, got: f32, want: f32, tol: u64) {
+    let d = ulp_diff(got, want);
+    let ok = d <= tol;
+    if !ok {
+        fail();
+    }
+    println!(
+        "{} {:30} got {:e} (0x{:08x}) want {:e} ({d} ulp, tol {tol})",
+        if ok { "ok  " } else { "FAIL" },
+        name,
+        got,
+        got.to_bits(),
+        want
+    );
+}
+
 /// idea #197: seam continuity standing test -- every branchless function
 /// in this crate always computes *both* branches and selects at a fixed
 /// threshold, so the two independently-fitted approximations aren't
@@ -1376,6 +1398,16 @@ fn real_main() {
     check("erf(-inf)", erf(f32::NEG_INFINITY), -1.0);
     check("erf(nan)", erf(f32::NAN), f32::NAN);
     check("erfc(0)", erfc(0.0), 1.0);
+    check("erfc(-0)", erfc(-0.0), 1.0);
+    // Infinities go through the `xs` clamp that feeds the exact-square
+    // correction `fma(xs,xs,-xs*xs)`: unclamped that is `inf-inf` = NaN,
+    // which would poison the result even though the exponential itself
+    // saturates correctly. The clamp is also the reason `erfc(nan)` still
+    // returns NaN -- `NaN > 11.0` is false, so NaN passes through rather
+    // than being replaced by the clamp value.
+    check("erfc(inf)", erfc(f32::INFINITY), 0.0);
+    check("erfc(-inf)", erfc(f32::NEG_INFINITY), 2.0);
+    check("erfc(nan)", erfc(f32::NAN), f32::NAN);
     // erfc's clamp used to not fully protect its internal exp2 call for
     // |x| >= ~9.35 (see its doc comment) -- these used to be inf/huge
     // garbage instead of the correct near-0 (or near-2 for negative x).
@@ -1388,18 +1420,6 @@ fn real_main() {
     check_range("erfc(10)", erfc(10.0), 0.0, 2.0);
     check_range("erfc(-9.5)", erfc(-9.5), 0.0, 2.0);
     check_range("erfc(-10)", erfc(-10.0), 0.0, 2.0);
-
-    // erfc_accurate: full-precision-exponent sibling of erfc (idea #62),
-    // same special-value/domain behavior, just a tighter fit within it.
-    check("erfc_accurate(0)", erfc_accurate(0.0), 1.0);
-    check("erfc_accurate(-0)", erfc_accurate(-0.0), 1.0);
-    check("erfc_accurate(inf)", erfc_accurate(f32::INFINITY), 0.0);
-    check("erfc_accurate(-inf)", erfc_accurate(f32::NEG_INFINITY), 2.0);
-    check("erfc_accurate(nan)", erfc_accurate(f32::NAN), f32::NAN);
-    check_range("erfc_accurate(9.5)", erfc_accurate(9.5), 0.0, 2.0);
-    check_range("erfc_accurate(10)", erfc_accurate(10.0), 0.0, 2.0);
-    check_range("erfc_accurate(-9.5)", erfc_accurate(-9.5), 0.0, 2.0);
-    check_range("erfc_accurate(-10)", erfc_accurate(-10.0), 0.0, 2.0);
 
     // norm_cdf/norm_pdf (backlog idea #67): thin composites over erfc/
     // exp_checked.
@@ -1464,49 +1484,39 @@ fn real_main() {
     check("erfcx(0)", erfcx(0.0), 1.0);
     check("erfcx(-0)", erfcx(-0.0), 1.0);
     check("erfcx(nan)", erfcx(f32::NAN), f32::NAN);
-    // Positive side never needs its own exp2_checked call (see doc
-    // comment), so it's finite for any finite input by construction --
-    // pinned mainly to guard the negative side, which does route through
-    // exp2_checked and genuinely diverges to +inf past the point where
-    // 2*exp(x^2) itself overflows (see doc comment) -- confirm the
-    // still-representable region stays finite.
-    check_finite("erfcx(1e6)", erfcx(1e6));
+    // The positive side is `v*P(v)` with `v = 1/(2+x)` and no exponential
+    // at all (see doc comment), so it is finite for every finite input by
+    // construction, and decays like the true 1/(x*sqrt(pi)) asymptote all
+    // the way out -- pinned mainly to guard the negative side, which does
+    // route through exp_checked and genuinely diverges to +inf past the
+    // point where 2*exp(x^2) itself overflows.
     check_finite("erfcx(-1)", erfcx(-1.0));
     check_finite("erfcx(-9)", erfcx(-9.0));
-    // Past the point where 2*e^(x^2) itself overflows f32 (x^2 > ~176.7,
-    // i.e. |x| > ~13.3), erfcx correctly saturates to +inf rather than
-    // wrapping to garbage -- exp2_checked's own established saturation
-    // guarantee, inherited here for free.
+    check("erfcx(inf)", erfcx(f32::INFINITY), 0.0);
+    // Past the point where 2*e^(x^2) itself overflows f32 (x^2 > ~88.03,
+    // i.e. |x| > ~9.382 -- scipy bisection on the true value, not the
+    // ~13.3 this comment used to claim), erfcx correctly saturates to
+    // +inf rather than wrapping to garbage -- exp_checked's own
+    // established saturation guarantee, inherited here for free. Pinned
+    // on both sides of the boundary, not just far past it.
+    check_finite("erfcx(-9.38)", erfcx(-9.38));
+    check("erfcx(-9.39)", erfcx(-9.39), f32::INFINITY);
     check("erfcx(-1000)", erfcx(-1000.0), f32::INFINITY);
-
-    // erfcx_accurate: full-precision-exponent sibling of erfcx (same
-    // mechanism as erfc_accurate), same special-value behavior as erfcx.
-    check("erfcx_accurate(0)", erfcx_accurate(0.0), 1.0);
-    check("erfcx_accurate(-0)", erfcx_accurate(-0.0), 1.0);
-    check("erfcx_accurate(nan)", erfcx_accurate(f32::NAN), f32::NAN);
-    check_finite("erfcx_accurate(1e6)", erfcx_accurate(1e6));
-    check_finite("erfcx_accurate(-1)", erfcx_accurate(-1.0));
-    check_finite("erfcx_accurate(-9)", erfcx_accurate(-9.0));
-    check("erfcx_accurate(-1000)", erfcx_accurate(-1000.0), f32::INFINITY);
-
-    // erfcx_checked: full-range sibling fixing erfcx's own documented
-    // freeze past |x|=10 (see its doc comment). Bit-identical to erfcx
-    // for |x|<=10 (same erfc_rational call).
-    check("erfcx_checked(0)", erfcx_checked(0.0), 1.0);
-    check("erfcx_checked(nan)", erfcx_checked(f32::NAN), f32::NAN);
-    check("erfcx_checked(9)", erfcx_checked(9.0), erfcx(9.0));
-    check("erfcx_checked(10)", erfcx_checked(10.0), erfcx(10.0));
-    check("erfcx_checked(inf)", erfcx_checked(f32::INFINITY), 0.0);
-    check("erfcx_checked(-1000)", erfcx_checked(-1000.0), f32::INFINITY);
-    // Past the 10 boundary: values confirmed against scipy.special.erfcx
-    // (max rel error ~5.8e-7, ~5 ulp, dominated by erfc_rational's own
-    // fit error right at the x=10 seam -- not a defect in the asymptotic
-    // tail itself) before pinning.
-    check("erfcx_checked(15)", erfcx_checked(15.0), 3.7529606e-2);
-    check("erfcx_checked(20)", erfcx_checked(20.0), 2.817435e-2);
-    check("erfcx_checked(50)", erfcx_checked(50.0), 1.1281537e-2);
-    check("erfcx_checked(100)", erfcx_checked(100.0), 5.641614e-3);
-    check("erfcx_checked(200)", erfcx_checked(200.0), 2.820913e-3);
+    // Large positive x, where the reciprocal-variable fit replaced an
+    // implementation that froze at a constant past |x|=10 (relative error
+    // growing without bound: ~99% at x=20, ~895% at x=100). Expected
+    // values are scipy.special.erfcx rounded to f32.
+    check_ulp("erfcx(11)", erfcx(11.0), 5.1080596e-2, 2);
+    check_ulp("erfcx(15)", erfcx(15.0), 3.7529606e-2, 2);
+    check_ulp("erfcx(20)", erfcx(20.0), 2.8174348e-2, 2);
+    check_ulp("erfcx(50)", erfcx(50.0), 1.1281536e-2, 2);
+    check_ulp("erfcx(100)", erfcx(100.0), 5.6416136e-3, 2);
+    check_ulp("erfcx(200)", erfcx(200.0), 2.8209127e-3, 2);
+    check_ulp("erfcx(1e6)", erfcx(1e6), 5.641896e-7, 2);
+    // Denormal output at the very top of the domain: v = 1/(2+x) itself
+    // rounds to 1/x there, and the leading (~1/sqrt(pi)) coefficient
+    // carries it down to a denormal without flushing.
+    check_ulp("erfcx(max)", erfcx(f32::MAX), 1.658004e-39, 2);
 
     // erfinv (backlog idea #66): domain (-1,1), odd function, unbounded
     // as |x|->1. Ordinary values checked via round-trip through erf

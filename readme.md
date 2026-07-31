@@ -67,8 +67,9 @@ logaddexp (|a|,|b|<80)|    0.141   |  ~1e3-1e5, heavy-tailed (real, narrow cance
            atan_latency |    0.052   |     3     |  0.000  |    0
         tan (in-domain) |    0.331   |  2967     |  0.000  |    0
                    erf  |    0.318   |     4     | (no std erf)
-         erfc (|x|<=10) |    0.311   |   109     | (no std erfc)
-        erfcx (|x|<=10) |    0.377   |   125     | (no std erfcx)
+         erfc (|x|<=10) |    0.199   |     7     | (no std erfc)
+        erfcx (|x|<=20) |    0.215   |     6     | (no std erfcx)
+         erfcx (x>=20)  |    0.648   |     4     | (no std erfcx)
                   atan2 |    0.069   |     3     |  0.000  |    0
     atan2_unchecked (+) |    0.069   |     3     | (bit-identical to atan2 on its domain)
         hypot (bounded) |    0.034   |     1     |  0.000  |    0
@@ -129,6 +130,14 @@ which is how `log1pmx` turned up as a fourth case, out of domain via its
 own negative output rather than its magnitude. The llvm-mca table further
 down needed no change: its numbers came back bit-identical, since llvm-mca
 reads the instruction stream and never sees a value.
+
+`(!)` marks the two rows re-measured in a *later* sitting, when `erfc` and
+`erfcx` were rebuilt on `erfcx_pos`. They are not strictly comparable to the
+rest: the control for that sitting was `erf`, whose code did not change and
+which measured **13.9 ns / 0.49 ns** against the 16.2 / 0.56 published here,
+i.e. that machine ran ~14% fast. Discount both marked rows accordingly, or
+just read the llvm-mca table below, which has no such problem and where the
+same change shows as `erfc` throughput +34.8% and `erfcx` +22.6%.
 ```
 Serial latency (dependency chain, examples/quickbench.rs; lower is better)
               | jodie   | std     | improvement
@@ -184,8 +193,8 @@ atan2_unchecked | 20.4 ns |    -    |  -
          cosd | 18.2 ns |    -    |  -
          tand | 22.9 ns |    -    |  -
           erf | 16.2 ns |    -    |  -
-         erfc | 17.2 ns |    -    |  -
-        erfcx | 10.9 ns |    -    |  -
+      erfc (!)| 16.6 ns |    -    |  -
+     erfcx (!)| 10.5 ns |    -    |  -
       hypot (*) | 6.0 ns  | 11.2 ns | 1.9x
 hypot_unchecked | 6.2 ns  |    -    |  -
   hypot_checked | 18.2 ns | 11.2 ns | 0.6x
@@ -284,8 +293,8 @@ atan2_unchecked | 0.52 ns |    -    |  -
          cosd | 0.44 ns |    -    |  -
          tand | 0.79 ns |    -    |  -
           erf | 0.56 ns |    -    |  -
-         erfc | 0.69 ns |    -    |  -
-        erfcx | 0.65 ns |    -    |  -
+      erfc (!)| 0.76 ns |    -    |  -
+     erfcx (!)| 0.70 ns |    -    |  -
   hypot (*) | 0.20 ns | 2.55 ns | 12.9x
 hypot_unchecked | 0.21 ns |    -    |  -
   hypot_checked | 0.38 ns | 2.55 ns | 6.7x
@@ -364,8 +373,8 @@ atan_latency        |          61.99 |             1.591
 atan2               |          67.19 |             1.694
 tan                 |          71.02 |             2.532
 erf                 |          83.98 |             2.037
-erfc                |          64.00 |             2.437
-erfcx               |          62.02 |             2.278
+erfc                |          70.36 |             3.284
+erfcx               |          69.97 |             2.792
 hypot               |          21.11 |             0.766
 hypot_checked       |          57.19 |             1.178
 rhypot              |          32.02 |             1.389
@@ -428,7 +437,7 @@ saturation_pins 0.3s, eft_contract_check 2.9s, denormal_audit 3.5s, approx_bound
 contracts the ulp sweeps above structurally cannot -- special values, clamp boundaries, denormal handling,
 and documented-bound drift.
 
-- `cargo run --release --example worst_corpus` - 108 public 1-arg functions x 90 historically-hard inputs
+- `cargo run --release --example worst_corpus` - 105 public 1-arg functions x 90 historically-hard inputs
   (special values, every branch seam, every clamp boundary, recorded worst-x values) checked bit-identical
   against a blessed golden file, in ~0.06s. The fast counterpart to the hours-long exhaustive sweeps.
   `-- --bless` regenerates; an intentional accuracy change is *expected* to fail this, and the diff is

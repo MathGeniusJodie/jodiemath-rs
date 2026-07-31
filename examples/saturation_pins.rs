@@ -151,8 +151,8 @@ fn main() {
             skip_denormal_out: false,
         },
         Target {
-            name: "erfcx_checked",
-            f: erfcx_checked,
+            name: "erfcx",
+            f: erfcx,
             r: |x| {
                 // erfcx(x) = exp(x^2)*erfc(x); use the asymptotic form for
                 // large x where exp(x^2) overflows f64.

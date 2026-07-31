@@ -498,17 +498,11 @@ throughput_fn!(thr_xlogy, "xlogy_throughput", |x: f32| xlogy(x, x));
 latency_fn!(lat_xlog1py, "xlog1py_latency", |x: f32| xlog1py(x, x));
 throughput_fn!(thr_xlog1py, "xlog1py_throughput", |x: f32| xlog1py(x, x));
 
-latency_fn!(lat_erfc_accurate, "erfc_accurate_latency", erfc_accurate);
-throughput_fn!(thr_erfc_accurate, "erfc_accurate_throughput", erfc_accurate);
 
 latency_fn!(lat_erfcx, "erfcx_latency", erfcx);
 throughput_fn!(thr_erfcx, "erfcx_throughput", erfcx);
 
-latency_fn!(lat_erfcx_accurate, "erfcx_accurate_latency", erfcx_accurate);
-throughput_fn!(thr_erfcx_accurate, "erfcx_accurate_throughput", erfcx_accurate);
 
-latency_fn!(lat_erfcx_checked, "erfcx_checked_latency", erfcx_checked);
-throughput_fn!(thr_erfcx_checked, "erfcx_checked_throughput", erfcx_checked);
 
 latency_fn!(lat_erfinv, "erfinv_latency", erfinv, Band::Half);
 throughput_fn!(thr_erfinv, "erfinv_throughput", erfinv);
@@ -879,10 +873,7 @@ fn main() {
         lat_compound, thr_compound;
         lat_xlogy, thr_xlogy;
         lat_xlog1py, thr_xlog1py;
-        lat_erfc_accurate, thr_erfc_accurate;
         lat_erfcx, thr_erfcx;
-        lat_erfcx_accurate, thr_erfcx_accurate;
-        lat_erfcx_checked, thr_erfcx_checked;
         lat_erfinv, thr_erfinv;
         lat_erfc_inv, thr_erfc_inv;
         lat_probit, thr_probit;
