@@ -4514,24 +4514,54 @@ pub fn dawson(x: f32) -> f32 {
     if x.abs() <= 4.0 { central } else { tail }
 }
 
-/// logit(p) = ln(p/(1-p)), sigmoid's inverse (backlog idea #71). Naive
-/// `ln(p/(1-p))` or `ln(p) - ln(1-p)` loses precision computing `1-p`
-/// directly whenever `p` is close to `1` (the same cancellation
-/// `log1p` exists to avoid) -- routing the second term through
-/// `log1p(-p)` instead recovers full precision there via `log1p`'s own
-/// internal correction, without needing any special-casing here. `p`
-/// outside `[0,1]` naturally comes out `NaN` (`ln(p)` for `p<0`, or
-/// `log1p(-p)`'s own domain error for `p>1`); `logit(0)=-inf`,
-/// `logit(1)=inf`, both falling out of `ln`/`log1p`'s own existing
-/// `0`/`-1` special cases with no extra code. Exhaustive max ulp looks
-/// alarming (1024, at `p≈0.4999`) but is the same "ulp isn't meaningful
-/// near a true zero" artifact as `cosh`'s own near-zero case elsewhere
-/// in this crate: `logit(0.5)=0` exactly, so nearby
-/// points have a true value near zero, and any tiny absolute
-/// difference there is a huge *relative* one. avg ulp (0.28) is the
-/// honest accuracy figure.
+/// logit(p) = ln(p/(1-p)), sigmoid's inverse (backlog idea #71).
+///
+/// The natural form, `ln(p) - log1p(-p)`, is accurate at both ends but
+/// subtracts two nearly-equal logarithms near `p = 0.5`, where the true
+/// result goes to zero: both terms are `~-ln(2)` there, and each carries
+/// its own rounding of a quantity ~0.693 while their difference is only
+/// ~`4*(p-0.5)`. That is a real relative error -- 1024 max ulp -- not
+/// the "near a true zero, ulp isn't meaningful" artifact it was
+/// documented as until 2026-07-31. The error grows smoothly as the
+/// result shrinks (~`6e-8/ulp(result)` ulp), so there is no threshold
+/// below which it is safely small; it just gets worse all the way in.
+///
+/// Fixed by giving the central band its own arm: `logit(p) =
+/// 2*atanh(2p-1)`, evaluated with `atanh`'s own small-argument
+/// polynomial over that poly's own `|x| < 0.25` domain. Nothing cancels
+/// there -- the result is proportional to `2p-1`, which is *exact* for
+/// any `p >= 0.25` (`2p` is an exact scaling, Sterbenz covers the
+/// subtraction), and the doubling is exact too, so full relative
+/// accuracy survives to the last f32 either side of 0.5.
+///
+/// Outside that band the difference form stays, unchanged: at the seam
+/// the result is already ~0.51 against operands ~0.69, so it has
+/// essentially nothing left to cancel, and it is what keeps denormal
+/// `p`, the endpoints, and out-of-domain `p` correct. `p` outside
+/// `[0,1]` comes out `NaN` (`ln(p)` for `p<0`, or `log1p(-p)`'s own
+/// domain error for `p>1`); `logit(0)=-inf` and `logit(1)=inf` fall out
+/// of `ln`/`log1p`'s existing `0`/`-1` special cases with no extra code.
+///
+/// A single `log1p((2p-1)/min(p,1-p))` covering the whole domain in one
+/// arm was measured and rejected: better avg (0.2408 vs 0.2625) and the
+/// same max, but its two divisions land in series where these two logs
+/// run in parallel, for +34% latency. See graveyard.md.
 #[inline(always)]
 pub fn logit(p: f32) -> f32 {
+    // `2p-1`, exact for every `p >= 0.25` (`2p` is an exact scaling,
+    // Sterbenz covers the subtraction), which is what lets the central
+    // arm keep full relative accuracy at the zero.
+    let a = fma(2.0, p, -1.0);
+    // logit(p) = 2*atanh(2p-1), reusing `atanh`'s own small-argument
+    // polynomial on its own `|x| < 0.25` domain. No subtraction of
+    // logarithms, so nothing cancels: the result is proportional to `a`,
+    // and `a` is exact.
+    let central = 2.0 * atanh_small(a);
+    // Outside that band the difference form has nothing left to cancel
+    // (at the seam the result is already ~0.51 against operands ~0.69)
+    // and it is what keeps `p` denormal, `0`, `1` and out-of-domain
+    // correct, so it stays exactly as it was.
+    //
     // `log1p(-p)` inlined without the branches this call site can't
     // reach (same lever as `erfinv` above): `t = 1-p` is never denormal
     // (`>= 2^-24` for any `p < 1`), and `-p == 0` only at `p == 0`, where
@@ -4549,7 +4579,8 @@ pub fn logit(p: f32) -> f32 {
     let corr = c / t;
     let spec = if t == 0.0 { f32::NEG_INFINITY } else { f32::NAN };
     let l = if t > 0.0 { ln_normal(t, 0.0) + corr } else { spec };
-    ln(p) - l
+    let outer = ln(p) - l;
+    if a.abs() < 0.25 { central } else { outer }
 }
 
 /// x*ln(y) (backlog idea #84), the entropy-sum kernel (`sum(p*ln(p))`

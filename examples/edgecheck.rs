@@ -1473,7 +1473,30 @@ fn real_main() {
     check("logit(-0.1)", logit(-0.1), f32::NAN);
     check("logit(1.1)", logit(1.1), f32::NAN);
     check("logit(nan)", logit(f32::NAN), f32::NAN);
+    // 1 ulp high, not exact: p=0.7 is outside logit's central band, so
+    // this round trip goes through the ln/log1p arm, where the seam is
+    // placed precisely because a ulp there is already cheap.
     check("sigmoid(logit(0.7))", sigmoid(logit(0.7)), 0.70000005);
+    // The central band is where the old difference form cancelled: both
+    // its logs were ~-ln(2) while their difference was ~4*(p-0.5). These
+    // sit where it measured its worst (~1024 ulp), against f64
+    // references, and are the pins that would catch a regression to any
+    // formula that subtracts two logarithms here.
+    check_ulp("logit(0.4998779)", logit(0.4998779), -4.8840046e-4, 2);
+    check_ulp("logit(0.5+2^-24)", logit(0.50000006), 2.3841858e-7, 2);
+    check_ulp("logit(0.5-2^-24)", logit(0.49999994), -2.3841858e-7, 2);
+    check_ulp("logit(0.4996)", logit(0.4996), -1.6000274e-3, 2);
+    // Denormal p: the ratio form's `1/p` exceeds f32::MAX below
+    // p ~ 2.9e-39, which returned -inf for a true value near -88 until
+    // the denominator got scaled (see logit's own doc comment). Every
+    // one of these is finite and ~-100, and the exhaustive sweep alone
+    // did catch this one -- but only as a single number in an average,
+    // so these pin the shape of the failure too.
+    check_ulp("logit(f32::MIN_POSITIVE)", logit(f32::MIN_POSITIVE), -87.33655, 2);
+    check_ulp("logit(2^-149)", logit(f32::from_bits(1)), -103.27893, 2);
+    check_ulp("logit(2.938736e-39)", logit(f32::from_bits(0x0020_0000)), -88.72284, 2);
+    check_ulp("logit(1e-40)", logit(1e-40), -92.10341, 2);
+    check("logit(-1e-40) [out of domain]", logit(-1e-40), f32::NAN);
 
     // xlogy/xlog1py (backlog idea #84): x==0 overrides to 0 regardless of
     // y, matching scipy.special.xlogy's convention exactly -- including
@@ -2168,6 +2191,11 @@ fn real_main() {
     check_seam("asin seam", asin, 0.27);
     check_seam("erf seam", erf, 0.28);
     check_seam("atanh seam", atanh, 0.25);
+    // logit's band is on |2p-1|, so its seams sit at p = 0.625 and
+    // p = 0.375 -- both, since the two arms are not mirror images of
+    // each other (the atanh poly is odd, the ln/log1p difference is not).
+    check_seam("logit seam (upper)", logit, 0.625);
+    check_seam("logit seam (lower)", logit, 0.375);
 }
 
 /// f64-computed exact reference for a single spot-check triple, used only

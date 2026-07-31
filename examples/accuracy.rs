@@ -1444,6 +1444,13 @@ fn main() {
         // Domain (0,1) (backlog idea #71) -- log1p_u10(-v) is
         // cancellation-safe for v near 1 the same way the real
         // implementation is.
+        //
+        // Deliberately keeps the difference form the real logit now only
+        // uses *outside* its central band: in f64 the cancellation near
+        // p=0.5 that made it a bug in f32 costs ~1e-16 absolute against
+        // a result ~4e-4, i.e. ~1e-13 relative -- orders below an f32
+        // ulp, so this stays a trustworthy reference for the very region
+        // whose f32 version it is no longer good enough to compute.
         let unit_open = |x: f32| x > 0.0 && x < 1.0;
         let logit_ref = |v: F64xN| log_u35(v) - log1p_u10(-v);
         let s = measure!(unit_open, logit, logit_ref);

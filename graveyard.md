@@ -477,6 +477,49 @@ open. Two rules that recur often enough to state up front:
 
 ### log family
 
+- **logit: `2*atanh(2p-1)` central band** (2026-07-31, **SHIPPED**, a
+  real bug fix). Exhaustive over the domain: avg ulp 0.2758 → 0.2625,
+  **max 1024 → 3**, for llvm-mca latency 59.03 → 59.91 (+1.5%) and
+  throughput 3.176 → 3.551 (+11.8%).
+  - **The defect**: `ln(p) - log1p(-p)` subtracts two nearly-equal
+    logarithms near `p = 0.5`. Both are `~-ln(2)`, each carrying its own
+    rounding of a quantity ~0.693, while their difference is only
+    `~4*(p-0.5)`. Error in ulp of the result is roughly
+    `6e-8/ulp(result)`, so it grows smoothly as the result shrinks —
+    there is no threshold below which it is safely small. This was
+    documented as a "near a true zero, ulp isn't meaningful" artifact
+    and was **not** one; it was found by re-auditing every user of that
+    excuse after the same excuse turned out to be hiding a real bug in
+    `cospi` (see the trig section).
+  - **The fix**: `logit(p) = 2*atanh(2p-1)` on `|2p-1| < 0.25`, reusing
+    `atanh_small` — the crate's existing poly, on its own fitted domain,
+    no new fit. Nothing cancels: the result is proportional to `2p-1`,
+    exact for `p >= 0.25`, and the doubling is exact. Outside the band
+    the old difference form stays untouched (at the seam the result is
+    ~0.51 against operands ~0.69, so ~1 ulp) and keeps denormal `p`, the
+    endpoints and out-of-domain `p` correct. Seam gaps 9 / 5 ulp with
+    matching one-sided slopes (4.2654 vs 4.2682 against a true
+    `1/(p(1-p)) = 4.2667`).
+  - **REJECTED alternative — one arm for the whole domain**,
+    `mulsign(log1p(|2p-1| / min(p,1-p)), 2p-1)`. Mathematically the
+    nicer object: a single `log1p`, no `ln` at all, both operands
+    Sterbenz-exact across the central band, quotient non-negative over
+    the whole domain, and it measured a genuinely *better* avg (0.2408
+    vs 0.2625) at the same max of 3. Killed on cost: **+34% latency**
+    (59.03 → 79.19) and +27% throughput (3.176 → 4.028). The reason is
+    structural and worth remembering — it needs *two* divisions (the
+    quotient, then `log1p`'s own `c/u` correction) and they land in
+    **series**, where the shipped form's `ln` and `log1p` are
+    independent and pipeline in **parallel**. Fewer total operations,
+    longer critical path. It also needed a denormal guard the difference
+    form gets for free: `1/p` overflows below `p ~ 2.9e-39`, returning
+    `-inf` for a true `~-88`, fixed by scaling the denominator `2^24`
+    and passing `koff = 24` to `ln_normal` (sound only because the
+    quotient is past `2^25` there, where `log1p` has already degenerated
+    to `ln`) — and that scale had to be gated on `d > 0.0`, or it pulls
+    an out-of-domain negative quotient back above `-1` and returns a
+    plausible finite number where `NaN` is owed (`logit(-0.1)` → -16.6).
+
 - **`log_2`/`ln`/`log10` integer koff fold**: bit-exact, but mca showed
   zero measurable change — LLVM already performs this reordering.
 - **`ln_normal`/`log10_normal`: fuse trailing `+k*LN2_LO` into the fma**:
