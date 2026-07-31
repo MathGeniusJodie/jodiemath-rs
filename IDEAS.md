@@ -83,7 +83,14 @@ examples:
   `log_2` two levels down through `powf_pos`), by **shape** rather than
   name (`tanh` carries a *standalone copy* of a poly, invisible to a grep
   for the macro), and **downstream** (`compound`'s `log1p` zero-select is
-  unobservable because `exp_checked` maps both zeros to `1.0`).
+  unobservable because `exp_checked` maps both zeros to `1.0`). Newest
+  variant, and the one to try next elsewhere: **the guard can be
+  *retuned* to create the licence.** `erfc`/`erfcx` already clamped `|x|`
+  before squaring; moving those clamps (11 -> 10.21 and 9.41) made the
+  exponent provably in-range, so `exp_checked`'s own clamp could be
+  dropped entirely -- bit-identical output, -11.7% throughput on `erfc`.
+  Any function that clamps an argument *and* calls a checked primitive
+  downstream is a candidate.
 - **Delete a rounding, not just an op.** Folding a poly's top coefficient
   group one level lower so `x^4` is never formed removes a multiply *and* a
   rounding -- it made 30 regions smaller while *improving* accuracy on

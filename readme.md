@@ -132,12 +132,15 @@ down needed no change: its numbers came back bit-identical, since llvm-mca
 reads the instruction stream and never sees a value.
 
 `(!)` marks the two rows re-measured in a *later* sitting, when `erfc` and
-`erfcx` were rebuilt on `erfcx_pos`. They are not strictly comparable to the
-rest: the control for that sitting was `erf`, whose code did not change and
-which measured **13.9 ns / 0.49 ns** against the 16.2 / 0.56 published here,
-i.e. that machine ran ~14% fast. Discount both marked rows accordingly, or
-just read the llvm-mca table below, which has no such problem and where the
-same change shows as `erfc` throughput +34.8% and `erfcx` +22.6%.
+`erfcx` were rebuilt on `erfcx_pos`. They are not comparable to the rest, and
+the reason is worth stating precisely rather than hand-waving: `erf`, whose
+code did not change, was measured as a control in the same window and came
+out **17.3 ns / 0.645 ns** against the 16.2 / 0.56 published here -- so that
+machine ran ~7% slow on latency and ~15% slow on throughput. (Earlier in the
+*same session* the same control read 13.9 / 0.49, i.e. ~14% fast. That 2.5x
+swing across one session is the whole reason this crate treats llvm-mca, not
+wall clock, as its perf reference.) Read the llvm-mca table below instead;
+it has no such problem.
 ```
 Serial latency (dependency chain, examples/quickbench.rs; lower is better)
               | jodie   | std     | improvement
@@ -193,8 +196,8 @@ atan2_unchecked | 20.4 ns |    -    |  -
          cosd | 18.2 ns |    -    |  -
          tand | 22.9 ns |    -    |  -
           erf | 16.2 ns |    -    |  -
-      erfc (!)| 16.6 ns |    -    |  -
-     erfcx (!)| 10.5 ns |    -    |  -
+      erfc (!)| 20.2 ns |    -    |  -
+     erfcx (!)| 14.0 ns |    -    |  -
       hypot (*) | 6.0 ns  | 11.2 ns | 1.9x
 hypot_unchecked | 6.2 ns  |    -    |  -
   hypot_checked | 18.2 ns | 11.2 ns | 0.6x
@@ -293,8 +296,8 @@ atan2_unchecked | 0.52 ns |    -    |  -
          cosd | 0.44 ns |    -    |  -
          tand | 0.79 ns |    -    |  -
           erf | 0.56 ns |    -    |  -
-      erfc (!)| 0.76 ns |    -    |  -
-     erfcx (!)| 0.70 ns |    -    |  -
+      erfc (!)| 0.94 ns |    -    |  -
+     erfcx (!)| 0.88 ns |    -    |  -
   hypot (*) | 0.20 ns | 2.55 ns | 12.9x
 hypot_unchecked | 0.21 ns |    -    |  -
   hypot_checked | 0.38 ns | 2.55 ns | 6.7x
@@ -373,8 +376,8 @@ atan_latency        |          61.99 |             1.591
 atan2               |          67.19 |             1.694
 tan                 |          71.02 |             2.532
 erf                 |          83.98 |             2.037
-erfc                |          70.36 |             3.284
-erfcx               |          69.97 |             2.792
+erfc                |          62.28 |             2.899
+erfcx               |          66.99 |             2.896
 hypot               |          21.11 |             0.766
 hypot_checked       |          57.19 |             1.178
 rhypot              |          32.02 |             1.389

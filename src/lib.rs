@@ -139,6 +139,33 @@ macro_rules! exp_r_poly {
     }};
 }
 
+// The `k`/`r` Cody-Waite reduction, e^r poly and 2^k reconstruction that
+// `exp_checked` is, minus the input clamp -- the caller supplies an
+// argument already inside `EXP_CLAMP_LO..=EXP_CLAMP_HI`. Split out for
+// callers that can *prove* one side of that clamp is unreachable and so
+// should not pay for it: `erfc`'s argument is `-(xs*xs)`, a negated
+// square, so the upper bound is dead by construction (see its own
+// comment). Macro, not a fn -- see exp_r_poly! for why a new shared-fn
+// boundary is the thing to avoid here; verified via a full pre/post
+// assembly diff that `exp_checked` and its other callers are unchanged.
+macro_rules! exp_reduce {
+    ($x:expr) => {{
+        let x = $x;
+        const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+        let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
+        let r = fma(-k, LN2_HI, x);
+        let r = fma(-k, LN2_LO, r);
+        let p = exp_r_poly!(r);
+        let (t1, t2) = exp2_field_split(k);
+        p * t1 * t2
+    }};
+}
+
+/// `exp_checked`'s clamp bounds: `exp2_checked`'s own `k` boundary
+/// (`[-151, 128)`) converted into `x`'s units.
+const EXP_CLAMP_LO: f32 = -104.66522426455174;
+const EXP_CLAMP_HI: f32 = 88.72283911167308;
+
 // Q(f) = (2^f - 1)/f, shared by exp2/exp2_checked/exp10/exp10_checked/
 // exp2m1/exp2_checked_df. Macro, not a fn -- see exp_r_poly!. Returns
 // `q`; each caller does its own final combine (exp2/exp10's single-field
@@ -2303,14 +2330,7 @@ pub fn exp_narrow(x: f32) -> f32 {
 /// `x`'s units.
 #[inline(always)]
 pub fn exp_checked(x: f32) -> f32 {
-    let x = x.clamp(-104.66522426455174, 88.72283911167308);
-    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
-    let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
-    let r = fma(-k, LN2_HI, x);
-    let r = fma(-k, LN2_LO, r);
-    let p = exp_r_poly!(r);
-    let (t1, t2) = exp2_field_split(k);
-    p * t1 * t2
+    exp_reduce!(x.clamp(EXP_CLAMP_LO, EXP_CLAMP_HI))
 }
 
 /// A Pade approximant near 0 (where exp(x)-1 loses precision to
@@ -4065,6 +4085,31 @@ pub fn erf(x: f32) -> f32 {
     if xa < 0.28 { a } else { b }
 }
 
+// The `|x|` clamps `erfc` and `erfcx` feed their `x*x` through. Both are
+// set by one rule: make the exponent they hand `exp_reduce!` provably
+// inside its valid range, so neither pays for a clamp `exp_checked`
+// would have applied. The bounds that make them correct are not
+// obvious, and each is one edit away from silently breaking, so they
+// are proved at compile time rather than commented.
+//
+// `erfc` needs `-xs^2` at or above `EXP_CLAMP_LO` (so the reduction is
+// valid) while still being far enough below zero that `e^-p` rounds to
+// exactly 0 -- which is what makes clamping legal in the first place,
+// since the true `erfc` has already reached exactly 0.0f32 by |x|~10.05.
+const ERFC_XS_CLAMP: f32 = 10.21;
+const _: () = assert!((ERFC_XS_CLAMP as f64) * (ERFC_XS_CLAMP as f64) <= -(EXP_CLAMP_LO as f64));
+// 150*ln2: below `e^-p` is at most half the smallest denormal, so it
+// rounds to 0 and every clamped input returns the exactly-right answer.
+const _: () = assert!((ERFC_XS_CLAMP as f64) * (ERFC_XS_CLAMP as f64) > 103.97207708399179);
+
+// `erfcx`'s negative arm needs `2*e^(xs^2)` to still overflow to +inf
+// (its true value out there), so `xs^2` must stay at or below
+// `EXP_CLAMP_HI` while landing above `ln(f32::MAX/2)`.
+const ERFCX_XS_CLAMP: f32 = 9.41;
+const _: () = assert!((ERFCX_XS_CLAMP as f64) * (ERFCX_XS_CLAMP as f64) <= EXP_CLAMP_HI as f64);
+// ln(f32::MAX/2) = 88.0296...: above this, `2*e^(xs^2)` leaves f32.
+const _: () = assert!((ERFCX_XS_CLAMP as f64) * (ERFCX_XS_CLAMP as f64) > 88.02969187150839);
+
 // erfcx(xa) for xa >= 0, shared by `erfc` and `erfcx` -- the scaled
 // complementary error function, i.e. erfc(xa)*exp(xa^2). Reciprocal
 // variable `v = 1/(2 + xa)` (so v in (0, 1/2], the whole half-line
@@ -4155,11 +4200,14 @@ fn erfcx_pos(xa: f32) -> f32 {
 /// polynomial in `1/(2+|x|)`, ~0.5 ulp of fit error against the old
 /// rational's ~15.
 ///
-/// No clamp on `x` anywhere except the one guarding `x*x` itself from
-/// overflowing to a non-finite exponent (`11` is far past where `erfc`
-/// has decayed under the smallest denormal, so it can only ever fire on
-/// inputs whose result is exactly `0.0`; `NaN > 11.0` is false, so NaN
-/// passes through it untouched and propagates).
+/// No clamp on `x` anywhere except [`ERFC_XS_CLAMP`] on the value being
+/// squared -- far past where `erfc` has decayed under the smallest
+/// denormal, so it can only ever fire on inputs whose result is exactly
+/// `0.0`, and NaN passes through it untouched (`NaN > c` is false) and
+/// propagates. That clamp does double duty: it also bounds `-x*x`
+/// tightly enough that the exponential needs *no* clamp of its own (see
+/// the const assertions on it), which is why this calls `exp_reduce!`
+/// rather than [`exp_checked`].
 ///
 /// Current: max ulp 7, avg 0.1993 (exhaustive sweep over `|x| <= 10`,
 /// which is where the f64 reference stops being usable -- past ~10.05
@@ -4168,18 +4216,25 @@ fn erfcx_pos(xa: f32) -> f32 {
 #[doc(alias = "erfcf")]
 #[inline(always)]
 pub fn erfc(x: f32) -> f32 {
-    let z = if x < 0.0 { -1.0 } else { 1.0 };
-    // w = 1.0 - z exactly, for both branches (0 = 1-1, 2 = 1-(-1)) --
-    // one subtract instead of a second compare+select on the same
-    // condition z already resolved.
-    let w = 1.0 - z;
+    // The x<0 reflection with no compare and no select. `w` shifts x's
+    // sign bit straight into the exponent field (0x4000_0000 is 2.0f),
+    // and `mulsign` applies the same bit to `y`, so the two arms are
+    // `y + 0` and `-y + 2` -- `2 - y` with the single rounding the old
+    // `fma(y, z, w)` gave it, bit-identical, in integer ops on ports the
+    // polynomial's fmas are not contending for.
+    let w = f32::from_bits((x.to_bits() >> 1) & 0x4000_0000);
     let xa = x.abs();
-    let xs = if xa > 11.0 { 11.0 } else { xa };
+    let xs = if xa > ERFC_XS_CLAMP { ERFC_XS_CLAMP } else { xa };
     let p = xs * xs;
     let pe = fma(xs, xs, -p);
     let r = erfcx_pos(xa);
-    let y = exp_checked(-p) * fma(-r, pe, r);
-    fma(y, z, w)
+    // No clamp on the exponent at all: `ERFC_XS_CLAMP` is chosen so
+    // `-p` cannot leave `exp_reduce!`'s valid range, which the two const
+    // assertions beside it check. NaN reaches here as NaN (`NaN > c` is
+    // false), and comes back out through `r`.
+    let e = exp_reduce!(-p);
+    let y = e * fma(-r, pe, r);
+    mulsign(y, x) + w
 }
 
 // erfinv's central branch (backlog idea #66): erfinv(x) = x*P(x^2) for
@@ -4578,20 +4633,14 @@ pub fn compound(x: f32, n: f32) -> f32 {
 /// `x >= 20` out to `f32::MAX` is **4 / 0.6478** over 1.04e9 samples,
 /// scored against the asymptotic series (`exp(x^2)` overflows f64 past
 /// x ~ 26.6, so the composed reference cannot reach there).
-///
-/// mca's latency number for this function (see readme.md) is not
-/// trustworthy: this is a sign-dependent branch (`x >= 0.0`), and the
-/// latency harness's `mix()` step masks the sign bit away entirely, so
-/// the `x<0` arm (with its real exponential) is never exercised there.
-/// Only the throughput number (a real mixed-sign array) is meaningful.
 #[inline(always)]
 pub fn erfcx(x: f32) -> f32 {
     let xa = x.abs();
     let r = erfcx_pos(xa);
-    let xs = if xa > 11.0 { 11.0 } else { xa };
+    let xs = if xa > ERFCX_XS_CLAMP { ERFCX_XS_CLAMP } else { xa };
     let p = xs * xs;
     let pe = fma(xs, xs, -p);
-    let g = exp_checked(p) * fma(pe, 2.0, 2.0);
+    let g = exp_reduce!(p) * fma(pe, 2.0, 2.0);
     if x >= 0.0 { r } else { g - r }
 }
 

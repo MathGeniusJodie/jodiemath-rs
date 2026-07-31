@@ -4146,3 +4146,80 @@ worked, which is what makes the next one findable. The code itself is in
     already stale at `3bad293` (42 entries across `cosh`/`exp`/`expm1`/
     `exp_m1_over_x`/`log_2`, all out-of-domain garbage from the exp
     reduction change, never re-blessed).
+
+- **`erfc`/`erfcx` perf pass, all of it bit-identical** — a follow-up to the
+  reciprocal-variable entry above, buying back cost without touching a
+  single returned bit (`worst_corpus` passes *unblessed*, and the exhaustive
+  sweep reproduces 0.1993/7 and 0.2142/6 exactly).
+  - **The lever that worked was the guard, not the arithmetic.** Both
+    functions clamp `|x|` before squaring it. Choosing that clamp so the
+    *exponential's own* clamp is provably dead removes it entirely:
+    `erfc` feeds `-xs^2`, so pick `ERFC_XS_CLAMP` with `xs^2` inside
+    `[150*ln2, -EXP_CLAMP_LO]` -- above the low end `e^-p` rounds to
+    exactly 0 (legal, the true `erfc` is already 0 by |x|~10.05), below
+    the high end the reduction stays valid. `erfcx` feeds `+xs^2` and
+    needs `2*e^(xs^2)` to still overflow to `+inf`, so its window is
+    `[ln(f32::MAX/2), EXP_CLAMP_HI]`. **Four `const _: () = assert!`
+    prove both windows at compile time** -- verified to fire in both
+    directions, because a silent one-edit break here is a wrong-answer
+    bug, not a slowdown.
+  - `exp_checked`'s body became `exp_reduce!(x.clamp(LO, HI))`, the macro
+    being the clamp-free reduction. Macro not fn, per `exp_r_poly!`'s own
+    note; **verified by a full-file assembly diff showing byte-identical
+    output**, so none of `exp_checked`'s 20+ other callers moved.
+  - **Sign folding beat compare-and-select.** `erfc`'s
+    `z = if x<0 {-1} else {1}; w = 1-z; fma(y,z,w)` became
+    `w = from_bits((x.to_bits()>>1) & 0x4000_0000); mulsign(y,x) + w`.
+    Bit-identical -- `fma(y,-1,2)` and `(-y)+2` are each one rounding of
+    the same exact `2-y` -- and worth **-5.9% throughput** on its own,
+    because it moves the work to integer ports the polynomial's fmas are
+    not contending for.
+  - Net: `erfc` **70.36 -> 62.28 cyc latency (-11.5%) and 3.284 -> 2.899
+    cyc/elem throughput (-11.7%)**; `erfcx` 69.97 -> 66.99 (-4.3%) with
+    its throughput column contested (see below). `erfc`'s latency is now
+    *below* where it was before the accuracy rewrite (64.00), and its
+    throughput regression against that baseline drops from +34.8% to
+    +19.0%.
+  - **`erfcx` is a clean worked example of mca's throughput column being
+    wrong, arbitrated to the end.** The clamp removal deletes 2 `vminps`
+    and adds 1 `vmovaps`; instructions 124 -> 123, uOps 143 -> 140, Block
+    RThroughput 39 -> 38, latency -4.3%, fma/mul/div mix identical --
+    every structural metric improves -- while simulated throughput reads
+    **+3.7%**. That is the documented artifact signature ("identical
+    expensive ops plus fewer total = mca is wrong"), so it was settled
+    with the wall clock rather than argued: two binaries built and run
+    **alternating A/B/A/B for four rounds**, and the clamp-removed
+    version was faster on throughput in **4 of 4** (0.858/0.911/0.889/
+    0.942 vs 0.952/0.952/0.984/0.953 ns/op) and on min latency. The
+    published mca row is therefore *worse* than the previous one for a
+    change that is really ~6% faster -- left as measured, flagged here.
+    Alternating A/B on prebuilt binaries is what makes this machine's
+    wall clock usable at all; the same session drifted from ~14% fast to
+    ~15% slow on an unchanged control.
+  - **Four things measured and rejected, all of them plausible:**
+    - **Drop a polynomial degree.** The standing "a branch under the
+      binding max can shed a term" lever does *not* apply here: the fit
+      is the binding term, not headroom. Ideal (exact-arithmetic) fit
+      error is 0.542 ulp at degree 10 but **>= 2.9 ulp at degree 9 for
+      every one of 12 reciprocal offsets scanned** (A from 0.5 to 8), and
+      through the real f32 chain max goes 4.049 -> 6.058 -> 10.400 for
+      degree 10 -> 9 -> 8.
+    - **Even/odd split in `v^2`** (11 ops vs Estrin's 12, depth 6 vs 5).
+      Cheaper on *both* mca axes (`erfc` lat -2.0%, thr -3.9%) and it
+      really is fewer operations -- but it costs **real accuracy**:
+      exhaustive `erfc` 7 -> 8 and `erfcx` 6 -> 8, and still 8/8 after
+      re-polishing the coefficients against the new rounding order.
+      Estrin's shallower tree is worth a max ulp: same-grid standalone,
+      4.670 vs 5.366. **Evaluation order is an accuracy decision here,
+      not just a scheduling one.**
+    - **Horner** (10 fma, no `v2`/`v4` at all): throughput -6.5%, but
+      latency **+13.5%** from the 10-deep chain. Even/odd with Estrin
+      halves was worse on every axis.
+    - **Bitwise select for `erfcx`'s x<0 arm** (mask `g`, `mulsign` `r`,
+      add): latency -5.5%, but instructions *and* uOps both **up** and
+      throughput +1.9%. Unlike the `erfcx` clamp case above, here the
+      structural metrics agree with the throughput column, so it is a
+      real regression.
+  - Stale fact corrected: `erfcx`'s doc claimed its mca latency number
+    was untrustworthy because `mix()` masks the sign bit. `mix()` was
+    fixed in idea #198 (`0x807f_ffff`); the note was removed.
