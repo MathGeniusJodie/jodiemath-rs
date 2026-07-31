@@ -459,6 +459,37 @@ fn real_main() {
     check("sinpi(1e20)", sinpi(1e20), 0.0);
     check("cospi(1e20)", cospi(1e20), 1.0);
 
+    // Regression guard for a second real bug (2026-07-30): cospi keeps
+    // full *relative* accuracy right up to its own zeros -- small
+    // absolute error there is not the same claim, and is not what these
+    // pin. Reducing on `k = round(x)` makes
+    // `0.5-|x-k|` Sterbenz-exact over the half of the domain containing
+    // the crossing; the previous `k = round(x-0.5)` reduction rounded
+    // away the low bits of exactly the quantity the answer is
+    // proportional to, which cost ~2e5 ulp just below -0.5 and returned
+    // a flat 0.0 at the very first f32 below it (a 100% relative error
+    // that no absolute-error framing catches). References computed in
+    // f64, where that same reduction has bits to spare.
+    check_ulp("cospi(0.5-2^-25)", cospi(0.49999997), 9.362676e-8, 2);
+    check_ulp("cospi(-(0.5-2^-25))", cospi(-0.49999997), 9.362676e-8, 2);
+    check_ulp("cospi(0.5+2^-24)", cospi(0.50000006), -1.8725352e-7, 2);
+    check_ulp("cospi(-4.9999842e-1)", cospi(-0.49999842), 4.962218e-6, 2);
+    // Every zero is +0.0, matching IEEE 754-2019's `cosPi(n+1/2) = +0`
+    // for every integer n: ties-even rounding sends `k` to the *even*
+    // neighbour at every exact half-integer, so the parity sign is +1
+    // there for free, with no special case spent on it.
+    check("cospi(0.5)", cospi(0.5), 0.0);
+    check("cospi(-0.5)", cospi(-0.5), 0.0);
+    check("cospi(1.5)", cospi(1.5), 0.0);
+    check("cospi(-2.5)", cospi(-2.5), 0.0);
+    check("cospi(2^22+0.5)", cospi(4_194_304.5), 0.0);
+    // cos is even, and this reduction is exactly even as well
+    // (`round_ties_even`, `|x-k|` and `parity` are each sign-symmetric),
+    // so the two sides agree bit for bit rather than just closely.
+    for &x in &[0.3f32, 0.25, 0.7, 1.3, 12.75, 1_000_000.5, 4_194_305.0] {
+        check(&format!("cospi(-{x}) == cospi({x})"), cospi(-x), cospi(x));
+    }
+
     // sinpi_unchecked (backlog idea #98): drops sinpi's `x==0.0` guard,
     // bit-identical everywhere else (verified via a real exhaustive
     // 2^32-pattern sweep before adopting). The one documented exception is
@@ -502,7 +533,9 @@ fn real_main() {
     check("sin2pi(0.25)", sin2pi(0.25), 1.0);
     check("sin2pi(0.5)", sin2pi(0.5), -0.0);
     check("cos2pi(0)", cos2pi(0.0), 1.0);
-    check("cos2pi(0.25)", cos2pi(0.25), -0.0);
+    // `+0.0`, not `-0.0`: `2*0.25` is exactly `cospi`'s own half-integer
+    // zero, and every one of those is `+0.0` (see cospi's pins above).
+    check("cos2pi(0.25)", cos2pi(0.25), 0.0);
     check("tan2pi(0)", tan2pi(0.0), 0.0);
     check_bounded("tan2pi(0.125)-1", tan2pi(0.125) - 1.0, 1e-5);
     check("sin2pi(nan)", sin2pi(f32::NAN), f32::NAN);

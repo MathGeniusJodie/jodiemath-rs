@@ -620,6 +620,46 @@ open. Two rules that recur often enough to state up front:
 
 ### sin / cos / tan / sinpi / cospi / sind / cosd / tanpi / tand
 
+- **cospi: reduce on `round(x)` instead of `round(x-0.5)`** (2026-07-30,
+  **SHIPPED**, a real bug fix, not a tuning change). Exhaustive, all 2^32
+  patterns: avg ulp 0.2813→0.0578, **max 868814811→2**, and it is
+  *cheaper* -- llvm-mca latency 51.00→47.00 cyc, throughput
+  1.283→1.226 cyc/elem (48 vs 51 instructions in the throughput region;
+  `acospi` unchanged as a control row). `cos2pi`, which is
+  `cospi(2*x)`, inherits it: 0.2835/868814811 → 0.0583/2.
+  `sinpi`/`tanpi`/`tan2pi`/`sind`/`cosd` are untouched and measured
+  bit-identical.
+  - **The old form's actual defect**: `k = round(x-0.5)` then
+    `r = (x-k)-0.5`. `x-k` lands in `[0,1]`, whose ulp is *coarser* than
+    that of an `x` just inside a smaller binade, so the subtraction
+    rounds away `x`'s low bits -- and `r` is exactly the quantity the
+    answer is proportional to near a zero. At `x = -0.49999997` (the
+    first f32 below `-0.5`) it returned a flat `0.0` for a true
+    `9.36e-8`: a 100% relative error, which is where the 8.7e8 came
+    from. The fix reduces like `sinpi`/`tanpi` already did (`r = x - k`,
+    exact for every f32) and reflects: `cos(pi*r) = sin(pi*(0.5-|r|))`,
+    where `0.5-|r|` is Sterbenz-exact over `|r| >= 0.25` -- i.e. exactly
+    the half of the domain holding the zero. Where it *does* round
+    (`|r| < 0.25`) the result is within a quarter turn of `+-1`, so the
+    rounding lands where the function is flat.
+  - **Why it survived so long**: it was written off four separate times
+    as a "near a true zero, ulp isn't meaningful" artifact (see the
+    `sinpi/cospi dedicated poly` entry below, and the cross-references
+    that used to point at it from `sinc`/`softplus`/`tan_checked`/
+    `wrap_pi`/`logit`/`compound`). That excuse is only valid **when the
+    reduction is exact at the zero** -- `sinpi` scores max 2 ulp at its
+    own zeros for precisely that reason, so `cospi` sitting at 8.7e8 at
+    *its* zeros was the tell, not the proof. Before accepting a
+    near-zero blowup anywhere else, check the sibling that has the same
+    shape of zero.
+  - Side effect, deliberate: every zero is now `+0.0` (was alternating
+    `-0.0`/`+0.0`), matching IEEE 754-2019's `cosPi(n+1/2) = +0`.
+    `round_ties_even` sends `k` to the even neighbour at a half-integer,
+    so the parity sign is `+1` there for free. `cospi` is also now
+    exactly even (`cospi(-x)` and `cospi(x)` agree bit for bit), and no
+    longer needs `sinf_poly`'s copysign, since `0.5-|r|` is never
+    negative. All pinned in edgecheck.rs.
+
 - **round_x_over_pi: remove dead pre_offset=0.0 add**: instructions
   confirmed gone via asm, but throughput got *worse* — removing an op let
   the scheduler pick worse elsewhere. **Re-screened under idea #22 on
@@ -740,9 +780,11 @@ open. Two rules that recur often enough to state up front:
   fuzzed: a clear regression, not the hoped-for win. `sinpi` alone
   (simplest case, no other confound) got worse on *both* axes -- avg
   ulp 0.1969→0.2065, max 2→3. `cospi`'s avg also got worse
-  (0.1079→0.1105); its already-huge near-x=-0.5 max-ulp outlier (a
-  known "near a true zero of the function, ulp isn't meaningful"
-  artifact, not a bug -- x≈-0.5 is exactly `cospi`'s zero) happened to
+  (0.1079→0.1105); its already-huge near-x=-0.5 max-ulp outlier (called
+  a known "near a true zero of the function, ulp isn't meaningful"
+  artifact, not a bug, at the time -- **that call was wrong, see the
+  `cospi` reduction entry below: it was a real bug, fixed 2026-07-30**)
+  happened to
   shrink from ~3.3M to ~103k on this run, but that's still catastrophic
   either way and not attributable to a real precision fix. Reverted --
   the weak ~2.6x idealized margin didn't survive contact with the real

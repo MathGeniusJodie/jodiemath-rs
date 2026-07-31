@@ -758,11 +758,12 @@ pub fn exp10(x: f32) -> f32 {
 // poly's domain the leading `x` term dominates `p*x3`, so r's sign
 // already equals x's -- copysign only changes the singular x=+-0.0 case,
 // and is cheaper than an `x == 0.0` select (which measured ~12-17% worse
-// throughput on sin/cos/tan). Verified per-caller: sin, sind, cospi,
-// cosd all genuinely need the copysign (cospi/cosd would lose
-// even-function sign-of-zero symmetry at their own crossings);
-// sin_checked and sinpi's own separate zero guards make it redundant for
-// them, so they call this raw version directly.
+// throughput on sin/cos/tan). Verified per-caller: sin, sind, cosd all
+// genuinely need the copysign (cosd would lose even-function
+// sign-of-zero symmetry at its own crossings); sin_checked and sinpi's
+// own separate zero guards, and cospi's never-negative `0.5-|r|`
+// argument, make it redundant for them, so they call this raw version
+// directly.
 #[inline(always)]
 fn sinf_poly_raw(x: f32) -> f32 {
     let c0 = -0.16666660f32;
@@ -922,21 +923,38 @@ pub fn sinpi_unchecked(x: f32) -> f32 {
 /// full-range-accurate (no cliff) guarantee, and the same magic-round
 /// range-limit bug this version fixes.
 ///
-/// Uses the identity `cos(pi*x) = sin(pi*(x+0.5))` without ever forming
-/// `x+0.5` as a single value (lossy for large `x`, reintroducing the
-/// exact bug being fixed): `k = round(x-0.5)` gives `round(x+0.5) =
-/// k+1` for free (rounding commutes with an exact integer shift), and
-/// `k+1`'s parity is just `1 - parity(k)` -- so neither `x+0.5` nor
-/// `k+1` themselves ever need to exist as floats, only `k`, `parity(k)`,
-/// and `r = (x-k)-0.5` (computed in that order so `x-k` stays a small,
-/// Sterbenz-exact value before the final `-0.5`).
+/// Reduces on `k = round(x)`, exactly like `sinpi`/`tanpi` (*not* on
+/// `round(x-0.5)`, where a real precision bug lived until 2026-07-30),
+/// so `r = x - k` inherits sinpi's own exactness argument verbatim and
+/// `cos(pi*x) = (-1)^k * cos(pi*r)` with `|r| <= 0.5`. The
+/// quarter-turn reflection `cos(pi*r) = sin(pi*(0.5-|r|))` then hands
+/// `sinf_poly` the distance to the *zero* rather than to the peak, and
+/// `0.5-|r|` is Sterbenz-exact over `|r| >= 0.25` -- precisely the half
+/// of the domain containing cospi's own zero -- so full relative
+/// accuracy survives right up to the crossing. Subtracting inside the
+/// small `[-0.5,0.5]` domain *before* scaling by pi (never after) is the
+/// same ordering `tan_core` relies on near its own poles, and for the
+/// same reason: `r`'s ulp there is finer than a pi-scaled value's.
+///
+/// Where `0.5-|r|` does round (`|r| < 0.25`) the result is within a
+/// quarter turn of `+-1`, so the induced error stays under half an ulp
+/// of a near-1 value -- the rounding lands where the function is flat,
+/// not where it crosses.
+///
+/// `sinf_poly_raw` rather than `sinf_poly`: `0.5-|r|` is never negative
+/// and never `-0.0`, so the copysign fixup that other callers need for
+/// their own `+-0.0` arguments has nothing left to correct here. At an
+/// exact half-integer `x` the poly argument *is* `+0.0`, and ties-even
+/// rounding always sends `k` to the even neighbour there, so the sign
+/// multiplier is `+1` and every one of cospi's zeros comes out `+0.0` --
+/// matching IEEE 754-2019's `cosPi(n+1/2) = +0` for every `n`, with no
+/// special case spent on it.
 #[inline(always)]
 pub fn cospi(x: f32) -> f32 {
-    let k = (x - 0.5).round_ties_even();
-    let r = (x - k) - 0.5;
-    let s = sinf_poly(std::f32::consts::PI * r);
-    let sign = fma(2.0, parity(k), -1.0); // -(1 - 2*(1-parity(k))) = 2*parity(k)-1
-    s * sign
+    let k = x.round_ties_even();
+    let r = x - k;
+    let s = sinf_poly_raw(std::f32::consts::PI * (0.5 - r.abs()));
+    s * fma(-2.0, parity(k), 1.0)
 }
 
 /// The normalized sinc function, `sin(pi*x)/(pi*x)` (DSP convention),
@@ -1021,9 +1039,14 @@ fn tan_poly(u: f32) -> f32 {
 // `sinpi(x)/cospi(x)` form (like this crate's own f64 `tanpi_ref` test
 // reference, verified exhaustively over 1000 half-integers) always
 // lands on the *same* sign, `-inf`, regardless of which half-integer:
-// `sinpi`'s numerator sign and `cospi`'s zero sign there both alternate
-// together in lockstep, canceling to a constant ratio sign that
-// `theta`'s sign alone doesn't reconstruct.
+// `sinpi`'s numerator sign and `cospi`'s zero sign there both alternated
+// in lockstep, canceling to a constant ratio sign that `theta`'s sign
+// alone doesn't reconstruct. (That lockstep was a property of the
+// *pre-2026-07-30* `cospi`, whose zeros alternated `-0.0`/`+0.0`;
+// today's `cospi` gives `+0.0` at every half-integer, so the same ratio
+// would now alternate. `tanpi` never took the ratio route and is
+// unaffected either way -- this override is what fixes the sign, and
+// `tanpi_ref` keeps the older f64 shape deliberately, see its own note.)
 #[inline(always)]
 fn tan_core(theta: f32, aphi: f32) -> f32 {
     let ae = theta.abs();
@@ -1072,20 +1095,19 @@ pub fn sin2pi(x: f32) -> f32 {
 }
 
 /// cos(2*pi*x) -- see [`sin2pi`]'s own doc comment for the convention
-/// and domain caveat. Exhaustive fuzzing reports enormous max ulp right
-/// at `x = 0.25 + k/2`, where `cos2pi(x) = cospi(2x)` lands exactly on
-/// one of `cospi`'s own true zeros (`2x` a half-integer) -- the same
-/// "ulp isn't meaningful near a true zero" artifact `cospi` itself is
-/// already documented for, not a new defect from doubling `x` first.
+/// and domain caveat. `2.0*x` is exact, so this inherits `cospi`'s own
+/// accuracy unchanged, including at `x = 0.25 + k/2` where `2x` lands
+/// exactly on one of `cospi`'s true zeros: those stay full-relative-
+/// accuracy (max 2 ulp, exhaustively), not a near-zero blowup.
 #[inline(always)]
 pub fn cos2pi(x: f32) -> f32 {
     cospi(2.0 * x)
 }
 
 /// tan(2*pi*x) -- see [`sin2pi`]'s own doc comment for the convention
-/// and domain caveat, and [`cos2pi`]'s for why exhaustive fuzzing
-/// reports enormous max ulp at the same `x = 0.25 + k/2` points (the
-/// division's own denominator, `cospi(2x)`, is exactly zero there).
+/// and domain caveat. `x = 0.25 + k/2` puts `2x` on a genuine pole of
+/// `tan`, where `tanpi` returns an exact `+-inf` rather than a large
+/// finite value (see [`tanpi`] and `tan_core`).
 #[inline(always)]
 pub fn tan2pi(x: f32) -> f32 {
     tanpi(2.0 * x)
@@ -4503,8 +4525,8 @@ pub fn dawson(x: f32) -> f32 {
 /// `logit(1)=inf`, both falling out of `ln`/`log1p`'s own existing
 /// `0`/`-1` special cases with no extra code. Exhaustive max ulp looks
 /// alarming (1024, at `p≈0.4999`) but is the same "ulp isn't meaningful
-/// near a true zero" artifact as `cospi`'s/`cosh`'s own near-zero
-/// cases elsewhere in this crate: `logit(0.5)=0` exactly, so nearby
+/// near a true zero" artifact as `cosh`'s own near-zero case elsewhere
+/// in this crate: `logit(0.5)=0` exactly, so nearby
 /// points have a true value near zero, and any tiny absolute
 /// difference there is a huge *relative* one. avg ulp (0.28) is the
 /// honest accuracy figure.
@@ -4573,8 +4595,8 @@ pub fn xlog1py(x: f32, y: f32) -> f32 {
 /// override here. Fuzzing can report large-looking max ulp for extreme
 /// `(x,n)` pairs that legitimately underflow to (or just past) zero --
 /// e.g. `compound(-0.0015, 1e5) ~ e^-150`, astronomically smaller than
-/// any denormal -- the same "near a true zero" artifact as `cospi`'s
-/// own near-zero case, not a real precision defect.
+/// any denormal -- a "the true value is far below anything f32 can
+/// represent" artifact, not a real precision defect.
 #[inline(always)]
 pub fn compound(x: f32, n: f32) -> f32 {
     // `log1p` minus its trailing signed-zero select: that select only

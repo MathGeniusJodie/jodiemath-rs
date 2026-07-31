@@ -103,6 +103,16 @@ fn cospi_ref(v: F64xN) -> F64xN {
         // class the real cospi's own fix avoids for f32's ~2^24 -- see
         // its doc comment) -- k, r=(x-k)-0.5, and parity(k) stay
         // separate the whole way through instead.
+        //
+        // Deliberately keeps this `round(x-0.5)` shape rather than
+        // mirroring the real cospi's newer `round(x)` one: in f64 both
+        // are exact for an f32 input (24 bits of input, ~53 available,
+        // so the rounding that made the shape matter in f32 cannot
+        // happen here), and this one signs its zeros the way `tanpi_ref`
+        // below needs -- `sinpi_ref/cospi_ref` there lands on a constant
+        // `-inf` at every pole only because these zeros alternate. The
+        // real `cospi`'s `+0.0`-everywhere zeros are invisible to
+        // `ulp_diff`, which ranks `+0.0` and `-0.0` equal.
         let k = (x - F64xN::splat(0.5)).round();
         let r = (x - k) - F64xN::splat(0.5);
         let s = sin_u35(r * F64xN::splat(std::f64::consts::PI));
@@ -760,10 +770,13 @@ fn main() {
         // Same full-range exactness as sinpi/cospi (tanpi is built
         // directly on their own reduction, see its doc comment) -- no
         // domain restriction needed for the reduction itself, but real
-        // poles (cospi(x)==0, at half-integer x) mean huge ulp right at
-        // those points is expected and harmless (matching cospi's own
-        // "near a zero" caveat, just amplified by the division) rather
-        // than a bug.
+        // poles (cospi(x)==0, at half-integer x) mean a huge ulp right at
+        // those points would be a pole artifact rather than a bug. (Not
+        // a licence to assume it: `tan_core` pins the poles to an exact
+        // `-inf` the reference matches, so this measures clean anyway.
+        // "Near a true zero/pole, ulp isn't meaningful" only holds when
+        // the reduction is exact there -- assuming it for `cospi` is
+        // what hid a real 8.7e8-ulp bug until 2026-07-30.)
         let s = measure!(everywhere, tanpi, tanpi_ref);
         report("tanpi (all f32)", &s, t0);
     }
@@ -794,8 +807,9 @@ fn main() {
         // Restricted to |x|<1e6: well past that, sinc(x)'s true value is
         // already indistinguishable from 0 at f32 precision (|sinc(x)|
         // <= 1/(pi*|x|)), so ulp comparisons there measure noise near a
-        // genuine zero, not real accuracy (same class of artifact as
-        // cospi's own near-zero-crossing ulp blowup).
+        // value too small for f32 to resolve, not real accuracy. (The
+        // true value being unresolvable is the claim; a *crossing* alone
+        // would not justify this -- see tanpi's note above.)
         let sinc_domain = |x: f32| x.abs() < 1e6;
         let s = measure!(sinc_domain, sinc, sinc_ref);
         report("sinc (|x|<1e6)", &s, t0);
@@ -1092,7 +1106,7 @@ fn main() {
         // matters, but a raw ulp comparison right at that seam reports
         // millions of ulp for what's actually a sub-denormal-scale
         // difference (the same "near a value too small to matter"
-        // artifact already documented for cospi elsewhere in this file).
+        // artifact documented for sinc above).
         // |x|<80 stays comfortably clear of the seam on both sides.
         let softplus_domain = |x: f32| x.abs() < 80.0;
         let softplus_ref = |v: F64xN| {
@@ -1264,8 +1278,10 @@ fn main() {
         // -1407892830220377.5, essentially exactly a pole -- verified
         // cos_checked(x)=-7.88e-6, correctly near zero, not a bug). Same
         // "ulp isn't meaningful near a true zero/pole" class of artifact
-        // as cospi's/cosh's own near-zero cases elsewhere in this crate,
-        // just at infinity instead of zero.
+        // as cosh's own near-zero case elsewhere in this crate, just at
+        // infinity instead of zero -- and here, unlike `cospi`'s former
+        // version of this excuse, the reduction genuinely has run out of
+        // bits by that magnitude, which is what makes it an excuse.
         let s = measure!(everywhere, tan_checked, tan_ref);
         report("tan_checked", &s, t0);
     }
@@ -1551,8 +1567,8 @@ fn main() {
         // on a multiple of 2*pi, where the answer is ~1e-7 formed by near
         // total cancellation of operands ~1e4, so one f32 ulp of the
         // *result* is a vanishingly small absolute quantity. Away from
-        // those points wrap_pi measures <= 0.41 ulp. Same class as cospi's
-        // and compound's documented near-zero cases.
+        // those points wrap_pi measures <= 0.41 ulp. Same class as
+        // compound's documented near-zero case.
         let wrap_domain = |x: f32| x.abs() <= 1e4;
         let s = measure!(wrap_domain, wrap_pi, |v: F64xN| {
             // 2*pi split into two f64 words: TAU_LO holds the part that the

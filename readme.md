@@ -25,7 +25,7 @@ cbrt_accurate_unchecked |    0.000   |     1     | (bit-identical to cbrt_accura
  sin_checked (|x|<=1e6) |    0.036   |     2     |  0.000  |    1
  cos_checked (|x|<=1e6) |    0.081   |     3     |  0.000  |    1
         sinpi (all f32) |    0.197   |     2     | (no std sinpi)
-        cospi (all f32) |    0.281   | 8.7e8 (near a zero of cospi -- tiny absolute error, huge ulp) | (no std cospi)
+        cospi (all f32) |    0.058   |     2     | (no std cospi)
         tanpi (all f32) |    0.386   | 3.6e6 (near a pole of tanpi -- tiny denominator, huge ulp) | (no std tanpi)
         sind (|x|<4.7e7)|    0.124   |     2     | (no std sind)
         cosd (|x|<4.7e7)|    0.073   |     2     | (no std cosd)
@@ -338,7 +338,7 @@ sin_checked         |         117.02 |             5.232
 cos                 |          56.00 |             1.406
 cos_checked         |         122.00 |             4.603
 sinpi               |          42.02 |             1.133
-cospi               |          51.00 |             1.283
+cospi               |          47.00 |             1.226
 tanpi               |          78.88 |             2.031
 sinc                |          53.02 |             1.256
 sind                |          48.00 |             1.151
