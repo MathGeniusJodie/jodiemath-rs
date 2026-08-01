@@ -6550,94 +6550,77 @@ pub fn remainder_checked(x: f32, y: f32) -> f32 {
 }
 
 /// [`remainder_checked`], but correct for `|x/y|` past `2^24` too (up to
-/// roughly `2^48`). `remainder_checked`'s self-correction assumes
+/// `2^53`). `remainder_checked`'s self-correction assumes
 /// `q0 = (x/y).round()` differs from the true integer quotient by at
 /// most one; past `2^24`, `q0` can only land on a coarse grid (gaps of
 /// `2^(e-23)` at exponent `e`), so the true quotient can be tens of
 /// integers away -- a severe gap, not a tail case (~85% of samples in
 /// `[2^24, 1e9]` landed on a completely different multiple of `y`).
 ///
-/// Fixed by computing the residual with `Df32` instead of a single
-/// `fma`: `q0*y` via `Df32::from_mul` (an exact two-product) subtracted
-/// from `x` gives the *exact* real-valued residual, unlimited by `q0`'s
-/// coarse quantization -- collapsing that to f32 and dividing by `y`
-/// recovers the correction `adj` exactly. A second exact Df32
-/// subtraction applies `adj`, then `remainder_checked`'s near-tie logic
-/// (`adj2`/`r2`) runs unchanged on the now-correct residual. This is
-/// `remainder_checked`'s correction loop run twice -- once for the
-/// coarse `q0`, once for a near-tie -- not a new algorithm. 0 avg/max
-/// ulp and 0 gross errors up to `|x/y| ~ 2^48` against a double-f64
-/// (106-bit) reference (plain f64 is not trustworthy that far out),
-/// degrading past that where a single correction pass is no longer
-/// enough. Substantial mca cost over `remainder_checked` -- a separate
-/// opt-in tier so callers who don't need the range don't pay.
+/// The whole reduction therefore happens in f64, which is exactly the
+/// size the problem needs and is why this tier is *cheap* rather than
+/// merely wider:
 ///
-/// Two exceptions vs `remainder_checked` in its own `|x/y| < 2^24`
-/// domain used to exist here (bit-identical everywhere else, and now
-/// bit-identical in both these corners too, verified below):
+/// * `q` is an exact integer for `|q| < 2^53`, so the coarse grid is
+///   gone outright -- nothing to recover with a second correction pass.
+/// * `x - q*y` is exactly representable in an **f32**, never mind an
+///   f64: `x` is a multiple of `ulp(x)` and `q*y` of `ulp(y)`, so their
+///   difference is a multiple of `min(ulp(x), ulp(y))` with magnitude
+///   `<= 1.5|y|` -- 24 significant bits. One `fma` forms `q*y` to full
+///   width internally and lands on it exactly, so there is no
+///   error-free transform anywhere in the function and the narrowing
+///   back to f32 rounds nothing. (This is the general fact that a true
+///   IEEE remainder is always representable in its operands' own
+///   format.)
+/// * f64's exponent range removes the overflow that made a `Df32`
+///   two-product need an exact-power-of-two rescale of `x` and `y` near
+///   `f32::MAX`, and with it the denormal precision loss that rescale
+///   could inflict on a tiny `x`. Both are structurally impossible now
+///   rather than gated.
 ///
-/// 1. When `x/y` landed on an *exact* half-integer, `adj`'s blind
-///    `.round()` (ties away from zero) treated the already-correctly-
-///    resolved tie (`q0` itself resolves ties away from zero, landing
-///    `r0` on exactly `+-ys/2`) as "one more whole `y` to remove",
-///    flipping the sign -- fixed by switching `adj` to
-///    `.round_ties_even()`: an exact `+-0.5` now rounds to `0` (no
-///    spurious correction) while every non-tie multi-integer-
-///    quantization gap `adj` exists to recover (`|adj| >= 1`, nowhere
-///    near a `.5` boundary) rounds identically either way. Also faster,
-///    same finding `remainder_ieee`'s own `q` already made:
-///    `round_ties_even` lowers to a single native `vroundps` where
-///    `.round()`'s ties-away needs extra emulation.
-/// 2. `Df32::from_mul(q0, y)` rounds the intermediate product to a
-///    single f32 before pairing it with its error term -- unlike a
-///    hardware `fma`, it can overflow on an intermediate value: `q0*y`
-///    can exceed `x` by up to `|y|/2`, so when `x` sits within a small
-///    factor of `f32::MAX` the exact product can exceed `f32::MAX` even
-///    though the true remainder is finite (gave NaN). Rescaling `x`
-///    (and `y`, to keep the ratio `x/y` unchanged) by an exact power of
-///    two (`0.125`) whenever `|x|` is within a 4x margin of `f32::MAX`
-///    is exact, not approximate: remainder is homogeneous of degree 1
-///    (`remainder(k*x,k*y) == k*remainder(x,y)` for `k>0`). The
-///    original gate was `max(|x|,|y|) > f32::MAX/4`, rescaling even
-///    when only `y` was huge and `x` was small/denormal-ish -- pushing
-///    that already-tiny `x` into the denormal range where low mantissa
-///    bits are unrepresentable for no reason: `q0*y` always tracks `x`
-///    itself (within `|y|/2`), so the overflow risk is governed
-///    entirely by `|x|`, regardless of `|y|`'s own magnitude (`q0`
-///    rounds to `~0` whenever `|x|` is tiny relative to `|y|`, so
-///    `q0*y` stays safely small too). Gating on `|x|` alone fixes this.
+/// What remains is `remainder_checked`'s own single correction, for the
+/// one thing f64 does not make exact: `fl(x/y)` carries a relative
+/// `2^-53`, which is up to half an integer at `|x/y| ~ 2^52`, so `q`
+/// can still land one integer off across a half-integer boundary. It
+/// cannot land two off below `2^53`, which is where the contract stops.
 ///
-/// Verified zero mismatches against `remainder_checked` over 351M
-/// in-domain samples for the tie fix (previously ~4 in that many, all
-/// exact ties) and 179M targeted denormal-x/huge-y samples for the
-/// rescale-gate fix (previously ~215K in that many, up to a few ulp) --
-/// both exclusions removed from `examples/unchecked_parity.rs`'s
-/// standing test now that they're fixed. The rescale-gate fix is also
-/// faster on its own (one fewer operand in the gating comparison).
+/// 0 avg / 0 max ulp against sleef's IEEE754 reference over the whole
+/// `|x/y| < 4e15` sweep, and bit-exact against an exact rational
+/// reference through `2^53`; past that `fl(x/y)`'s error exceeds one
+/// integer and a single correction pass is no longer enough. Still a
+/// separate opt-in tier: it costs ~1.7x `remainder_checked` on mca
+/// throughput, so callers who don't need the range don't pay.
+///
+/// Bit-identical to `remainder_checked` on its own `|x/y| < 2^24`
+/// domain, checked by `examples/unchecked_parity.rs` as a standing
+/// test.
 #[inline(always)]
 pub fn remainder_wide(x: f32, y: f32) -> f32 {
-    let big = x.abs() > f32::MAX * 0.25;
-    let scale = if big { 0.125 } else { 1.0 };
-    let unscale = if big { 8.0 } else { 1.0 };
-    let xs = x * scale;
-    let ys = y * scale;
-    let q0 = (xs / ys).round();
-    let r0_df = Df32::from_f32(xs) - Df32::from_mul(q0, ys);
-    let r0 = r0_df.to_f32();
-    let adj = (r0 / ys).round_ties_even();
-    let r1_df = r0_df - Df32::from_mul(adj, ys);
-    let r1 = r1_df.to_f32();
-    // The last whole-`y` correction always moves `r1` toward zero, so it
-    // is `r1 - copysign(|ys|, r1)` -- no `+-1` multiplier to select and
-    // no fma. (The two forms differ only at `r1 == +-0.0`, where the
-    // guard below keeps `r1` anyway.) `ays` is shared with that guard.
-    let ays = ys.abs();
-    let r2 = r1 - ays.copysign(r1);
-    let normal = if r1.abs() > ays * 0.5 { r2 } else { r1 };
-    // `unscale` is selected, not computed as `1.0 / scale`: both scales
-    // are exact powers of two, so their reciprocals are exact literals
-    // and a second blend replaces a full-width divide.
-    let normal = normal * unscale;
+    let xd = x as f64;
+    let yd = y as f64;
+    // Ties away from zero, matching `remainder`/`remainder_checked`'s
+    // documented divergence from IEEE754 (`remainder_ieee` is the
+    // ties-even variant). At an exact half-integer `x/y` this lands `r0`
+    // on exactly `+-|y|/2`, which the strict `>` below leaves alone.
+    let q = (xd / yd).round();
+    // Exact, and that is the whole point: `x` is a multiple of
+    // `ulp(x)` and `q*y` a multiple of `ulp(y)`, so `x - q*y` is a
+    // multiple of `min(ulp(x), ulp(y))` with magnitude `<= 1.5|y|` --
+    // 24 significant bits, representable in an *f32*, never mind an f64.
+    // The fma forms `q*y` to full width internally, so no error-free
+    // transform is needed at this step at all.
+    let r0 = f64::mul_add(-q, yd, xd);
+    // The correction always moves `r0` toward zero, so it is
+    // `r0 - copysign(|y|, r0)` -- no `+-1` multiplier to select and no
+    // fma. (The two forms differ only at `r0 == +-0.0`, where the guard
+    // below keeps `r0` anyway.) `ay` is shared with that guard.
+    let ay = yd.abs();
+    let r1 = r0 - ay.copysign(r0);
+    let normal = if r0.abs() > ay * 0.5 { r1 } else { r0 };
+    // Exact by the same argument as `r0`, so the narrowing rounds
+    // nothing: a true IEEE remainder is always representable in its
+    // operands' own format.
+    let normal = normal as f32;
     // Same exact-cancellation sign bug as remainder_style_combine! (see
     // its own comment): a nonzero x that's an exact multiple of y
     // exactly cancels to +0.0 regardless of x's sign, silently dropping

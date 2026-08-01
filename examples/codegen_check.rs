@@ -107,10 +107,15 @@ fn main() {
                 || t.starts_with("vfmadd")
                 || t.starts_with("vfnmadd")
                 || t.starts_with("vfmsub");
-            // packed forms end in "ps" (single-precision packed); scalar
-            // forms end in "ss" -- reject scalar-only, require at least one
-            // genuinely packed op somewhere using a wide register.
-            is_arith && t.contains("ps\t") && packed_simd.iter().any(|r| t.contains(r))
+            // packed forms end in "ps"/"pd"; scalar forms end in "ss"/"sd"
+            // -- reject scalar-only, require at least one genuinely packed
+            // op somewhere using a wide register. "pd" counts: a function
+            // that does its whole job in f64 (`remainder_wide`) has no "ps"
+            // arithmetic at all yet is fully vectorized, two f32 lanes per
+            // f64 lane pair.
+            is_arith
+                && (t.contains("ps\t") || t.contains("pd\t"))
+                && packed_simd.iter().any(|r| t.contains(r))
         });
         if has_call {
             failures.push(format!("{name}: contains a `call` instruction (libm fallback / de-vectorized loop)"));

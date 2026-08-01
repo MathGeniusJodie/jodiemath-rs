@@ -6142,3 +6142,88 @@ sin_fast       1.151    ~1e6
 sin            1.778    5.27e7
 sin_checked    2.495    ~7e15
 ```
+
+## `remainder_wide`: the `Df32` chain was doing f64's job, in f32
+
+The crate's 3rd most expensive function, and its double-float residual
+chain had never been attacked on its own terms (flagged as a live target
+by backlog #157's own follow-up). Replacing the whole thing with a
+reduction in f64 wins on **every** axis at once -- there is no tradeoff
+here to weigh, so no second pareto point and no new function.
+
+```
+                  instrs   uOps  BlockRT   cyc/elem   latency
+  remainder_wide  134->67 141->85 38->32   7.688 -> 2.266   171.17 -> 58.13
+                                           (-70.5%)         (-66.0%)
+  control: remainder_checked 1.357 / 45.17 unchanged, remainder_unchecked 0.646 unchanged
+```
+
+All four counters agree in direction, so the standing "mca's throughput
+column is unreliable" caveat does not bite.
+
+### Why it is *cheaper*, not merely wider
+
+The old body carried `Df32::from_f32(xs) - Df32::from_mul(q0, ys)`, a
+`.to_f32()`, a second divide for `adj`, a second `Df32` subtraction, and
+an exact-power-of-two rescale of both operands near `f32::MAX`. Every one
+of those exists to work around an f32 limit that f64 simply does not
+have:
+
+* **The coarse-`q` grid is gone.** `q` is an exact integer to `2^53`, so
+  there is no multi-integer quantization gap for an `adj` pass to
+  recover. That deletes a divide, a round, and a whole `Df32` subtract.
+* **`x - q*y` needs no error-free transform at all.** It is exactly
+  representable in an **f32**: `x` is a multiple of `ulp(x)` and `q*y` of
+  `ulp(y)`, so the difference is a multiple of `min(ulp(x), ulp(y))` with
+  magnitude `<= 1.5|y|` -- 24 significant bits. One `fma` forms `q*y` to
+  full width internally and lands on it exactly. This is the same shape
+  of argument that made `reduce_pi64` cheaper than the double-f32
+  reduction it replaced: pick a working precision where the intermediate
+  is *exact* and the bookkeeping evaporates.
+* **The rescale is gone.** It existed because `Df32::from_mul` rounds
+  `q0*y` to a single f32 before pairing it with its error term, so it
+  could overflow near `f32::MAX` where a hardware `fma` would not. f64's
+  exponent range makes that structurally impossible -- and with it the
+  denormal precision loss the rescale could inflict on a tiny `x`.
+
+What survives is `remainder_checked`'s own single `|r0| > |y|/2`
+correction, for the one thing f64 does not make exact: `fl(x/y)` carries
+a relative `2^-53`, up to half an integer at `|x/y| ~ 2^52`, so `q` can
+still land one integer off across a half-integer boundary.
+
+### Accuracy: the contract widens from `2^48` to `2^53`
+
+Simulating both algorithms exactly (f32 ops via `Fraction` rounded once;
+f64 natively) against an exact rational ties-away reference, 6000 samples
+per band:
+
+| band | old inexact | old worst ulp | new inexact | new worst ulp |
+|---|---|---|---|---|
+| `[2^20,2^48]` | 0 | 0 | 0 | 0 |
+| `[2^48,2^50]` | 0 | 0 | 0 | 0 |
+| `[2^50,2^52]` | 1532 | 9.85e19 | 0 | 0 |
+| `[2^52,2^53]` | 3544 | 2.68e20 | 0 | 0 |
+| `[2^53,2^56]` | -- | -- | (degrades) | -- |
+
+Confirmed on the real shipped code, not just the simulation: widening
+`accuracy.rs`'s `remainder_wide` domain from `|x/y| < 2e14` to `< 4e15`
+reads **0.0000 avg / 0 max** for the f64 version and **2.55e6 avg /
+3.42e9 max** for the `Df32` one, against sleef's independent IEEE754
+remainder. The old bound was hiding the failure, not proving its absence
+-- worth remembering when a harness domain is set to "comfortably under"
+a hand-derived limit.
+
+Bit-identical to `remainder_checked` on 29.3M in-domain samples
+(`unchecked_parity.rs`), `worst_corpus` bit-identical with no re-bless,
+and edgecheck / special_matrix2 / saturation_pins / denormal_audit clean.
+
+### Tooling: `codegen_check` could not see an f64-vectorized region
+
+`has_packed_arith` required a mnemonic containing `ps\t` -- single
+precision only. A function that does its whole job in f64 emits `vdivpd`
+/ `vfnmadd213pd` / `vrndscalepd` on `zmm` and has no `ps` arithmetic
+anywhere, so it failed as "loop may not have vectorized at all" while
+being perfectly vectorized (`vcvtps2pd %ymm -> %zmm`, 8 f32 lanes per
+iteration). Fixed to accept `pd\t` as well. This gap would have hit any
+future f64-internal function; `reduce_pi64`'s callers never tripped it
+only because they keep an f32 polynomial.

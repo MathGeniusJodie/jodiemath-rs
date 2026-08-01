@@ -93,7 +93,7 @@ hypot_unchecked (bounded, +) | 0.034 |     1     | (bit-identical to hypot on it
         remainder (|x/y|<1000, near-tie excluded) | 0.000 | 0 | (no std comparison needed)
 remainder_unchecked (+) |    0.000   |     0     | (bit-identical to remainder on its domain)
     remainder_checked (|x/y|<1e7, near-tie excluded) | 0.000 | 0 | (no std comparison needed)
-       remainder_wide (|x/y|<2e14, near-tie excluded) | 0.0003 | 4 | (no std comparison needed)
+       remainder_wide (|x/y|<4e15, near-tie excluded) | 0.000 | 0 | (no std comparison needed)
       remainder_ieee (|x/y|<1000, near-tie excluded) | 0.000 | 0 | (no std comparison needed)
                    fmod (|x/y|<1000, near-int excluded) | 0.000 | 0 | (matches Rust's `%`)
         fmod_unchecked (+) |    0.000   |     0     | (bit-identical to fmod on its domain)
@@ -219,7 +219,7 @@ powf_unchecked (r)| 39.2 ns | 23.9 ns | 0.6x
 remainder_unchecked| 9.3 ns  |    -    |  -
 remainder_checked| 13.0 ns |    -    |  -
    remainder_ieee| 9.2 ns  |    -    |  -
-   remainder_wide| 46.1 ns |    -    |  -
+   remainder_wide (w)| 46.1 ns |    -    |  -
          fmod| 9.1 ns  |    -    |  -
 fmod_unchecked| 7.3 ns  |    -    |  -
 ```
@@ -319,7 +319,7 @@ powf_unchecked (r)| 1.89 ns | 7.74 ns | 4.1x
 remainder_unchecked| 0.17 ns |    -    |  -
 remainder_checked| 0.34 ns |    -    |  -
    remainder_ieee| 0.20 ns |    -    |  -
-   remainder_wide| 1.82 ns |    -    |  -
+   remainder_wide (w)| 1.82 ns |    -    |  -
          fmod| 0.20 ns |    -    |  -
 fmod_unchecked| 0.16 ns |    -    |  -
 ```
@@ -327,6 +327,12 @@ fmod_unchecked| 0.16 ns |    -    |  -
 not a regression. `powf`'s throughput ratio flips especially hard here
 (was "0.07x", now "5.7x") since the old std comparison point was a bare
 `x*x` multiply, not real `powf`.
+
+(w) `remainder_wide`'s two wall-clock rows predate its f64 rewrite and
+are not re-recorded here -- a single row re-measured in a later sitting
+would not be comparable to the rest of the table (see the `(!)`/`(r)`
+notes above for what that costs). llvm-mca puts the rewrite at -66.0%
+latency and -70.5% throughput; read that table instead.
 
 ```
 theoretical cost from llvm-mca (-mcpu=native, 100 iterations)
@@ -402,7 +408,7 @@ remainder           |          34.11 |                 ? (*)
 remainder_unchecked |          33.00 |             0.646
 remainder_checked   |          45.17 |             1.357
 remainder_ieee      |          29.11 |                 ? (*)
-remainder_wide      |         171.17 |             7.688
+remainder_wide      |          58.13 |             2.266
 fmod                |          29.11 |                 ? (*)
 fmod_unchecked      |          28.00 |             0.643
 ```

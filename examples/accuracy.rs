@@ -2273,11 +2273,11 @@ fn main() {
     }
     if run("remainder_wide") {
         // remainder_wide extends remainder_checked's own correction past
-        // the 2^24 cliff (see its own doc comment) using an exact Df32
-        // residual instead of a single fma, verified by hand to hold
-        // cleanly up to |x/y| ~ 2^48 (2^48 == 2.81e14) -- bound comfortably
-        // under that, matching remainder_checked's own "stay well clear of
-        // the cliff" convention. sleef's remainder_ref is a real IEEE754
+        // the 2^24 cliff (see its own doc comment) by reducing in f64,
+        // verified against an exact rational reference to hold cleanly up
+        // to |x/y| ~ 2^53 (2^53 == 9.01e15) -- bound comfortably under
+        // that, matching remainder_checked's own "stay well clear of the
+        // cliff" convention. sleef's remainder_ref is a real IEEE754
         // remainder implementation (its own internal argument reduction,
         // not a naive single-f64-pass formula), so it stays trustworthy as
         // a reference at this magnitude, unlike a naive `xf - q*yf` f64
@@ -2286,7 +2286,7 @@ fn main() {
         // arithmetic loses precision once q*y needs more than f64's own
         // 52 mantissa bits, which happens well before this domain's edge).
         let remainder_domain =
-            |x: f32, y: f32| y != 0.0 && (x / y).abs() < 2.0e14 && !near_tie(x, y);
+            |x: f32, y: f32| y != 0.0 && (x / y).abs() < 4.0e15 && !near_tie(x, y);
         let s = fuzz2(TWOARG_SAMPLES, remainder_domain, remainder_wide, remainder_ref);
         report("remainder_wide", &s, t0);
     }
