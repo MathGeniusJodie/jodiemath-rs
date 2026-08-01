@@ -1361,11 +1361,28 @@ fn real_main() {
     check("atan2_pos(-0,1)", atan2_pos(-0.0, 1.0), std::f32::consts::TAU);
     check("atan2_pos(-0,-1)", atan2_pos(-0.0, -1.0), std::f32::consts::PI);
 
-    // atan2d (backlog idea #123): plain composite.
+    // atan2d (backlog idea #123): composite plus a scaled-quotient
+    // branch for a denormal atan2 (180/pi > 1, so the plain multiply
+    // carries a denormal's missing bits into a finer binade).
     check("atan2d(1,0)", atan2d(1.0, 0.0), 90.0);
     check("atan2d(0,1)", atan2d(0.0, 1.0), 0.0);
     check("atan2d(-1,0)", atan2d(-1.0, 0.0), -90.0);
     check("atan2d(nan,1)", atan2d(f32::NAN, 1.0), f32::NAN);
+    // the `x == 0.0` exclusion, which keeps that branch's quotient form
+    // out of the 0/0 corners atan2 already answers correctly.
+    check("atan2d(0,0)", atan2d(0.0, 0.0), 0.0);
+    check("atan2d(-0,0)", atan2d(-0.0, 0.0), -0.0);
+    check("atan2d(0,-0)", atan2d(0.0, -0.0), 180.0);
+    check("atan2d(-0,1)", atan2d(-0.0, 1.0), -0.0);
+    check("atan2d(0,-1)", atan2d(0.0, -1.0), 180.0);
+    check("atan2d(1,inf)", atan2d(1.0, f32::INFINITY), 0.0);
+    // and the branch itself: both of these are 0 without it. The first
+    // expects a hair less than the second because its own `y` is already
+    // denormal (1e-40 as an f32 is 9.99994610e-41), so some of the bits
+    // were gone before atan2d ever saw them -- that part is not
+    // recoverable and is not what the branch is for.
+    check("atan2d(1e-40,1)", atan2d(1.0e-40, 1.0), 5.7295465e-39);
+    check("atan2d(1e-30,1e10)", atan2d(1.0e-30, 1.0e10), 5.7295776e-39);
 
     // atan2pi (backlog idea #85): plain composite -- see its own doc
     // comment for why a rescaled-coefficient fold isn't attempted.

@@ -1111,6 +1111,37 @@ open. Two rules that recur often enough to state up front:
   shape. Shipped `asind`/`acosd`/`atand`/`atan2d` as the plain composite
   instead (see lib.rs/git log) -- not attempting the fold for the other
   three without new evidence it would fare differently for them.
+- **atan2d's 30 max ulp was a denormal *intermediate*, not the poly, not
+  the constant.** Instrumented: **every** sample over 8 ulp has a
+  denormal `atan2(y,x)` result, and `atan2`'s own error at those inputs
+  measures **0 ulp** — it is exactly right, it just cannot represent the
+  answer, because its internal `y/x` underflowed. `180/pi > 1` then
+  carries that value up into a binade with more mantissa bits than the
+  denormal ever had, and the missing ones show. `atan2pi` scores 4 on
+  the same plane purely because `1/pi < 1` moves the other way. 1.3% of
+  20M uniform samples scored over 8 ulp; a sixth of those have a
+  perfectly normal *output*, so this is not confined to denormal
+  results.
+  - Fixed with a second branch: a denormal `atan2` means the angle is
+    deep inside `atan`'s linear regime, where the answer is just
+    `y * ((180/pi) / x)`. **Max ulp 30 -> 5, avg 0.458 -> 0.175.** Not
+    free, and the cost is real by the full ladder (instructions 65 ->
+    72, uOps 67 -> 74, `Block RThroughput` flat): throughput 1.881 ->
+    2.128 cyc/elem (+13.1%), latency 71.19 -> 78.10 (+9.7%).
+  - **The association is the whole trick, and the obvious one is
+    wrong.** `(y * (180/pi)) / x` scores **77** max ulp, worse than some
+    runs of the original: for a denormal `y` the scaled numerator is
+    *still denormal*, so it reintroduces the identical bug one step
+    earlier. `y * ((180/pi) / x)` keeps every intermediate normal —
+    `(180/pi)/x` cannot be denormal on this branch, since a nonzero `y`
+    there forces `|x| >= 1.2e-7`. Same op count, 15x the accuracy.
+  - Also: quick-fuzz max for the wrong association swung **7 / 11 / 77**
+    across three consecutive runs while the right one is a flat 5 four
+    times. A 2-arg max that moves by 10x run to run is itself the
+    signal that a narrow input class is being hit at random, not noise
+    to average away.
+  - Untested but the same shape: `asind`/`acosd`/`atand` all multiply by
+    `180/pi` and `asin(x) ~ x` can be denormal too. `asind` is 11.
 - **erfc's n/d rational Horner→Estrin**: small theoretical win, measured
   as a wash on speed plus a real accuracy cost (avg +2.7%).
 - **erf's near-zero Padé branch refit / tail branch (erf_poly) refit**:

@@ -4014,12 +4014,46 @@ pub fn atan2_latency(y: f32, x: f32) -> f32 {
     if bothinf { inf_result } else { r }
 }
 
-/// atan2(y,x) in degrees (backlog idea #123): plain composite -- see
+/// atan2(y,x) in degrees (backlog idea #123): the composite -- see
 /// `asind`'s own doc comment for why a rescaled-coefficient fold isn't
-/// attempted here either.
+/// attempted here either -- plus one branch the radian version doesn't
+/// need.
+///
+/// `180/pi` is *greater than 1*, so unlike `atan2pi`'s `1/pi` it can
+/// carry a denormal `atan2` result up into a binade with more mantissa
+/// bits than the denormal ever had. Those bits are gone: `atan2` is
+/// exactly right there (its own error at every one of these inputs
+/// measures 0 ulp), it just cannot represent the answer, because `y/x`
+/// underflowed inside it. Scaling afterwards cannot invent them back,
+/// and the loss survives into results that are themselves perfectly
+/// normal -- ~1.3% of the f32 plane scored over 8 ulp, up to 30, a
+/// sixth of that with a normal result.
+///
+/// A denormal `atan2` means the angle is far inside `atan`'s linear
+/// regime, where `atan2(y,x)` is just `y/x`, so `(180/pi) * atan2(y,x)`
+/// is exactly `y * ((180/pi) / x)`. The association matters and is the
+/// whole point: `(180/pi) / x` is always normal on this branch, so `y`
+/// -- denormal or not -- is multiplied straight into the result's own
+/// binade with a single rounding, and no intermediate is ever denormal.
+/// Scaling `y` first instead (`(y * 180/pi) / x`) fixes the original
+/// case but reintroduces the identical bug one step earlier for a
+/// denormal `y`, where the scaled numerator is still denormal: measured
+/// 77 max ulp that way, against 5 for this one.
+///
+/// `(180/pi) / x` is normal because this branch implies `|y| <
+/// 1.2e-38 * |x|`, so a nonzero `y` forces `|x| >= 1.2e-7`, and `|x|`
+/// can never exceed `f32::MAX`. It depends only on the arguments, so it
+/// is off `atan2`'s dependency chain, but it is not free: throughput
+/// +13%, latency +10%. `x == 0.0` is excluded because the quotient
+/// degenerates there exactly where `atan2` already answers `+-0.0`
+/// correctly; every other `x == 0` case gives `+-90` and never reaches
+/// this branch at all.
 #[inline(always)]
 pub fn atan2d(y: f32, x: f32) -> f32 {
-    atan2(y, x) * (180.0 / std::f32::consts::PI)
+    let r = atan2(y, x);
+    let normal = r * (180.0 / std::f32::consts::PI);
+    let tiny = y * ((180.0 / std::f32::consts::PI) / x);
+    if r.abs() < f32::MIN_POSITIVE && x != 0.0 { tiny } else { normal }
 }
 
 /// atan2(y,x)/pi (backlog idea #85, C23 half-turn family): plain
