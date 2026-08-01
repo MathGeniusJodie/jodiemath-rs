@@ -148,21 +148,23 @@ fn sinc_ref(v: F64xN) -> F64xN {
     })
 }
 // sinc_unnormalized(x) = sin(x)/x, radians (backlog idea #131). Unlike
-// sinc_ref (which routes through sinpi_ref's own exact round(x)
-// reduction, never handing sin_u35 an extreme argument directly), there
-// is no analogous exact-reduction trick for plain radians -- sleef's
-// sin_u35 itself panics (internal table index out of bounds) on a
-// sufficiently huge finite argument, so this also has to guard *large*
-// |v|, not just non-finite v the way trig_safe does. Fine here: the
-// accuracy.rs `sinc_domain` restriction (|x|<1e6) already excludes
-// these from scoring, this is purely about not crashing the *call*
-// on the unrestricted lanes "thorough" mode still feeds through.
+// sinc_ref, which routes through sinpi_ref's own exact round(x)
+// reduction, this hands sin_u35 the argument directly -- fine at any
+// finite magnitude, and `trig_safe` covers the rest.
+//
+// `sin_u35` is safe on every finite f64, including f32::MAX and beyond.
+// Its `rempi` table index is `(ilogb2k(a) - 55) << 2`, which for the
+// largest finite exponent is (1023-55)<<2 = 3872, and the last of the
+// four offsets it reads from there is 3875 -- REMPITABDP is [f64; 3876],
+// sized for exactly that. Only the non-finite sentinel exponents overrun
+// it, which is the 0.3.3 bug `trig_safe` exists for. Verified directly:
+// zero panics over every f64 exponent, both signs, denormals included.
 fn sinc_unnormalized_ref(v: F64xN) -> F64xN {
-    let safe = v.abs().simd_lt(F64xN::splat(1e15)) & v.is_finite();
-    let safe_v = safe.select(v, F64xN::splat(1.0));
-    let normal = sin_u35(safe_v) / safe_v;
-    let is_zero = v.simd_eq(F64xN::splat(0.0));
-    is_zero.select(F64xN::splat(1.0), safe.select(normal, F64xN::splat(f64::NAN)))
+    trig_safe(v, |x: F64xN| {
+        let is_zero = x.simd_eq(F64xN::splat(0.0));
+        let safe_x = is_zero.select(F64xN::splat(1.0), x);
+        is_zero.select(F64xN::splat(1.0), sin_u35(safe_x) / safe_x)
+    })
 }
 // xlogy/xlog1py (backlog idea #84): x==0 overrides to 0 regardless of y
 // (matching scipy.special.xlogy's own convention, see the real
