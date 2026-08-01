@@ -6479,3 +6479,138 @@ the numbers -- the loop measures 5.7-6.5 cyc/elem against a resource floor
 of 3.75-4.25, so it is dependency- and front-end-bound, not port-bound.
 Medians across the 12 rounds were useless (2.4-4.5 ns spread on the *same*
 binary); only the min is a usable estimator on this machine.
+## `dawson`: 15 max ulp was the fit, and 5/5 was already optimal -- the lever was a degree
+
+2026-08-01. `dawson` was the crate's worst *ordinary* function on a fresh
+`accuracy quick` sweep -- max 15, ahead of `srgb_to_linear`'s 14 and
+`linear_to_srgb`/`gelu`/`asind`'s 8 -- once the reduction-limited trig rows
+(`sin_checked`/`tan_checked` and friends, closed separately) and the
+documented y-amplified ones (`compound`, `logaddexp`, `powf`) are set aside.
+
+**Shipped: avg 0.1527 -> 0.0561, max 15 -> 5**, for llvm-mca throughput
+1.938 -> 1.992 (+2.8%) and latency 65.89 -> 68.97 (+4.7%), Block
+RThroughput unchanged at 30.00.
+
+### Attribution first: the fit, not the chain, and not `u = fl(x*x)`
+
+A four-row decomposition per octave (shipped f32 chain / the same rational
+evaluated in f64 from an exact `u` / the same from `u = fl(x*x)` / an
+oracle `x * fl(dawsn(x)/x)`) said the answer immediately, and it is worth
+recording because two of the three plausible culprits were flat:
+
+| band | shipped | fit only | + `u` rounding | oracle `x*fl(R)` |
+|---|---|---|---|---|
+| `[0.25,0.5)` | 6.73 avg / 13 max | 6.74 / 11 | 6.74 / 11 | 0.19 / 1 |
+| `[1,2)` | 5.95 / 13 | 5.94 / 11 | 5.94 / 11 | 0.26 / 1 |
+| `[2,3)` | 5.43 / 16 | 5.40 / 12 | 5.41 / 13 | 0.28 / 1 |
+
+So `u = fl(x*x)` contributes ~0.01 avg (the amplification `u*R'/R` is
+under 1 over the whole branch -- `dawsn(x)/x` decays like `1/(2u)`, so the
+argument rounding cannot be amplified here the way `gelu`'s and
+`norm_cdf`'s were), the f32 evaluation chain contributes ~0.02 avg and
+~2 max, and everything else is the rational's own fit.
+
+**The bit-pattern-uniform harness hides all of it.** The reported avg was
+0.1527 while the *central branch's* real avg was 4-7 ulp across every
+octave in `[0.06, 4]`: ~45% of f32 patterns are `|x|` small enough that
+`P/Q` is exactly 1.0 (the `pc[0] = 1.0` pin), and ~49% are `|x| > 4` and
+take the tail. Only ~6% of samples land where the central fit is even
+visible. Same shape as `acosd`'s "the bulk mass sits where the answer is
+representable" -- check the per-band profile before believing a low avg.
+
+### `[5/5]` really was exhausted; `[6/6]` is 5.6x better for +6 instructions
+
+Re-derived the minimax rational independently (HiGHS, linearised
+`|P - g*Q| <= eps*g*Q_prev`, iterated to a fixed point) after the first
+attempt in a plain `u`-monomial basis returned nonsense (`eps` driven to
+0 with a real error of 4.4e-5 -- the LP satisfying its own constraints
+numerically while the rational it names is garbage). **Rescaling the
+variable to `t = u/16` fixes it outright**; the monomial basis over
+`u in [0,16]` spans `16^5 ~ 1e6` and HiGHS cannot see through that. Worth
+copying: if a rational LP here returns an `eps` far below the achieved
+error, suspect the basis before the solver.
+
+With that fixed, the shipped `[5/5]` measures 13.12 ulp-equivalent against
+a freshly-computed `[5/5]` minimax optimum of **13.07** -- confirming the
+existing "the frontier is flat, do not re-run this sweep" entry, and
+confirming it was a statement about *that degree*:
+
+| | continuous minimax | after f32 quantization |
+|---|---|---|
+| `[5/5]` (shipped) | 7.79e-7 (13.07 ulp-eq) | 13.04 |
+| `[6/5]` | 1.67e-7 (2.80) | 2.82 |
+| `[5/6]` | 2.53e-7 (4.24) | 4.49 |
+| `[6/6]` | 1.25e-7 (2.09) | **2.36** (after a quantization descent) |
+| `[7/6]` | 6.45e-8 (1.08) | 3.07 -- quantization dominates |
+
+`[7/6]` and `[7/7]` are the point where independently rounding the
+continuous optimum to f32 gives back more than the extra degree buys, so
+the search stops at `[6/6]`.
+
+**`[6/6]` beats `[6/5]` on both perf axes, and the reason is codegen, not
+op count.** `[6/5]` measures throughput 1.939 / latency 71.83; `[6/6]`,
+which is *three more instructions*, measures **1.906 / 69.81**. The
+latency harness's asm explains it: at `[5/5]` and `[6/6]` LLVM packs the
+numerator and denominator into the two halves of one SIMD register and
+evaluates them together (`vfmadd231ps` in a scalar chain), and at `[6/5]`
+the two sides no longer have the same shape, so it falls back to scalar
+`vfmadd213ss` plus 64 `jmp`/`jae` -- a branch-shaped region llvm-mca then
+misprices on top. **Keep a rational's two sides the same degree unless
+there is a measured reason not to.**
+
+The extra coefficient on each side rides into the existing `u^2` group
+(`ln_normal`'s `c[8]` fold), so it is one `fma` per side and no new
+multiply.
+
+### The tail's 22 ulp sat exactly on the seam, and L1-under-a-max-cap took it
+
+With the central branch down, the reported max moved to `|x| ~ 4.0`, i.e.
+the *tail* branch -- exactly the condition the earlier tail entry names
+("revisit only if the central branch ever drops below ~10, and then fit
+L1-under-a-max-cap rather than pure minimax"). It is worth being precise
+about the shape of the defect: the shipped degree-4 least-squares fit's
+relative error over `v in [0,1/16]` is a monotone climb to a **spike at
+the endpoint** -- 0.83 ulp-equiv at `x=16`, 2.4 at `x=8`, 5.2 at `x=4.5`,
+and **21.9 at `x=4`**. That single endpoint was `dawson`'s whole reported
+max.
+
+The right objective needs both halves and neither alone works:
+
+- **The weight.** A bit-pattern-uniform caller reaches every octave of
+  `|x|` equally often, so a log-uniform `x` grid *is* the correct L1
+  weight, and it puts nearly all the mass at `v ~ 0`. This is why the
+  earlier pure-minimax refit regressed: it spread error uniformly in `v`.
+- **The cap.** Without it the L1 optimum parks its error at `v = 1/16`,
+  which is what least squares already did.
+
+| | weighted L1 | max (ulp-eq) | at the seam |
+|---|---|---|---|
+| shipped degree 4 | 0.2967 | 21.86 | 21.86 |
+| degree 4, cap 5 | 0.6196 | 5.52 | 4.99 |
+| degree 4, cap 8 | 0.3992 | 8.00 | 8.00 |
+| **degree 5, cap 1.35** | **0.0617** | **2.37** | **0.46** |
+
+Degree 4 cannot get under ~5 max at any cap and pays 2x the L1 to get
+there; degree 5 wins on **both** axes at once, by 4.8x and 9.2x. The LP's
+own optimum puts the `v^4` coefficient at zero, so the shipped term set is
+`1, v, v^2, v^3, v^5` and the top group carries `v^5` alone -- one extra
+multiply, not an extra `fma`.
+
+Non-negativity was imposed on the tail coefficients rather than taken:
+the unconstrained optimum is marginally better (L1 0.0616 / max 1.42) but
+wants a negative `v^4`, and all-positive is what keeps `v = +inf` -- the
+discarded arm for small `|x|` -- combining to a consistently-signed `+inf`
+instead of `erfinv`'s opposite-signed-infinity `NaN`. The cost of keeping
+that invariant is 1.42 -> 2.37 ulp-equiv on a term that is no longer
+binding.
+
+### Not taken here
+
+- **Pinning the tail's `c[1]` to exactly `0.5`** (its exact asymptotic
+  value, and exactly representable). Tested as a first-class candidate on
+  the `pc[0] = 1.0` precedent, and it does *not* pay: degree 5 with `c[1]`
+  free reaches L1 0.0568 / max 2.01, pinned reaches 0.0949 / 2.13. Unlike
+  `pc[0]`, `c[1] = 0.5` does not make any region *exact* -- `fma(0.5, v,
+  1.0)` is already exactly `1.0` for `v < 1.2e-7` whatever `c[1]` is, so
+  the pin buys nothing and costs a real degree of freedom.
+- The `[7/6]`/`[7/7]` rationals, on the quantization result above.

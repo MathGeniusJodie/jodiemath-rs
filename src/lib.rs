@@ -5049,11 +5049,20 @@ pub fn norm_pdf(x: f32) -> f32 {
 }
 
 // dawson's central branch (backlog idea #138): `x*P(u)/Q(u)`, `u=x^2`,
-// degree 5/5, Estrin-grouped with each side's top pair folded in at the
+// degree 6/5, Estrin-grouped with each side's top group folded in at the
 // `u^2` level so `u^4` is never formed (exp_r_poly!'s own fold, applied
 // to the numerator and the denominator alike). Real fit (scipy/HiGHS) of
 // `dawsn(x)/x` against `u` over `|x| <= 4`, not a transcription of any
 // published algorithm's constants.
+//
+// Degree 6 in the numerator and 5 in the denominator, not 5/5: at 5/5
+// this rational is the binding term in `dawson`'s whole error budget by
+// a wide margin (the fit alone is 13 ulp-equivalent, against ~2 for the
+// f32 evaluation chain around it and ~1 for `u = fl(x*x)`), and 5/5 is
+// already at its own minimax optimum, so the only lever left is a
+// degree. The extra numerator coefficient rides into the existing `u^2`
+// group for one `fma` and no new multiply; the same coefficient spent
+// on the denominator instead measures 4.5 rather than 2.8.
 //
 // Minimax in *relative* error, not least squares: `dawsn(x)/x` falls by
 // 30x across `u in [0,16]`, so an absolute-error objective spends its
@@ -5071,42 +5080,72 @@ pub fn norm_pdf(x: f32) -> f32 {
 // its own error band of 1 anyway.
 #[inline(always)]
 fn dawson_central_ratio(u: f32) -> f32 {
-    let pc: [f32; 6] = [
+    let pc: [f32; 7] = [
         1.0,
-        -0.04486033,
-        0.034414444,
-        0.00092847738,
-        0.00022258201,
-        -4.9580024e-7,
+        -0.085751414,
+        0.037434783,
+        -0.0004054072,
+        0.00019858626,
+        5.6392253e-8,
+        2.8313497e-8,
     ];
-    let qc: [f32; 6] = [1.0, 0.62182093, 0.1821982, 0.032993324, 0.0038007316, 0.00037382546];
+    let qc: [f32; 7] = [
+        1.0,
+        0.5809171,
+        0.15803601,
+        0.026255792,
+        0.002856104,
+        0.00021274923,
+        5.002549e-6,
+    ];
     let u2 = u * u;
     let pl0 = fma(pc[1], u, pc[0]);
     let pl1 = fma(pc[3], u, pc[2]);
     let pl2 = fma(pc[5], u, pc[4]);
-    let pr0 = fma(pl2, u2, pl1);
+    // pc[6]/qc[6] (the even 7th coefficients, degree 6) fold into the top
+    // group at the `u^2` level rather than needing a `u^6` of their own --
+    // the same trick `ln_normal`'s c[8] uses, one fma and no new multiply.
+    let pl2b = fma(pc[6], u2, pl2);
+    let pr0 = fma(pl2b, u2, pl1);
     let num = fma(pr0, u2, pl0);
     let ql0 = fma(qc[1], u, qc[0]);
     let ql1 = fma(qc[3], u, qc[2]);
     let ql2 = fma(qc[5], u, qc[4]);
-    let qr0 = fma(ql2, u2, ql1);
+    let ql2b = fma(qc[6], u2, ql2);
+    let qr0 = fma(ql2b, u2, ql1);
     let den = fma(qr0, u2, ql0);
     num / den
 }
 
-// dawson's tail branch: `R(v)/(2x)`, `v=1/x^2`, degree 4, Estrin-grouped
-// with the odd top coefficient folded in at the `v^2` level so `v^4` is
-// never formed (exp_r_poly!'s own fold) -- a real least-squares fit of
-// `2*x*dawsn(x)` against `v` over `|x| > 4` (`v` in `[0, 1/16]`),
-// matching the `1 + v/2 + O(v^2)` asymptotic shape but fit directly
-// rather than truncated from that series.
+// dawson's tail branch: `R(v)/(2x)`, `v=1/x^2`, Estrin-grouped so that
+// `v^4` is never formed -- a real fit of `2*x*dawsn(x)` against `v` over
+// `|x| > 4` (`v` in `[0, 1/16]`), matching the `1 + v/2 + O(v^2)`
+// asymptotic shape but fit directly rather than truncated from that
+// series.
+//
+// Terms `1, v, v^2, v^3, v^5`: the objective is a *weighted L1 under a
+// hard max cap*, not plain minimax and not plain least squares, and the
+// term set falls out of it -- the `v^4` coefficient sits at zero, so its
+// group carries `v^5` alone. The weight is what makes this the right
+// objective: a bit-pattern-uniform caller reaches every octave of `|x|`
+// equally often, so nearly all of this branch's inputs have `v` within a
+// few octaves of zero, where a plain minimax spreads error it does not
+// need to. The cap is what stops the free end of that trade from parking
+// the error at `v = 1/16`, which is exactly where the previous
+// least-squares degree-4 fit left it: 22 ulp-equivalent at the `|x| = 4`
+// seam against 0.3 average, i.e. the whole of `dawson`'s reported max.
+//
+// Every coefficient is positive, which is what keeps `v = +inf` (the
+// discarded arm for small `|x|`) combining to a consistently-signed
+// `+inf` rather than `erfinv`'s opposite-signed-infinity `NaN`.
 #[inline(always)]
 fn dawson_tail_poly(v: f32) -> f32 {
-    let c: [f32; 5] = [1.0, 0.4999613, 0.7583368, 1.4159758, 14.885198];
+    let c: [f32; 5] = [1.0, 0.50000554, 0.74808973, 2.0591528, 113.96649];
     let v2 = v * v;
     let l0 = fma(c[1], v, c[0]);
     let l1 = fma(c[3], v, c[2]);
-    let r0 = fma(c[4], v2, l1);
+    let l2 = c[4] * v;
+    let r0 = fma(l2, v2, l1);
     fma(r0, v2, l0)
 }
 
