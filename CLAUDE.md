@@ -64,7 +64,13 @@ accuracy sweep for the **whole crate** before landing, not just your domain.
   --release --example quickbench`. Another instance compiling on the same 8
   cores makes a timing run meaningless.
 - Accuracy sweeps use half the cores and self-nice; two at once is fine, three
-  thrashes.
+  thrashes. This machine also runs unrelated multi-core jobs for hours at a
+  time, so wall-clock duration tells you nothing — one more reason perf
+  conclusions come from `llvm-mca` only.
+- **Do not poll for a background job with `until ! pgrep -f "<cmd>"`.** The
+  pattern matches the waiting shell's own command line, so the loop waits on
+  itself forever — it has already hung an instance for hours. Run the job with
+  `run_in_background` and let the completion notification arrive.
 
 ### If this worktree holds work that is not yours, stop
 
