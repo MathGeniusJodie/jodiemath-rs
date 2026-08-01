@@ -5427,3 +5427,41 @@ counts *integer* bit distance, so it reads as a misrounding rate.
   - Also needs a guard `wrap_pi` did not: halving a denormal (or anything
     in the smallest normal binade) drops its last bit, so `x*0.5` is not
     exact there.
+
+## `gelu`'s remaining max is `erfc`'s, and `erfcx_pos`'s is its *evaluation*
+
+Two closures, measured rather than argued, so neither gets re-attacked from
+the wrong end.
+
+**`gelu` (max 9, avg 0.209) is a pass-through.** Substituting a correctly
+rounded `erfc` for the real one, while keeping every other f32 operation
+`gelu` performs (the `RSQRT2_HI`/`RSQRT2_LO` double-`f32` argument, the
+`dz` first-order correction, the `x*0.5*` combine), leaves **max 2.86 ulp**.
+`gelu = x*0.5*erfc(z)` passes `erfc`'s *relative* error straight through, and
+a relative error can cost up to twice as many ulp on the other side of a
+binade -- so `erfc`'s 7 plus `gelu`'s own ~3 is the whole 9. Its avg 0.209
+against `erfc`'s 0.199 is the same statement. Nothing inside `gelu`'s own
+domain can move this; it moves when `erfc` does.
+
+**`erfcx_pos`'s residual is not the fit and not `v`.** Simulating its exact
+f32 instruction sequence in numpy over a dense sweep of `[1e-4, 12]`:
+
+| variant | max ulp | avg |
+|---|---|---|
+| shipped (plain `v`, Estrin) | 5.08 | 0.730 |
+| plain `v`, Horner | 4.36 | 0.660 |
+| exact-residual `v`, Estrin | 4.20 | 0.672 |
+| exact-residual `v`, Horner | 4.32 | 0.597 |
+| **exact `v` (f64), Estrin** | **3.75** | 0.639 |
+| fit alone (exact `v`, f64 arithmetic) | 0.72 | 0.290 |
+
+This independently reproduces the rejection already recorded in
+`erfcx_pos`'s own comment -- compensating `2+xa`'s rounding is worth ~0.9
+ulp on max for 4 more ops -- and adds the part that closes the question:
+even with a *perfect* `v` the sequence still measures 3.75, against a fit of
+0.72. Roughly three quarters of the remaining budget is the f32 evaluation
+of the polynomial itself, so no cheaper or more accurate `v`, and no refit
+at this degree, is the lever. Note also that Horner beats Estrin on both
+axes with the plain `v` and *loses* on max once `v` is corrected -- the two
+choices are not independent, and Estrin is there for depth anyway (the
+division is already on the critical path ahead of it).
