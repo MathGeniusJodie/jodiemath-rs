@@ -3961,25 +3961,51 @@ pub fn asin(x: f32) -> f32 {
     if a < 0.27 { small } else { big }
 }
 
-/// asin(x) in degrees (backlog idea #123 as originally proposed --
-/// "fold 180/pi into the poly/combine constants" -- was tried and
-/// rejected: rescaling every one of `asin_small`/`asin_poly`'s own
-/// coefficients by `RAD_TO_DEG` is a pure *linear* operation on the
-/// combine (unlike sinpi/sind's own rejected folds, which changed the
-/// poly's *input* reduction domain shape, a fundamentally different and
-/// already-failed mechanism), so in principle it should be at worst
-/// neutral versus a post-multiply. Measured instead of assumed: real
-/// exhaustive fuzz found the opposite of the idea's own "90.0/45.0 are
-/// exact" framing actually pays off -- folded gives avg ulp 0.3376/max
-/// 16 versus the plain `asin(x)*RAD_TO_DEG` composite's 0.3387/max
-/// **11**, i.e. folding is a wash on average and *worse* on max ulp.
-/// Larger-magnitude degree-space coefficients apparently accumulate
-/// more absolute rounding per fma step than one final multiply costs,
-/// despite the "removes an irrational-constant rounding" reasoning
-/// being sound on paper. Ships as the simple composite instead.
+// 180/pi as a double-f32, for the radians-to-degrees composites: HI+LO
+// represents it to ~2^-49 relative, so `fma(y, HI, y*LO)` rounds once at
+// the result's own magnitude where a single-word `y * K` rounds twice
+// and carries whatever bias the f32 `K` has.
+//
+// That bias is not small here. `180.0 / std::f32::consts::PI` -- the
+// obvious spelling -- computes `180/fl(pi)`, not `fl(180/pi)`, and lands
+// one ulp low (`0x42652ee0` against `0x42652ee1`); as a lone multiplier
+// that is a systematic **-0.46 ulp** relative error on every result.
+// Even the correctly-rounded `fl(180/pi)` still biases every result by
+// +0.098 ulp. (`1/pi` and `pi/180` have no such problem -- `1/fl(pi)`
+// and `fl(pi)/180` each land on the correctly-rounded constant -- so
+// this is specific to 180/pi, not a general rule about deriving
+// constants from `PI`.)
+//
+// HI is deliberately the *low* neighbour rather than the correctly
+// rounded one, which is what makes LO positive, which is what keeps
+// `-0.0` a signed zero through the `fma`: with a negative LO, `y*LO`
+// comes out `+0.0` for `y = -0.0`, and `-0.0 + 0.0` is `+0.0`, silently
+// dropping the sign every odd function in this family has to preserve.
+// The split point is otherwise free -- either neighbour as HI represents
+// 180/pi to the same ~2^-49 once LO is added.
+const RAD_TO_DEG_HI: f32 = 57.2957763671875;
+const RAD_TO_DEG_LO: f32 = 3.1458948e-6;
+
+/// asin(x) in degrees (backlog idea #123). The idea as originally
+/// proposed -- "fold 180/pi into the poly/combine constants" -- was tried
+/// and measured worse on max ulp than a post-multiply (see IDEAS.md
+/// §asin/acos), so this stays a composite; what it does not stay is a
+/// single-word multiply. `asin`'s result is already a rounded f32 and
+/// `180/pi` is irrational, so a plain `asin(x) * K` rounds twice, and the
+/// second rounding is biased by however far the f32 `K` sits from the
+/// real `180/pi` (see [`RAD_TO_DEG_HI`]). The `fma` form rounds once, at
+/// the result's own magnitude.
+///
+/// What is left is `asin`'s own error, amplified ~1.8x by the binade
+/// shift from `asin`'s `[0.25,0.5)` to degrees' `[8,16)` at the worst
+/// case -- `|x|` just above `asin`'s own 0.27 branch crossover, which is
+/// exactly where `asin` itself is at its max. That is the whole of the
+/// remaining max ulp, and nothing on this side of the composite can
+/// reach it.
 #[inline(always)]
 pub fn asind(x: f32) -> f32 {
-    asin(x) * (180.0 / std::f32::consts::PI)
+    let y = asin(x);
+    fma(y, RAD_TO_DEG_HI, y * RAD_TO_DEG_LO)
 }
 
 // asin(x)/pi, seeded by rescaling each coefficient by 1/pi (backlog idea

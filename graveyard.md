@@ -5157,3 +5157,58 @@ body was not a pareto point.
     and no shared-kernel blast radius, so the extra fma is paid only by
     the function that needed it. Check the caller list *before* pricing
     a degree bump, not after.
+
+## `asind`: `180.0 / f32::consts::PI` is one ulp low, and that was its whole average
+
+`asind`'s max ulp is not its own -- it is `asin`'s relative error read on
+an unluckier binade ruler (`asin`'s `[0.25,0.5)` against degrees'
+`[8,16)`, ~1.8x), and that has been separately measured and recorded. Its
+**average** turned out to be a different and entirely separate defect,
+which the max-side analysis correctly does not cover.
+
+`asin(x) * (180.0 / std::f32::consts::PI)` computes `180/fl(pi)`, not
+`fl(180/pi)`. Those are different f32s: `0x42652ee0` against `0x42652ee1`.
+The shipped one is a **-0.4606 ulp** relative error on the multiplier;
+the correctly rounded one is +0.0979. A constant relative bias on the
+last multiply flips a fixed fraction of results by exactly 1 ulp, which
+is why it shows up as an average and never as a max.
+
+Decomposed over 4M random in-domain samples, feeding a *correctly
+rounded* `asin` so only the composite's own arithmetic is in view (in-domain
+average; the harness reports ~0.496x of these because `|x| > 1` is half of
+all bit patterns and scores 0):
+
+| final step | avg | max |
+|---|---|---|
+| `* (180.0/PI_f32)` (shipped) | 0.6712 | 2 |
+| `* fl(180/pi)` | 0.1538 | 2 |
+| `fma(y, HI, y*LO)` two-word | 0.0252 | 1 |
+
+0.6712 * 0.496 = 0.333 against the harness's measured 0.3378 -- the
+constant is the entire average, with nothing left over for `asin`.
+
+Shipped: the two-word form. Exhaustive over all 2^32 patterns, avg
+**0.3378 -> 0.0222**, max 9 -> 9 (unchanged, and expected to be: it is
+`asin`'s own max at `x` just above the 0.27 branch crossover, 0.27002
+before and 0.27009 after). Cost `asind_throughput` 58 -> 61 instructions,
+uOps 63 -> 66, Block RThroughput 14 -> 15; `asind_latency` +6.4% cycles.
+The correctly-rounded single constant is *free* and gets avg 0.085, a
+real option if 3 instructions ever matter more than 4x the average --
+but the two-word form is what makes the contract clean: `asind`'s error
+becomes exactly `asin`'s error on a different ruler, with nothing of its
+own added.
+
+**The split point is not free, for a reason that has nothing to do with
+accuracy.** Taking HI as the correctly-rounded `fl(180/pi)` makes LO
+negative, and then `y*LO` is `+0.0` for `y = -0.0`, so the `fma`'s
+`-0.0 + 0.0` returns `+0.0` and `asind(-0.0)` loses its sign. Caught by
+edgecheck, invisible to a 100M fuzz. Taking HI as the *low* neighbour
+(which is the old, "wrong" constant) makes LO positive and both terms
+`-0.0`. Either HI represents 180/pi to the same ~2^-49 once LO is added,
+so this costs nothing.
+
+`1/pi` and `pi/180` were checked for the same defect and do not have it:
+`1/fl(pi)` and `fl(pi)/180` each land on the correctly-rounded constant.
+So this is specific to 180/pi, not a general rule about deriving from
+`PI`. **`acosd`, `atand` and `atan2d` all still spell it
+`180.0 / std::f32::consts::PI`** and carry the same -0.46 ulp bias.
