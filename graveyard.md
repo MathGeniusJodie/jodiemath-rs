@@ -5761,3 +5761,48 @@ re-screened blind:**
   `[0.5, pi/2]` (worst at `r = 1.5705949`), so the output clamp is doing
   real work -- and it is *improving* accuracy there, since the true
   `sin` at those points rounds to exactly 1.0.
+
+### Follow-on: two words of `1/pi` are enough, and the third-word fma pays for itself
+
+`round_x_over_pi` carried a third correction word, `fma(x, RPI_TINY, s)`,
+on top of `s = e0 + x * RPI_LO`. Both went: `RPI_TINY` deleted, and the
+remaining correction folded into a single `fma(x, RPI_LO, e0)`. -5 instrs
+/ -6 uOps / -2 BlockRT on `sin_checked` (4.698 -> **4.546**, -3.2%) and
+the same instruction savings on `cos_checked` (4.079 -> **4.037**, -1.0%);
+latency flat at 108.02 / 113.00.
+
+**Why a third word of `1/pi` buys nothing here, unlike a third word of
+`pi`.** `RPI_TINY` reaches `r` only through *which integer* `ql` rounds
+to -- `reduce_pi` never sees it. A perturbation of size `d` can only move
+`ql` for residuals within `d` of a half-integer, and at a half-integer
+either choice is self-consistent: `q -> q+-1` flips the parity *and*
+shifts `r` by `-+pi`, and `(-1)^(q+1) sin(r-pi) == (-1)^q sin(r)`
+exactly. So `RPI_TINY` is inert until its own contribution `|x|*1.47e-16`
+exceeds 0.5, i.e. `|x| > 3.4e15` -- inside the region the two-word `q`
+has already lost to whole-integer error. This is the opposite of the
+`PI_HI`/`PI_LO`/`PI_TINY` split on the *output* side, where every word
+lands directly in `r` and dropping one is an unbounded relative error at
+sin's zeros (see the `single replacement word` entry above).
+
+Measured, 4M scored samples per band, against the previous code:
+identical avg *and* max *and* worst-x on every band below 1e13 for both
+functions, and better above -- `sin_checked [1e13,1e15)` avg
+13384 -> **2975**, `cos_checked [1e13,1e15)` 8.90e6 -> **8.54e6**, both
+`[1e15,+)` rows down slightly too. The fused `fma`'s extra rounding
+saved more than the deleted word was contributing. A dedicated
+near-zero probe (every f32 within 4 ulp of a zero of sin or cos out to
+1e6, 11.5M points -- the set where a small absolute slop in `r` becomes
+a large *relative* error) is bit-for-bit unchanged: 0.16675 avg /
+1.516 max for sin and 0.16692 / 3.460 for cos, same worst x as before.
+
+The exhaustive diff says the same thing more sharply: over all 2^32
+inputs the **smallest** input whose result changes at all is 7.09e8 for
+`sin_checked` and 3.67e9 for `cos_checked`. Everything below that is
+bit-identical, and above it the differences are exactly the predicted
+tie-flips -- 7.3% of the whole f32 line, overwhelmingly the `>= 1e15`
+patterns that make up most of it.
+
+Downstream, all unchanged or marginally better: `wrap_pi` 0.0244 avg
+(its exhaustive baseline), `sinc` 0.0938 / 3 max, `sinc_unnormalized`
+0.0716 -> 0.0715, `tan_checked` 3.2835e8 -> 3.2750e8 avg with the same
+~2.3e9 ceiling. edgecheck clean, 26 tests pass.

@@ -1340,18 +1340,26 @@ pub fn tand_unchecked(x: f32) -> f32 {
 // (qh, ql) via `two_prod`/`two_sum` error-free transforms (each transform
 // is exact for any inputs, unlike the PI_A..D trick, which needs bounded
 // q): the dominant cross term and the two next-biggest (~x*2^-24) get
-// real two_prod treatment; the smallest tier (~x*2^-48, plus 1/pi's 3rd
-// correction word) is folded in with plain multiplies/adds, whose own
-// rounding error is already far below 1 ulp of the O(1) result.
+// real two_prod treatment; the smallest tier (~x*2^-48) is folded in with
+// plain multiplies/adds, whose own rounding error is already far below
+// 1 ulp of the O(1) result.
+//
+// Two words of 1/pi, not three: a third word only ever perturbs *which
+// integer* `ql` rounds to, and a perturbation that small can only move
+// `ql` where the residual sits within it of a half-integer -- exactly
+// where either choice is self-consistent (`q -> q+-1` flips the parity
+// and shifts `r` by `-+pi`, giving the same answer). Its only real reach
+// is past |x| ~ 3.4e15, where its own contribution exceeds 0.5 -- deep
+// inside the region the two-word q has already lost anyway.
 //
 // Individual transforms being exact does *not* make qh/ql exact at any
 // magnitude: together they resolve q to roughly 48 bits, so once the true
 // round(x/pi) needs more -- around |x| > 2^48*pi ~ 8.85e14 -- qh+ql comes
 // out off by whole integers (measured: off by 1 at x=1e15, by 14 at
 // x~1e16). The cliff is relocated from ~2^24 to ~2^48, not eliminated.
-// POLY_SAFE_BOUND bounds sinf_poly's *input* here but not its *output* --
-// see sin_checked's own `.clamp(-1,1)` for what keeps
-// sin_checked/cos_checked inside [-1,1] regardless.
+// Nothing here bounds sinf_poly's input -- see sin_checked's own
+// `.clamp(-1,1)` for what keeps sin_checked/cos_checked inside [-1,1]
+// regardless.
 //
 // pre_offset (cos's -0.5 phase shift) MUST be folded into the *low*
 // correction term, never into the two_prod's dominant term p0: once |x|
@@ -1361,7 +1369,6 @@ pub fn tand_unchecked(x: f32) -> f32 {
 // unaffected either way.
 const RPI_HI: f32 = 0.31830987334251404;
 const RPI_LO: f32 = 1.2841276486597053e-8;
-const RPI_TINY: f32 = 1.4685477398157775e-16;
 const PI_HI: f32 = 3.1415927410125732;
 const PI_LO: f32 = -8.742277657347586e-8;
 const PI_TINY: f32 = -3.4302490200117637e-15;
@@ -1471,9 +1478,11 @@ fn round_x_over_pi<const HALF: bool>(x: f32) -> (f32, f32) {
     // only use would be `s + e1` immediately after, and for a Fast2Sum
     // pair fl(s + e1) is just `s` itself again (verified exhaustively) --
     // so the whole call collapses to a plain add.
-    let s = e0 + x * RPI_LO;
+    //
+    // One fma, not `e0 + x * RPI_LO`: the product is exact inside the
+    // fma, so this is both one op and one rounding cheaper.
+    let lo = fma(x, RPI_LO, e0);
     // pre_offset folded in here, NOT into p0 -- see the constants' comment
-    let lo = fma(x, RPI_TINY, s);
     let lo = if HALF { lo - 0.5 } else { lo };
     // ql: ties-to-even -- q only needs to be *an* integer within 0.5 of
     // the true residual, so any consistent nearest-rounding rule works,

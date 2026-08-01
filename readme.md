@@ -345,10 +345,10 @@ log2                |          38.06 |             1.583
 log2_unchecked      |          38.06 |             1.021
 sin                 |          64.00 |             1.776
 sin_fast            |          48.00 |             1.151
-sin_checked         |         108.02 |             4.698
+sin_checked         |         108.02 |             4.546
 cos                 |          61.00 |             1.654
 cos_fast            |          56.00 |             1.406
-cos_checked         |         113.00 |             4.079
+cos_checked         |         113.00 |             4.037
 sinpi               |          42.02 |             1.133
 cospi               |          47.00 |             1.226
 tanpi               |          76.00 |             2.223
