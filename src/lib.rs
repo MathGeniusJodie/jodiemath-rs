@@ -6051,36 +6051,173 @@ fn exp2_checked_df(v: Df32) -> f32 {
     fma(p, c, p) * t2
 }
 
+/// `2*log2(e)`, the atanh form's leading coefficient (see `log2_f64`).
+const LOG2E_2_F64: f64 = 2.8853900817779268;
+
+/// Minimax seed for `1/(m+1)` over `m` in `[2^-0.5, 2^0.5]`, accurate to
+/// ~`2^-20` -- only a seed, squared by the single Newton step that
+/// follows it, so it does not need to be better. Fitted in `m` rather than
+/// in `d = m + 1` (the same fit either way, an affine change of variable)
+/// so the seed does not have to wait on the `m + 1` add.
+const LOG2_ATANH_RCP64: [f64; 6] = [
+    0.9836614733399011,
+    -0.8856304007709652,
+    0.6435262038352056,
+    -0.3284692378061808,
+    0.10056909996623936,
+    -0.013656925651166552,
+];
+
+/// `(atanh(t)/t - 1)/u` in `u = t^2` over `u` in `[0, (3-2*sqrt(2))^2]`,
+/// i.e. the atanh series past its own leading term, with the leading `1`
+/// pinned rather than fitted: that makes `log2(1)` come out exactly `0`,
+/// which `powf_unchecked` (which has no `x == 1` override) relies on.
+/// Idealized relative error `2^-37.6`, against the `2^-31` the chain
+/// needs -- see `log2_f64`.
+const LOG2_ATANH_A64: [f64; 4] =
+    [0.33333332824327616, 0.20000167265984317, 0.14268673572031404, 0.117907343543545];
+
+/// `(2^f - 1)/f` over `f` in `[-0.5, 0.5]`, leading `1` pinned so `2^0`
+/// is exactly `1`. Idealized relative error `2^-28.9`, against the
+/// `2^-25` needed for an f32 result.
+const EXP2_F64_E: [f64; 6] = [
+    0.6931472028549269,
+    0.24022647913384074,
+    0.05550332471225973,
+    0.009618437395496837,
+    0.0013398874430087457,
+    0.0001535334944368378,
+];
+
+/// `log2(x)` in f64, for positive finite `x` (denormals included; callers
+/// must guard zero/negative/inf/nan themselves). The `powf` family's log
+/// half.
+///
+/// The precision this needs is set by its caller, not by f32: the result
+/// is multiplied by `y` before exponentiating, so `powf`'s relative error
+/// is about `ln2 * |y*log2(x)| *` this function's own -- amplified by up
+/// to 128 (the largest `|y*log2(x)|` with a finite result), which is ~7
+/// bits. Landing within an ulp therefore needs ~31 bits here, which is
+/// past what an f32 chain can produce without double-float bookkeeping at
+/// every step, and comfortably inside one f64.
+///
+/// The shape is still the atanh form rather than `log_2_normal`'s
+/// `k + s*P(s)`, and for a reason that survives the precision change:
+/// with `t = (m-1)/(m+1)`, `log2(m) = 2*log2(e)*atanh(t)` and
+/// `|t| <= 3-2*sqrt(2) ~ 0.1716`, so `u = t^2 <= 0.0294` and four tail
+/// coefficients reach `2^-37.6`. The `s = m - 1` form has `|s|` up to
+/// 0.4142 and would need ~15 to get there.
+///
+/// `t` costs no division. `m + 1` is exact in an f64 (`m` carries 24
+/// bits), so a degree-5 seed plus one Newton step -- which squares the
+/// error it is given, `2^-20 -> 2^-40` -- lands `t` far inside what the
+/// chain needs, for one dependent level less than a shorter seed plus
+/// two steps and no `vdivpd` (which is 16 cycles of reciprocal
+/// throughput on its own, against ~6 for the whole seed-and-refine).
+#[inline(always)]
+fn log2_f64(x: f32) -> f64 {
+    let (xs, koff) = denormal_rescale!(x);
+    // Same decomposition log_family_normal! does, spelled out (like
+    // ln_normal/log10_normal's own copies): m in [2^-0.5, 2^0.5), k exact.
+    let e = (xs.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23;
+    let m = f32::from_bits((xs.to_bits() as i32).wrapping_sub(e << 23) as u32);
+    let k = (e as f32 + koff) as f64;
+    let md = m as f64;
+    // Both exact: `md - 1` by Sterbenz, `md + 1` because 24 bits plus a
+    // leading one still fits. So the whole reduction below is exact
+    // except for the reciprocal itself.
+    let s = md - 1.0;
+    let d = md + 1.0;
+    let rc = LOG2_ATANH_RCP64;
+    let md2 = md * md;
+    // Estrin, not Horner: this sits at the head of the chain everything
+    // else waits on, so a level of depth is worth an extra multiply.
+    let e0 = f64::mul_add(rc[1], md, rc[0]);
+    let e1 = f64::mul_add(rc[3], md, rc[2]);
+    let e2 = f64::mul_add(rc[5], md, rc[4]);
+    let r = f64::mul_add(e2, md2 * md2, f64::mul_add(e1, md2, e0));
+    let r = r * f64::mul_add(-d, r, 2.0);
+    let t = s * r;
+    let u = t * t;
+    let a = LOG2_ATANH_A64;
+    let u2 = u * u;
+    let l0 = f64::mul_add(a[1], u, a[0]);
+    let l1 = f64::mul_add(a[3], u, a[2]);
+    let l2 = f64::mul_add(l1, u2, l0);
+    // `1 + u*A(u)` folded into the `t` multiply, so the pinned leading
+    // term stays exact and no separate `+1` rounding happens.
+    f64::mul_add(LOG2E_2_F64 * t, f64::mul_add(l2, u, 1.0), k)
+}
+
+/// `2^v` for an f64 `v`, narrowed to f32. The `powf` family's exp half.
+///
+/// Everything the f32 `exp2_checked` needs a two-word exponent split for
+/// (`exp2_field_split`'s `t1`/`t2`, and the clamp that keeps each word
+/// inside the f32 exponent field) collapses here: `2^n` for every `n`
+/// this can reach is a single *normal* f64, so the scale is one exact
+/// power of two and the product is normal whatever the f32 result turns
+/// out to be. A denormal or overflowing f32 result therefore rounds
+/// exactly once, in the narrowing conversion, instead of having a
+/// correction applied after its mantissa bits were already lost.
+///
+/// The clamp is only there to keep `n` inside the 11-bit exponent field
+/// the magic-constant reconstruction below writes into; `+-200` is far
+/// past where `2^v` has saturated an f32 either way, so it changes no
+/// finite result. NaN survives it (both compares are false) and rides
+/// through the polynomial.
+#[inline(always)]
+fn exp2_f64_to_f32(v: f64) -> f32 {
+    let vc = v.clamp(-200.0, 200.0);
+    // ROUND_MAGIC64 does double duty: `nm - MAGIC` is round-ties-even of
+    // `v`, and `nm`'s own low bits already *are* that integer, so the
+    // scale's exponent field costs an integer add and a shift rather than
+    // a float-to-int cast (which is saturating in Rust and does not
+    // vectorize -- the signature `codegen_check` watches for).
+    let nm = vc + ROUND_MAGIC64;
+    let n = nm - ROUND_MAGIC64;
+    // Exact: |f| <= 0.5 and both operands share an exponent range.
+    let f = vc - n;
+    let c = EXP2_F64_E;
+    let f2 = f * f;
+    let l0 = f64::mul_add(c[1], f, c[0]);
+    let l1 = f64::mul_add(c[3], f, c[2]);
+    let l2 = f64::mul_add(c[5], f, c[4]);
+    let r0 = f64::mul_add(l1, f2, l0);
+    let r1 = f64::mul_add(l2, f2 * f2, r0);
+    let p = f64::mul_add(r1, f, 1.0);
+    // (n + 1023) << 52. `nm`'s low 52 bits hold `n + 2^51`, and 2^51 is a
+    // multiple of 4096, so the 12 bits the shift keeps are exactly
+    // `n + 1023` -- in range for every `n` the clamp above allows.
+    let scale = f64::from_bits(nm.to_bits().wrapping_add(1023) << 52);
+    (p * scale) as f32
+}
+
 /// `exp2(log2(ax) * y)`, the magnitude half of the whole `powf` family.
 ///
-/// `log2(ax)` stays a double-float (`Df32`) through the multiply by `y`
-/// and the `exp2` reconstruction, collapsing to a single f32 only at the
-/// very end (see `log2_df`/`exp2_checked_df`). That is the formula, not
-/// an opt-in accuracy tier, because the single-f32 route has no way to be
-/// merely *approximate* here: `exp2(log2(x)*y)`'s error is
-/// `ln2 * |y*log2(x)| * relerr(log2)`, and collapsing `log2(x)` to one
-/// f32 *before* the multiply throws away exactly the low bits `y` then
-/// amplifies -- by up to 128, i.e. hundreds of ulp, at ordinary inputs
-/// like `(1.21, 464.7)`. There is no cheap way to buy that back on the
-/// collapsed route: a compensated two-product on the multiply alone
-/// recovers ~13% of it, because the multiply is not where the error is.
+/// The whole chain runs in f64 and returns to f32 once, at the end. That
+/// is the formula, not an opt-in accuracy tier, because the single-f32
+/// route has no way to be merely *approximate* here:
+/// `exp2(log2(x)*y)`'s error is `ln2 * |y*log2(x)| * relerr(log2)`, and
+/// collapsing `log2(x)` to one f32 *before* the multiply throws away
+/// exactly the low bits `y` then amplifies -- by up to 128, i.e. hundreds
+/// of ulp, at ordinary inputs like `(1.21, 464.7)`. There is no cheap way
+/// to buy that back on the collapsed route: a compensated two-product on
+/// the multiply alone recovers ~13% of it, because the multiply is not
+/// where the error is.
 ///
 /// `ax`'s degenerate values ride the same formula rather than a separate
 /// fallback: `log2` of `+0` is `-inf` and of `+inf`/NaN is itself, and
-/// `exp2_checked_df`'s own clamp then saturates each to the right
-/// `0`/`+inf`/NaN. Two selects on the *high word only* is all that costs
-/// -- the low word may be arbitrary (or NaN) there, because every path
-/// that reads it ends at `exp2_checked_df`'s own non-finite guard, which
-/// already exists for the overflow case. Deciding those four magnitudes
-/// separately instead needs the sign of `y` as well and lands at roughly
-/// three times the ops.
-macro_rules! powf_df_mag {
+/// `exp2_f64_to_f32`'s own clamp then saturates each to the right
+/// `0`/`+inf`/NaN. Two selects is all that costs. Deciding those four
+/// magnitudes separately instead needs the sign of `y` as well and lands
+/// at roughly three times the ops.
+macro_rules! powf_f64_mag {
     ($ax:expr, $y:expr) => {{
         let ax = $ax;
-        let l = log2_df(ax);
-        let lh = if ax == 0.0 { f32::NEG_INFINITY } else { l.0 };
-        let lh = if !(ax < f32::INFINITY) { ax * ax } else { lh };
-        exp2_checked_df(Df32(lh, l.1) * $y)
+        let l = log2_f64(ax);
+        let l = if ax == 0.0 { f64::NEG_INFINITY } else { l };
+        let l = if !(ax < f32::INFINITY) { (ax * ax) as f64 } else { l };
+        exp2_f64_to_f32(l * ($y as f64))
     }};
 }
 
@@ -6194,7 +6331,7 @@ macro_rules! powf_sign_combine {
 #[allow(clippy::neg_cmp_op_on_partial_ord)] // `!(ax < inf)` catches NaN too
 pub fn powf(x: f32, y: f32) -> f32 {
     let ax = x.abs();
-    let mag = powf_df_mag!(ax, y);
+    let mag = powf_f64_mag!(ax, y);
     powf_sign_combine!(x, ax, y, mag)
 }
 
@@ -6237,7 +6374,7 @@ pub fn powf(x: f32, y: f32) -> f32 {
 #[inline(always)]
 #[allow(clippy::neg_cmp_op_on_partial_ord)] // `!(x < inf)` catches NaN too
 pub fn powf_pos(x: f32, y: f32) -> f32 {
-    let mag = powf_df_mag!(x, y);
+    let mag = powf_f64_mag!(x, y);
     let r = if x == 1.0 { 1.0 } else { mag };
     if y == 0.0 { 1.0 } else { r }
 }
@@ -6277,7 +6414,7 @@ pub fn signed_pow(x: f32, y: f32) -> f32 {
 /// the answer right, not a safety net -- see `powf_df_mag!`.
 #[inline(always)]
 pub fn powf_unchecked(x: f32, y: f32) -> f32 {
-    exp2_checked_df(log2_df(x) * y)
+    exp2_f64_to_f32(log2_f64(x) * y as f64)
 }
 
 /// x^(1/n) for integer `n` (backlog idea #75, C23 `rootn`), the `cbrt`

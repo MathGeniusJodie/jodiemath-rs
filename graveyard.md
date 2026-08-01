@@ -6390,3 +6390,92 @@ instructions) and `remainder_wide_throughput` (134 -> 67), exactly the
 multi-exit-path marker corruption `mca_target.rs` documents. So the
 existing decision not to wire it stands; check the *whole* region list,
 not two controls, before believing otherwise.
+
+## `powf`: the `Df32` chain was doing f64's job, again -- 3 -> 1 max ulp
+
+Same lever as `remainder_wide` above, on the crate's 2nd most expensive
+function. The whole `log2` / multiply-by-`y` / `exp2` chain moves from
+double-f32 (`log2_df` + `Df32 * f32` + `exp2_checked_df`) to f64, coming
+back to f32 once, at the end.
+
+```
+                   instrs   uOps  BlockRT   cyc/elem            latency
+  powf            233->209 274->267 65->76  8.459 -> 6.996 (-17.3%)  125.17 -> 125.81
+  powf_unchecked  170->140 200->179 60->70  6.509 -> 6.171 ( -5.2%)  117.28 -> 118.00
+```
+
+Accuracy, both harnesses, baselines re-measured on the spot rather than
+read off the readme:
+
+| | old | new |
+|---|---|---|
+| `powfsearch` worst over all sweeps | **3** | **1** |
+| `powfsearch` worst per-band avg | 0.3027 | 0.0106 |
+| `accuracy quick` powf avg | 0.0193 | 0.0007 |
+| `accuracy quick` powf_pos / powf_unchecked avg | 0.0387 | 0.0014 |
+
+So `powf` is now faithfully rounded, matching std's own max of 1, and the
+latency rows are a wash. Nothing is dominated, so no `powf_latency` tier.
+
+### Why this needed care that `remainder_wide` did not
+
+**f64 buys no lane throughput on this machine.** Measured directly with
+llvm-mca on single instructions: `vfmadd213pd %zmm` has Block RThroughput
+**1.0**, `vfmadd213ps %ymm` has **0.5**. Both process 8 lanes. So f64 ZMM
+costs exactly 2x f32 YMM per lane, and an f64 rewrite only wins if it
+*shortens the algorithm*, which is the entire question. `remainder_wide`
+halved its instruction count and won 70%; `powf` cuts 10-18% and wins
+5-17%. Do not expect the `remainder_wide` multiple anywhere the f32
+version was not doing obvious bookkeeping busywork.
+
+**`vdivpd %zmm` is 16.0 Block RThroughput**, so the atanh form's
+`t = (m-1)/(m+1)` still cannot be a division even in f64 -- a seed plus
+Newton refinement is ~6 ops against 16. Priced, not assumed.
+
+**Constant pressure is a real cost in f64.** The first version had ~23
+distinct f64 constants and llvm-mca showed **24 `vbroadcastsd`** inside
+the unrolled loop body: LLVM ran out of ZMM registers to keep them live
+and rematerialized. Shortening both polynomials to the accuracy actually
+required (atanh tail 5 -> 4 coefficients at `2^-37.6` against `2^-31`
+needed; exp2 tail 7 -> 6 at `2^-28.9` against `2^-25`) took `powf` from
+211 to 207 instructions on its own.
+
+**The seed/Newton split is a latency knob, and the obvious setting is the
+wrong one.** A degree-3 seed (`2^-13`) plus *two* Newton steps and a
+degree-5 seed (`2^-20`) plus *one* are within an instruction of each
+other, but one dependent level apart:
+
+| | powf cyc/elem | powf latency | powf_unchecked cyc/elem | powf_unchecked latency |
+|---|---|---|---|---|
+| deg-3 seed, 2 Newton | 7.251 | 131.45 (+5.0%) | **5.734** | 124.35 (+6.0%) |
+| deg-5 seed, 1 Newton | **6.996** | **125.81** (+0.5%) | 6.171 | **118.00** (+0.6%) |
+
+The two-Newton version is a genuine tradeoff (throughput win, ~5% latency
+loss) and would have needed a pareto decision. One Newton removes the
+tradeoff outright, and *also* wins `powf`'s own throughput row. Worth
+remembering as a general shape: when an f64 port lands "faster throughput,
+slower latency", check whether a shorter refinement chain buys the level
+back before reaching for a second public function.
+
+### What did not move
+
+`compound_accurate` (255 instrs, 9.239 cyc/elem, now the crate's most
+expensive function) still routes through `log2p1_df` -> `log2_df` and
+`exp2_checked_df`, so both double-f32 helpers stay live and nothing is
+dead. It is the obvious next target for the same treatment; the `log2p1`
+shape (`log2_df` of `1+x` with the cancellation handled) is the part that
+needs designing, not the `exp2` half.
+
+### Methodology
+
+The mca signals disagreed: instructions **down**, uOps **down**, Block
+RThroughput **up** 13-17%, simulated cycles **down**. That combination is
+not in the escalation ladder. Arbitrated with the documented prebuilt-
+binary wall-clock A/B (12 alternating rounds under the bench lock, min per
+variant), which agreed with the cycle column and against RThroughput:
+throughput old 2.354 / new 2.263 ns, latency old 42.26 / new 43.79 ns for
+the two-Newton build. The reason RThroughput is not binding is visible in
+the numbers -- the loop measures 5.7-6.5 cyc/elem against a resource floor
+of 3.75-4.25, so it is dependency- and front-end-bound, not port-bound.
+Medians across the 12 rounds were useless (2.4-4.5 ns spread on the *same*
+binary); only the min is a usable estimator on this machine.

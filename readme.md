@@ -87,9 +87,9 @@ hypot_unchecked (bounded, +) | 0.034 |     1     | (bit-identical to hypot on it
        hypot_checked |    0.015   |     1     | (no std comparison needed, no domain restriction)
                 rhypot |    0.065   |     2     | (no std rhypot)
                   rsqrt |    0.260   |     1     | (no std rsqrt)
-        powf (in-domain)|    0.019   |   3 (s)  |  0.000  |    1
-    powf_unchecked (+)  |    0.039   |   3 (s)  | (bit-identical to powf on its domain)
-                powf_pos|    0.039   |   3 (s)  | (bit-identical to powf for x > 0, see its doc comment)
+        powf (in-domain)|    0.001   |   1 (s)  |  0.000  |    1
+    powf_unchecked (+)  |    0.001   |   1 (s)  | (bit-identical to powf on its domain)
+                powf_pos|    0.001   |   1 (s)  | (bit-identical to powf for x > 0, see its doc comment)
         remainder (|x/y|<1000, near-tie excluded) | 0.000 | 0 | (no std comparison needed)
 remainder_unchecked (+) |    0.000   |     0     | (bit-identical to remainder on its domain)
     remainder_checked (|x/y|<1e7, near-tie excluded) | 0.000 | 0 | (no std comparison needed)
@@ -103,13 +103,17 @@ remainder_unchecked (+) |    0.000   |     0     | (bit-identical to remainder o
 lives in one corner -- `|y*log2(x)|` just inside the largest finite
 exponent, `x` inside the single octave where log2's own relative error is
 undiluted by the integer exponent -- which random pairs essentially never
-hit. The blind fuzz reports `powf` at 2 ulp; pinning `y` to `x` and
-sweeping that octave exhaustively finds 3.
+hit. That corner is what the number above is measured at; the blind fuzz
+alone reports 1 ulp too, but it reported 2 where the search found 3 back
+when powf was a double-f32 chain, so the search is still the number to
+quote.
 
 There is no `powf_checked`. There used to be: `powf` computed
 `exp2_checked(log_2(x)*y)` through a single f32 and measured **>=292 ulp**,
-with a separate opt-in tier carrying `log2(x)` as a double-float for the
-3 ulp above. That split is gone -- the double-float route *is* `powf` now.
+with a separate opt-in tier carrying `log2(x)` as a double-float. Both are
+gone -- `powf` now does the whole `log2`/multiply/`exp2` chain in f64 and
+returns to f32 once, at the end, which is both cheaper than the
+double-f32 bookkeeping it replaces and faithfully rounded (max 1 ulp).
 The old fast route had no useful accuracy/speed curve to sit on: its error
 is `y`-amplified, so it is not "approximate", it is wrong by hundreds of
 ulp at ordinary inputs like `(1.21, 464.7)`, and a compensated multiply
@@ -213,8 +217,8 @@ hypot_unchecked | 6.2 ns  |    -    |  -
   hypot_checked | 18.2 ns | 11.2 ns | 0.6x
        rhypot | 8.9 ns  |    -    |  -
         rsqrt | 7.5 ns  |    -    |  -
-      powf (*)(r)| 42.7 ns | 23.9 ns | 0.6x
-powf_unchecked (r)| 39.2 ns | 23.9 ns | 0.6x
+      powf (*)(r)(w)| 42.7 ns | 23.9 ns | 0.6x
+powf_unchecked (r)(w)| 39.2 ns | 23.9 ns | 0.6x
  remainder (*)| 10.7 ns |    -    |  -
 remainder_unchecked| 9.3 ns  |    -    |  -
 remainder_checked| 13.0 ns |    -    |  -
@@ -313,8 +317,8 @@ hypot_unchecked | 0.21 ns |    -    |  -
   hypot_checked | 0.38 ns | 2.55 ns | 6.7x
        rhypot | 0.36 ns |    -    |  -
         rsqrt | 0.35 ns |    -    |  -
-      powf (*)(r)| 2.27 ns | 7.74 ns | 3.4x
-powf_unchecked (r)| 1.89 ns | 7.74 ns | 4.1x
+      powf (*)(r)(w)| 2.27 ns | 7.74 ns | 3.4x
+powf_unchecked (r)(w)| 1.89 ns | 7.74 ns | 4.1x
  remainder (*)| 0.23 ns |    -    |  -
 remainder_unchecked| 0.17 ns |    -    |  -
 remainder_checked| 0.34 ns |    -    |  -
@@ -328,8 +332,8 @@ not a regression. `powf`'s throughput ratio flips especially hard here
 (was "0.07x", now "5.7x") since the old std comparison point was a bare
 `x*x` multiply, not real `powf`.
 
-(w) `remainder_wide`'s two wall-clock rows predate its f64 rewrite and
-are not re-recorded here -- a single row re-measured in a later sitting
+(w) `remainder_wide`'s and `powf`/`powf_unchecked`'s wall-clock rows
+predate their f64 rewrites and are not re-recorded here -- a single row re-measured in a later sitting
 would not be comparable to the rest of the table (see the `(!)`/`(r)`
 notes above for what that costs). llvm-mca puts the rewrite at -66.0%
 latency and -70.5% throughput; read that table instead.
@@ -402,8 +406,8 @@ hypot               |          21.11 |             0.766
 hypot_checked       |          57.19 |             1.178
 rhypot              |          32.02 |             1.389
 rsqrt               |          28.00 |             1.381
-powf                |         125.17 |             8.459
-powf_unchecked      |         117.28 |             6.509
+powf                |         125.81 |             6.996
+powf_unchecked      |         118.00 |             6.171
 remainder           |          34.11 |                 ? (*)
 remainder_unchecked |          33.00 |             0.646
 remainder_checked   |          45.17 |             1.357
