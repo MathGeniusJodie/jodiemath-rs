@@ -453,15 +453,40 @@ cmd_stash() {
     git -C "$TOPLEVEL" checkout HEAD -- .
     echo "${c_grn}stashed${c_off} to $f  ${c_dim}(jm unstash to restore)${c_off}"
     local untracked; untracked=$(git -C "$TOPLEVEL" ls-files --others --exclude-standard | head -5)
-    [[ -n $untracked ]] && note "untracked files left in place: $(echo "$untracked" | tr '\n' ' ')"
+    if [[ -n $untracked ]]; then
+        note "untracked files left in place: $(echo "$untracked" | tr '\n' ' ')"
+    fi
+    # Explicit: a trailing `[[ ... ]] && note` returns 1 when the test is
+    # false, so a SUCCESSFUL stash with no untracked files exited non-zero and
+    # broke `jm stash && git rebase master && jm unstash` at the first link.
+    return 0
 }
 
 cmd_unstash() {
     local f; f=$(stash_file)
+    local mode=${1:-}
     [[ -s $f ]] || die "no jm stash for this worktree"
-    git -C "$TOPLEVEL" apply "$f" || die "apply failed; patch kept at $f"
+    if [[ $mode == --discard ]]; then
+        local keep="$f.discarded"
+        mv "$f" "$keep"
+        echo "${c_yel}discarded${c_off} the stash; patch preserved at $keep"
+        return 0
+    fi
+    if [[ $mode == --3way ]]; then
+        git -C "$TOPLEVEL" apply --3way "$f" || die "3-way apply left conflicts; resolve them, then jm unstash --discard"
+    elif ! git -C "$TOPLEVEL" apply "$f"; then
+        # Without a way out, a patch that cannot apply wedges stashing
+        # entirely: every later `jm stash` refuses because a stash exists,
+        # and unstash can never clear it.
+        echo "${c_red}apply failed${c_off} -- the patch no longer fits this tree (another instance may have landed the same lines)." >&2
+        echo "  ${c_bold}jm unstash --3way${c_off}     try a 3-way merge, leaving conflict markers" >&2
+        echo "  ${c_bold}jm unstash --discard${c_off}  drop it (the patch is kept at $f.discarded)" >&2
+        echo "  the raw patch is at $f" >&2
+        return 1
+    fi
     rm -f "$f"
     echo "${c_grn}restored${c_off} from stash"
+    return 0
 }
 
 cmd_gc() {

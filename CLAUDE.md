@@ -47,6 +47,16 @@ accuracy sweep for the **whole crate** before landing, not just your domain.
 
 - **`llvm-mca` needs no lock.** It is static analysis, and each worktree has
   its own `target/`, so nobody clobbers your `mca_target-*.s`.
+- **Iterate with `tools/mca_region.py`, not the full harness.** It extracts
+  just the `LLVM-MCA-BEGIN`/`END` regions you name and reproduces
+  `examples/mca`'s numbers to the digit in seconds instead of ~20 minutes, and
+  it prints instrs / uOps / Block RThroughput together — the whole escalation
+  ladder, which you need because mca's throughput column alone has been wrong
+  in both directions here.
+
+      python3 tools/mca_region.py \
+        "$(ls -t target/release/examples/mca_target-*.s | head -1)" \
+        asin_throughput asin_latency
 - **Never set `CARGO_TARGET_DIR`.** A shared target dir puts every instance's
   `--emit=asm` output at the same path and silently corrupts asm comparisons.
   `./tools/jm doctor` checks this.
