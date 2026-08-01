@@ -4439,3 +4439,61 @@ absolute error is `~|x| * 2^-73.65` regardless of how `q` is stored.
 Three-word `q` alone buys nothing without four-word pi. And a table
 lookup is a gather, which is the one thing this crate's auto-vectorized
 scalar style cannot absorb.
+
+## `erfc`/`exp` composites: the *argument's* rounding, not the kernel's error
+
+`gelu(x) = x*0.5*erfc(-x/sqrt2)` scored 199 max ulp exhaustively with its
+worst point at `x = -13.09`, deep in the tail, while `erfc` itself scores 7.
+Its doc comment (and `norm_cdf`'s, and `norm_pdf`'s) blamed the kernel --
+"inherits `erfc`'s own documented tail accuracy as-is". **That was wrong.**
+
+The error is the composite's own *argument* rounding, amplified by the
+kernel's condition number. `erfc`'s relative sensitivity to its argument,
+`|z * dln(erfc)/dz| = 2z/(sqrt(pi)*erfcx(z))`, grows as `2z^2`: at
+`z = 9.26` (`gelu(-13.09)`) the half-ulp already sitting in
+`fl(-x*FRAC_1_SQRT_2)` comes back out as ~170 half-ulps of result. Nothing
+`erfc` could do would fix that -- it is never handed the right argument.
+
+Attribution, exhaustive over `gelu`'s negative octaves, splitting the total
+into "f64 `erfc` at the *rounded* argument vs at the true argument"
+(argument rounding) and "f32 `erfc` vs f64 `erfc` at the *same* rounded
+argument" (kernel):
+
+| `|x|` octave | total ulp | from argument | from `erfc` |
+|---|---|---|---|
+| `2^-1` |   7 |   1 | 6 |
+| `2^0`  |  11 |   4 | 7 |
+| `2^1`  |  22 |  16 | 6 |
+| `2^2`  |  67 |  64 | 3 |
+| `2^3`  | 199 | 197 | 2 |
+
+**Fix (shipped for `gelu`):** hand `erfc` the argument as a double-`f32`.
+`RSQRT2_HI + RSQRT2_LO` names `1/sqrt2` to a relative `2^-49`, one `fma`
+recovers the product's exact residual `dz`, and the first-order term
+`erfc(z+dz) = erfc(z)*(1 - 2*z*dz)` puts the lost bits back. Exhaustive
+`gelu` **199 -> 10 max ulp, avg 0.3477 -> 0.2095**, and the worst point
+moves out of the tail entirely (`x = -13.09` -> `-2.78`, i.e. what is left
+is `erfc`'s own 7 plus composition rounding). llvm-mca cost is real but
+small: latency 70.61 -> 74.85 (+6.0%), throughput 3.217 -> 3.470 (+7.9%),
+throughput region 138 -> 153 instructions. Not worth a `gelu_fast` pareto
+sibling at a 7% spread against a 20x accuracy gap.
+
+Three details that are load-bearing, not incidental:
+
+- **`2z` is only the *asymptotic* log-derivative, and it is wrong-signed
+  nonsense for `x > 0`** (where `z < 0`, `erfc -> 2`, and the true
+  sensitivity decays like `exp(-z^2)`). Applying the correction unclamped
+  *adds* ~84 ulp at `x = +13`. `np = max(-x, 0)` gates it off; because
+  `np*RSQRT2_HI` is then exactly `max(z, 0)`, the clamp costs one `vmaxps`
+  and no extra multiply.
+- **`max(-x,0)` also keeps `dz` finite at `x = +inf`**, where the
+  unclamped `fma(nx, HI, -z)` is `inf - inf = NaN`.
+- **Apply the correction to `erfc`'s result, not to `x*Phi(x)`.** The
+  natural-looking `fma(-base, t, base)` is `NaN` at `x = +inf` even with
+  `t` exactly `0`, because `base` is `inf` and `inf*0` is `NaN`. Folding it
+  into the bounded `erfc` value first sidesteps the whole indeterminate
+  form and needs no extra branch.
+
+`norm_cdf` (186) and `norm_pdf` (65) are the same defect and are open --
+`norm_pdf`'s is `-0.5*x*x`, whose rounding `exp` amplifies by `|x^2/2|`
+(~85 at `x = 13`), fixable with `two_prod(x,x)` and a `(1 - 0.5*e)` factor.

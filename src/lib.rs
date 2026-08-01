@@ -3233,6 +3233,14 @@ pub fn logaddexp(a: f32, b: f32) -> f32 {
     if a.is_nan() || b.is_nan() { f32::NAN } else { normal }
 }
 
+/// `1/sqrt(2)` as a double-`f32` pair, same shape as `RPI_HI`/`RPI_LO`
+/// above: `RSQRT2_HI` is the nearest `f32` and `RSQRT2_LO` the next
+/// 24 bits of the remainder, together naming the constant to a relative
+/// `2^-49`. Used by [`gelu`] to hand `erfc` an argument that is exact to
+/// far more than `f32`, which its tail needs -- see [`gelu`]'s comment.
+const RSQRT2_HI: f32 = std::f32::consts::FRAC_1_SQRT_2;
+const RSQRT2_LO: f32 = 1.2101617485882343e-8;
+
 /// GELU (Gaussian Error Linear Unit), the exact/erf-based form (as
 /// opposed to the tanh approximation): `x * Phi(x)` where `Phi` is the
 /// standard normal CDF. The de facto default activation in transformer
@@ -3250,9 +3258,29 @@ pub fn logaddexp(a: f32, b: f32) -> f32 {
 /// there, but `0.0` times the *literal* `x = -inf` is an indeterminate
 /// `0*inf`, even though the true limit (`x*Phi(x)` as `x -> -inf`) is
 /// `0` -- same shape as `sqrt1pm1`'s own `x == inf` override below.
+///
+/// The argument `-x/sqrt2` is fed to `erfc` as a double-`f32` pair
+/// rather than a single rounded `f32`, because `erfc` is violently
+/// ill-conditioned in its argument out in the tail: the relative
+/// sensitivity `|z * dln(erfc)/dz|` grows as `2z^2`, so at `x = -13`
+/// (`z = 9.2`) the half-ulp already present in a rounded `z` reappears
+/// as ~170 half-ulps of the result. `RSQRT2_HI + RSQRT2_LO` names
+/// `1/sqrt2` to 2^-49, `dz` recovers the rest of the product exactly via
+/// `fma`, and the first-order term `erfc(z+dz) = erfc(z)*(1 - 2*z*dz)`
+/// (the `2z` asymptotic form of that same log-derivative) puts it back.
+/// `np = max(-x, 0)` clamps the correction off for `x >= 0`, where the
+/// true log-derivative decays like `exp(-z^2)` instead and `2z` would be
+/// badly wrong; the clamp also keeps `dz` finite at `x = +inf`, and the
+/// correction is applied to `erfc`'s own (bounded) result rather than to
+/// `x*Phi(x)` so that `+inf` stays `+inf` instead of hitting `inf*0`.
 #[inline(always)]
 pub fn gelu(x: f32) -> f32 {
-    let normal = x * 0.5 * erfc(-x * std::f32::consts::FRAC_1_SQRT_2);
+    let nx = -x;
+    let np = nx.max(0.0);
+    let zp = np * RSQRT2_HI;
+    let dz = fma(np, RSQRT2_LO, fma(np, RSQRT2_HI, -zp));
+    let e = erfc(nx * RSQRT2_HI);
+    let normal = x * 0.5 * fma(-e, (zp + zp) * dz, e);
     if x == f32::NEG_INFINITY { 0.0 } else { normal }
 }
 

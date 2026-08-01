@@ -191,6 +191,7 @@ fn main() {
         "softplus",
         "logsigmoid",
         "logaddexp",
+        "gelu",
         "sqrt1pm1",
         "asinh",
         "acosh",

@@ -1057,15 +1057,19 @@ fn real_main() {
     check("logaddexp(nan,1)", logaddexp(f32::NAN, 1.0), f32::NAN);
     check("logaddexp(1,nan)", logaddexp(1.0, f32::NAN), f32::NAN);
 
-    // gelu(x) = x*Phi(x) = x*0.5*erfc(-x/sqrt2) (backlog idea #70). The
-    // structural pins (gelu(3)/gelu(-3)) confirm the normal path really is
-    // that composition, bit for bit -- accuracy vs a real reference is the
-    // accuracy.rs harness's job. The special-value pins guard the explicit
-    // x==-inf override: 0.0*(-inf) alone is NaN, but the true limit is 0.
+    // gelu(x) = x*Phi(x) = x*0.5*erfc(-x/sqrt2) (backlog idea #70). For
+    // x >= 0 gelu's tail correction is identically zero, so gelu(3) is
+    // still exactly that composition and pins it structurally. For x < 0
+    // the correction is live and deliberately makes gelu *not* equal the
+    // plain f32 composition (3 ulp off the true -0.0040496940948903 at
+    // x=-3), so gelu(-3) is pinned against the true value instead --
+    // accuracy across the domain stays accuracy.rs's job. The
+    // special-value pins guard the explicit x==-inf override:
+    // 0.0*(-inf) alone is NaN, but the true limit is 0.
     check("gelu(0)", gelu(0.0), 0.0);
     check("gelu(-0)", gelu(-0.0), -0.0);
     check("gelu(3)==3*.5*erfc(-3/sqrt2)", gelu(3.0), 3.0 * 0.5 * erfc(-3.0 * std::f32::consts::FRAC_1_SQRT_2));
-    check("gelu(-3)==-3*.5*erfc(3/sqrt2)", gelu(-3.0), -3.0 * 0.5 * erfc(3.0 * std::f32::consts::FRAC_1_SQRT_2));
+    check_ulp("gelu(-3)==-3*Phi(-3)", gelu(-3.0), -4.0496941e-3, 1);
     check("gelu(inf)", gelu(f32::INFINITY), f32::INFINITY);
     check("gelu(-inf)", gelu(f32::NEG_INFINITY), 0.0);
     check("gelu(nan)", gelu(f32::NAN), f32::NAN);
