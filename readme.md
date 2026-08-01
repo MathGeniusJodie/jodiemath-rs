@@ -498,6 +498,13 @@ and documented-bound drift.
   blind 2-arg fuzz is structurally weak: their error is `ln2 * |y*log2(x)| * relerr(log2)`, maximised only
   where both factors are extreme at once, so this derives `y` from `x` to pin the first and sweeps the
   octave that maximises the second exhaustively instead of sampling. Finds twice the max ulp the fuzz does.
+- `cargo run --release --example clogsearch` - the same idea for `clog`'s real part, where the blind 2-arg
+  fuzz is weak in *both* halves. `Re clog = ln|z|` is a near-total cancellation on the unit circle, which
+  independent uniform `re`/`im` never reach -- and `accuracy.rs`'s own reference there is
+  `hypot(re,im).ln()`, whose relative error is `2^-53/|re^2+im^2-1|`, i.e. already ~2 f32 ulp at `|v| ~ 1e-9`
+  and unbounded below that, so it could not score the region even if it sampled it. This walks the manifold
+  and builds `re^2+im^2` exactly in f64 instead. Found **4096 ulp** where the standing row read 3. Exits
+  nonzero above a 4 ulp budget.
 - `cargo run --release --example special_matrix` - +-0/+-inf/NaN in/out matrix over every public 1-arg
   function, asserting NaN propagation and quietness (the `_unchecked`/`_approx` tiers that promise nothing
   off-domain are exempted by name, so a *new* function inheriting garbage NaN behaviour still fails).

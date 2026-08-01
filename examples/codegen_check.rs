@@ -86,7 +86,18 @@ fn main() {
         // reintroducing the historical saturating-cast pattern into a
         // scratch copy of hypot and confirming this check failed to catch
         // it before this fix, see IDEAS.md).
-        let has_saturating_cast = body.iter().any(|l| l.contains("cvttsd2si") || l.contains("cvttss2si"));
+        // `cvtsi2ss`/`cvtsi2sd` is the *other* direction and was not checked
+        // until f64 kernels started doing integer exponent-field work
+        // (`log2p1_f64`'s `ki as f64`): an i64->f64 cast needs AVX512DQ's
+        // `vcvtqq2pd` to stay packed, and scalarizes to a per-lane
+        // `vcvtsi2sd` without it. Zero regions have it today (verified over
+        // all 297), so this is a guard, not a fix.
+        let has_saturating_cast = body.iter().any(|l| {
+            l.contains("cvttsd2si")
+                || l.contains("cvttss2si")
+                || l.contains("cvtsi2ss")
+                || l.contains("cvtsi2sd")
+        });
         // IDEAS.md idea #75's own explicit ask ("no vsqrtss/vdivss") isn't
         // fully covered by has_packed_arith below, which only confirms *at
         // least one* packed op is present -- a scalar sqrt/div could still
@@ -121,7 +132,7 @@ fn main() {
             failures.push(format!("{name}: contains a `call` instruction (libm fallback / de-vectorized loop)"));
         }
         if has_saturating_cast {
-            failures.push(format!("{name}: contains cvttsd2si/cvttss2si (saturating-cast de-vectorization, see jodiemath-workflow memory)"));
+            failures.push(format!("{name}: contains a scalar float<->int convert (cvttsd2si/cvttss2si/cvtsi2ss/cvtsi2sd -- de-vectorization)"));
         }
         if has_scalar_sqrt_or_div {
             failures.push(format!("{name}: contains a scalar vsqrtss/vdivss/vsqrtsd/vdivsd (partial de-vectorization -- should be the packed vXXXps/vXXXpd form)"));

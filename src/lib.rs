@@ -5816,22 +5816,38 @@ pub fn clog(re: f32, im: f32) -> (f32, f32) {
     let mag = cabs(re, im);
     let log_mag = if mag.is_finite() {
         if (mag - 1.0).abs() < 0.5 {
-            // `re^2 + im^2 - 1` to full relative precision however hard
-            // it cancels. Both squares are split exactly by `fma` and
-            // their sum exactly by `two_sum`, so `s + es + e1 + e2` *is*
-            // `re^2 + im^2`, with no error at all. `s - 1.0` is then
-            // Sterbenz-exact wherever it matters (`s` in `[0.5, 2]`, i.e.
-            // wherever the result is small enough to care), and the only
-            // rounding left lands on the correction word, at `2^-24` of
-            // an already-`2^-24` quantity. `mag < 1.5` bounds `|re|` and
-            // `|im|` by `1.5`, so no square can overflow, and `1 + v =
-            // re^2 + im^2` stays inside `log1p_guarded`'s licence.
-            let p1 = re * re;
-            let e1 = fma(re, re, -p1);
-            let p2 = im * im;
-            let e2 = fma(im, im, -p2);
-            let (s, es) = two_sum(p1, p2);
-            0.5 * log1p_guarded((s - 1.0) + ((e1 + e2) + es))
+            // `re^2 + im^2 - 1` to full *relative* precision however hard
+            // it cancels, in three f64 operations and with no error-free
+            // transform at all.
+            //
+            // The `- 1` is peeled off the **larger** component, and that
+            // is what makes the whole thing work. `mag` is in `(0.5, 1.5)`
+            // here, so `a = max(|re|,|im|)` is at least `mag/sqrt(2) >
+            // 0.35`: its exponent is at least `-2`, so `a*a` is a 48-bit
+            // number whose lowest bit sits at `2^-51` or above, and
+            // `fma(a, a, -1.0)` -- a result of magnitude at most 1.25 --
+            // is therefore **exact**. Peeling off the smaller component
+            // instead is not: `b` can be arbitrarily tiny, and `b*b - 1`
+            // would need bits far below `2^-53`.
+            //
+            // `b*b` is exact too (24 bits squared is 48), and the final
+            // add is where the cancellation happens -- so its rounding is
+            // `ulp(v)/2`, i.e. a *relative* `2^-53` on `v` no matter how
+            // small `v` gets. That is the property the answer needs:
+            // `ln|z| ~ v/2` here, so `v`'s relative error passes straight
+            // through, and the f32 version this replaces did not have it
+            // -- it summed its three correction words in f32, at those
+            // words' own `2^-24` scale rather than at `v`'s.
+            //
+            // `mag < 1.5` bounds `|re|` and `|im|`, so no square can
+            // overflow, and `1 + v = re^2 + im^2` stays inside
+            // `log1p_guarded`'s licence.
+            let are = re.abs();
+            let aim = im.abs();
+            let a = are.max(aim) as f64;
+            let b = are.min(aim) as f64;
+            let v = f64::mul_add(a, a, -1.0) + b * b;
+            0.5 * log1p_guarded(v as f32)
         } else {
             ln(mag)
         }

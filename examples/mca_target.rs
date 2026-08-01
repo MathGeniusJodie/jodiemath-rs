@@ -537,6 +537,14 @@ throughput_fn!(thr_hypot, "hypot_throughput", |x: f32| hypot(x, 1.0));
 // corruption already documented for ldexp/frexp/rootn, not
 // worth the risk for a function whose cost is just its already-measured
 // constituents).
+// clog's *real* part only: `carg` is a plain `atan2` alias already measured
+// on its own, and the near-1 branch (`0.5*log1p(re^2+im^2-1)`) is the part
+// with any algebra in it. Both arms are computed and blended in the
+// vectorized loop, so this region covers the whole value path. The second
+// argument is derived from `x` rather than a constant so it cannot hoist.
+latency_fn!(lat_clog_re, "clog_re_latency", |x: f32| clog(x, 1.0 - x).0);
+throughput_fn!(thr_clog_re, "clog_re_throughput", |x: f32| clog(x, 1.0 - x).0);
+
 latency_fn!(lat_cabs, "cabs_latency", |x: f32| cabs(x, 1.0));
 throughput_fn!(thr_cabs, "cabs_throughput", |x: f32| cabs(x, 1.0));
 latency_fn!(lat_carg, "carg_latency", |x: f32| carg(x, 1.0));
@@ -892,6 +900,7 @@ fn main() {
         lat_probit, thr_probit;
         lat_dawson, thr_dawson;
         lat_hypot, thr_hypot;
+        lat_clog_re, thr_clog_re;
         lat_cabs, thr_cabs;
         lat_carg, thr_carg;
         lat_hypot_checked, thr_hypot_checked;

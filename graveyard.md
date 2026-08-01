@@ -7051,3 +7051,95 @@ vs 24.16 ns wall; 69.08 vs 69.02 cyc arm-isolated).
 So the pre-split form is **dominated on every axis** -- worse avg, worse
 max, no measurable throughput or latency advantage -- and under the rule
 that deleted `cbrt_throughput` it does not get an API. No `_fast` shipped.
+## `clog`: 4096 max ulp on the unit circle, invisible to the standing sweep
+
+Found by re-screening my own IDEAS.md entry rather than by looking for it
+(see the correction entry above -- I had closed `clog` as "fails the f64
+screen" on an op-count ratio that was never measured). The re-screen said
+plain f64 forms `v = re^2+im^2-1` more accurately than the shipped f32
+error-free transform; checking that against the *real* function found a
+defect, not just a tidier formula.
+
+**The standing sweep cannot see this, and could not even if it sampled
+there.** Two independent failures, which is why it survived the rewrite
+that took `clog` from 4717 to 3 max ulp:
+
+1. *Sampling.* `accuracy.rs` draws `re` and `im` as independent uniform f32
+   bit patterns. Landing within a few ulp of `|z| = 1` essentially never
+   happens.
+2. *The reference.* It scores against `(re as f64).hypot(im as f64).ln()`.
+   `hypot` is correctly rounded, so `|z|` carries a relative `2^-53` -- but
+   `ln` of it is `~|z|-1`, which turns that into a relative `2^-53/|v|`:
+   ~2 f32 ulp once `|v| ~ 1e-9`, unbounded below. **The reference is
+   already wrong by more than the budget in the region being asked about.**
+
+`examples/clogsearch.rs` walks the manifold and builds `re^2 + im^2`
+exactly in f64 (both squares are exact, `two_sum` catches the one rounding
+in their sum), so `v` is exact and `log1p` is the only rounding in the
+whole reference. Measured on the shipped code:
+
+| `\|v\|` band | before | after |
+|---|---|---|
+| `>= 1e-6` | 1 | 1 |
+| `1e-7..1e-6` | 2 | 2 |
+| `1e-8..1e-7` | 3 | 2 |
+| `1e-9..1e-8` | **14** | 1 |
+| `< 1e-9` | **4096** | **0** |
+
+### Why the shipped EFT was not exact after all
+
+Its own comment claimed "`s + es + e1 + e2` *is* `re^2 + im^2`, with no
+error at all" -- true of the real numbers, false of the evaluation. The
+correction word is spelled `((e1 + e2) + es)` and summed **in f32**, so its
+roundings land at the `e`-terms' own scale (`~ulp(re^2)/2 ~ 6e-8`), giving
+`v` an *absolute* error near `8e-15` -- catastrophic once `|v|` drops below
+`1e-9`. An exact-as-reals decomposition still has to be *evaluated*.
+
+### The fix: peel the `-1` off the larger component
+
+```rust
+let a = re.abs().max(im.abs()) as f64;
+let b = re.abs().min(im.abs()) as f64;
+let v = f64::mul_add(a, a, -1.0) + b * b;
+```
+
+Three f64 operations, no error-free transform, and `v` carries a
+**relative** `2^-53` however small it gets. Which component gets the `-1`
+is the whole trick and is not interchangeable:
+
+- `mag` is in `(0.5, 1.5)` on this branch, so `a >= mag/sqrt(2) > 0.35`.
+  Its exponent is at least `-2`, so `a*a` is a 48-bit number whose lowest
+  bit sits at `2^-51` or above, and `fma(a, a, -1.0)` -- magnitude at most
+  1.25 -- is **exact**.
+- `b` has no such bound. `b*b - 1` would need bits far below `2^-53` and
+  the identity fails.
+- `b*b` is exact (24 bits squared is 48), and the final add is where the
+  cancellation happens, so *its* rounding is `ulp(v)/2` -- relative, not
+  absolute. That is the property the answer needs, since `ln|z| ~ v/2`.
+
+Cheaper too, measured with a new `clog_re_throughput`/`clog_re_latency`
+region (`mca_target.rs` had deliberately omitted `clog` on the grounds that
+"its cost is just its already-measured constituents" -- no longer true once
+its algebra changes):
+
+```
+                 instrs   uOps  BlockRT   cyc/elem   latency
+  before           263    284    67.50     8.057     295.31
+  after            258    284    61.00     7.728     281.88
+```
+
+So this is the rare case where the f64 port wins the accuracy axis *and*
+every perf counter, despite f64's 2x per-lane cost -- because it deletes
+ten f32 ops to add three f64 ones.
+
+### The general lesson, and it is not about `clog`
+
+This is the third time in one session that a *hand-picked harness bound or
+sampling scheme* turned out to be load-bearing: `remainder_wide` scored
+clean at `|x/y| < 2e14` and 3.42e9 ulp just past it; `clog` scores 3 under
+uniform sampling and 4096 on the manifold. **A domain restriction in
+`accuracy.rs` is a claim about where the function is good, and it is
+evidence only if someone checked the other side.** Worth a systematic pass
+over the remaining hand-picked bounds in that file -- and note that
+`clog`'s case needed the *reference* replaced too, not just the sampling,
+so "sample harder" is not by itself the audit.

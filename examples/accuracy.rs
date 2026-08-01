@@ -2013,6 +2013,16 @@ fn main() {
                 continue;
             }
             let (got_re, got_im) = clog(re, im);
+            // NOTE: this row is blind to `clog`'s hard region and cannot be
+            // made to see it by sampling harder. On the unit circle
+            // `Re clog = ln|z|` is a near-total cancellation, and this
+            // reference is `hypot(...).ln()` -- `hypot` is correctly rounded,
+            // so `|z|` carries a relative 2^-53, but `ln` of it is ~`|z|-1`,
+            // which turns that into a relative `2^-53/|v|`: already ~2 f32 ulp
+            // once `|re^2+im^2-1| ~ 1e-9` and unbounded below. Independent,
+            // uniform `re`/`im` also never land there. `examples/clogsearch.rs`
+            // walks the manifold with an exact reference instead; it found a
+            // real 4096 ulp where this row read 3.
             let want_re = (re as f64).hypot(im as f64).ln();
             let want_im = (im as f64).atan2(re as f64);
             let d_re = ulp_diff(got_re, want_re as f32);
