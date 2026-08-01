@@ -1413,6 +1413,19 @@ pub fn quick_two_sum(a: f32, b: f32) -> (f32, f32) {
     (s, e)
 }
 
+// Fast2Diff: `quick_two_sum(a, -b)` with the negation folded into the
+// subtraction instead of materialised. `(a - s) - b` is the same
+// expression as `(-b) - (s - a)` reassociated (float addition commutes,
+// and `a - s` is the exact negative of `s - a`), so it is bit-identical
+// -- one vxorps cheaper each time. Same `|a| >= |b|` caveat as
+// [`quick_two_sum`].
+#[inline(always)]
+fn quick_two_diff(a: f32, b: f32) -> (f32, f32) {
+    let s = a - b;
+    let e = (a - s) - b;
+    (s, e)
+}
+
 /// Error-free product (backlog idea #184): returns `(p, e)` with
 /// `p = fl(a*b)` and `p + e == a * b` exactly, **provided the exact
 /// product satisfies `2^-102 <= |a*b| <= f32::MAX`**. The multiplicative
@@ -1494,12 +1507,18 @@ fn reduce_pi(x: f32, qh: f32, ql: f32) -> f32 {
     // round_x_over_pi (qh is ready much earlier). Combining p3+tier2 here
     // runs fully parallel with the qh-only chain instead of stacking two
     // more sequential merges after it, shortening the ql-dependent tail
-    // by one two_sum of latency. NB: two_sum guarantees p3t + e3t ==
-    // p3 + tier2 exactly, so subtracting (p3+tier2) means subtracting
-    // *both* -- e3t must be SUBTRACTED from err below, not added (getting
-    // this backwards breaks cos badly near its zero crossings, where p3
-    // and tier2 nearly cancel and e3t is large, not negligible).
-    let (p3t, e3t) = two_sum(p3, tier2);
+    // by one two_sum of latency. NB: p3t + e3t == p3 + tier2, so
+    // subtracting (p3+tier2) means subtracting *both* -- e3t must be
+    // SUBTRACTED from err below, not added (getting this backwards breaks
+    // cos badly near its zero crossings, where p3 and tier2 nearly cancel
+    // and e3t is large, not negligible).
+    //
+    // quick_two_sum, not two_sum, despite p3 = ql*PI_HI being the term
+    // that goes to zero: |tier2| is bounded by ~|qh|*2^-46 + |ql|*2^-23
+    // while a nonzero ql forces |p3| >= pi, so the |a| >= |b| ordering
+    // holds by a wide margin over the whole f32 line -- and at ql == 0
+    // the Fast2Sum is exact anyway (`e = b - (s - 0)` is exactly zero).
+    let (p3t, e3t) = quick_two_sum(p3, tier2);
     // x - p1 is exact by Sterbenz's lemma, not assumption: p1 = qh*PI_HI
     // with qh ~ round(x/pi), so whenever qh != 0, p1 sits within a factor
     // ~(1 +- 2^-24) of x, comfortably inside [x/2, 2x]; qh == 0 makes the
@@ -1507,18 +1526,16 @@ fn reduce_pi(x: f32, qh: f32, ql: f32) -> f32 {
     // plain subtract (edge cases at the qh = 0/+-1 boundary confirmed
     // clean by the exhaustive sweep).
     let s0 = x - p1;
-    // All three merges use quick_two_sum, each violating the |a|>=|b|
+    // All three merges use the Fast2Sum form, each violating the |a|>=|b|
     // ordering assumption somewhere in the domain, but that bounded error
     // measured harmless in every case (see quick_two_sum's comment). p2's
     // merge isn't on the ql-dependent critical path (p2 only needs qh),
     // so downgrading it from full two_sum saves no latency -- but it's
     // still 3 fewer ops of port pressure, and mca confirmed a real
-    // throughput win from exactly that (sin_checked -4.2%, cos_checked
-    // -18.8%, both callers' latency unchanged, exhaustively bit-identical
-    // avg/max ulp per domain bucket).
-    let (s1, e1b) = quick_two_sum(s0, -e1);
-    let (s2, e2b) = quick_two_sum(s1, -p2);
-    let (s3, e3b) = quick_two_sum(s2, -p3t);
+    // throughput win from exactly that.
+    let (s1, e1b) = quick_two_diff(s0, e1);
+    let (s2, e2b) = quick_two_diff(s1, p2);
+    let (s3, e3b) = quick_two_diff(s2, p3t);
     // flat left-to-right; a depth-2 rebalance measured *worse* latency at
     // identical throughput (scheduling side effects), see IDEAS.md
     let err = e1b + e2b + e3b - e3t;
@@ -1534,22 +1551,23 @@ fn parity(q: f32) -> f32 {
     fma(-2.0, (q * 0.5).floor(), q)
 }
 
-// Bound for the reduced residual right before it enters sinf_poly. Once
-// the reduction's precision runs out (|x| beyond the gradual-degradation
-// range), the residual can grow large -- squaring that inside sinf_poly
-// is where an earlier "returns inf for ordinary finite input" bug came
-// from. sinf_poly's dominant term for large |r| is ~c3*r^9 (c3 ~ 2.6e-6),
-// which overflows f32 around |r| ~ 8e4; 1000 leaves a large safety margin
-// while still being far outside [-pi/2, pi/2], so a legitimately-reduced
-// residual is never clipped.
+// Bound for the reduced residual right before it enters sinf_poly, used by
+// sind/cosd (whose own reduction has no `|result| <= 1` clamp downstream to
+// fall back on). Once the reduction's precision runs out (|x| beyond the
+// gradual-degradation range), the residual can grow large -- squaring that
+// inside sinf_poly is where an earlier "returns inf for ordinary finite
+// input" bug came from. sinf_poly's dominant term for large |r| is
+// ~c3*r^9 (c3 ~ 2.6e-6), which overflows f32 around |r| ~ 8e4; 1000 leaves
+// a large safety margin while still being far outside [-pi/2, pi/2], so a
+// legitimately-reduced residual is never clipped.
 // `.clamp` on a NaN residual (x itself nan or +-inf) returns nan unchanged,
-// so sin/cos(nan/inf) still correctly come out nan with no extra selects.
+// so sind/cosd(nan/inf) still correctly come out nan with no extra selects.
 const POLY_SAFE_BOUND: f32 = 1000.0;
 
 #[inline(always)]
 pub fn sin_checked(x: f32) -> f32 {
     let (qh, ql) = round_x_over_pi::<false>(x);
-    let r = reduce_pi(x, qh, ql).clamp(-POLY_SAFE_BOUND, POLY_SAFE_BOUND);
+    let r = reduce_pi(x, qh, ql);
     // sin(x) = (-1)^q * sin(r); q = qh+ql, so parity(q) = (parity(qh) +
     // parity(ql)) mod 2. parity(qh) and parity(ql) are each exactly 0.0 or
     // 1.0, so their sum mod 2 is just whether they differ (XOR), cheaper
@@ -1574,18 +1592,22 @@ pub fn sin_checked(x: f32) -> f32 {
     // `.clamp(-1.0, 1.0)`: `round_x_over_pi`'s double-float q genuinely
     // loses precision once |x| exceeds roughly 2^48*pi (~8.85e14) -- q
     // comes out off by whole integers, shifting r by multiples of pi and
-    // putting it wildly outside sinf_poly's fitted domain despite the
-    // POLY_SAFE_BOUND clamp (which bounds the poly's *input*, not its
-    // *output*: a degree-9 poly at |r|=1000 is ~2.6e21). Without this
-    // clamp, sin_checked/cos_checked could silently return values up to
-    // ~2.6e21 for legitimate (if extreme) finite input -- a genuine
-    // `|sin(x)| <= 1` invariant violation, much worse than the documented
-    // gradual degradation. The clamp doesn't fix accuracy that far out (a
-    // real fix needs a wider-than-double-float q) but restores the one
-    // invariant every caller can rely on at any magnitude. Verified a
-    // true no-op everywhere the function was already accurate; the real
-    // (small) mca cost was accepted per this crate's usual
-    // "pay-to-fix-wrong-output" precedent.
+    // putting it wildly outside sinf_poly's fitted domain (a degree-9 poly
+    // at |r|=1000 is ~2.6e21). Without this clamp, sin_checked/cos_checked
+    // could silently return values up to ~2.6e21 for legitimate (if
+    // extreme) finite input -- a genuine `|sin(x)| <= 1` invariant
+    // violation, much worse than the documented gradual degradation. The
+    // clamp doesn't fix accuracy that far out (a real fix needs a
+    // wider-than-double-float q) but restores the one invariant every
+    // caller can rely on at any magnitude.
+    //
+    // It also subsumes a `POLY_SAFE_BOUND` clamp on `r` itself: for every
+    // f32 residual, `sinf_poly_raw` keeps the sign of `r` and only ever
+    // grows past 1 in magnitude as |r| grows, so pre-clipping |r| to 1000
+    // and letting |r| run free give bit-identical results after this clamp
+    // (verified exhaustively over all 2^32 residuals). A NaN residual
+    // (x itself nan or +-inf) survives both clamps unchanged, so
+    // sin/cos(nan/inf) still come out nan with no extra selects.
     //
     // Measured per-decade (accuracy.rs's own magnitude buckets, found by
     // an unrelated cross-function identity fuzz -- see IDEAS.md): max
@@ -1613,7 +1635,7 @@ pub fn cos_checked(x: f32) -> f32 {
     // huge) kh word, for the same reason pre_offset itself is folded into
     // the low correction term above -- kl stays small enough that + 0.5
     // is always exact
-    let r = reduce_pi(x, kh, kl + 0.5).clamp(-POLY_SAFE_BOUND, POLY_SAFE_BOUND);
+    let r = reduce_pi(x, kh, kl + 0.5);
     // cos(x) = (-1)^(k+1) * sin(r); k = kh+kl. Same sign-flip-before-the-
     // poly trick as sin_checked above (also odd in r), inverted since the
     // exponent is k+1 instead of k.
@@ -1621,12 +1643,11 @@ pub fn cos_checked(x: f32) -> f32 {
     let pl = parity(kl);
     let flip = if pk == pl { SIGN_MASK } else { 0 };
     let r = f32::from_bits(r.to_bits() ^ flip);
-    // See sin_checked's own doc comment for why this clamp is needed:
-    // round_x_over_pi's double-float q loses precision for |x| beyond
-    // ~2^48*pi, and POLY_SAFE_BOUND only bounds sinf_poly's *input*, not
-    // its *output* -- without this, cos_checked could silently return
-    // values like 2.6e21 for legitimate finite input, violating
-    // `|cos(x)| <= 1`.
+    // See sin_checked's own doc comment for why this clamp is needed (and
+    // why it is the only one needed): round_x_over_pi's double-float q
+    // loses precision for |x| beyond ~2^48*pi, and without this clamp
+    // cos_checked could silently return values like 2.6e21 for legitimate
+    // finite input, violating `|cos(x)| <= 1`.
     sinf_poly(r).clamp(-1.0, 1.0)
 }
 

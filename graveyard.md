@@ -804,8 +804,27 @@ open. Two rules that recur often enough to state up front:
   was relaxed), but the throughput cost lands the same way it did for
   the e3 downgrade regardless. Reverted -- a real win for one caller
   paired with a real, larger-magnitude loss for the other isn't a clean
-  win. This was the crate's last full `two_sum` call; `two_sum` itself
-  would need removing (dead code) if this were ever adopted.
+  win. This was the crate's last full `two_sum` call inside `reduce_pi`;
+  `two_sum` stays regardless as a documented public EFT, and
+  `doublefloat.rs` keeps its own copy.
+  - **Re-screened once the `POLY_SAFE_BOUND` clamp came out of
+    `sin_checked`/`cos_checked`, and it flipped: shipped.** With both
+    callers two ops shorter the "diverges by caller" split is gone --
+    `sin_checked` 4.854 -> **4.698 (-3.2%)** and `cos_checked` 4.349 ->
+    **4.079 (-6.2%)**, with instrs (-6/-6), uOps (-6/-5) and BlockRT
+    (-3/-3) all corroborating, and both latencies improving. The +13.7%
+    cos regression was a scheduling artifact of the *old* surrounding
+    code, not a property of the downgrade. Same lesson as the two
+    `Re-screened under idea #22` entries above: a rejection measured
+    against a since-changed neighbourhood is stale evidence.
+  - The ordering argument is a proof, not a hope: `|tier2|` is bounded
+    by `~|qh|*2^-46 + |ql|*2^-23` while any nonzero `ql` forces
+    `|p3| = |ql|*PI_HI >= pi`, so `|a| >= |b|` holds by many orders of
+    magnitude across the whole f32 line -- and at `ql == 0` Fast2Sum is
+    exact anyway (`e = b - (s - 0)` is exactly zero). Exhaustively
+    bit-identical to the `two_sum` form over all 2^32 inputs for
+    `sin_checked`, `cos_checked`, `reduce_pi_checked` and
+    `reduce_pi_half_checked`.
 - **parity() via integer bit-ops**: bit-exact, latency unchanged,
   throughput worse for both — FP-port ops beat integer ops once scheduled.
 - **sin_checked/cos_checked clamp: move bound into poly's `y.min()`**:
@@ -5675,3 +5694,70 @@ dependent `fma`, so there is no branch artifact to arbitrate here.
 `atanpi`'s instruction and cycle counts come out identical to `atand`'s
 in the entry above, which is the expected cross-check: same `atan`, same
 two-word tail.
+
+## `sin_checked`/`cos_checked`: three op-level removals, all bit-identical
+
+Ten percent of both functions' throughput came off without a single
+output bit changing. Verified the strongest way available: an exhaustive
+2^32 bit-for-bit diff of `sin_checked`, `cos_checked`, `reduce_pi_checked`
+and `reduce_pi_half_checked` against a frozen copy of the previous code,
+zero differences on all four.
+
+mca (`tools/mca_region.py`), all four counters moving together:
+
+```
+region                    instrs      uOps    BlockRT   cyc/elem
+sin_checked_throughput  159->142  173->153    61->56   5.232->4.698  -10.2%
+cos_checked_throughput  162->145  178->159    63->58   4.603->4.079  -11.4%
+sin_checked_latency                                  117.02->108.02   -7.7%
+cos_checked_latency                                  122.00->113.00   -7.4%
+```
+
+**1. The `POLY_SAFE_BOUND` clamp on `r` is subsumed by the `clamp(-1,1)`
+on the result.** Both functions clamped the residual to `+-1000` *and*
+clamped the poly's output to `[-1,1]`. The first is redundant given the
+second: `sinf_poly_raw` keeps `r`'s sign for every `r`, and `|r| > 1000`
+already puts `|sinf_poly_raw(r)| > 2.6e21`, so the pre-clip and the free
+run land on the same `+-1.0` afterwards. Nothing overflows to `NaN`
+either -- the only `inf - inf` candidate is `fma(b, y2, a)`, and `b < 0`
+requires `y < 76` while `y2 = inf` requires `y > 1.8e19`, so `b` is
+positive wherever `y2` is infinite. Checked exhaustively over all 2^32
+residuals for both the raw and the `copysign` path, then again end to
+end. This is the biggest single piece: -6 instrs and -8 latency cycles
+per function on its own.
+- `POLY_SAFE_BOUND` itself stays: `sind`/`cosd` have no `clamp(-1,1)`
+  downstream to fall back on, so for them it is still what keeps a
+  finite input from producing an infinite output.
+
+**2. `quick_two_sum(p3, tier2)` -- previously rejected, re-screened,
+flipped.** See the `reduce_pi: downgrade the last remaining full
+two_sum` entry above for the numbers; the short version is that its
++13.7% `cos_checked` regression was an artifact of the code that removal
+(1) has since deleted.
+
+**3. `quick_two_sum(a, -b)` -> a Fast2Diff spelling.** `quick_two_sum`'s
+error term is `b - (s - a)`; passing `-b` makes LLVM materialise the
+negation with a real `vxorps` at two of `reduce_pi`'s three merges (the
+third folds into `PI_LO`'s constant, which is already negative). Written
+as `s = a - b; e = (a - s) - b` the negation disappears: `a - s` is the
+exact negative of `s - a`, and float addition commutes, so it is the
+same expression reassociated -- bit-identical, one op cheaper. -5 instrs
+per function.
+
+**What was screened and is *not* takeable, priced here so it is not
+re-screened blind:**
+- **Merging `e1` and `p2` into one `fma(qh, PI_LO, e1)`** (3 ops instead
+  of `two_prod`'s 4, and one fewer merge in the chain: ~5 ops total).
+  Dead on arithmetic: the merged value is `~x*2^-23.4`, so its own
+  rounding is `~x*2^-47.4`, which at `|x| = 1e10` is 3.4e-5 against a
+  residual that has to be right to ~6e-8. Three orders of magnitude too
+  coarse. The four separate `two_prod` words are all load-bearing at
+  `[1e8,1e10)`, and the reduction's real error floor is the final
+  `s3 + err` rounding at half an ulp of `r` -- i.e. it is already sitting
+  on the floor, and *any* added term at the 6e-8 scale doubles the
+  budget.
+- **Clamping `r` to `+-pi/2` instead, to drop the output clamp**:
+  `sinf_poly_raw` exceeds 1.0 by one ulp at 21 distinct `r` in
+  `[0.5, pi/2]` (worst at `r = 1.5705949`), so the output clamp is doing
+  real work -- and it is *improving* accuracy there, since the true
+  `sin` at those points rounds to exactly 1.0.
