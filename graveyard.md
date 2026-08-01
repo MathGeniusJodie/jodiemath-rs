@@ -5053,3 +5053,61 @@ and 10 max ulp in a family where everything else is 4 was an outlier, not a
 pareto point. Note `coshm1`'s **mca throughput row is mispriced in absolute
 terms** (documented above), so instruction and opcode counts are the measure
 here, not cycles.
+
+## `pow_2_3`: `cbrt(x)^2` doubles cbrt's error before it rounds
+
+`pow_2_3` was `cbrt(x)*cbrt(x)` and carried the crate's **highest average
+ulp, 0.763** (max 7, exhaustive over all 2^32 patterns). Unlike most
+high-average cases in this file, it was *not* a bad coefficient or a bad
+region: the number is arithmetic. `cbrt` is 0.281 avg / 3 max, squaring
+doubles a relative error, and the square's own rounding adds ~0.25 avg on
+top -- 2*0.281 + 0.25 is 0.81, which is the measured 0.763 to within the
+error terms' correlation. There was nothing to fix inside `cbrt`.
+
+The replacement fits `x^(2/3)` **directly** on cbrt's own bit-trick seed.
+`s * (1+r)^(-1/3) == a^(1/3)` identically for `r = (s^3-a)/a`, and the same
+`r` gives `s^2 * (1+r)^(-2/3) == a^(2/3)` for free -- so the only change
+needed is which exponent the correction poly fits. Exhaustive: avg
+**0.7626 -> 0.1032**, max **7 -> 1**.
+
+Three things the `-2/3` fit needs that the `-1/3` one does not, each
+measured rather than assumed:
+
+- **Degree 4, not 3.** `(1+r)^(-2/3)`'s series coefficients are ~3x
+  `(1+r)^(-1/3)`'s, so over the seed's `r` range (`[-0.0999, 0.0894]`,
+  enumerated exhaustively across all three exponent-mod-3 seed alignment
+  classes) a degree-3 minimax fits to 2.03 ulp against cbrt's own ~0.5.
+  Degree 4 fits to 0.125 ulp with f32-rounded coefficients.
+- **The leading term's rounding.** `s` is a bit pattern and exact; `s*s`
+  is not, and at full weight its `e2` is worth up to a whole ulp. Dropping
+  the `e2` correction entirely measures avg 0.190 / max 2, so it is worth
+  exactly the one instruction it costs.
+- **`e2` again, through `r`.** `d = fma(s2, s, -a)` is short of `s^3 - a`
+  by `e2*s ~ 2^-24 * a`. The obvious fix, a second `fma(e2, s, d)`, sits on
+  the critical path and measured **+11.5% latency** on its own. It is not
+  needed: that shortfall reaches the result multiplied by `-2/3` (cbrt's
+  own equivalent is `-1/3`, which is why `cbrt_normal` gets away with
+  ignoring it) and `s2*s/a ~ 1`, so it is `-(2/3)*e2` to well inside its
+  own last bit. Folding it into the tail addend that already carries `e2`
+  -- `e2 - (2/3)*e2 = e2/3` -- is one *multiply*, off the critical path,
+  and reproduces the two-fma version's avg and max exactly (0.1032 / 1 vs
+  0.1039 / 1).
+
+**Horner, not Estrin, and the reason is codegen, not arithmetic.** With the
+denormal rescale folded into the kernel as a parameter (worth 4 cycles of
+tail latency), the Estrin schedule triggers exactly the trap `cbrt_normal`'s
+doc comment already warns about: LLVM's vectorizer duplicates the whole
+kernel for the tiny and normal branches instead of computing once and
+blending. `pow_2_3_throughput` went 7600 -> **12200** instructions, uOps
+8400 -> 12900, Block RThroughput 18 -> **34**. Horner does not trip it.
+Estrin *without* the scale parameter is fine and is a real latency/
+throughput tradeoff (+5.8% lat / +18.8% RThr against Horner's +11.5% /
++12.5%), but folding the scale in dominates both.
+
+Cost of the shipped version, `pow_2_3_throughput` region: instructions
+7500 -> 7600 (+1.3%), uOps 7900 -> 8400 (+6.3%), Block RThroughput 16 -> 18
+(+12.5%), mca cycles 2651 -> 2682 (+1.2%); `pow_2_3_latency` 339506 ->
+352804 cycles (+3.9%) at +0.1% instructions. FP mul/fma 24 -> 26. Shipped
+as the single version rather than a `_fast`/`_accurate` split: 7 max ulp
+was outside the crate's 0.5 avg / 2 max budget to begin with, so the old
+body was not a pareto point.

@@ -3462,18 +3462,88 @@ pub fn pow_3_2(x: f32) -> f32 {
     x * x.sqrt()
 }
 
-/// x^(2/3) (backlog idea #133): `cbrt(x)^2`, not `cbrt(x*x)` -- squaring
-/// *after* the cube root avoids `x*x` overflowing for large `|x|` before
-/// `cbrt` ever gets a chance to shrink it back down, and is cheaper
-/// besides (one multiply on `cbrt`'s already-small output instead of one
-/// on the original, possibly-huge input). `cbrt` is odd and total, so
-/// this is defined and correctly signed-then-squared (non-negative) for
-/// every real `x`, including negative `x` (the standard real-valued
-/// extension of a rational power via the odd root), unlike `pow_3_2`.
+/// Core of `x^(2/3)` for `a` positive and normal: `cbrt_normal`'s own
+/// bit-trick seed `s` and residual `r = (s^3-a)/a`, but fitting
+/// `(1+r)^(-2/3)` instead of `(1+r)^(-1/3)` -- `s^2 * (1+r)^(-2/3) ==
+/// a^(2/3)` identically, exactly as `s * (1+r)^(-1/3) == a^(1/3)`, so the
+/// two-thirds power is a *direct* fit rather than a cube root squared.
+/// `scale`/`scale3` carry the caller's denormal rescale (`scale3` is
+/// `scale/3`, see below); folding them in here rather than multiplying
+/// the return value keeps them off the tail of the dependency chain,
+/// which measures a real latency win. That is safe only because `scale`
+/// is an exact power of two AND the poly stays in Horner form -- with the
+/// Estrin schedule `cbrt_normal` uses, LLVM's vectorizer takes the scale
+/// parameter as licence to duplicate this whole function for the tiny and
+/// normal branches instead of computing once and blending, doubling every
+/// fma/mul/div (see `cbrt_normal`'s own comment on the same trap).
+///
+/// The leading term is `s^2` rather than `s`, and `s*s` -- unlike the bit
+/// pattern `s` -- is not exact, so its rounding `e2` reaches the result at
+/// full weight and has to be added back. `e2` lands twice over:
+///
+/// - directly, since `a^(2/3) = (s2+e2)*(1+r)^(-2/3)` and the poly only
+///   covers the `s2` part;
+/// - through `r`, because `d = fma(s2, s, -a)` computes `s2*s - a`, short
+///   of the intended `s^3 - a` by `e2*s ~ 2^-24 * a`. That shortfall
+///   reaches the result multiplied by `-2/3` (against `cbrt`'s `-1/3`),
+///   and `s2*s/a ~ 1`, so it is `-(2/3)*e2` to well within its own last
+///   bit -- no second `fma` on the critical path needed to correct `d`.
+///
+/// The two together are `e2 - (2/3)*e2 = e2/3`, which is why the tail
+/// addend is scaled by a third.
+///
+/// The poly is degree 4, not `cbrt_normal`'s degree 3: `(1+r)^(-2/3)`'s
+/// series coefficients are ~3x `(1+r)^(-1/3)`'s, so degree 3 over the
+/// seed's `r` range (`[-0.0999, 0.0894]`, exhaustive over all three of
+/// the seed's exponent-mod-3 alignment classes) fits to only ~2 ulp where
+/// cbrt's own degree 3 reaches ~0.5. Degree 4 fits to 0.13 ulp, leaving
+/// the final rounding dominant.
+#[inline(always)]
+fn pow_2_3_normal(a: f32, scale: f32, scale3: f32) -> f32 {
+    let ax = a.to_bits();
+    let rcp = 1.0 / a; // independent of the seed chain, starts immediately
+    let s = f32::from_bits(ax / 3 + 0x2a509a07u32);
+    let s2u = s * s;
+    let e2 = fma(s, s, -s2u) * scale3;
+    let d = fma(s2u, s, -a);
+    let r = d * rcp;
+    let s2 = s2u * scale; // exact: scale is a power of two
+    let c1 = -0.6666668057441711f32;
+    let c2 = 0.5555411577224731f32;
+    let c3 = -0.49370095133781433f32;
+    let c4 = 0.45774292945861816f32;
+    let c5 = -0.440396785736084f32;
+    let p = fma(fma(fma(fma(c5, r, c4), r, c3), r, c2), r, c1);
+    // s2*r is off the poly's dependency chain, so the tail after p is one
+    // fma and one add; e2 rides in as the fma's addend for free.
+    s2 + fma(s2 * r, p, e2)
+}
+
+/// x^(2/3) (backlog idea #133), fitted directly rather than as
+/// `cbrt(x)^2`: squaring a cube root doubles its relative error before
+/// the square's own rounding is even applied, and `cbrt`'s own budget is
+/// ~0.28 avg ulp. See [`pow_2_3_normal`] for the kernel. `x^(2/3)` is
+/// even, so this reads `|x|` and is defined for every real `x` (the
+/// standard real-valued extension of a rational power via the odd root),
+/// unlike `pow_3_2`. Denormals get `cbrt`'s rescale, with `(2^24)^(2/3) =
+/// 2^16` undone on the way out; `+-0`, `+-inf` and `NaN` take the same
+/// trailing select (`|x| + |x|` gives `+0`, `+inf` and `NaN` respectively,
+/// all three the correct even-power answers).
 #[inline(always)]
 pub fn pow_2_3(x: f32) -> f32 {
-    let c = cbrt(x);
-    c * c
+    // denormal (or zero) rescale: x by 2^24 = (2^8)^3, so the result comes
+    // back 2^16 too big. scale3 is scale/3, the kernel's tail weight.
+    const OUT: f32 = 1.52587890625e-5; // 2^-16
+    const OUT3: f32 = OUT * (1.0 / 3.0);
+    let ax = x.to_bits() & !SIGN_MASK;
+    let a = f32::from_bits(ax);
+    let tiny = ax < 0x0080_0000;
+    let ascaled = if tiny { a * 16777216.0 } else { a };
+    let scale = if tiny { OUT } else { 1.0 };
+    let scale3 = if tiny { OUT3 } else { 1.0 / 3.0 };
+    let r = pow_2_3_normal(ascaled, scale, scale3);
+    // +-0, +-inf, nan propagate (also kills the rcp=inf NaN for x == +-0)
+    if ax == 0 || ax >= EXPONENT_MASK { a + a } else { r }
 }
 
 /// Hermite smoothstep (backlog idea #147), GLSL's `smoothstep(edge0,
