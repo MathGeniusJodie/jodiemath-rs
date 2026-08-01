@@ -1339,7 +1339,7 @@ fn real_main() {
     check("atan2(-inf,inf)", atan2(f32::NEG_INFINITY, f32::INFINITY), -std::f32::consts::FRAC_PI_4);
     check("atan2(-inf,-inf)", atan2(f32::NEG_INFINITY, f32::NEG_INFINITY), -3.0 * std::f32::consts::FRAC_PI_4);
 
-    // atan2_pos: [0, 2*pi) fold (backlog idea #143).
+    // atan2_pos: single-positive-turn fold (backlog idea #143).
     check("atan2_pos(0,1)", atan2_pos(0.0, 1.0), 0.0);
     check("atan2_pos(1,0)", atan2_pos(1.0, 0.0), std::f32::consts::FRAC_PI_2);
     check("atan2_pos(0,-1)", atan2_pos(0.0, -1.0), std::f32::consts::PI);
@@ -1347,6 +1347,15 @@ fn real_main() {
     check("atan2_pos(-1,-1)", atan2_pos(-1.0, -1.0), 5.0 * std::f32::consts::FRAC_PI_4);
     check("atan2_pos(nan,1)", atan2_pos(f32::NAN, 1.0), f32::NAN);
     check_range("atan2_pos(1,1)", atan2_pos(1.0, 1.0), 0.0, std::f32::consts::TAU);
+    // y/x underflowing to -0.0 must still fold: the angle is a hair under
+    // a full turn, not a hair over zero. Keying the fold on atan2's own
+    // sign gets this wrong over ~2% of the f32 plane.
+    check("atan2_pos(-1e-30,1e30)", atan2_pos(-1e-30, 1e30), std::f32::consts::TAU);
+    check("atan2_pos(-min,max)", atan2_pos(-f32::MIN_POSITIVE, f32::MAX), std::f32::consts::TAU);
+    // -0.0 reads as "approached from below" and folds, same as the slab
+    // above; atan2_pos never returns -0.0.
+    check("atan2_pos(-0,1)", atan2_pos(-0.0, 1.0), std::f32::consts::TAU);
+    check("atan2_pos(-0,-1)", atan2_pos(-0.0, -1.0), std::f32::consts::PI);
 
     // atan2d (backlog idea #123): plain composite.
     check("atan2d(1,0)", atan2d(1.0, 0.0), 90.0);

@@ -4013,28 +4013,43 @@ pub fn atan2_unchecked(y: f32, x: f32) -> f32 {
     atan(y / x) + correction
 }
 
-/// atan2, folded into `[0, 2*pi)` (backlog idea #143), the geo/graphics
-/// "bearing" convention: `atan2`'s own `(-pi, pi]` range only needs a
-/// `+2*pi` fold on the negative half to land there, branchless-select
-/// same as every other seam in this crate. NaN propagates unchanged
-/// (`NaN < 0.0` is always false, so the select is a no-op on it); `+pi`
-/// itself (the one boundary `atan2` can return) is already in-range, no
-/// wraparound needed. Fuzzing can report enormous-looking ulp right at
-/// the wrap seam itself (`y` an ulp or two off `0` for `x>0`): a genuine
-/// branch-cut artifact, not a defect -- `atan2(y,x)` for `y` extremely
-/// close to (but not exactly) `0` rounds to a tiny value whose *sign*
-/// can differ between this crate's real f32 computation and an f64
-/// reference computed the same way, and that sign alone decides whether
-/// the answer folds to `~0` or `~2*pi` -- both represent the same
-/// physical angle, but as numbers they're maximally far apart. Checked
-/// directly: `atan2_pos` folds this correctly given its own `atan2`
-/// value, this is purely a reference-comparison artifact right at the
-/// seam, the same species as any other "near a true zero" case
-/// elsewhere in this crate, just at a branch cut instead of a zero.
+/// atan2 folded into a single positive turn (backlog idea #143), the
+/// geo/graphics "bearing" convention: `atan2`'s own `(-pi, pi]` range
+/// only needs a `+2*pi` fold on the negative half to land there,
+/// branchless-select same as every other seam in this crate. NaN
+/// propagates unchanged (the fold is a masked add and `NaN + 2*pi` is
+/// NaN); `+pi` itself (the one boundary `atan2` can return) is already
+/// in-range, no wraparound needed. The range is `[0, TAU]` *closed*,
+/// not `[0, 2*pi)`: `f32::consts::TAU` is the nearest f32 to `2*pi` and
+/// it sits just above it, so it is the correctly-rounded answer for
+/// every angle in the last half-ulp of the turn and there is no way to
+/// both round correctly and stay strictly under `2*pi`. `-0.0` is never
+/// returned.
+///
+/// The fold is keyed on `y`'s sign bit, not on `atan2`'s own sign.
+/// Cheaper: the mask comes straight off an argument, so it is ready long
+/// before `atan2` is, instead of extending that result's dependency
+/// chain the way `r < 0.0` does. And correct where `r < 0.0` is not:
+/// `atan2` returns `-0.0` for a whole slab of genuinely negative `y`.
+/// Once `|y/x|` falls below the smallest subnormal the quotient flushes
+/// to `-0.0`, `atan(-0.0)` is `-0.0`, and the `x > 0` correction term is
+/// `-0.0` as well, so nothing downstream still carries the fact that the
+/// angle was ever nonzero; `r < 0.0` reads that as non-negative, skips
+/// the fold, and answers `~0` where the true angle is `~2*pi` -- a full
+/// turn out, and not a rare corner, since both operands uniform over all
+/// f32 bit patterns puts ~2% of the plane in that slab. A sign bit
+/// cannot underflow away.
+///
+/// The two disagree for a second reason at exactly one input, `y ==
+/// -0.0` with `x >= +0.0`, where `atan2` is `-0.0` and this folds to
+/// `TAU`. That is deliberate: it reads the sign bit as "the turn
+/// approached from below", the same meaning it carries in the underflow
+/// slab, and it is what keeps `-0.0` out of the output range of a
+/// function whose whole job is to return a non-negative angle.
 #[inline(always)]
 pub fn atan2_pos(y: f32, x: f32) -> f32 {
     let r = atan2(y, x);
-    if r < 0.0 { r + std::f32::consts::TAU } else { r }
+    if y.is_sign_negative() { r + std::f32::consts::TAU } else { r }
 }
 
 /// Straight port of jodiemath's tanf: sin(x)/cos(x), same domain limits as

@@ -72,6 +72,7 @@ logaddexp (|a|,|b|<80)|    0.141   |  ~1e3-1e5, heavy-tailed (real, narrow cance
          erfcx (x>=20)  |    0.648   |     4     | (no std erfcx)
                   atan2 |    0.069   |     3     |  0.000  |    0
     atan2_unchecked (+) |    0.069   |     3     | (bit-identical to atan2 on its domain)
+              atan2_pos |    0.063   |     3     | (no std atan2_pos)
         hypot (bounded) |    0.034   |     1     |  0.000  |    0
 hypot_unchecked (bounded, +) | 0.034 |     1     | (bit-identical to hypot on its domain)
        hypot_checked |    0.015   |     1     | (no std comparison needed, no domain restriction)

@@ -1494,11 +1494,14 @@ fn main() {
         let atan2_domain = |_: f32, x: f32| x != 0.0;
         let s = fuzz2(TWOARG_SAMPLES, atan2_domain, atan2_unchecked, atan2_u35);
         report("atan2_unchecked (+)", &s, t0);
-        // atan2_pos: [0, 2*pi) fold (backlog idea #143).
+        // atan2_pos: single-positive-turn fold (backlog idea #143). Keyed
+        // on y's sign bit, same as the shipped function -- an f64 atan2
+        // never underflows to -0.0 on f32 inputs, so `r < 0.0` here would
+        // score atan2_pos's deliberate `y == -0.0` fold as a full turn of
+        // error at the one input where the two conventions differ.
         let atan2_pos_ref = |y: F64xN, x: F64xN| {
             let r = atan2_u35(y, x);
-            let neg = r.simd_lt(F64xN::splat(0.0));
-            neg.select(r + F64xN::splat(std::f64::consts::TAU), r)
+            y.is_sign_negative().select(r + F64xN::splat(std::f64::consts::TAU), r)
         };
         let s = fuzz2(TWOARG_SAMPLES, |_, _| true, atan2_pos, atan2_pos_ref);
         report("atan2_pos", &s, t0);

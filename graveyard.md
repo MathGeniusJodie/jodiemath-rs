@@ -1301,6 +1301,37 @@ open. Two rules that recur often enough to state up front:
   pressure picture enough that the same reassociation lands as a net
   loss here — the win doesn't transfer between the two constructions
   despite the identical algebraic shape. Reverted.
+- **atan2_pos's "branch-cut artifact" excuse: measured false, it was a
+  real bug.** `atan2_pos`'s doc comment used to claim its ~1.09e9 max ulp
+  was a reference-comparison artifact at the wrap seam, the sign of a
+  near-zero `atan2` differing between f32 and the f64 reference. It is
+  not: instrumenting every sample over 1000 ulp showed **100% of them are
+  one mechanism**, `y/x` underflowing to `-0.0` in f32 where f64 has
+  plenty of exponent left. `atan(-0.0)` is `-0.0` and the `x>0`
+  correction term is `-0.0`, so `r < 0.0` reads a genuinely negative
+  angle as non-negative, skips the fold, and returns `~0` for a true
+  angle of `~2*pi`. The sign never differs; the magnitude flushes. Not a
+  rare corner either — **2.1% of 20M uniform-bit-pattern samples**
+  (420587/20000000), which is why the *avg* was 2.3e7. Fixed by keying
+  the fold on `y`'s sign bit: max ulp 1.09e9 → 3, avg 2.29e7 → 0.063,
+  mca latency flat at 72.19 and throughput **1.993 → 1.856 cyc/elem
+  (−6.9%)** — same instruction count and same uOps, the mask just moves
+  off the dependency chain onto an argument. The tell-tale worth reusing:
+  the reported max was *exactly* `ulp_diff(0.0, TAU)` = 1086918619, one
+  constant rather than a distribution, which is what a systematic
+  full-turn miss looks like and a genuine seam artifact does not.
+  - **The exact-reference variant `y < 0.0 || r < 0.0`** scores the same
+    3 max / 0.063 avg and additionally keeps `atan2_pos(-0.0, x>=0)` at
+    `-0.0` (matching a plain `r < 0.0` f64 fold), but costs `vcmpltps` +
+    `korb` per vector: latency 72.19 → 74.09 (+2.6%), throughput 1.993 →
+    2.037 (+2.2%). Rejected — 9% of throughput for one input pair of
+    measure 2^-33, and folding `-0.0` is arguably the better convention
+    anyway since it keeps `-0.0` out of the range of a function whose
+    name says non-negative.
+  - The advertised range `[0, 2*pi)` was never achievable:
+    `f32::consts::TAU` is *above* `2*pi` and is the correctly-rounded
+    answer for the last half-ulp of the turn. Doc now says `[0, TAU]`
+    closed.
 
 ### hyperbolics / sigmoid
 
