@@ -7321,3 +7321,107 @@ own error is 3-5 orders of magnitude larger wherever anyone actually uses
 it, so a two-word split here is `acosd`'s case -- structurally the better
 code, no measurable effect, +3 instructions. Revisit it *after* the `w`
 fix, when it would be the binding term.
+## `denormal_audit`'s function list was hand-maintained, and it was missing the crate's three worst flushers
+
+Started as the harness-bound audit the `clog` and `remainder_wide` results
+called for: sweep the hand-picked domain bounds in `accuracy.rs` and find
+the ones that are load-bearing. Widening nine of them (`sinc`, `sind`,
+`erfc`, `erfcx`, `wrap_pi`, `cexp`'s `im`, `softplus`, `logsigmoid`,
+`logaddexp`) plus the shared `hypot` magnitude window at once:
+
+- **`hypot_checked` was a false alarm and is already right** -- it is
+  passed `|_, _| true`, the full domain, not the `[1e-15, 1e18]` window
+  its siblings get. Checked before assuming.
+- **`sinc` (1e6 -> 1e8), `wrap_pi` (1e4 -> 1e6) and `cexp`'s `im`
+  (1e4 -> 1e6) are simply conservative** -- max ulp 3, 1 and 4
+  respectively outside their bounds, i.e. unchanged. No defect, and the
+  bounds could be widened if anyone cares.
+- **`sind`/`cosd`/`tand` (2.19e9 ulp past 4.7e7) and `hypot`/`rhypot`/
+  `hypot3`/`rnorm3`/`hypot4`/`rnorm4` (5.4e8 past 1e18) are load-bearing
+  *and documented*** -- the degree-reduction cliff and the
+  no-rescaling-overflow tradeoff respectively, both already in the readme
+  and in their doc comments. The bound is honest.
+- **`softplus`/`logsigmoid` past 80 was neither.** 1.17e7 max ulp at
+  `x = -87`, and the reason is a doc comment that is measurably false.
+
+### `softplus` returns 0 where a *normal* f32 is owed
+
+`softplus(x) = max(x,0) + log1p(exp(-|x|))`, and the correction is
+selected to `0.0` once `|x| > 87` -- a threshold set by `exp_narrow`'s
+`[-87.68311, 88.37627]` domain. The doc comment justified it as "once
+`|x|` is far enough out that the true value is negligible at f32
+precision". Measured, that is wrong: `ln(1+e^x)` does not reach zero in
+f32 until `x ~ -103.97`.
+
+| x | `softplus(x)` | true |
+|---|---|---|
+| -87 | 1.6458113e-38 | 1.6458115e-38 |
+| **-87.3** | **0** | **1.2192433e-38** (normal) |
+| -88 | 0 | 6.054601e-39 |
+| -103 | 0 | 1e-45 |
+| -104 | 0 | 0 |
+
+So the flush begins while the true output is still **normal**, and covers
+the entire denormal band below it -- **16.97 in `x` premature**.
+
+### Why nothing caught it: two hand-maintained lists, not one
+
+`denormal_audit` exists for exactly this and reported "functions that
+flush some denormal output: [sigmoid, norm_pdf]". `softplus` was not in
+its case-(A) list at all -- that list is **nine hand-picked functions with
+nine hand-picked `x` windows**, and it had never been checked for
+completeness. Adding the crate's other exponential-tailed 1-arg functions:
+
+| function | flushed | premature by (in x) |
+|---|---|---|
+| `silu` | **100%** | **20.28** |
+| `softplus` | **100%** | **16.97** |
+| `logsigmoid` | **100%** | **16.97** |
+| `sigmoid` (already known) | 94% | 15.60 |
+| `gelu` | 11% | 0.134 |
+| `norm_cdf` | 2% | 0.028 |
+
+Three functions flushing their *entire* denormal range, two of them worse
+than the `sigmoid` case that prompted the audit's creation in the first
+place.
+
+And there is a **second** hand-maintained list inside the same file: the
+`width()` calls that produce the actionable "premature by" figure carry
+their own six names. It silently omitted every function that flushes its
+whole range -- precisely the set worth looking at -- because those never
+produce a `last_ok_x` inside the sweep window. Both lists are extended
+now.
+
+### The fix is priced and declined, not overlooked
+
+Restoring the tail is one substitution -- `exp_checked(-ax)` for
+`exp_narrow(-ax.min(87.0))`, which also deletes the `min` and the select,
+since `exp_checked` reaches `x ~ -104.7` and carries denormals:
+
+```
+                 instrs   uOps  BlockRT   cyc/elem   latency
+  softplus         100    110    28.00     2.449     74.11
+  + exp_checked    113    127    34.00     2.970     77.61   (+21.3% / +4.7%)
+  logsigmoid       105    116    28.00     2.604
+  + exp_checked    117    131    34.00     3.095     (+18.9%)
+```
+
+Declined on the same grounds `sigmoid`'s own 15.60-premature flush is
+already accepted: +21% on every call to restore `-104 < x < -87`, where
+the absolute value at stake is under `1.7e-38`. Recorded in `softplus`'s
+doc comment with the numbers, so the next reader gets the tradeoff rather
+than the old false claim. A `softplus_checked` tier is the obvious
+alternative if a caller ever wants it -- the mechanism is a one-line
+substitution and is written out above.
+
+### Transferable
+
+Both this and the `clog` result came from the same question -- *what is
+just outside the bound the harness stops at?* -- and both times the answer
+was hiding behind something that had been asserted rather than measured (a
+doc comment's "negligible", an IDEAS.md entry's op ratio). The specific
+smell worth grepping for: **a gate whose coverage is a hand-written list.**
+`denormal_audit` had two of them in one file, `accuracy.rs`'s `clog` row
+had a reference that could not score its own hard region, and
+`codegen_check` accepted only `ps` mnemonics. None of those fail loudly;
+they all just quietly report on less than they appear to.

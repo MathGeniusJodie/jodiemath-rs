@@ -3457,9 +3457,22 @@ fn log1p_unit(e: f32) -> f32 {
 ///    the correction term -- clamping `exp`'s argument there would
 ///    replace the true (much smaller) correction with a fixed,
 ///    comparatively huge stand-in, and for negative `x` nothing hides
-///    that error. So the correction is *selected* to exactly `0.0` once
-///    `|x|` is far enough out that the true value is negligible at f32
-///    precision, rather than feeding `exp` a clamped-but-wrong argument.
+///    that error. So the correction is *selected* to exactly `0.0`
+///    instead, rather than feeding `exp` a clamped-but-wrong argument.
+///
+///    **The cutoff is early, and this is the accepted tradeoff, not a
+///    claim that nothing is lost.** The selection fires at `|x| > 87`,
+///    set by `exp_narrow`'s own `[-87.68311, 88.37627]` domain -- but
+///    `ln(1+e^x)` does not reach zero in f32 until `x ~ -103.97`. So
+///    `softplus` returns exactly `0.0` across `-103.97 < x < -87`, where
+///    the true value is a representable f32: still *normal* down to
+///    `x ~ -87.68` (e.g. `softplus(-87.3)` is `1.219e-38`), denormal
+///    below that. That is **16.97 in `x` premature**, the widest early
+///    flush in the crate -- see `examples/denormal_audit.rs`, which now
+///    reports it. Restoring the tail means `exp_checked(-ax)` in place of
+///    `exp_narrow`, which costs +21.3% throughput and +4.7% latency on
+///    every call; measured and declined on the same grounds `sigmoid`'s
+///    own 15.60-premature flush is accepted (see graveyard.md).
 /// 2. `f32::max`/`min` follow IEEE `maxNum`/`minNum` semantics and
 ///    *discard* NaN rather than propagate it -- `x.max(0.0)` and the
 ///    exponent-clamping `min` would silently turn `softplus(NaN)` into

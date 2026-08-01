@@ -516,7 +516,11 @@ and documented-bound drift.
   Generalizes the exp10_checked overflow-at-the-boundary bug.
 - `cargo run --release --example denormal_audit` - which functions carry denormal outputs correctly vs
   flush early, split into normal-input-denormal-output and denormal-in-denormal-out. Reports how *early*
-  each flush begins relative to the true zero, which is the metric that matters.
+  each flush begins relative to the true zero, which is the metric that matters. Both of its lists are
+  hand-maintained, and both were incomplete: `softplus`/`logsigmoid`/`silu` flush their *entire* denormal
+  range (16.97, 16.97 and 20.28 premature in `x`, all worse than the `sigmoid` case that prompted this
+  example) and none of them was listed. Adding a function here is not optional bookkeeping -- nothing else
+  in the suite reports this.
 - `cargo run --release --example approx_bounds` - asserts the `_approx` tier's doc-comment error bounds
   (relative/absolute, not ulp -- that tier is deliberately outside the 0.5/2 budget).
 - `cargo run --release --example eft_contract_check` - the public EFT toolkit's exactness contracts against

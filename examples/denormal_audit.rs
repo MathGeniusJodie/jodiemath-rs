@@ -126,6 +126,15 @@ fn main() {
         audit("norm_pdf", norm_pdf, |v| (-0.5 * v * v).exp() / (2.0 * std::f64::consts::PI).sqrt(), &lin(12.0, 14.5, 300_000)),
         audit("tanh_grad", tanh_grad, |v| { let t = v.tanh(); 1.0 - t * t }, &lin(20.0, 45.0, 300_000)),
         audit("sigmoid_grad", sigmoid_grad, |v| { let s = 1.0 / (1.0 + (-v).exp()); s * (1.0 - s) }, &lin(60.0, 92.0, 300_000)),
+        // The list above was hand-picked and had never been checked for
+        // completeness; these five are the rest of the crate's
+        // exponential-tailed 1-arg functions, added after `softplus` turned
+        // out to flush 17 units of `x` early with nothing reporting it.
+        audit("softplus", softplus, |v| v.exp().ln_1p(), &lin(-110.0, -85.0, 300_000)),
+        audit("logsigmoid", logsigmoid, |v| -((-v).exp().ln_1p()), &lin(85.0, 110.0, 300_000)),
+        audit("silu", silu, |v| v / (1.0 + (-v).exp()), &lin(-110.0, -85.0, 300_000)),
+        audit("gelu", gelu, |v| v * 0.5 * libm_erfc(-v / std::f64::consts::SQRT_2), &lin(-15.5, -12.0, 300_000)),
+        audit("norm_cdf", norm_cdf, |v| 0.5 * libm_erfc(-v / std::f64::consts::SQRT_2), &lin(-15.0, -13.0, 300_000)),
     ];
     report("(A) normal input -> denormal output", &a_rows);
 
@@ -208,6 +217,18 @@ fn main() {
         12.0,
         14.8,
     );
+
+    // Same five as the (A) table above. Note this helper carries its *own*
+    // list -- it is the one that produces the actionable "premature by"
+    // figure, and it silently omitted every function that flushes its whole
+    // denormal range, which is exactly the set worth looking at. Each scan
+    // has to *start* where the function is still correct, so these ranges
+    // begin outside the denormal band and walk into it.
+    width("softplus", &softplus, &|v: f64| v.exp().ln_1p(), -80.0, -110.0);
+    width("logsigmoid", &logsigmoid, &|v: f64| -((-v).exp().ln_1p()), 80.0, 110.0);
+    width("silu", &silu, &|v: f64| v / (1.0 + (-v).exp()), -80.0, -112.0);
+    width("gelu", &gelu, &|v: f64| v * 0.5 * libm_erfc(-v / std::f64::consts::SQRT_2), -12.0, -16.0);
+    width("norm_cdf", &norm_cdf, &|v: f64| 0.5 * libm_erfc(-v / std::f64::consts::SQRT_2), -13.0, -15.5);
 
     let flushers: Vec<&str> = a_rows
         .iter()
