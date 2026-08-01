@@ -126,7 +126,14 @@ cmd_release() {
     fi
     [[ ${#doms[@]} -eq 0 ]] && { note "nothing to release"; return 0; }
     for q in "${doms[@]}"; do
-        local dom; dom=$(domain_of "$q" 2>/dev/null || echo "$q")
+        # Resolve to a live claim dir by preference. Landing an edit can merge
+        # two domains (norm_cdf started calling erfcx_pos and folded into
+        # exp_checked), after which domain_of happily returns the NEW label
+        # and the old claim dir becomes unreachable -- so an existing dir with
+        # this exact name always wins over a fresh lookup.
+        local dom
+        if [[ -d "$CLAIMS/$q" ]]; then dom=$q
+        else dom=$(domain_of "$q" 2>/dev/null || echo "$q"); fi
         [[ -d "$CLAIMS/$dom" ]] || { note "not claimed: $dom"; continue; }
         local o; o=$(claim_owner "$dom" || echo "?")
         [[ $o == "$AGENT" || ${JM_FORCE:-} == 1 ]] || die "$dom is $o's, not yours (JM_FORCE=1 to override)"
@@ -206,51 +213,84 @@ cmd_check() {
     [[ -d "$LOCKS/core" && $(cat "$LOCKS/core/owner" 2>/dev/null) == "$AGENT" ]] && core_held=1
 
     git -C "$TOPLEVEL" diff -U0 "$base" -- src/lib.rs > "$JM/.diff.$$" || true
+    # A diff has two coordinate systems and both are needed. Post-image line
+    # numbers only make sense against the WORKING TREE's line ranges: matching
+    # them against master's ranges misattributes every hunk below a net
+    # insertion by exactly the number of lines added. Pre-image numbers are
+    # the ones that mean something in master, and they are what catches a
+    # deletion from a function you do not own.
+    local wmap="$JM/.workmap.$$"
+    python3 "$REPO_MAIN/tools/jm_domains.py" "$TOPLEVEL/src/lib.rs" > "$wmap" 2>/dev/null \
+        || cp "$(map_path)" "$wmap"
     local rc=0
     pyq '
 import json,re,sys
 m=json.load(open(sys.argv[1]))
 mine=set(x.strip() for x in open(sys.argv[2]) if x.strip())
 core_held=sys.argv[4]=="1"
-core={c[2]:(c[0],c[1]) for c in m["core_ranges"]}
-owner={}
-for label,d in m["domains"].items():
-    for s,e,name in d["ranges"]: owner[name]=(label,s,e)
-# line -> unit, using post-image line numbers from the diff hunk headers
-hunks=[]
+w=json.load(open(sys.argv[5]))
+
+def ranges(mm):
+    core={c[2]:(c[0],c[1]) for c in mm["core_ranges"]}
+    own={}
+    for label,d in mm["domains"].items():
+        for s,e,name in d["ranges"]: own[name]=(label,s,e)
+    return own,core
+own_m,core_m=ranges(m)
+own_w,core_w=ranges(w)
+master_all=set(own_m)|set(core_m)
+
+pre=[];post=[]
 for line in open(sys.argv[3]):
-    mm=re.match(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@", line)
-    if mm:
-        st=int(mm.group(1)); ln=int(mm.group(2) or 1)
-        if ln: hunks.append((st,st+ln-1))
-touched_dom={}; touched_core=set(); unowned=[]
-for a,b in hunks:
-    hit=False
-    for name,(label,s,e) in owner.items():
-        if not (b<s or a>e): touched_dom.setdefault(label,set()).add(name); hit=True
-    for name,(s,e) in core.items():
-        if not (b<s or a>e): touched_core.add(name); hit=True
-    if not hit: unowned.append((a,b))
-bad=False
+    mm=re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
+    if not mm: continue
+    a=int(mm.group(1)); al=int(mm.group(2) or 1)
+    b=int(mm.group(3)); bl=int(mm.group(4) or 1)
+    if al: pre.append((a,a+al-1))
+    if bl: post.append((b,b+bl-1))
+
+def hits(spans,own,core):
+    names=set(); miss=[]
+    for a,b in spans:
+        h=False
+        for name,(label,s,e) in own.items():
+            if not (b<s or a>e): names.add(name); h=True
+        for name,(s,e) in core.items():
+            if not (b<s or a>e): names.add(name); h=True
+        if not h: miss.append((a,b))
+    return names,miss
+n_pre,miss_pre=hits(pre,own_m,core_m)
+n_post,miss_post=hits(post,own_w,core_w)
+touched=n_pre|n_post
+unowned=miss_pre+miss_post
+
+bad=False; new=set(); core_hit=set(); ok_n=set(); bad_n=set()
+for name in touched:
+    if name in core_m or name in core_w:
+        core_hit.add(name)
+    elif name not in master_all:
+        new.add(name)          # a function this branch introduces
+    elif name in mine:
+        ok_n.add(name)
+    else:
+        bad_n.add(name); bad=True
 print("\033[1mtouched\033[0m")
-for label,names in sorted(touched_dom.items()):
-    ok = all(n in mine for n in names)
-    tag = "\033[32mOK\033[0m" if ok else "\033[31mNOT YOURS\033[0m"
-    if not ok: bad=True
-    print("  {} domain {}: {}".format(tag, label, ", ".join(sorted(names))))
-if touched_core:
-    tag = "\033[32mOK (core lock held)\033[0m" if core_held else "\033[31mCORE -- needs `jm core claim`\033[0m"
+if ok_n:  print("  \033[32mOK\033[0m        "+", ".join(sorted(ok_n)))
+if new:   print("  \033[32mNEW\033[0m       "+", ".join(sorted(new))+"  (added by this branch)")
+if bad_n: print("  \033[31mNOT YOURS\033[0m "+", ".join(sorted(bad_n)))
+if core_hit:
     if not core_held: bad=True
-    print("  {}: {}".format(tag, ", ".join(sorted(touched_core))))
+    tag = "\033[32mOK (core lock held)\033[0m" if core_held else "\033[31mCORE -- needs `jm core claim`\033[0m"
+    print("  {} {}".format(tag, ", ".join(sorted(core_hit))))
     print("     \033[33mediting a core kernel moves every function that uses it;")
     print("     re-run accuracy for the whole crate, not just your domain.\033[0m")
 if unowned:
-    print(f"  \033[33mSHARED\033[0m file regions (header/consts/tests) at lines: "
-          + ", ".join(f"{a}-{b}" for a,b in unowned[:6]))
-if not touched_dom and not touched_core and not unowned: print("  (nothing in src/lib.rs)")
+    print("  \033[33mSHARED\033[0m    file regions (header/consts/tests) at lines: "
+          + ", ".join("{}-{}".format(a,b) for a,b in unowned[:6]))
+if not touched and not unowned: print("  (nothing in src/lib.rs)")
 raise SystemExit(1 if bad else 0)
-' "$mine" "$JM/.diff.$$" "$core_held" || rc=$?
-    rm -f "$mine" "$JM/.diff.$$"
+' "$mine" "$JM/.diff.$$" "$core_held" "$wmap" || rc=$?
+    rm -f "$mine" "$JM/.diff.$$" "$wmap"
 
     # shared harness files: no runtime interference (separate target dirs),
     # but they are the usual source of rebase conflicts.
