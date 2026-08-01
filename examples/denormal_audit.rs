@@ -131,8 +131,11 @@ fn main() {
         // exponential-tailed 1-arg functions, added after `softplus` turned
         // out to flush 17 units of `x` early with nothing reporting it.
         audit("softplus", softplus, |v| v.exp().ln_1p(), &lin(-110.0, -85.0, 300_000)),
+        audit("softplus_checked", softplus_checked, |v| v.exp().ln_1p(), &lin(-110.0, -85.0, 300_000)),
         audit("logsigmoid", logsigmoid, |v| -((-v).exp().ln_1p()), &lin(85.0, 110.0, 300_000)),
+        audit("logsigmoid_checked", logsigmoid_checked, |v| -((-v).exp().ln_1p()), &lin(85.0, 110.0, 300_000)),
         audit("silu", silu, |v| v / (1.0 + (-v).exp()), &lin(-110.0, -85.0, 300_000)),
+        audit("silu_checked", silu_checked, |v| v / (1.0 + (-v).exp()), &lin(-110.0, -85.0, 300_000)),
         audit("gelu", gelu, |v| v * 0.5 * libm_erfc(-v / std::f64::consts::SQRT_2), &lin(-15.5, -12.0, 300_000)),
         audit("norm_cdf", norm_cdf, |v| 0.5 * libm_erfc(-v / std::f64::consts::SQRT_2), &lin(-15.0, -13.0, 300_000)),
     ];
@@ -165,6 +168,7 @@ fn main() {
         audit("sqrt1pm1", sqrt1pm1, |v| v / ((1.0 + v).sqrt() + 1.0), &dn),
         audit("gelu", gelu, |v| 0.5 * v * (1.0 + libm_erf(v / 2f64.sqrt())), &dn),
         audit("silu", silu, |v| v / (1.0 + (-v).exp()), &dn),
+        audit("silu_checked", silu_checked, |v| v / (1.0 + (-v).exp()), &dn),
         audit("softsign", softsign, |v| v / (1.0 + v.abs()), &dn),
         audit("wrap_pi", wrap_pi, |v| v, &dn),
     ];
@@ -225,8 +229,11 @@ fn main() {
     // has to *start* where the function is still correct, so these ranges
     // begin outside the denormal band and walk into it.
     width("softplus", &softplus, &|v: f64| v.exp().ln_1p(), -80.0, -110.0);
+    width("softplus_checked", &softplus_checked, &|v: f64| v.exp().ln_1p(), -80.0, -110.0);
     width("logsigmoid", &logsigmoid, &|v: f64| -((-v).exp().ln_1p()), 80.0, 110.0);
+    width("logsigmoid_checked", &logsigmoid_checked, &|v: f64| -((-v).exp().ln_1p()), 80.0, 110.0);
     width("silu", &silu, &|v: f64| v / (1.0 + (-v).exp()), -80.0, -112.0);
+    width("silu_checked", &silu_checked, &|v: f64| v / (1.0 + (-v).exp()), -80.0, -112.0);
     width("gelu", &gelu, &|v: f64| v * 0.5 * libm_erfc(-v / std::f64::consts::SQRT_2), -12.0, -16.0);
     width("norm_cdf", &norm_cdf, &|v: f64| 0.5 * libm_erfc(-v / std::f64::consts::SQRT_2), -13.0, -15.5);
 

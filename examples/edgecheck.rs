@@ -1070,6 +1070,27 @@ fn real_main() {
     check("softplus(-f32::MAX)", softplus(-f32::MAX), 0.0);
     check("softplus(nan)", softplus(f32::NAN), f32::NAN);
 
+    // softplus_checked: every softplus pin above still holds (it has no
+    // correction-term cutoff, but out at these magnitudes the correction
+    // is zero either way), plus the band softplus flushes -- pinned at
+    // both ends and one point inside, since "returns exactly 0.0 where a
+    // normal f32 is owed" is precisely the defect this tier fixes and is
+    // invisible to any pin that only looks at +-inf.
+    check("softplus_checked(0)", softplus_checked(0.0), std::f32::consts::LN_2);
+    check("softplus_checked(-0)", softplus_checked(-0.0), std::f32::consts::LN_2);
+    check("softplus_checked(1000)", softplus_checked(1000.0), 1000.0);
+    check("softplus_checked(f32::MAX)", softplus_checked(f32::MAX), f32::MAX);
+    check("softplus_checked(inf)", softplus_checked(f32::INFINITY), f32::INFINITY);
+    check("softplus_checked(-inf)", softplus_checked(f32::NEG_INFINITY), 0.0);
+    check("softplus_checked(-1000)", softplus_checked(-1000.0), 0.0);
+    check("softplus_checked(-f32::MAX)", softplus_checked(-f32::MAX), 0.0);
+    check("softplus_checked(nan)", softplus_checked(f32::NAN), f32::NAN);
+    check("softplus_checked(-87.3) normal", softplus_checked(-87.3), 1.2192433e-38);
+    check("softplus_checked(-95) denormal", softplus_checked(-95.0), 5.521e-42);
+    check("softplus_checked(-104) is 0", softplus_checked(-104.0), 0.0);
+    check("softplus_checked(-80)==softplus(-80)", softplus_checked(-80.0), softplus(-80.0));
+    check("softplus_checked(3)==softplus(3)", softplus_checked(3.0), softplus(3.0));
+
     // logsigmoid = -softplus(-x) (backlog idea #118): each pin here is
     // softplus's own pin above, mirrored through that identity.
     check("logsigmoid(0)", logsigmoid(0.0), -std::f32::consts::LN_2);
@@ -1081,6 +1102,16 @@ fn real_main() {
     check("logsigmoid(-1000)", logsigmoid(-1000.0), -1000.0);
     check("logsigmoid(-f32::MAX)", logsigmoid(-f32::MAX), -f32::MAX);
     check("logsigmoid(nan)", logsigmoid(f32::NAN), f32::NAN);
+
+    // logsigmoid_checked = -softplus_checked(-x), same mirroring.
+    check("logsigmoid_checked(0)", logsigmoid_checked(0.0), -std::f32::consts::LN_2);
+    check("logsigmoid_checked(inf)", logsigmoid_checked(f32::INFINITY), -0.0);
+    check("logsigmoid_checked(-inf)", logsigmoid_checked(f32::NEG_INFINITY), f32::NEG_INFINITY);
+    check("logsigmoid_checked(1000)", logsigmoid_checked(1000.0), -0.0);
+    check("logsigmoid_checked(-1000)", logsigmoid_checked(-1000.0), -1000.0);
+    check("logsigmoid_checked(nan)", logsigmoid_checked(f32::NAN), f32::NAN);
+    check("logsigmoid_checked(87.3) normal", logsigmoid_checked(87.3), -1.2192433e-38);
+    check("logsigmoid_checked(-3)==logsigmoid(-3)", logsigmoid_checked(-3.0), logsigmoid(-3.0));
 
     // logaddexp(a,b) = ln(e^a+e^b); softplus(x) == logaddexp(x,0.0).
     check("logaddexp(0,0)", logaddexp(0.0, 0.0), std::f32::consts::LN_2);
@@ -1119,6 +1150,23 @@ fn real_main() {
     check("silu(inf)", silu(f32::INFINITY), f32::INFINITY);
     check("silu(-inf)", silu(f32::NEG_INFINITY), 0.0);
     check("silu(nan)", silu(f32::NAN), f32::NAN);
+
+    // silu_checked: the whole negative saturation tail is -0.0 here (the
+    // true signed limit), including -inf, where silu's separate override
+    // returns +0.0 -- the one input on which the two tiers differ at all,
+    // and only in the sign of a zero. Plus the band silu flushes: still a
+    // *normal* f32 at -90, denormal below, zero only past -108.6.
+    check("silu_checked(0)", silu_checked(0.0), 0.0);
+    check("silu_checked(-0)", silu_checked(-0.0), -0.0);
+    check("silu_checked(inf)", silu_checked(f32::INFINITY), f32::INFINITY);
+    check("silu_checked(-inf)", silu_checked(f32::NEG_INFINITY), -0.0);
+    check("silu_checked(nan)", silu_checked(f32::NAN), f32::NAN);
+    check("silu_checked(-1000)", silu_checked(-1000.0), -0.0);
+    check("silu_checked(f32::MAX)", silu_checked(f32::MAX), f32::MAX);
+    check("silu_checked(-90) normal", silu_checked(-90.0), -7.374611e-38);
+    check("silu_checked(-100) denormal", silu_checked(-100.0), -3.72e-42);
+    check("silu_checked(-109) is -0", silu_checked(-109.0), -0.0);
+    check("silu_checked(2)==silu(2)", silu_checked(2.0), silu(2.0));
 
     // softsign(x) = x/(1+|x|) (backlog idea #70). 0.5/0.75 are exact here
     // (1/(1+1), 3/(1+3)). The +-inf override guards inf/inf -> +-1.

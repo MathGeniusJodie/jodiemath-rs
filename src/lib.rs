@@ -3476,12 +3476,10 @@ fn log1p_unit(e: f32) -> f32 {
 ///    `softplus` returns exactly `0.0` across `-103.97 < x < -87`, where
 ///    the true value is a representable f32: still *normal* down to
 ///    `x ~ -87.68` (e.g. `softplus(-87.3)` is `1.219e-38`), denormal
-///    below that. That is **16.97 in `x` premature**, the widest early
-///    flush in the crate -- see `examples/denormal_audit.rs`, which now
-///    reports it. Restoring the tail means `exp_checked(-ax)` in place of
-///    `exp_narrow`, which costs +21.3% throughput and +4.7% latency on
-///    every call; measured and declined on the same grounds `sigmoid`'s
-///    own 15.60-premature flush is accepted (see graveyard.md).
+///    below that. That is **16.97 in `x` premature** -- see
+///    `examples/denormal_audit.rs`, which reports it.
+///    [`softplus_checked`] restores the band for **+2.3%** throughput
+///    (and is *faster* on latency); this tier keeps the throughput.
 /// 2. `f32::max`/`min` follow IEEE `maxNum`/`minNum` semantics and
 ///    *discard* NaN rather than propagate it -- `x.max(0.0)` and the
 ///    exponent-clamping `min` would silently turn `softplus(NaN)` into
@@ -3502,6 +3500,52 @@ pub fn softplus(x: f32) -> f32 {
     if x.is_nan() { f32::NAN } else { normal }
 }
 
+/// Full-range sibling of [`softplus`]: no correction-term cutoff, so the
+/// tail stays live all the way to where `ln(1+e^x)` genuinely reaches
+/// zero. [`softplus`] returns exactly `0.0` across `-103.97 < x < -87`
+/// where the true value is representable -- *normal* down to
+/// `x ~ -87.68`, denormal below -- and this returns it, correctly rounded
+/// (measured: 0 ulp at every integer `x` from `-88` to `-103`, against
+/// `softplus`'s 4.3e6 to 1.3 ulp over the same points).
+///
+/// The mechanism is not `exp_checked`, which is what the cutoff's cost
+/// was originally priced against (+21.3% throughput). The correction
+/// needs `exp(-|x|)` *denormal*, which a single exponent field cannot
+/// produce -- but it can produce `exp(-|x|) * 2^64`, and `2^-64` is an
+/// exact power of two, so one trailing multiply lands the denormal with
+/// the single correct rounding. `k = round(-|x|*log2(e))` runs to `-152`
+/// over the extended domain, but `k + 64` stays inside one field's
+/// `[-126, 127]`, so this is `exp_narrow`'s cost plus one add and one
+/// multiply rather than `exp_checked`'s k1/k2 split. The `min(105.0)`
+/// replaces both `softplus`'s own `min(87.0)` and its correction select:
+/// past `105` the scaled field underflows the trailing multiply to
+/// exactly `0.0` on its own, which is the right answer there anyway.
+///
+/// Measured price, mca: throughput `2.449 -> 2.506` cyc/elem (**+2.3%**,
+/// instrs 100 -> 103, uOps 110 -> 116, Block RThroughput 28 -> 30),
+/// latency `74.11 -> 73.36` (**-1.0%**). Both tiers are on the Pareto
+/// frontier -- [`softplus`] on throughput, this on latency and on the
+/// tail -- which is why both exist.
+///
+/// Identical to [`softplus`] over `|x| <= 87`: a single exponent field is
+/// exact there, and scaling by `2^64` and back is exact while the result
+/// is normal, so the two agree bit-for-bit wherever `softplus` has an
+/// answer at all.
+#[inline(always)]
+pub fn softplus_checked(x: f32) -> f32 {
+    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+    const P64: f32 = 5.421010862427522e-20; // 2^-64, exact
+    let ax = x.abs().min(105.0);
+    let k = fma(ax, -LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
+    let t1 = fma(k, LN2_HI, ax);
+    let t2 = fma(k, LN2_LO, t1);
+    let r = -t2;
+    let p = exp_r_poly!(r);
+    let e = (p * exp2int_field!(k + 64.0)) * P64;
+    let normal = x.max(0.0) + log1p_unit(e);
+    if x.is_nan() { f32::NAN } else { normal }
+}
+
 /// logsigmoid(x) = ln(sigmoid(x)) = -softplus(-x) (backlog idea #118), the
 /// numerically stable log-likelihood ML frameworks pair with `sigmoid`
 /// (`ln(1/(1+e^-x))`, same cancellation trap as `softplus` itself for
@@ -3511,6 +3555,17 @@ pub fn softplus(x: f32) -> f32 {
 #[inline(always)]
 pub fn logsigmoid(x: f32) -> f32 {
     -softplus(-x)
+}
+
+/// Full-range sibling of [`logsigmoid`], inherited through the same
+/// identity: `logsigmoid` saturates to exactly `-0.0` across
+/// `87 < x < 103.97`, where the true value is a representable negative
+/// normal/denormal. See [`softplus_checked`] for the mechanism and the
+/// band; the price here is throughput `2.604 -> 2.699` cyc/elem
+/// (**+3.6%**), latency `75.11 -> 75.56` (+0.6%).
+#[inline(always)]
+pub fn logsigmoid_checked(x: f32) -> f32 {
+    -softplus_checked(-x)
 }
 
 /// logaddexp(a,b) = ln(e^a+e^b), the numerically stable "log of a sum of
@@ -3594,10 +3649,102 @@ pub fn gelu(x: f32) -> f32 {
 /// SiLU / Swish: `x * sigmoid(x)` (backlog idea #70). Same `x = -inf`
 /// `0*inf` indeterminate-form fix as `gelu` above (`sigmoid(-inf) = 0`
 /// exactly, but `-inf * 0.0` alone is `NaN`, not the true limit `0`).
+///
+/// Inherits `sigmoid`'s own accepted saturation, and *widens* it: the
+/// extra factor `|x|` means the true value is still representable long
+/// after `sigmoid(x)` has flushed, so this returns `-0.0` from
+/// `x ~ -88.72` down while `x*e^x` stays nonzero to `x ~ -108.6` --
+/// **20.28 in `x` premature**, the widest early flush in the crate
+/// (`examples/denormal_audit.rs`). [`silu_checked`] restores it, and is
+/// *faster* on latency; what it costs is max ulp in the shared domain
+/// (3.85 -> 4.69) and, by two of four mca rungs, some throughput.
 #[inline(always)]
 pub fn silu(x: f32) -> f32 {
     let normal = x * sigmoid(x);
     if x == f32::NEG_INFINITY { 0.0 } else { normal }
+}
+
+/// Full-range sibling of [`silu`]. Two separate things go wrong in
+/// `x * sigmoid(x)` on the negative tail, and one substitution is not
+/// enough for either:
+///
+/// 1. `sigmoid` saturates to exactly `0.0` at `x ~ -88.72`, so `silu`
+///    returns `-0.0` from there down -- but `silu(x) ~ x*e^x` carries the
+///    extra factor `|x| ~ 90`, so the *true* value stays representable
+///    all the way to `x ~ -108.6`. **20.28 in `x` premature**, the widest
+///    early flush in the crate (`examples/denormal_audit.rs`).
+/// 2. Even where `sigmoid` still returns something, that something is a
+///    *denormal* for `x < -87.68`, while `x*sigmoid(x)` is still a
+///    *normal* f32 down to `x ~ -91.8`. A normal result computed through
+///    a denormal intermediate loses whatever bits the denormal dropped:
+///    the product would inherit ~17-22 significand bits, tens of ulp,
+///    over a band where nothing is actually out of range.
+///
+/// Both are fixed by never forming `e = e^-|x|` at all -- the whole
+/// quotient is evaluated at a `2^64` offset, numerator and denominator
+/// together, so the only denormal anywhere is the *result*, which is the
+/// best f32 can do. With `e2 = e^-|x| * 2^64`:
+///
+/// ```text
+///   x < 0:  silu(x) = x*e/(1+e) = (x*e2) / (2^64 + e2)
+///   x >= 0: silu(x) =   x/(1+e) = (x*2^64) / (2^64 + e2)
+/// ```
+///
+/// so one select on the multiplier is the entire difference between the
+/// two sides, and the `2^-64` never appears: dividing by the scaled
+/// denominator undoes it exactly. Nothing overflows on the way, because
+/// the live domain is bounded: `|x| * e^-|x| * 2^64` peaks at `|x| = 1`
+/// (`6.8e18`) and `|x| * 2^64` at `|x| = 110` (`2.0e21`).
+///
+/// The `2^64` is free. `k + 64` is still a *single* exponent field here
+/// (`k = round(-|x|*log2(e))` is in `[-159, 0]` over the live domain, so
+/// `k+64` is in `[-95, 64]`, inside one field's `[-126, 127]`) -- so this
+/// is a standalone copy of `exp`'s reduction with `64` added to `k`, the
+/// same shape as [`exp_scaled`] but at `exp_narrow`'s cost rather than
+/// `exp`'s k1/k2 split, which would buy range this caller provably cannot
+/// reach. The negation folding is `sigmoid`'s, for the same reason.
+///
+/// Past `|x| = 110` that reduction is out of range and its result is
+/// discarded by the trailing select rather than clamped -- clamping the
+/// argument instead would freeze `e2` at a fixed constant that `x`
+/// (unbounded) then multiplies straight back into range, the same trap
+/// `sigmoid`'s own doc comment records. `110` is where the true function
+/// has already reached both asymptotes: `x*(1 - e^-x)` rounds to `x` for
+/// `x > 110`, and `|x|e^-|x| < 1.9e-46` rounds to zero for `x < -110`, so
+/// `x.max(-0.0)` is the correctly-rounded answer on both sides, signed
+/// zero included, and covers `+-inf` as well -- replacing `silu`'s
+/// separate `0*inf` override. (`silu_checked(-inf)` is therefore `-0.0`,
+/// the true signed limit, where `silu` returns `+0.0`; the two agree on
+/// every input either can round to a nonzero value.)
+///
+/// Measured, mca: **latency `65.02 -> 60.97`, -6.2%** (`mca_arms.py`,
+/// in-domain arm). Throughput is the axis that pays, and the rungs
+/// disagree about how much: instrs 57 -> 67, uOps 60 -> 71, but **Block
+/// RThroughput is unchanged at 17.00** and cyc/elem is `1.407 -> 1.466`
+/// (+4.2%). Not arbitrated against hardware, because it does not decide
+/// anything -- see the accuracy tradeoff below, which keeps both tiers on
+/// the frontier either way.
+///
+/// Accuracy over the domain the two share (`|x| <= 87`, dense scan of
+/// every 64th bit pattern, f64 reference): avg ulp `0.0904 -> 0.0673`,
+/// max ulp `3.85 -> 4.69`. The usual avg-for-max trade, from evaluating
+/// `e^-|x|` where `silu` evaluates `e^+|x|` and dividing where `silu`
+/// takes a reciprocal and multiplies. `silu` is the max-ulp tier;
+/// this one is the average, latency and tail tier.
+#[inline(always)]
+pub fn silu_checked(x: f32) -> f32 {
+    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+    const TWO64: f32 = 18446744073709551616.0; // 2^64, exact
+    let ax = x.abs();
+    let k = fma(ax, -LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
+    let t1 = fma(k, LN2_HI, ax);
+    let t2 = fma(k, LN2_LO, t1);
+    let r = -t2;
+    let p = exp_r_poly!(r);
+    let e2 = p * exp2int_field!(k + 64.0); // exp(-|x|) * 2^64
+    let num = x * if x < 0.0 { e2 } else { TWO64 };
+    let normal = num / (TWO64 + e2);
+    if ax > 110.0 { x.max(-0.0) } else { normal }
 }
 
 /// Softsign: `x / (1 + |x|)` (backlog idea #70). `x = +-inf` is the one

@@ -378,8 +378,14 @@ throughput_fn!(thr_sigmoid_grad, "sigmoid_grad_throughput", sigmoid_grad);
 latency_fn!(lat_softplus, "softplus_latency", softplus);
 throughput_fn!(thr_softplus, "softplus_throughput", softplus);
 
+latency_fn!(lat_softplus_checked, "softplus_checked_latency", softplus_checked);
+throughput_fn!(thr_softplus_checked, "softplus_checked_throughput", softplus_checked);
+
 latency_fn!(lat_logsigmoid, "logsigmoid_latency", logsigmoid);
 throughput_fn!(thr_logsigmoid, "logsigmoid_throughput", logsigmoid);
+
+latency_fn!(lat_logsigmoid_checked, "logsigmoid_checked_latency", logsigmoid_checked);
+throughput_fn!(thr_logsigmoid_checked, "logsigmoid_checked_throughput", logsigmoid_checked);
 
 latency_fn!(lat_logaddexp, "logaddexp_latency", |x: f32| logaddexp(x, 0.0));
 throughput_fn!(thr_logaddexp, "logaddexp_throughput", |x: f32| logaddexp(x, 0.0));
@@ -389,6 +395,9 @@ throughput_fn!(thr_gelu, "gelu_throughput", gelu);
 
 latency_fn!(lat_silu, "silu_latency", silu);
 throughput_fn!(thr_silu, "silu_throughput", silu);
+
+latency_fn!(lat_silu_checked, "silu_checked_latency", silu_checked);
+throughput_fn!(thr_silu_checked, "silu_checked_throughput", silu_checked);
 
 latency_fn!(lat_softsign, "softsign_latency", softsign);
 throughput_fn!(thr_softsign, "softsign_throughput", softsign);
@@ -858,10 +867,13 @@ fn main() {
         lat_sigmoid_fast, thr_sigmoid_fast;
         lat_sigmoid_grad, thr_sigmoid_grad;
         lat_softplus, thr_softplus;
+        lat_softplus_checked, thr_softplus_checked;
         lat_logsigmoid, thr_logsigmoid;
+        lat_logsigmoid_checked, thr_logsigmoid_checked;
         lat_logaddexp, thr_logaddexp;
         lat_gelu, thr_gelu;
         lat_silu, thr_silu;
+        lat_silu_checked, thr_silu_checked;
         lat_softsign, thr_softsign;
         lat_sqrt1pm1, thr_sqrt1pm1;
         lat_asinh, thr_asinh;

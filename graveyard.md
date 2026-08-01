@@ -7777,3 +7777,137 @@ max unchanged. It has no readme accuracy row.
 moved 731 -> 897 between two runs of *identical* code -- that is its
 documented heavy tail resampling, not this change (it routes through
 `log1p_unit`, and no `logaddexp` region appears in the asm diff).
+## The denormal flushers get `_checked` tiers, and the price that justified declining them was 10x too high
+
+Follow-on to the `denormal_audit` result above, which found `softplus`,
+`logsigmoid` and `silu` flushing their *entire* denormal range (16.97,
+16.97 and 20.28 premature in `x`) and **priced the fix at +21.3%
+throughput, then declined it**. That price was measured against the wrong
+mechanism. Re-priced against the right one it is **+2.3%**, and all three
+tiers now exist: `softplus_checked`, `logsigmoid_checked`, `silu_checked`.
+
+### The mechanism: a single exponent field can carry denormals if you scale it
+
+The obvious substitution is `exp_checked(-|x|)` for
+`exp_narrow(-|x|.min(87.0))` — the correction needs `exp(-|x|)` *denormal*,
+a single exponent field cannot produce one, so reach for the k1/k2 split.
+That is what cost +21.3% (`instrs 100 -> 113, uOps 110 -> 127,
+BlockRT 28 -> 34, 2.449 -> 2.970 cyc/elem`).
+
+But a single field *can* produce `exp(-|x|) * 2^64`, and `2^-64` is an
+exact power of two. `k = round(-|x|*log2(e))` reaches `-152` over the
+extended domain, out of one field's `[-126, 127]` — `k + 64` does not.
+So the whole extension is `exp_narrow`'s reduction with `64` added to `k`
+and one trailing multiply, which lands the denormal with the single
+correct rounding:
+
+```
+                     instrs  uOps  BlockRT  cyc/elem  latency
+  softplus              100   110    28.00     2.449    74.11
+  softplus + exp_checked 113   127    34.00     2.970    77.61   (+21.3% / +4.7%)
+  softplus_checked      103   116    30.00     2.506    73.36   (+2.3% / -1.0%)
+```
+
+`min(105.0)` then replaces *both* `softplus`'s own `min(87.0)` and its
+correction select: past `105` the trailing multiply underflows the scaled
+field to exactly `0.0` by itself, which is the right answer there anyway
+(`ln(1+e^x)` reaches zero at `x ~ -103.97`). Net one fewer select than the
+function it extends.
+
+Verified exhaustively: `softplus_checked` is **bit-identical to
+`softplus` on all 2,237,399,042 f32 patterns with `|x| <= 87`** — a single
+field is exact there, and scaling by `2^64` and back is exact while the
+result is normal. It is 0 ulp at every integer `x` from `-88` to `-103`,
+where `softplus` scores 4.3e6 down to 1.3.
+
+### `silu` needed more than the substitution, and came out *faster*
+
+`silu` has two defects, not one. `sigmoid` saturates at `x ~ -88.72` but
+`silu(x) ~ x*e^x` carries an extra factor `|x| ~ 90`, so the true value
+survives to `x ~ -108.6`; and for `-91.8 < x < -87.68` `sigmoid` returns a
+*denormal* while `x*sigmoid(x)` is still *normal*, so the product inherits
+17-22 significand bits over a band where nothing is out of range.
+
+Both fall out of evaluating the whole quotient at the `2^64` offset —
+numerator and denominator together, so `2^-64` never appears at all:
+
+```
+  x <  0:  x*e/(1+e) = (x*e2) / (2^64 + e2)
+  x >= 0:    x/(1+e) = (x*2^64) / (2^64 + e2)      e2 = e^-|x| * 2^64
+```
+
+One select on the multiplier is the entire difference between the two
+sides. Nothing overflows: the live domain is bounded (`|x| <= 110`), and
+`|x|*e^-|x|*2^64` peaks at `6.8e18`, `|x|*2^64` at `2.0e21`.
+
+Writing it with the explicit `2^-64` multiplies instead (`(x*e2)*P64` over
+`1 + e2*P64`) is **bit-identical** — dividing by the scaled denominator is
+the same value, and division by a power of two is exact — but costs 4 more
+instrs and `BlockRT 17 -> 19`. Worth knowing: the scaled-denominator form
+is free precision *and* free ops.
+
+```
+                     instrs  uOps  BlockRT  cyc/elem  latency
+  silu                   57    60    17.00     1.407    65.02
+  silu_checked           67    71    17.00     1.466    60.97
+```
+
+**Latency -6.2%** (`mca_arms.py`: the published figure equals the
+in-domain arm, 13.00 is the saturated arm). Throughput is where the rungs
+*disagree*: instrs +17.5% and uOps +18.3%, but **Block RThroughput is
+identical at 17.00** and cyc/elem says +4.2%. Not arbitrated against
+hardware, because it does not decide anything — see below.
+
+### Why `silu_checked` is a second tier and not a replacement
+
+It does not dominate. Over the domain the two share (`|x| <= 87`, dense
+scan of every 64th bit pattern against an f64 reference):
+
+| | avg ulp | max ulp |
+|---|---|---|
+| `silu` | 0.0904 | **3.85** |
+| `silu_checked` | **0.0673** | 4.69 |
+
+The usual avg-for-max trade, and structural rather than fittable: `silu`
+evaluates `e^+|x|` and multiplies by a reciprocal, this evaluates `e^-|x|`
+and divides. They differ on 232,916,327 of 2,237,399,042 patterns
+(10.4%) by up to 7 ulp-of-result. So `silu` is the max-ulp tier and
+`silu_checked` is the average/latency/tail tier — both on the frontier,
+whatever the hardware would say about the throughput rung.
+
+`softplus_checked`/`logsigmoid_checked` are a cleaner split: bit-identical
+in-domain, so the *only* axis is throughput (+2.3%/+3.6%) against latency
+(-1.0%/+0.6%) and the tail. `softplus` stays the default on throughput.
+
+### Method notes
+
+- **The quick-fuzz max for `silu_checked` printed `4` on one run and `5`
+  on the next**, on byte-identical code. The dense scan's 4.69 is the
+  number to quote; the readme carries both.
+- **`x.max(0.0)` is not a signed-zero-safe saturation.** `silu_checked`
+  needs `-0.0` on the negative tail (the true rounding, and what `silu`
+  itself returns at `-1000`), and `x.max(-0.0)` gives it on both sides
+  while still returning `x` for `x > 110`. `(-0.0f32).max(0.0)` is `+0.0`
+  here, and Rust documents that case as *non-deterministic*, so it is not
+  something to rely on either way.
+- The saturation guard cannot be a clamp on the exp argument. Clamping
+  freezes `e2` at a constant that `x` — unbounded — multiplies straight
+  back into range (`silu(-1e30)` would return `-3.7e-26`). It has to be a
+  select on the *result*, which is `sigmoid`'s own recorded trap.
+
+### Still open, same defect, not fixed here
+
+**`logaddexp` has the identical cutoff** (on `|a-b|` rather than `|x|`)
+and nothing reports it, because `denormal_audit` covers 1-arg functions
+only. `logaddexp(-88.0, 0.0)` returns `0.0`; the true value is
+`6.054601e-39`, a representable denormal, and `edgecheck` already pins
+`logaddexp(x,0) == softplus(x)` — the identity is the reference. It bites
+only when `max(a,b)` is itself near zero, which is narrow but is exactly
+the `logsumexp` normalization case. The fix is the same six lines as
+`softplus_checked`; see IDEAS.md.
+
+Note the trap while confirming it: the obvious reference
+`(a.exp() + b.exp()).ln()` in **f64** returns `0.0` for `(0, -88)`,
+because `1 + 6e-39` is `1.0` in f64 too. The reference collapses in
+exactly the region being asked about — the `clog` result's lesson again.
+Score against `softplus_checked` (or `a + ln1p(exp(b-a))`), not that.

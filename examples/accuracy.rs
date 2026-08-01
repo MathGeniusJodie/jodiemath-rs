@@ -1272,6 +1272,16 @@ fn main() {
         let s = measure!(softplus_domain, softplus, softplus_ref);
         report("softplus (|x|<80)", &s, t0);
     }
+    if run("softplus_checked") {
+        // No |x|<80 restriction, and that is the whole point of this tier:
+        // it has no correction-term cutoff to stay clear of, so the sweep
+        // gets the entire finite line including the band softplus flushes.
+        let softplus_ref = |v: F64xN| {
+            v.simd_max(F64xN::splat(0.0)) + log1p_u10(exp_u10(-v.abs()))
+        };
+        let s = measure!(|x: f32| x.is_finite(), softplus_checked, softplus_ref);
+        report("softplus_checked", &s, t0);
+    }
     if run("logsigmoid") {
         // Same |x|<80 reasoning as softplus's own doc comment (this is
         // -softplus(-x), so the identical seam sits at the same |x|=87).
@@ -1281,6 +1291,14 @@ fn main() {
         };
         let s = measure!(logsigmoid_domain, logsigmoid, logsigmoid_ref);
         report("logsigmoid (|x|<80)", &s, t0);
+    }
+    if run("logsigmoid_checked") {
+        // Full finite line, same reasoning as softplus_checked's block.
+        let logsigmoid_ref = |v: F64xN| {
+            -((-v).simd_max(F64xN::splat(0.0)) + log1p_u10(exp_u10(-v.abs())))
+        };
+        let s = measure!(|x: f32| x.is_finite(), logsigmoid_checked, logsigmoid_ref);
+        report("logsigmoid_checked", &s, t0);
     }
     if run("logaddexp") {
         // Same |x|<80 reasoning as softplus (its own doc comment) --
@@ -1323,6 +1341,17 @@ fn main() {
         let silu_ref = |v: F64xN| v / (F64xN::splat(1.0) + exp_u10(-v));
         let s = measure!(silu_domain, silu, silu_ref);
         report("silu", &s, t0);
+    }
+    if run("silu_checked") {
+        // Full finite line, unlike `silu`'s exp(-x)-doesn't-overflow
+        // window: this tier's whole purpose is the tail outside it. The
+        // f64 reference itself overflows for `v < -709` (`exp(-v)` is
+        // `inf`, so the quotient is `-0.0`), which is the right answer
+        // there anyway -- the true f32 value has been zero since
+        // `x ~ -108.6`.
+        let silu_ref = |v: F64xN| v / (F64xN::splat(1.0) + exp_u10(-v));
+        let s = measure!(|x: f32| x.is_finite(), silu_checked, silu_ref);
+        report("silu_checked", &s, t0);
     }
     if run("softsign") {
         // `x = +-inf` excluded: same reference-side `inf/inf` indeterminate

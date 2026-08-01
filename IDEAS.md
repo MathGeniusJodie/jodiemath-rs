@@ -431,3 +431,28 @@ function's speed or accuracy directly; several unblock ideas above.
      constant in the function. Only the tail arm; the central arm still
      needs `sqrt(2) * x * P(x^2)`. Costs a duplicated tail, which is why
      it was not done when `probit` was rewritten onto `erfc_inv_half`.
+
+- **`logaddexp_checked`: the last of the four correction-term flushers.**
+  `logaddexp` has `softplus`'s exact cutoff, on `|a-b|` instead of `|x|`,
+  and `denormal_audit` structurally cannot see it -- both of that file's
+  lists are 1-arg only. Measured: `logaddexp(-88.0, 0.0)` returns `0.0`
+  where the true value is `6.054601e-39`, a representable denormal. It
+  only bites when `max(a,b)` is itself near zero, which is narrow but is
+  the `logsumexp`-normalization case exactly. The fix is the same six
+  lines that shipped as `softplus_checked` (scaled single exponent field,
+  `min(105.0)` absorbing both the old `min(87.0)` and the correction
+  select) and should price the same, ~+2.3% throughput for a slightly
+  *lower* latency -- with the reduction now written out three times, that
+  is also the point to fold it into a `macro_rules!` rather than a fourth
+  copy or a new shared private fn (the +32% precedent is the fn boundary,
+  not the macro). Reference trap on the way in: `(a.exp()+b.exp()).ln()`
+  in **f64** returns `0.0` here too, because `1 + 6e-39` is `1.0` in f64
+  as well -- score against `softplus_checked` or `a + ln1p(exp(b-a))`.
+  Numbers in graveyard.md.
+- **`denormal_audit` still has no 2-arg coverage at all.** Both of its
+  hand-maintained lists take `fn(f32) -> f32`, so `logaddexp`, `hypot`,
+  `atan2`, `powf`, `remainder` and the rest are simply absent -- and the
+  one 2-arg function anybody has checked by hand (`logaddexp`, above)
+  turned out to flush. Same "gate whose coverage is a hand-written list"
+  smell that produced the 1-arg findings; this is the next place it is
+  known to still be open.

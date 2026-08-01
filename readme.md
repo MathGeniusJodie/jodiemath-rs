@@ -63,6 +63,9 @@ cosh_throughput (in-domain)| 0.049    |     3     |  0.000  |    0
         tanh (in-domain) |    0.145   |     5     |  0.000  |    0
                  sigmoid |    0.091   |     3     | (no std sigmoid)
         softplus (|x|<80)|    0.075   |     3     | (no std softplus)
+softplus_checked (all f32)| 0.039   |     3     | (no std softplus)
+logsigmoid_checked (all f32)| 0.039 |     3     | (no std logsigmoid)
+    silu_checked (all f32)| 0.045   |     5     | (no std silu; 4.69 on a dense scan -- `silu` is 3.85, the avg/max trade in its doc)
 logaddexp (|a|,|b|<80)|    0.141   |  ~1e3-1e5, heavy-tailed (real, narrow cancellation -- see its own doc comment) | (no std logaddexp)
                   asinh |    0.034   |     2     | 
                   acosh |    0.003   |     3     |  0.000  |    1
@@ -390,6 +393,11 @@ cosh_checked        |          58.00 |             1.938
 tanh                |          85.64 |             1.731
 sigmoid             |          61.00 |             1.222
 softplus            |          74.11 |             2.449
+softplus_checked    |          73.36 |             2.506
+logsigmoid          |          75.11 |             2.604
+logsigmoid_checked  |          75.56 |             2.699
+silu                |          65.02 |             1.407
+silu_checked        |          60.97 |             1.466
 logaddexp           |          74.11 |             2.449
 asinh               |          74.49 |             4.159
 acosh               |          97.88 |             3.948
@@ -520,7 +528,8 @@ and documented-bound drift.
   hand-maintained, and both were incomplete: `softplus`/`logsigmoid`/`silu` flush their *entire* denormal
   range (16.97, 16.97 and 20.28 premature in `x`, all worse than the `sigmoid` case that prompted this
   example) and none of them was listed. Adding a function here is not optional bookkeeping -- nothing else
-  in the suite reports this.
+  in the suite reports this. All three now have a `_checked` sibling that carries the band ("never" flushes,
+  0 ulp at every integer `x` through it); the defaults keep their throughput.
 - `cargo run --release --example approx_bounds` - asserts the `_approx` tier's doc-comment error bounds
   (relative/absolute, not ulp -- that tier is deliberately outside the 0.5/2 budget).
 - `cargo run --release --example eft_contract_check` - the public EFT toolkit's exactness contracts against
