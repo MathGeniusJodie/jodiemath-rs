@@ -1,0 +1,402 @@
+#!/usr/bin/env bash
+# jm -- work coordination for several Claude Code instances on this crate.
+#
+# Each instance runs in its own git worktree (own target/, so nobody's
+# --emit=asm build clobbers anybody else's mca_target-*.s) and claims a
+# *domain* before editing: a cluster of public functions that share private
+# code, derived by tools/jm_domains.py from master's lib.rs.
+#
+# Claims live in the shared .git dir, so all worktrees see the same state
+# without anything being committed. `mkdir` is the atomic primitive -- two
+# instances racing on the same domain, one wins, no lockfile library needed.
+#
+#   jm status | claim <fn> | release [dom] | next | check | land | sync
+#   jm core claim|release | bench -- <cmd> | wt add|list|rm | gc | doctor
+set -euo pipefail
+
+REPO_MAIN=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
+    echo "jm: not in a git repository" >&2; exit 1; }
+REPO_MAIN=${REPO_MAIN%/.git}
+JM="$(git rev-parse --path-format=absolute --git-common-dir)/jm"
+CLAIMS="$JM/claims"
+LOCKS="$JM/locks"
+TOPLEVEL=$(git rev-parse --show-toplevel)
+AGENT=${JM_AGENT:-$(basename "$TOPLEVEL")}
+WT_BASE=${JM_WT_BASE:-$(dirname "$REPO_MAIN")/jodiemath-wt}
+STALE_HOURS=${JM_STALE_HOURS:-8}
+
+mkdir -p "$CLAIMS" "$LOCKS"
+
+c_red=$'\033[31m'; c_grn=$'\033[32m'; c_yel=$'\033[33m'
+c_dim=$'\033[2m'; c_bold=$'\033[1m'; c_off=$'\033[0m'
+die() { echo "${c_red}jm: $*${c_off}" >&2; exit 1; }
+note() { echo "${c_dim}$*${c_off}"; }
+
+# ---------------------------------------------------------------- domain map
+# Built from master's lib.rs, cached against master's blob hash so it is
+# regenerated exactly when master's lib.rs actually changes.
+map_path() {
+    local h
+    h=$(git -C "$REPO_MAIN" rev-parse master:src/lib.rs)
+    local out="$JM/domains-$h.json"
+    if [[ ! -s $out ]]; then
+        local tmp="$JM/.libsnap-$h.rs"
+        git -C "$REPO_MAIN" show master:src/lib.rs > "$tmp"
+        python3 "$REPO_MAIN/tools/jm_domains.py" "$tmp" > "$out.tmp" \
+            || { rm -f "$out.tmp" "$tmp"; die "domain map generation failed"; }
+        mv "$out.tmp" "$out"
+        rm -f "$tmp"
+        find "$JM" -maxdepth 1 -name 'domains-*.json' ! -name "domains-$h.json" -delete 2>/dev/null || true
+    fi
+    echo "$out"
+}
+
+# jq is not assumed to exist; python3 is already a hard dependency here.
+pyq() { python3 -c "$1" "$(map_path)" "${@:2}"; }
+
+# domain label owning a public function name (or the label itself)
+domain_of() {
+    pyq '
+import json,sys
+d=json.load(open(sys.argv[1]))["domains"]
+q=sys.argv[2]
+if q in d: print(q); raise SystemExit
+for k,v in d.items():
+    if q in v["public"] or q in v["private"]: print(k); raise SystemExit
+raise SystemExit(3)
+' "$1"
+}
+
+# ------------------------------------------------------------------- claims
+claim_owner() { [[ -f "$CLAIMS/$1/owner" ]] && cat "$CLAIMS/$1/owner"; }
+
+claim_age_h() {
+    local s; s=$(cat "$CLAIMS/$1/started" 2>/dev/null || echo 0)
+    echo $(( ($(date +%s) - s) / 3600 ))
+}
+
+cmd_claim() {
+    [[ $# -ge 1 ]] || die "usage: jm claim <function-or-domain> [more...]"
+    local ok=()
+    for q in "$@"; do
+        local dom
+        dom=$(domain_of "$q") || die "unknown function or domain: $q
+  try: jm next     (lists what is free)"
+        # mkdir is the atomic claim: it succeeds for exactly one racer.
+        if mkdir "$CLAIMS/$dom" 2>/dev/null; then
+            echo "$AGENT" > "$CLAIMS/$dom/owner"
+            date +%s > "$CLAIMS/$dom/started"
+            pyq '
+import json,sys
+d=json.load(open(sys.argv[1]))["domains"][sys.argv[2]]
+print("\n".join(d["public"]+d["private"]))
+' "$dom" > "$CLAIMS/$dom/units"
+            ok+=("$dom")
+            echo "${c_grn}claimed${c_off} ${c_bold}$dom${c_off}  ${c_dim}($AGENT)${c_off}"
+            pyq '
+import json,sys
+d=json.load(open(sys.argv[1]))["domains"][sys.argv[2]]
+print("  public : "+", ".join(d["public"]))
+if d["private"]: print("  private: "+", ".join(d["private"]))
+if d.get("calls"): print("  calls  : "+", ".join(d["calls"])+"   (their contracts; do not edit)")
+if d.get("called_by"): print("  \033[33mused by: "+", ".join(d["called_by"])+"\033[0m   (your changes move their numbers)")
+' "$dom"
+        else
+            local o; o=$(claim_owner "$dom" || echo "?")
+            if [[ $o == "$AGENT" ]]; then
+                echo "${c_dim}already yours: $dom${c_off}"; ok+=("$dom")
+            else
+                echo "${c_red}TAKEN${c_off} $dom by ${c_bold}$o${c_off} ($(claim_age_h "$dom")h ago)" >&2
+                [[ $(claim_age_h "$dom") -ge $STALE_HOURS ]] && \
+                    note "  stale (>${STALE_HOURS}h): jm gc, or jm steal $dom"
+                return 1
+            fi
+        fi
+    done
+    return 0
+}
+
+cmd_release() {
+    local doms=("$@")
+    if [[ ${#doms[@]} -eq 0 ]]; then          # release everything I hold
+        for d in "$CLAIMS"/*/; do
+            [[ -d $d ]] || continue
+            [[ $(cat "$d/owner" 2>/dev/null) == "$AGENT" ]] && doms+=("$(basename "$d")")
+        done
+    fi
+    [[ ${#doms[@]} -eq 0 ]] && { note "nothing to release"; return 0; }
+    for q in "${doms[@]}"; do
+        local dom; dom=$(domain_of "$q" 2>/dev/null || echo "$q")
+        [[ -d "$CLAIMS/$dom" ]] || { note "not claimed: $dom"; continue; }
+        local o; o=$(claim_owner "$dom" || echo "?")
+        [[ $o == "$AGENT" || ${JM_FORCE:-} == 1 ]] || die "$dom is $o's, not yours (JM_FORCE=1 to override)"
+        rm -rf "$CLAIMS/$dom"
+        echo "${c_grn}released${c_off} $dom"
+    done
+}
+
+cmd_steal() {
+    [[ $# -eq 1 ]] || die "usage: jm steal <domain>"
+    local dom; dom=$(domain_of "$1")
+    [[ -d "$CLAIMS/$dom" ]] || die "$dom is not claimed"
+    local age; age=$(claim_age_h "$dom")
+    [[ $age -ge $STALE_HOURS || ${JM_FORCE:-} == 1 ]] || \
+        die "$dom claimed ${age}h ago, under the ${STALE_HOURS}h stale cutoff (JM_FORCE=1 to override)"
+    rm -rf "$CLAIMS/$dom"; cmd_claim "$dom"
+}
+
+cmd_status() {
+    echo "${c_bold}worktrees${c_off}"
+    git -C "$REPO_MAIN" worktree list | while read -r p rest; do
+        local mark=""; [[ $p == "$TOPLEVEL" ]] && mark=" ${c_grn}<- you${c_off}"
+        echo "  $p $rest$mark"
+    done
+    echo
+    echo "${c_bold}claims${c_off}"
+    local any=0
+    for d in "$CLAIMS"/*/; do
+        [[ -d $d ]] || continue
+        any=1
+        local dom o age me=""
+        dom=$(basename "$d"); o=$(cat "$d/owner" 2>/dev/null || echo "?"); age=$(claim_age_h "$dom")
+        [[ $o == "$AGENT" ]] && me=" ${c_grn}<- you${c_off}"
+        local warn=""; [[ $age -ge $STALE_HOURS ]] && warn=" ${c_yel}STALE${c_off}"
+        printf "  %-22s %-12s %sh%s%s\n" "$dom" "$o" "$age" "$warn" "$me"
+        [[ -f "$d/note" ]] && note "      $(cat "$d/note")"
+    done
+    [[ $any == 0 ]] && note "  (none)"
+    echo
+    if [[ -d "$LOCKS/core" ]]; then
+        echo "${c_bold}core lock${c_off} held by ${c_yel}$(cat "$LOCKS/core/owner")${c_off} -- shared kernels are frozen"
+    else
+        echo "${c_bold}core lock${c_off} free"
+    fi
+}
+
+cmd_next() {
+    local n=${1:-12}
+    pyq '
+import json, os, sys
+m = json.load(open(sys.argv[1]))
+n = int(sys.argv[2])
+claims = sys.argv[3]
+taken = set(os.listdir(claims)) if os.path.isdir(claims) else set()
+free = [(k, v) for k, v in m["domains"].items() if k not in taken]
+free.sort(key=lambda kv: -kv[1]["lines"])
+print("\033[1munclaimed domains\033[0m (most code first) -- jm claim <name>")
+for k, v in free[:n]:
+    pub = ", ".join(v["public"][:6]) + (".." if len(v["public"]) > 6 else "")
+    print("  {:<20s} {:>5d} ln   {}".format(k, v["lines"], pub))
+print("\n  {} free / {} total".format(len(free), len(m["domains"])))
+' "$n" "$CLAIMS"
+}
+
+# -------------------------------------------------------------------- check
+# What does my working tree touch, and am I allowed to touch it?
+cmd_check() {
+    local base=${1:-master}
+    git -C "$TOPLEVEL" diff --quiet "$base" -- src/lib.rs && \
+        { note "no changes to src/lib.rs vs $base"; }
+    local mine="$JM/.mine.$$"; : > "$mine"
+    for d in "$CLAIMS"/*/; do
+        [[ -d $d ]] || continue
+        [[ $(cat "$d/owner" 2>/dev/null) == "$AGENT" ]] && cat "$d/units" >> "$mine"
+    done
+    local core_held=0
+    [[ -d "$LOCKS/core" && $(cat "$LOCKS/core/owner" 2>/dev/null) == "$AGENT" ]] && core_held=1
+
+    git -C "$TOPLEVEL" diff -U0 "$base" -- src/lib.rs > "$JM/.diff.$$" || true
+    local rc=0
+    pyq '
+import json,re,sys
+m=json.load(open(sys.argv[1]))
+mine=set(x.strip() for x in open(sys.argv[2]) if x.strip())
+core_held=sys.argv[4]=="1"
+core={c[2]:(c[0],c[1]) for c in m["core_ranges"]}
+owner={}
+for label,d in m["domains"].items():
+    for s,e,name in d["ranges"]: owner[name]=(label,s,e)
+# line -> unit, using post-image line numbers from the diff hunk headers
+hunks=[]
+for line in open(sys.argv[3]):
+    mm=re.match(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@", line)
+    if mm:
+        st=int(mm.group(1)); ln=int(mm.group(2) or 1)
+        if ln: hunks.append((st,st+ln-1))
+touched_dom={}; touched_core=set(); unowned=[]
+for a,b in hunks:
+    hit=False
+    for name,(label,s,e) in owner.items():
+        if not (b<s or a>e): touched_dom.setdefault(label,set()).add(name); hit=True
+    for name,(s,e) in core.items():
+        if not (b<s or a>e): touched_core.add(name); hit=True
+    if not hit: unowned.append((a,b))
+bad=False
+print("\033[1mtouched\033[0m")
+for label,names in sorted(touched_dom.items()):
+    ok = all(n in mine for n in names)
+    tag = "\033[32mOK\033[0m" if ok else "\033[31mNOT YOURS\033[0m"
+    if not ok: bad=True
+    print("  {} domain {}: {}".format(tag, label, ", ".join(sorted(names))))
+if touched_core:
+    tag = "\033[32mOK (core lock held)\033[0m" if core_held else "\033[31mCORE -- needs `jm core claim`\033[0m"
+    if not core_held: bad=True
+    print("  {}: {}".format(tag, ", ".join(sorted(touched_core))))
+    print("     \033[33mediting a core kernel moves every function that uses it;")
+    print("     re-run accuracy for the whole crate, not just your domain.\033[0m")
+if unowned:
+    print(f"  \033[33mSHARED\033[0m file regions (header/consts/tests) at lines: "
+          + ", ".join(f"{a}-{b}" for a,b in unowned[:6]))
+if not touched_dom and not touched_core and not unowned: print("  (nothing in src/lib.rs)")
+raise SystemExit(1 if bad else 0)
+' "$mine" "$JM/.diff.$$" "$core_held" || rc=$?
+    rm -f "$mine" "$JM/.diff.$$"
+
+    # shared harness files: no runtime interference (separate target dirs),
+    # but they are the usual source of rebase conflicts.
+    local shared
+    shared=$(git -C "$TOPLEVEL" diff --name-only "$base" -- examples IDEAS.md readme.md graveyard.md | tr '\n' ' ')
+    [[ -n ${shared// /} ]] && echo "${c_yel}shared files touched:${c_off} $shared ${c_dim}(expect rebase conflicts; keep edits minimal)${c_off}"
+    [[ $rc -ne 0 ]] && echo "${c_red}check FAILED -- claim the domain or drop the edit${c_off}" >&2
+    return $rc
+}
+
+# --------------------------------------------------------------- core lock
+cmd_core() {
+    case ${1:-status} in
+    claim)
+        if mkdir "$LOCKS/core" 2>/dev/null; then
+            echo "$AGENT" > "$LOCKS/core/owner"; date +%s > "$LOCKS/core/started"
+            echo "${c_grn}core lock acquired${c_off} -- you may edit shared kernels"
+            pyq 'import json,sys; print("  "+", ".join(json.load(open(sys.argv[1]))["core"]))'
+            echo "${c_yel}  every function using these moves: run the full accuracy sweep before landing${c_off}"
+        else
+            die "core lock held by $(cat "$LOCKS/core/owner")"
+        fi ;;
+    release)
+        [[ -d "$LOCKS/core" ]] || { note "core lock not held"; return 0; }
+        [[ $(cat "$LOCKS/core/owner") == "$AGENT" || ${JM_FORCE:-} == 1 ]] || die "not yours"
+        rm -rf "$LOCKS/core"; echo "${c_grn}core lock released${c_off}" ;;
+    *)
+        if [[ -d "$LOCKS/core" ]]; then echo "held by $(cat "$LOCKS/core/owner")"
+        else echo "free"; fi
+        pyq 'import json,sys; print("core kernels: "+", ".join(json.load(open(sys.argv[1]))["core"]))' ;;
+    esac
+}
+
+# ------------------------------------------------------------------- bench
+# Wall-clock numbers are meaningless when two instances are compiling. mca is
+# static analysis and needs no lock, but timing runs do.
+cmd_bench() {
+    [[ $# -ge 1 ]] || die "usage: jm bench -- <command>"
+    [[ $1 == -- ]] && shift
+    note "waiting for the bench lock (exclusive machine time)..."
+    exec 9>"$LOCKS/bench.lock"
+    flock 9
+    echo "${c_grn}bench lock held${c_off} -- $*"
+    "$@"
+}
+
+# -------------------------------------------------------------- sync / land
+cmd_sync() {
+    git -C "$TOPLEVEL" diff --quiet && git -C "$TOPLEVEL" diff --cached --quiet \
+        || die "working tree dirty -- commit first, then jm sync"
+    git -C "$TOPLEVEL" rebase master
+    echo "${c_grn}rebased onto master${c_off}"
+}
+
+cmd_land() {
+    local br; br=$(git -C "$TOPLEVEL" rev-parse --abbrev-ref HEAD)
+    [[ $br != master ]] || die "you are on master -- land is for worktree branches"
+    git -C "$TOPLEVEL" diff --quiet && git -C "$TOPLEVEL" diff --cached --quiet \
+        || die "working tree dirty -- commit your work first"
+    git -C "$TOPLEVEL" rev-parse --verify -q "$br" >/dev/null || die "no branch"
+
+    exec 9>"$LOCKS/land.lock"
+    note "waiting for the land lock..."
+    flock 9
+
+    git -C "$TOPLEVEL" fetch . master:refs/remotes/jmlocal/master 2>/dev/null || true
+    if ! git -C "$TOPLEVEL" rebase master; then
+        echo "${c_red}rebase hit conflicts${c_off} -- resolve, 'git rebase --continue', then jm land again" >&2
+        exit 1
+    fi
+    git -C "$REPO_MAIN" diff --quiet && git -C "$REPO_MAIN" diff --cached --quiet \
+        || die "the main checkout ($REPO_MAIN) has uncommitted changes; master cannot advance"
+    git -C "$REPO_MAIN" merge --ff-only "$br" || die "ff-merge failed"
+    echo "${c_grn}landed${c_off} $br -> master  ($(git -C "$REPO_MAIN" rev-parse --short master))"
+    git -C "$TOPLEVEL" rebase master >/dev/null 2>&1 || true
+    note "master is now $(git -C "$REPO_MAIN" log -1 --oneline master)"
+}
+
+# --------------------------------------------------------------- worktrees
+cmd_wt() {
+    case ${1:-list} in
+    add)
+        local name=${2:-}
+        [[ -n $name ]] || { # auto-name: w1, w2, ...
+            local i=1; while [[ -e "$WT_BASE/w$i" ]]; do i=$((i+1)); done; name="w$i"; }
+        mkdir -p "$WT_BASE"
+        git -C "$REPO_MAIN" worktree add -b "wt/$name" "$WT_BASE/$name" master
+        echo "${c_grn}worktree${c_off} $WT_BASE/$name  ${c_dim}(branch wt/$name)${c_off}"
+        echo "  cd $WT_BASE/$name && claude" ;;
+    rm)
+        local name=${2:?usage: jm wt rm <name>}
+        JM_AGENT=$name cmd_release || true
+        git -C "$REPO_MAIN" worktree remove "$WT_BASE/$name" --force
+        git -C "$REPO_MAIN" branch -D "wt/$name" 2>/dev/null || true
+        echo "${c_grn}removed${c_off} $name" ;;
+    *) git -C "$REPO_MAIN" worktree list ;;
+    esac
+}
+
+cmd_gc() {
+    local n=0
+    for d in "$CLAIMS"/*/; do
+        [[ -d $d ]] || continue
+        local dom; dom=$(basename "$d")
+        if [[ $(claim_age_h "$dom") -ge $STALE_HOURS ]]; then
+            echo "reaping $dom (owner $(cat "$d/owner" 2>/dev/null), $(claim_age_h "$dom")h)"
+            rm -rf "$d"; n=$((n+1))
+        fi
+    done
+    note "$n stale claim(s) reaped"
+}
+
+cmd_doctor() {
+    echo "${c_bold}jm doctor${c_off}"
+    echo "  main repo : $REPO_MAIN"
+    echo "  this tree : $TOPLEVEL  (agent: ${c_bold}$AGENT${c_off})"
+    echo "  state dir : $JM"
+    echo "  domain map: $(map_path)"
+    local t="$TOPLEVEL/target"
+    if [[ -n ${CARGO_TARGET_DIR:-} ]]; then
+        echo "  ${c_red}CARGO_TARGET_DIR is set ($CARGO_TARGET_DIR)${c_off}"
+        echo "    ${c_yel}unset it: a shared target dir makes every instance overwrite the${c_off}"
+        echo "    ${c_yel}same mca_target-*.s, which silently corrupts asm comparisons.${c_off}"
+    else
+        echo "  target dir: $t ${c_grn}(per-worktree, correct)${c_off}"
+    fi
+    echo "  disk free : $(df -h "$TOPLEVEL" | awk 'NR==2{print $4" ("$5" used)"}')"
+    echo "  cores     : $(nproc)   ${c_dim}accuracy.rs uses half; >2 concurrent sweeps will thrash${c_off}"
+    command -v flock >/dev/null || echo "  ${c_red}flock missing -- bench/land locks will not work${c_off}"
+}
+
+case ${1:-status} in
+    claim)   shift; cmd_claim "$@" ;;
+    release) shift; cmd_release "$@" ;;
+    steal)   shift; cmd_steal "$@" ;;
+    status)  shift; cmd_status "$@" ;;
+    next)    shift; cmd_next "$@" ;;
+    check)   shift; cmd_check "$@" ;;
+    core)    shift; cmd_core "$@" ;;
+    bench)   shift; cmd_bench "$@" ;;
+    sync)    shift; cmd_sync "$@" ;;
+    land)    shift; cmd_land "$@" ;;
+    wt)      shift; cmd_wt "$@" ;;
+    gc)      shift; cmd_gc "$@" ;;
+    doctor)  shift; cmd_doctor "$@" ;;
+    domains) shift; cat "$(map_path)" ;;
+    -h|--help|help) sed -n '2,20p' "$0" | sed 's/^# \?//' ;;
+    *) die "unknown command: $1  (jm help)" ;;
+esac

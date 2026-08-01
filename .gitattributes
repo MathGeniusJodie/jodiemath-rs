@@ -1,0 +1,2 @@
+# Append-only log: two instances adding different entries must not conflict.
+graveyard.md merge=union
