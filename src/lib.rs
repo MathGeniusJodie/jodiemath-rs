@@ -2929,25 +2929,61 @@ pub fn cosh_checked(x: f32) -> f32 {
     ep + en
 }
 
+// coshm1's own poly: `Q(u) = (cosh(sqrt(u)) - 1 - u/2) / u^2` on
+// `u = x^2` in `[0, 4]`, i.e. the series with *both* leading terms peeled
+// off, not just the constant. Minimax by LP (HiGHS) weighted by
+// `u^2/(cosh(sqrt(u))-1)`, the factor that turns an absolute error here
+// into the result's relative error. Degree 3, residual 0.177 ulp: degree 4
+// halves that (0.088) and measures *identically* end to end, because what
+// actually binds is the final `fma`'s own rounding plus `u = x*x`'s, not
+// the fit -- so the extra term was dropped again.
+const COSHM1_Q_COEFFS: [f32; 4] = [0.04166663, 0.0013889787, 2.4732362e-5, 2.963389e-7];
+
 /// cosh(x) - 1 (backlog idea #144), the catenary/relativity primitive
 /// where naive `cosh(x)-1` cancels badly for small `x` (`cosh(x)` is
 /// `~1` there, the same class of cancellation `expm1`/`log1p` exist to
-/// avoid). `cosh(x)-1 = 2*sinh(x/2)^2` (half-angle identity) sidesteps
-/// it entirely -- `sinh_checked` already has its own small-`x` branch
-/// with no cancellation of its own, so squaring its (accurate, small)
-/// output never reintroduces the problem. Built on `sinh_checked` (not
-/// plain `sinh`) for the same full-range correctness reason `norm_pdf`
-/// uses `exp_checked`: `coshm1` grows as fast as `cosh` itself, so a
-/// real caller can easily reach the unchecked tier's domain edge.
-/// Squaring roughly doubles `sinh_checked`'s own relative error (avg
-/// ulp 0.0429 -> 0.0864, max 5 -> 12, exhaustive) -- expected from the
-/// identity itself, not a new defect, and still far more accurate than
-/// the naive form it replaces (which loses *all* precision, not just a
-/// factor of 2, for small `x`).
+/// avoid). Two branches, each avoiding the *other*'s error mechanism:
+///
+/// - `|x| < 2`: `x^2/2 + (x^2)^2 * Q(x^2)`, with `x*(0.5*x)` -- a single
+///   correctly-rounded multiply, exact all the way into the denormal
+///   floor -- carrying the leading term. Peeling `x^2/2` out of the
+///   polynomial is what makes this branch cheap *and* accurate: the
+///   whole poly reaches the answer scaled by `u^2`, worth 28% of it at
+///   `x = 2` and vanishing as `x -> 0`, so its own roundings are
+///   demoted everywhere the cancellation would have mattered.
+/// - `|x| >= 2`: `cosh_checked(x) - 1.0` directly. Subtracting 1 from a
+///   value `>= 1` is *exact* in binary floating point (the result's
+///   exponent drops by at most one, so `1` is always on the coarser
+///   grid), so this branch is exactly as accurate as `cosh_checked`
+///   itself, up to the conditioning factor `cosh/(cosh-1)` -- 1.36 at
+///   `x = 2` and 1.0007 by `x = 4`, which is why the handover sits at
+///   2 rather than lower. `cosh_checked` rather than plain `cosh` for
+///   the same full-range reason `norm_pdf` uses `exp_checked`: `coshm1`
+///   grows as fast as `cosh`, so a real caller reaches the unchecked
+///   tier's domain edge easily.
+///
+/// The half-angle identity `2*sinh(x/2)^2` this replaces had no
+/// cancellation either, but squaring doubles the relative error of
+/// `sinh_checked` by construction -- verified rather than assumed, by
+/// scoring `2 * relerr(sinh_checked(x/2))` per octave against the real
+/// end-to-end error and finding it matched to three digits at every one.
 #[inline(always)]
 pub fn coshm1(x: f32) -> f32 {
-    let s = sinh_checked(x * 0.5);
-    2.0 * s * s
+    let u = x * x;
+    let u2 = u * u;
+    let c = COSHM1_Q_COEFFS;
+    let a = fma(c[1], u, c[0]);
+    let b = fma(c[3], u, c[2]);
+    let q = fma(b, u2, a);
+    // x*(0.5*x), not 0.5*(x*x): the halved factor keeps the leading term
+    // a single rounding even where x*x itself would land denormal.
+    let small = fma(u2, q, x * (0.5 * x));
+    let big = cosh_checked(x) - 1.0;
+    if x.abs() < 2.0 {
+        small
+    } else {
+        big
+    }
 }
 
 /// Throughput-tier sinh: computes `exp(-x)` as `1.0 / exp(x)` instead of a

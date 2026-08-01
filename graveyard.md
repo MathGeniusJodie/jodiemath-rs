@@ -4985,3 +4985,71 @@ a two-term split of `2.4*e` and is a different, non-free change.
     helper has already absorbed essentially all of them -- these two
     subtractions were the leftovers, presumably because `k - p*q` does
     not *look* like an fma the way `p*q + k` does.
+## `coshm1`: the half-angle identity's error doubling, priced and replaced
+
+`coshm1` was `2*sinh_checked(x/2)^2` and sat at **max 10 ulp** where every
+other member of the hyperbolic family is 4. Its own doc comment blamed the
+identity ("squaring roughly doubles `sinh_checked`'s relative error"), which
+is the shape of claim this crate has repeatedly found to be false -- so it
+was checked rather than inherited. Here it is **true**: scoring the
+predictor `2 * relerr(sinh_checked(x/2))` in ulp of the result, per octave,
+against the real end-to-end error reproduces it to three digits at every
+octave from `2^-14` to `2^6` (e.g. `[2,4)`: predictor 1.6581 avg / 9 max,
+actual 1.6587 / 9). So the identity was the whole story, and the fix had to
+be a different identity, not a better `sinh`.
+
+Replaced by two branches, each avoiding the other's error mechanism:
+
+- **`|x| >= 2`: `cosh_checked(x) - 1.0`.** The naive form's cancellation is
+  what the half-angle identity existed to dodge, but there is no
+  cancellation out here -- and better, **subtracting 1 from a value `>= 1`
+  is exact in binary floating point** (the result's exponent falls by at
+  most one, so `1` always sits on the coarser grid). So this branch is
+  exactly `cosh_checked`'s own error times the conditioning factor
+  `cosh/(cosh-1)`: 1.36 at `x = 2`, 1.0007 by `x = 4`. Measured per octave:
+  0.81 avg / 4 max on `[2,4)`, 0.72 / 3 above -- against the identity's
+  1.66 / 9 and 1.52 / 9. Below `|x| = 2` the factor takes over fast (7 max
+  on `[1,2)`, 18 on `[0.5,1)`, 10^8 by `2^-12`), which is what sets the
+  handover at 2 and not lower.
+- **`|x| < 2`: `x*(0.5*x) + (x^2)^2 * Q(x^2)`**, `Q` a degree-3 minimax
+  (HiGHS LP) of `(cosh(sqrt(u)) - 1 - u/2)/u^2` on `u` in `[0,4]`, weighted
+  by `u^2/(cosh(sqrt(u))-1)` so the fit minimises the *result*'s relative
+  error. Both leading terms are peeled, not just the constant: the poly
+  reaches the answer scaled by `u^2`, which is 28% of it at `x = 2` and
+  vanishes as `x -> 0`. Result: **max 1 ulp** over the whole range
+  `[2^-11, 1)` and 2 on `[1,2)`, against the identity's 3-7.
+
+Two details worth keeping:
+
+- **`x*(0.5*x)`, not `0.5*(x*x)`.** They differ only for results below the
+  denormal floor, and there the first is one rounding and the second is
+  two: `x*x` lands on the `2^e` denormal grid, and halving a denormal grid
+  value is *not* exact (the halves are multiples of `2^-150`, unrepresentable).
+  This is also exactly what the old `2.0*s*s` did -- `(2*s)*s = x*(x/2)` --
+  so the tiny-`x` octaves stay bit-comparable rather than regressing.
+- **Degree 4 was fitted, measured, and dropped.** Its residual is half
+  degree 3's (0.088 vs 0.177 ulp) and it measures *identically* end to end
+  (avg 0.0287, max 4, and per-octave to four digits), because the binding
+  constraint is the final `fma`'s rounding plus `u = x*x`'s, not the fit.
+  The "drop a term where the branch's max sits under the function's binding
+  max" lever, worth 3 instructions.
+
+**Harness (100M fuzz): avg 0.0832 -> 0.0287, max 10 -> 4.** Confirmed
+exhaustively on the shipped version (all 2^32 patterns): avg **0.0287**,
+max **4**, worst `x = 2.1662018`. (The old body's own recorded exhaustive
+figures were 0.0864 / 12, so the honest before/after is either fuzz-to-fuzz
+or 12 -> 4 exhaustive-to-exhaustive; the fuzz's 10 is it being optimistic
+about a max, as usual.) The remaining max is `cosh_checked`'s own 4, reached
+just past the handover -- the floor for any formulation that goes through
+`cosh`, and not something `coshm1` can fix from inside its own domain.
+
+Cost is real and was not clawed back: `coshm1_throughput` **97 -> 108**
+instructions (+11.3%), `coshm1_latency` 3468 -> 3600 (+3.8%), and no other
+region in the file moved by one instruction. That is the price of evaluating
+both arms of the select where the old body evaluated one `sinh_checked`.
+Taken as the single shipped version rather than a `_fast`/`_accurate` split:
+11% is well under the ~13% spread that justifies the existing `sinh` tiers,
+and 10 max ulp in a family where everything else is 4 was an outlier, not a
+pareto point. Note `coshm1`'s **mca throughput row is mispriced in absolute
+terms** (documented above), so instruction and opcode counts are the measure
+here, not cycles.
