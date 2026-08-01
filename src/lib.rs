@@ -4417,18 +4417,59 @@ pub fn erfinv(x: f32) -> f32 {
     if x.abs() == 1.0 { f32::INFINITY.copysign(x) } else { normal }
 }
 
+// `norm_cdf`'s counterpart to `ERFC_XS_CLAMP`, in `x`'s units rather than
+// `x/sqrt(2)`'s. Same two conditions, and they are asserted the same way:
+// `x^2/2` must stay inside `exp_reduce!`'s valid range, and must already
+// be far enough below zero that `e^-x^2/2` rounds to exactly 0 -- the
+// true `norm_cdf` has reached exactly 0.0f32 by `x ~ -14.2`.
+const NORM_CDF_XS_CLAMP: f32 = 14.44;
+const _: () =
+    assert!((NORM_CDF_XS_CLAMP as f64) * (NORM_CDF_XS_CLAMP as f64) * 0.5 <= -(EXP_CLAMP_LO as f64));
+const _: () =
+    assert!((NORM_CDF_XS_CLAMP as f64) * (NORM_CDF_XS_CLAMP as f64) * 0.5 > 103.97207708399179);
+
 /// Standard normal CDF, `Φ(x) = 0.5*erfc(-x/sqrt(2))` (backlog idea
-/// #67): a thin composite over the already-correctly-rounded, full-range
-/// `erfc` (itself saturating cleanly to `0`/`2` well before `x=+-inf`),
-/// so this inherits `0`/`1` saturation for free at both tails with no
-/// extra special-casing. Also inherits `erfc`'s own documented tail
-/// accuracy as-is (exhaustive max ulp 295, worst `x≈-12.79` -- maps to
-/// `erfc`'s own argument near its `9`-ish region, the same weaker-tail
-/// behavior `erfc`'s own doc/IDEAS.md history already documents): a thin
-/// composite for API convenience, not a new, independently-tuned fit.
+/// #67). Written out as `erfcx(|x|/sqrt(2)) * e^(-x^2/2)` rather than
+/// composed on top of [`erfc`], because the composition's *argument* is
+/// what limits it: `fl(x/sqrt(2))` carries a relative error of `2^-24`,
+/// and `erfc`'s dominant `e^(-z^2)` factor amplifies that by `2*z^2`, so
+/// a thin `0.5*erfc(-x*FRAC_1_SQRT_2)` reaches ~190 ulp near `x = -12.8`
+/// no matter how accurate `erfc` itself is. Squaring `x` *before*
+/// dividing by two removes the amplified rounding entirely -- `x^2/2` is
+/// one rounding of `x^2` plus an exact halving -- and `pe` compensates
+/// even that one. `erfcx` keeps its own argument in `x/sqrt(2)` units,
+/// where the `2^-24` is harmless: `d(ln erfcx)/dz ~ -1/z`, so it stays a
+/// `2^-24` relative error instead of being amplified.
+///
+/// The tail reflection is `erfc`'s own trick, one power of two down:
+/// `w` shifts `x`'s sign bit into the exponent field, so the two arms
+/// are `y + 0` and `-y + 2`, and the outer `0.5` (exact) turns those
+/// into `Φ = y/2` and `Φ = 1 - y/2`. Saturation to exactly `0`/`1` at
+/// both tails still comes for free.
 #[inline(always)]
 pub fn norm_cdf(x: f32) -> f32 {
-    0.5 * erfc(-x * std::f32::consts::FRAC_1_SQRT_2)
+    let xa = x.abs();
+    // `erfcx_pos`, not `erfcx`: the argument is an absolute value, so
+    // erfcx's own x<0 arm is dead, and LLVM does not prove that -- taking
+    // the public wrapper left a whole second `exp_reduce!` (two
+    // `exp2_field_split`s in the asm) in the region. x/sqrt(2) is formed
+    // here and nowhere else, and erfcx is well-conditioned in it.
+    let r = erfcx_pos(xa * std::f32::consts::FRAC_1_SQRT_2);
+    let xs = if xa > NORM_CDF_XS_CLAMP { NORM_CDF_XS_CLAMP } else { xa };
+    // p + pe == xs^2/2 exactly: the halving is exact, so this is just
+    // `two_prod`'s error term on a single multiply. The clamp above is
+    // what keeps `pe` from becoming `inf*inf - inf == NaN` at x = +-inf.
+    let h = 0.5 * xs;
+    let p = h * xs;
+    let pe = fma(h, xs, -p);
+    let e = exp_reduce!(-p);
+    let y = e * fma(-r, pe, r);
+    // `-x` as a sign carrier only (Φ(x) uses erfc(-x/sqrt(2))), so the
+    // negation is a bit flip and stays exact at +-0.0: x = +0.0 takes the
+    // `1 - y/2` arm and x = -0.0 the `y/2` arm, and both are exactly 0.5.
+    let nx = -x;
+    let w = f32::from_bits((nx.to_bits() >> 1) & 0x4000_0000);
+    0.5 * (mulsign(y, nx) + w)
 }
 
 /// Inverse of `erfc` (backlog idea #139): `erfc(z) = 1 - erf(z)`, so
@@ -4456,18 +4497,29 @@ pub fn probit(p: f32) -> f32 {
 }
 
 /// Standard normal PDF, `φ(x) = exp(-x^2/2)/sqrt(2*pi)` (backlog idea
-/// #67): routes through `exp_checked` (not the unchecked `exp`) since
-/// `-x^2/2` easily leaves `exp`'s own `[-87.3,88.7)` domain for
-/// perfectly ordinary `x` (e.g. `|x|>=14` already overflows it) --
-/// `exp_checked` saturates correctly to exactly `0.0` in the tails
-/// instead of returning garbage. Exhaustive max ulp 67 (worst `x≈13.04`)
-/// sits in `exp_checked`'s own underflow-adjacent region, the same
-/// class of tail-relative-error growth any exponential shows approaching
-/// zero -- inherited, not a new defect from this composite.
+/// #67). The exponent is formed as a compensated square: `-0.5*x*x` is a
+/// single rounding of magnitude `ulp(x^2/2)/2`, but it lands in an
+/// *exponent*, where an absolute error `d` is a relative error `d` in
+/// the result -- so at `|x| ~ 13` (`x^2/2 ~ 85`) that one rounding is
+/// already ~70 ulp on its own, which is exactly where the naive form's
+/// max sat. `p + pe == xs^2/2` exactly, and `fma(-pe, e, e)` applies
+/// `e^-pe ~ 1 - pe` to put the missing part back.
+///
+/// The clamp is what keeps `pe` finite (`inf*inf - inf` is `NaN`), and
+/// is placed where `e^-p` has already rounded to exactly 0, so it is a
+/// no-op on the value. `exp_reduce!` rather than `exp_checked` for the
+/// same reason [`erfc`] uses it: the clamp above already proves the
+/// argument is in range, asserted next to the constant.
 #[inline(always)]
 pub fn norm_pdf(x: f32) -> f32 {
     const INV_SQRT_2PI: f32 = 0.3989422804014327;
-    INV_SQRT_2PI * exp_checked(-0.5 * x * x)
+    let xa = x.abs();
+    let xs = if xa > NORM_CDF_XS_CLAMP { NORM_CDF_XS_CLAMP } else { xa };
+    let h = 0.5 * xs;
+    let p = h * xs;
+    let pe = fma(h, xs, -p);
+    let e = exp_reduce!(-p);
+    INV_SQRT_2PI * fma(-pe, e, e)
 }
 
 // dawson's central branch (backlog idea #138): `x*P(u)/Q(u)`, `u=x^2`,

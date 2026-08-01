@@ -4497,3 +4497,54 @@ Three details that are load-bearing, not incidental:
 `norm_cdf` (186) and `norm_pdf` (65) are the same defect and are open --
 `norm_pdf`'s is `-0.5*x*x`, whose rounding `exp` amplifies by `|x^2/2|`
 (~85 at `x = 13`), fixable with `two_prod(x,x)` and a `(1 - 0.5*e)` factor.
+
+---
+
+## `norm_cdf`/`norm_pdf`: the composite's *argument* was the whole error
+
+Both were thin composites whose max ulp had nothing to do with the
+primitive they composed. Shipped 2026-08-01; exhaustive `norm_cdf`
+**295 -> 8**, `norm_pdf` **67 -> 4**.
+
+- **The screen, worth reusing on any composite:** price the rounding of
+  the *argument* through the outer function's own log-derivative before
+  touching anything else. `norm_cdf(x) = 0.5*erfc(-x/sqrt(2))` rounds
+  `x/sqrt(2)` to `2^-24` relative; `erfc`'s dominant `e^(-z^2)` factor
+  turns that into `2*z^2 * 2^-24` relative on the result, which at
+  `x = -12.8` (`z^2 = 80`) is ~160 ulp on its own. Measured max was 188.
+  `norm_pdf`'s `-0.5*x*x` is one rounding of magnitude `ulp(x^2/2)/2`
+  landing *in an exponent*, i.e. that many ulp directly: ~70 at
+  `|x| ~ 13`, measured 65. In both cases **no amount of work on `erfc`
+  or `exp` could have moved the number** -- and `erfc` had just been
+  taken to 7 max ulp, which is exactly why this looked like a mystery.
+- **The fix is to move the rounding, not to compensate it.** Square `x`
+  first and halve (exact), instead of halving/dividing first and then
+  squaring -- the same "order of operations decides the error, not the
+  formula" shape as `tanpi`'s subtract-before-scale. `erfcx` keeps the
+  `x/sqrt(2)` argument, where `d(ln erfcx)/dz ~ -1/z` leaves it a plain
+  `2^-24`. The residual `pe = fma(h, xs, -p)` then compensates the one
+  remaining rounding.
+- **Cost, and it is nearly free.** `norm_cdf` latency 71.63 -> 70.08,
+  Block RThroughput 41 -> 42 (+2.4%); `norm_pdf` latency flat, RTh
+  23 -> 24 (+4.3%). Note mca's *throughput column* claimed `norm_cdf`
+  -8.6% while instructions (132 -> 135), uOps (+3.3%) and RThroughput
+  (+2.4%) all said "slightly up" -- another instance of the column being
+  the unreliable one, this time optimistic rather than pessimistic.
+- **`erfcx` vs `erfcx_pos`, a real 37% trap.** Writing the first version
+  against the public `erfcx` cost **+37.6%** throughput (132 -> 198
+  instructions, `vpslld` 4 -> 8 = *two* `exp2_field_split`s). `erfcx`'s
+  `x < 0` arm computes a whole second `exp_reduce!`, and LLVM does not
+  prove it dead even though the argument is literally `x.abs() * c`.
+  Calling `erfcx_pos` directly recovered all of it. Generalises: when a
+  public wrapper's other arm contains an `exp`/`log`/division, check the
+  opcode histogram for a doubled expensive op before accepting its cost.
+
+### Tooling note: `jm check` false-positives on any net insertion
+
+`cmd_check` matches **post-image** diff hunk line numbers against
+function ranges generated from **master's** `lib.rs`. An edit that adds
+lines therefore reports every domain that follows it in the file. This
+change (+52 net lines, confined to `norm_cdf`/`norm_pdf`) reported
+`dawson`, `erfc_inv` and `probit` as "NOT YOURS". Verify by checking
+which lines the diff *removes* -- those are in pre-image coordinates and
+are not shifted.
