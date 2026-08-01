@@ -4898,6 +4898,100 @@ fn erfinv_tail_poly(w: f32) -> f32 {
     fma(c[8], w4 * w4, fma(r1, w4, r0))
 }
 
+// erfinv's *far*-tail branch, a poly in `t = sqrt(w) - 7`. Reachable only
+// from `erfc_inv`/`probit`, which build `w = -ln(1-x^2)` out of their own
+// argument instead of out of `x`, and so reach `w` up to ~102.6 -- far
+// past the `w <= 15.9424` that any 24-bit `x` can encode, which is all
+// `erfinv_tail_poly` is fitted for.
+//
+// Minimax (LP) fit of `erfinv/sqrt(w)` against `sqrt(w)` over `w` in
+// `[15.92, 102.8]`. The variable is `sqrt(w)`, not `w`, because
+// `erfinv/sqrt(w)` approaches 1 with a `ln(w)/w` tail that no degree-7
+// poly in `w` can follow across a 6.4x range (1644 ulp idealized, against
+// 2.0 for the same degree in `sqrt(w)`). `sqrt(w) - 7` is *exact* for
+// every `sqrt(w)` this branch sees -- both binades in `[4, 10.13]` leave
+// enough significand for a result up to 3.15 -- so the recentring costs
+// no accuracy and buys the Estrin combine its conditioning back.
+//
+// A poly in `1/sqrt(w)` fits ~8x tighter still (0.37 ulp at one degree
+// lower), and is not used: the reciprocal is a `vdivps` on the divider
+// port for a fit that is already 5x under this chain's binding term.
+#[inline(always)]
+fn erfinv_far_poly(t: f32) -> f32 {
+    let c: [f32; 8] = [
+        0.9812885,
+        0.0039011878,
+        -0.0006304676,
+        9.076141e-5,
+        -1.21382e-5,
+        1.563816e-6,
+        -1.7515987e-7,
+        1.0700608e-8,
+    ];
+    let t2 = t * t;
+    let t4 = t2 * t2;
+    let l0 = fma(c[1], t, c[0]);
+    let l1 = fma(c[3], t, c[2]);
+    let l2 = fma(c[5], t, c[4]);
+    let l3 = fma(c[7], t, c[6]);
+    let r0 = fma(l1, t2, l0);
+    let r1 = fma(l3, t2, l2);
+    fma(r1, t4, r0)
+}
+
+// Where `erfc_inv_half`'s tail hands over from `erfinv_tail_poly` to
+// `erfinv_far_poly`: the largest `w` a 24-bit `erfinv` argument can
+// produce is `-ln(1 - x_max^2) = 15.9424`, so the two polys split exactly
+// where `erfinv`'s own reachable range stops and `erfc_inv`/`probit`'s
+// extra reach begins. Keeping the split there is what leaves
+// `erfinv_tail_poly` -- and `erfinv` itself -- untouched by this.
+const ERFC_INV_W_FAR: f32 = 16.0;
+
+// `|erfc_inv(n)|` for `n` in `(0, 1]`, the half both erfc_inv and probit
+// reduce to, and the reason neither is written as `erfinv(1-y)` any more.
+//
+// The point is `w`. erfinv's tail needs `w = -ln(1-x^2)`, and going
+// through erfinv means first forming `x = 1-n` (or `2p-1`), which for
+// small `n` sits just under `1` where `ulp` is `2^-24` -- discarding
+// `log2(1/n)` bits of the argument *before* the tail amplifies what is
+// left by `exp(erfinv^2)`. Past `n = 2^-24` there is nothing left at all:
+// `1-n` is exactly `1.0`, and the old erfc_inv/probit returned `+-inf`
+// for every input below that -- ~80% of the f32 bit patterns in their
+// domain, where the true answer is a perfectly ordinary 4 to 10.
+//
+// Built from `n`, the cancellation simply is not there:
+// `1 - x^2 = (1-x)(1+x) = n*(2-n)`. `2n` is an exact scaling and
+// `fma(-n, n, 2n)` is one rounding of the whole product, so `w` carries a
+// single `2^-25` relative error at any `n`, denormals included. The
+// central branch still wants `x` itself, and there `1-n` is harmless --
+// `n >= 0.3`, so at most one bit goes.
+#[inline(always)]
+fn erfc_inv_half(n: f32) -> f32 {
+    let x = 1.0 - n;
+    let central = x * erfinv_central_poly(x * x);
+    let s = fma(-n, n, n + n);
+    // `denormal_rescale!` and nothing else from `log_family_wrapper!`:
+    // `s` reaches down to `2 * f32::MIN_POSITIVE_SUBNORMAL` for the
+    // smallest `n`, so the rescale is live, but the zero/negative/inf/NaN
+    // arms are all dead here -- the `n > 0.0` select below already owns
+    // every input that could reach them ("the guard is the licence").
+    let (ss, koff) = denormal_rescale!(s);
+    let w = -ln_normal(ss, koff);
+    let v = w.sqrt();
+    let q = if w > ERFC_INV_W_FAR {
+        erfinv_far_poly(v - 7.0)
+    } else {
+        erfinv_tail_poly(w)
+    };
+    let mag = if x <= 0.7 { central } else { v * q };
+    // `n == 0` is the pole and `n < 0` (with NaN) is a domain error. Both
+    // have to be pinned rather than left to fall out: `s == 0` puts
+    // `ln_normal` off its own positive-normal contract, and it returns a
+    // large finite number there instead of the `+inf` the pole needs.
+    let edge = if n == 0.0 { f32::INFINITY } else { f32::NAN };
+    if n > 0.0 { mag } else { edge }
+}
+
 /// Inverse error function (backlog idea #66): the sampling/ML staple
 /// (inverse-CDF / Box-Muller-style transforms build on this). Two
 /// branches, same shape as this crate's other `erf`/`erfc` splits:
@@ -5006,28 +5100,40 @@ pub fn norm_cdf(x: f32) -> f32 {
     0.5 * (mulsign(y, nx) + w)
 }
 
-/// Inverse of `erfc` (backlog idea #139): `erfc(z) = 1 - erf(z)`, so
-/// `erfc_inv(y) = erfinv(1 - y)` directly -- `1 - y` needs no
-/// cancellation-safe handling the way `erfinv`'s own `w` does, since
-/// `erfc_inv`'s intended use (small tail-probability `y` near `0`) lands
-/// `1-y` close to `1`, already `erfinv`'s own well-conditioned regime
-/// (Sterbenz-exact subtraction of two close, same-magnitude values, not
-/// the "large cancellation" case that needs a dedicated correction).
+/// Inverse of `erfc` (backlog idea #139). `erfc` is odd about `y = 1`
+/// (`erfc(-z) = 2 - erfc(z)`), so the whole function is one half plus a
+/// reflection: `n = min(y, 2-y)` lands in `(0, 1]` -- exactly, since
+/// `2-y` is Sterbenz-exact for `y >= 1` -- and the sign comes from
+/// `1-y`, which needs no subtraction of its own.
+///
+/// Not `erfinv(1-y)`, which is what this used to be: that forms the
+/// argument by cancelling `y` against `1`, and so returned `+inf` for
+/// every `y < 2^-24`. The half reduces on `n` directly instead -- see
+/// `erfc_inv_half`'s own comment.
 #[inline(always)]
 pub fn erfc_inv(y: f32) -> f32 {
-    erfinv(1.0 - y)
+    let n = if y < 1.0 { y } else { 2.0 - y };
+    mulsign(erfc_inv_half(n), 1.0 - y)
 }
 
 /// Probit, the standard normal quantile function (backlog idea #139):
-/// inverse of [`norm_cdf`], `probit(p) = sqrt(2)*erfinv(2p-1)` --
-/// derived directly from `norm_cdf`'s own definition (`norm_cdf(x) =
-/// 0.5*erfc(-x/sqrt(2))`, solved for `x` via `erfc_inv`/`erfinv`'s
-/// oddness), not a separately-fit approximation. Completes the
-/// sampling-stack trio with [`erfinv`]/[`erfc_inv`] (inverse-CDF
-/// transforms, Box-Muller-style generators).
+/// inverse of [`norm_cdf`]. Derived directly from `norm_cdf`'s own
+/// definition (`norm_cdf(x) = 0.5*erfc(-x/sqrt(2))`, solved for `x`), not
+/// a separately-fit approximation, which gives
+/// `probit(p) = -sqrt(2)*erfc_inv(2p)` with `2p` an *exact* scaling --
+/// the reason this reduction is preferred over the algebraically equal
+/// `sqrt(2)*erfinv(2p-1)` the function used to be, where `2p-1` threw
+/// away `log2(1/p)` bits of `p` and reached `-inf` below `p = 2^-25`.
+/// Completes the sampling-stack trio with [`erfinv`]/[`erfc_inv`]
+/// (inverse-CDF transforms, Box-Muller-style generators).
+///
+/// The reflection is `probit(p) = -probit(1-p)` with `1-p` Sterbenz-exact
+/// for `p >= 0.5`, so `m` is `min(p, 1-p)` to the bit and the sign rides
+/// on `p - 0.5` (itself exact wherever it is not obviously signed).
 #[inline(always)]
 pub fn probit(p: f32) -> f32 {
-    std::f32::consts::SQRT_2 * erfinv(fma(2.0, p, -1.0))
+    let m = if p < 0.5 { p } else { 1.0 - p };
+    mulsign(std::f32::consts::SQRT_2 * erfc_inv_half(m + m), p - 0.5)
 }
 
 /// Standard normal PDF, `φ(x) = exp(-x^2/2)/sqrt(2*pi)` (backlog idea

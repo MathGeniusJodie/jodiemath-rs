@@ -1501,88 +1501,99 @@ fn main() {
         report("erfcx (x>=20)", &s, t0);
     }
     if run("erfinv") {
-        // No sleef erfinv bucket, so verify via round-trip through erf_u10
-        // instead of a direct reference: erf and erfinv are computed via
-        // completely different mechanisms (erf's own poly/exp2 combine vs
-        // erfinv's central/tail fit), so erf_u10(erfinv(x)) landing back
-        // on x is real, independent evidence, not circular.
-        let n_samples = 5_000_000u64;
-        let mut max_dev = 0.0f64;
-        let mut worst_x = 0.0f32;
-        for _ in 0..n_samples {
-            let x = f32::from_bits(rand::rng().random::<u32>());
-            if !(x.abs() < 1.0) {
-                continue;
+        // Direct ulp rows against a real reference. These three used to be
+        // scored as round trips (`max |erf(erfinv(x)) - x|` and the
+        // norm_cdf/erfc analogues), which is structurally blind: the trip
+        // home goes back through the *inverse* map, which un-does exactly
+        // the argument rounding that dominates the error. It reported
+        // 1.93e-7 -- "clean" -- for a `probit` that returned +-inf over
+        // ~80% of the f32 bit patterns in its domain.
+        //
+        // No sleef erfinv bucket exists, so the reference is an f64 Newton
+        // refinement against sleef's own erf_u10/erfc_u15 -- independent
+        // of every mechanism this crate uses. It takes `(n, xt)`, the erfc
+        // target and the erf target, rather than one argument: each caller
+        // can supply one of the two exactly and reaches the other only
+        // through a cancelling subtraction, and which one that is flips
+        // between the branches. Validated to 1e-15 relative against
+        // scipy.special.erfcinv across the whole reachable range, and to
+        // 12 digits on published quantiles (probit(0.975) = 1.959963985,
+        // probit(1e-5) = -4.264890794).
+        const SQRT_PI_2: f64 = 0.886226925452758013649083741670572;
+        const TWO_OVER_SQRT_PI: f64 = 1.128379167095512573896158903121;
+        let erfc_inv_half_ref = |n: F64xN, xt: F64xN| -> F64xN {
+            let tiny = F64xN::splat(1e-300);
+            let w = -log_u35(n * (F64xN::splat(2.0) - n));
+            // Tail seed: the fixed point of z = sqrt(w - ln(z*sqrt(pi)/2)),
+            // i.e. the asymptotic erfc(z) ~ e^(-z^2)/(z*sqrt(pi)) solved
+            // for z. Started from sqrt(w) and iterated, not because it is
+            // fast (it is not -- it needs 4-5 passes) but because it costs
+            // one log against the erfc+exp+log1p a Newton step costs.
+            let mut z = w.simd_max(tiny).sqrt();
+            for _ in 0..5 {
+                z = (w - log_u35((z * F64xN::splat(SQRT_PI_2)).simd_max(tiny)))
+                    .simd_max(F64xN::splat(1e-6))
+                    .sqrt();
             }
-            let y = erfinv(x) as f64;
-            let back = erf_u10(F64xN::splat(y)).to_array()[0];
-            let dev = (back - x as f64).abs();
-            if dev > max_dev {
-                max_dev = dev;
-                worst_x = x;
+            // Central seed: erfinv's own Maclaurin series through x^5.
+            let x2 = xt * xt;
+            let zc0 = xt
+                * (F64xN::splat(0.8862269)
+                    + x2 * (F64xN::splat(0.2320137) + x2 * F64xN::splat(0.1275562)));
+            let central = n.simd_ge(F64xN::splat(0.5));
+            let z0 = central.select(zc0, z);
+            // Central arm: Newton on erf(z) = xt. Solving erfc(z) = n here
+            // instead would cancel two values near 1 and lose the whole
+            // answer as z -> 0.
+            let mut zc = z0;
+            for _ in 0..5 {
+                zc -= (erf_u10(zc) - xt)
+                    / (F64xN::splat(TWO_OVER_SQRT_PI) * exp_u10(-zc * zc));
             }
-        }
-        println!(
-            "{:24} max |erf(erfinv(x))-x| {:>10.6e}  worst x={:e} ({:>12} samples, {:>7.2}s elapsed)",
-            "erfinv",
-            max_dev,
-            worst_x,
-            n_samples,
-            t0.elapsed().as_secs_f64(),
-        );
-        // probit/erfc_inv (backlog idea #139): same round-trip approach,
-        // one level further out (through norm_cdf/erfc's own already-
-        // verified accuracy) -- no sleef bucket for either exists.
-        let mut max_dev_p = 0.0f64;
-        let mut worst_p = 0.0f32;
-        for _ in 0..n_samples {
-            let p = f32::from_bits(rand::rng().random::<u32>());
-            if !(p > 0.0 && p < 1.0) {
-                continue;
+            // Tail arm: Newton on *ln* erfc(z) = ln n, not on erfc itself.
+            // erfc is exponentially flat above its root and exponentially
+            // steep below it, so plain Newton crawls in from the left by
+            // ~1/(2z) a step; ln erfc is near-quadratic and lands at once.
+            // The increment carries log1p of the relative residual because
+            // ln(erfc(z)) and ln(n) are both ~-100 near the root and their
+            // difference would cancel away to nothing.
+            let mut zt = z0;
+            for _ in 0..6 {
+                let e = erfc_u15(zt);
+                zt += log1p_u10((e - n) / n) * F64xN::splat(SQRT_PI_2) * e * exp_u10(zt * zt);
             }
-            let x = probit(p) as f64;
-            let norm_cdf_ref = |v: F64xN| {
-                let z = F64xN::splat(-std::f64::consts::FRAC_1_SQRT_2) * v;
-                F64xN::splat(0.5) * erfc_u15(z)
-            };
-            let back = norm_cdf_ref(F64xN::splat(x)).to_array()[0];
-            let dev = (back - p as f64).abs();
-            if dev > max_dev_p {
-                max_dev_p = dev;
-                worst_p = p;
-            }
-        }
-        println!(
-            "{:24} max |norm_cdf(probit(p))-p| {:>10.6e}  worst p={:e} ({:>12} samples, {:>7.2}s elapsed)",
-            "probit",
-            max_dev_p,
-            worst_p,
-            n_samples,
-            t0.elapsed().as_secs_f64(),
-        );
-        let mut max_dev_y = 0.0f64;
-        let mut worst_y = 0.0f32;
-        for _ in 0..n_samples {
-            let y = f32::from_bits(rand::rng().random::<u32>());
-            if !(y > 0.0 && y < 2.0) {
-                continue;
-            }
-            let z = erfc_inv(y) as f64;
-            let back = erfc_u15(F64xN::splat(z)).to_array()[0];
-            let dev = (back - y as f64).abs();
-            if dev > max_dev_y {
-                max_dev_y = dev;
-                worst_y = y;
-            }
-        }
-        println!(
-            "{:24} max |erfc(erfc_inv(y))-y| {:>10.6e}  worst y={:e} ({:>12} samples, {:>7.2}s elapsed)",
-            "erfc_inv",
-            max_dev_y,
-            worst_y,
-            n_samples,
-            t0.elapsed().as_secs_f64(),
-        );
+            central.select(zc, zt)
+        };
+        // The open domains are deliberate: at the poles (|x| = 1, y = 0 or
+        // 2, p = 0 or 1) the reference's own `w` is +inf and its seed
+        // iteration goes to NaN, so the poles are pinned in edgecheck.rs
+        // instead, where an exact expected value is the right test anyway.
+        let erfinv_ref = |x: F64xN| {
+            let ax = x.abs();
+            erfc_inv_half_ref(F64xN::splat(1.0) - ax, ax).copysign(x)
+        };
+        let erfinv_domain = |x: f32| x.abs() < 1.0;
+        let s = measure!(erfinv_domain, erfinv, erfinv_ref);
+        report("erfinv", &s, t0);
+        let erfc_inv_ref = |y: F64xN| {
+            let one = F64xN::splat(1.0);
+            let n = y.simd_lt(one).select(y, F64xN::splat(2.0) - y);
+            erfc_inv_half_ref(n, one - n).copysign(one - y)
+        };
+        let erfc_inv_domain = |y: f32| y > 0.0 && y < 2.0;
+        let s = measure!(erfc_inv_domain, erfc_inv, erfc_inv_ref);
+        report("erfc_inv", &s, t0);
+        let probit_ref = |p: F64xN| {
+            let one = F64xN::splat(1.0);
+            let half = F64xN::splat(0.5);
+            let m = p.simd_lt(half).select(p, one - p);
+            let n = m + m;
+            (erfc_inv_half_ref(n, one - n) * F64xN::splat(std::f64::consts::SQRT_2))
+                .copysign(p - half)
+        };
+        let probit_domain = |p: f32| p > 0.0 && p < 1.0;
+        let s = measure!(probit_domain, probit, probit_ref);
+        report("probit", &s, t0);
     }
     if run("norm_cdf") {
         // Both compose already-full-range primitives (erfc/exp_checked),

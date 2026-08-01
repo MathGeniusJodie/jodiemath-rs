@@ -1683,17 +1683,37 @@ fn real_main() {
         check_bounded(&format!("erf(erfinv({x}))-{x}"), erf(y) - x, 1e-4);
     }
 
-    // erfc_inv/probit (backlog idea #139): erfc_inv(y) = erfinv(1-y),
-    // probit(p) = sqrt(2)*erfinv(2p-1). Round-trip checked (tolerance,
-    // not exact) the same way as erfinv's own ordinary-value pins above.
+    // erfc_inv/probit (backlog idea #139): both reduce on their own
+    // argument (`n = min(y, 2-y)`, `m = min(p, 1-p)`) rather than through
+    // `erfinv(1-y)`, so the poles, the out-of-domain edges and the
+    // reflection seam are all new selects and each gets an exact pin.
     check("erfc_inv(1)", erfc_inv(1.0), 0.0);
     check("erfc_inv(0)", erfc_inv(0.0), f32::INFINITY);
     check("erfc_inv(2)", erfc_inv(2.0), f32::NEG_INFINITY);
+    check("erfc_inv(-0.5)", erfc_inv(-0.5), f32::NAN);
+    check("erfc_inv(2.5)", erfc_inv(2.5), f32::NAN);
+    check("erfc_inv(inf)", erfc_inv(f32::INFINITY), f32::NAN);
+    check("erfc_inv(-inf)", erfc_inv(f32::NEG_INFINITY), f32::NAN);
     check("erfc_inv(nan)", erfc_inv(f32::NAN), f32::NAN);
     check("probit(0.5)", probit(0.5), 0.0);
     check("probit(0)", probit(0.0), f32::NEG_INFINITY);
     check("probit(1)", probit(1.0), f32::INFINITY);
+    check("probit(-0.5)", probit(-0.5), f32::NAN);
+    check("probit(1.5)", probit(1.5), f32::NAN);
+    check("probit(inf)", probit(f32::INFINITY), f32::NAN);
+    check("probit(-inf)", probit(f32::NEG_INFINITY), f32::NAN);
     check("probit(nan)", probit(f32::NAN), f32::NAN);
+    // The far tail, which is the whole point of the `n`-side reduction:
+    // every one of these used to be `+-inf`, because `1-y`/`2p-1` is
+    // exactly `+-1` once the argument drops under `2^-24`. Values are
+    // scipy.special.erfcinv/ndtri, matched to 4 decimals -- a tolerance,
+    // like the round-trips below, not a bit pin.
+    for &(y, want) in &[(1e-7f32, 3.766563), (1e-20, 6.601581), (1e-45, 10.019834)] {
+        check_bounded(&format!("erfc_inv({y})"), erfc_inv(y) - want, 1e-4);
+    }
+    for &(p, want) in &[(1e-8f32, -5.612001), (1e-20, -9.262340), (1e-45, -14.121427)] {
+        check_bounded(&format!("probit({p})"), probit(p) - want, 1e-4);
+    }
     for &y in &[0.001f32, 0.5, 1.0, 1.5, 1.999] {
         let z = erfc_inv(y);
         check_bounded(&format!("erfc(erfc_inv({y}))-{y}"), erfc(z) - y, 1e-4);

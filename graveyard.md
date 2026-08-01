@@ -7425,3 +7425,138 @@ smell worth grepping for: **a gate whose coverage is a hand-written list.**
 had a reference that could not score its own hard region, and
 `codegen_check` accepted only `ps` mnemonics. None of those fail loudly;
 they all just quietly report on less than they appear to.
+
+## `probit`/`erfc_inv`: `+-inf` over ~80% of the domain, and the metric that could not see it
+
+2026-08-01. **Fixed and landed.** The prior entry (same file, "`probit`:
+6e4 max ulp in the tail") understated this by four orders of magnitude,
+because it reasoned about the *rounding* of `fma(2.0, p, -1.0)` and never
+asked what happens once that rounding consumes the entire argument.
+
+### What was actually shipped
+
+`probit(p) = sqrt(2)*erfinv(2p-1)`. For `p < 2^-25` the exact `2p-1`
+rounds to exactly `-1.0`, so `erfinv(-1.0) = -inf`. Likewise
+`erfc_inv(y) = erfinv(1-y)` returns `+inf` for every `y < 2^-24`. Measured
+by the new direct ulp row, quick fuzz, uniform random bit patterns:
+
+| function | avg ulp | max ulp | non-finite |
+|---|---|---|---|
+| `probit` (before) | 832718338 | 1053729553 | **79.53%** of samples |
+| `probit` (after) | 1.5929 | 15 | 0 |
+| `erfc_inv` (before) | 837462091 | 1057303482 | **79.68%** of samples |
+| `erfc_inv` (after) | 1.5212 | 16 | 0 |
+| `erfinv` (before / after) | 0.3855 / 0.3853 | 71 / 69 | 0 |
+
+The true answers over that 80% are entirely ordinary: `probit(1e-45)` is
+-14.12, `erfc_inv(1e-45)` is 10.02. `erfinv` is untouched by design and
+its row moves only by fuzz sampling noise.
+
+### Why nothing caught it, for eleven months
+
+`accuracy.rs` scored all three as **round trips** --
+`max |norm_cdf(probit(p)) - p|`, `max |erfc(erfc_inv(y)) - y|`,
+`max |erf(erfinv(x)) - x|` -- and reported 1.93e-7, which reads clean.
+A round trip through the *inverse* map cannot see this even in principle:
+`norm_cdf(-inf)` is `0`, and `p` was 1e-45, so the residual is 1e-45.
+The metric is structurally blind to exactly the failure it is watching
+for, and it is blind *hardest* where the function is worst. `edgecheck`
+missed it too -- its `probit` pins are round trips as well, and its
+ordinary-value samples all sit at `p >= 0.001`.
+
+**A round-trip residual through an ill-conditioned inverse pair measures
+the pair, not the function.** The `Stats` struct already had the counter
+that would have screamed (`nonfinite`, "the function blew up, not the
+maths"); nothing was feeding it.
+
+### The fix
+
+`erfc` is odd about `y = 1`, so `n = min(y, 2-y)` lands in `(0,1]` exactly
+(`2-y` is Sterbenz-exact for `y >= 1`), and `probit(p) = -sqrt(2) *
+erfc_inv(2p)` with `2p` an exact scaling. Both now reduce to a shared
+`erfc_inv_half(n)`, which forms
+
+    w = -ln(1 - x^2) = -ln((1-x)(1+x)) = -ln(n*(2-n))
+
+directly from `n`: `2n` is exact, `fma(-n, n, 2n)` is a single rounding of
+the whole product, and `w` carries one `2^-25` relative error at any `n`,
+denormals included. Nothing ever forms `1-n` in the tail.
+
+That extends `w`'s reach from `[0.673, 15.94]` (all a 24-bit `x` can
+encode) to `[0.673, 102.6]`, which `erfinv_tail_poly` is not fitted for --
+hence a second tail poly. Fit results, LP minimax on relative error,
+scored through the real f32 Estrin chain:
+
+| variable | domain | deg 6 | deg 7 | deg 8 |
+|---|---|---|---|---|
+| `w` | `[16, 102.8]` | -- | -- | 1644 (ideal, deg 8 over full range) |
+| `sqrt(w) - 7` | `[16, 102.8]` | 10.31 | **3.07** | 3.12 |
+| `1/sqrt(w)` | `[16, 102.8]` | 0.37 | 0.70 | 0.68 |
+
+`sqrt(w)` is the variable because `erfinv/sqrt(w) -> 1` with a `ln(w)/w`
+tail no polynomial in `w` can follow over a 6.4x range. `1/sqrt(w)` fits
+8x tighter again and is **not** used: it is a `vdivps` on the divider port
+for a fit already 5x under this chain's binding term. `sqrt(w) - 7` is
+exact for every `sqrt(w)` in `[4, 10.13]`, so the recentring is free.
+
+The split sits at `w = 16`, i.e. exactly `-ln(1 - x_max^2) = 15.9424`,
+which is where `erfinv`'s own reachable range stops. That is what leaves
+`erfinv` and `erfinv_tail_poly` bit-identical: verified, `erfinv`'s mca
+region is 171 instrs / 184 uOps / BlockRT 45 before and after.
+
+Single-poly-for-the-whole-range was screened first and is dead: over
+`[0.673, 102.6]` the best of five variables at degree 8 is 103 ulp
+idealized (`1/sqrt(w)`), and `sqrt(w)-shift` needs degree 16 to reach 15.
+
+### Cost
+
+mca throughput, the trustworthy ladder:
+
+| region | instrs | uOps | Block RThroughput |
+|---|---|---|---|
+| `erfc_inv_throughput` | 171 -> 209 | 186 -> 270 | 46 -> 58 |
+| `probit_throughput` | 176 -> 213 | 193 -> 275 | 47 -> 60 |
+| `erfinv_throughput` | 171 -> 171 | 184 -> 184 | 45 -> 45 |
+
++26% Block RThroughput, all three rungs agreeing in direction. No Pareto
+variant was minted and none should be: the old code is not a faster point
+on a tradeoff curve, it is `+-inf`.
+
+An alternating wall-clock A/B on two prebuilt `quickbench` binaries under
+`jm bench` **failed to arbitrate** and is recorded as such: across four
+rounds the unchanged in-binary control (`erfc`) moved -21%, +39%, +3%
+between the two binaries -- larger than the `erfc_inv` signal itself
+(+7.5% to +15%, and *negative* in one round). The machine was not quiet.
+This is the documented `quickbench`-absolute-numbers trap; mca stands.
+
+### The reference, which is the reusable part
+
+No sleef `erfinv` bucket exists. `accuracy.rs` now carries an f64 Newton
+refinement against sleef's own `erf_u10`/`erfc_u15`, taking `(n, xt)` --
+the erfc target and the erf target -- rather than one argument, because
+each caller can supply one of the two exactly and reaches the other only
+through a cancelling subtraction, and which one that is flips between the
+branches. Two details are load-bearing:
+
+- **Newton on `ln erfc`, not on `erfc`.** `erfc` is exponentially flat
+  above its root and exponentially steep below it, so plain Newton crawls
+  in from the left by `~1/(2z)` per step and needs dozens of iterations at
+  `z = 10`. `ln erfc` is near-quadratic and lands in three.
+- **The increment carries `log1p` of the *relative* residual.**
+  `ln(erfc(z))` and `ln(n)` are both `~-100` near the root; differencing
+  them directly cancels 1.1e-14 of absolute error into an answer that
+  needs 2^-51.
+
+Validated to 1e-15 relative against `scipy.special.erfcinv` over the whole
+reachable range (`n` from 1e-45 to 1), and to 12 digits on published
+quantiles. Iteration counts are not padding: 5 seed / 6 tail-Newton /
+5 central-Newton, where (fp=6, tailN=2) still leaves 7726 ulp and
+(fp=5, tailN=3) leaves 21.8.
+
+### Left open
+
+`erfinv` itself is now the worst of the three at max 69, and the cause is
+*not* its poly: it forms `1-x^2` as `1 - fl(x*x)`, whose rounding is
+`2^-25` absolute and therefore `1.7e-4` *relative* at the measured worst
+case `x = 0.99983`. `(1-|x|)*(1+|x|)` is the same product
+`erfc_inv_half` already computes. IDEAS.md #179-#181.

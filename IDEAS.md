@@ -384,14 +384,31 @@ function's speed or accuracy directly; several unblock ideas above.
      mca-derived scheduling decision in this crate is Tiger-Lake-
      specific — the decided tradeoffs (division-vs-poly, Estrin
      groupings) need re-measuring before claiming portability.
-- **`probit`'s tail: form `w` from `p`, not from `2p-1`.** Measured
-  defect, up to 6e4 max ulp for `p < 1e-5`, ~100% attributable to
-  `fma(2.0, p, -1.0)` throwing away `log2(1/p)` bits before `erfinv`
-  amplifies what is left by `exp(erfinv^2)`. `erfinv`'s tail only wants
-  `w = -ln(1-x^2)`, and `1-x^2 = 4p(1-p)` exactly, so the whole
-  cancellation is avoidable. Needs the `erfinv` domain (for
-  `erfinv_tail_poly`) alongside `probit`'s, plus a real ulp row in
-  `accuracy.rs` -- the current round-trip metric structurally cannot see
-  this, and `erfinv`/`erfc_inv` are scored the same way and want the same
-  re-check. Full numbers and the validated f64 reference recipe are in
-  graveyard.md.
+179. **`erfinv`'s tail forms `1-x^2` as `1 - fl(x*x)`**, which is the
+     whole of its max ulp. At the measured worst case `x = 0.99983` the
+     rounding of `x*x` is `2^-25` *absolute*, i.e. `1.7e-4` relative to
+     `1-x^2 = 3.4e-4`, and `-ln` turns that into an absolute error in
+     `w` that the tail then amplifies. `(1-|x|)*(1+|x|)` has no such
+     loss -- `1-|x|` is Sterbenz-exact for `|x| >= 0.5`, `1+|x|` costs
+     one bit -- and it is exactly the `n*(2-n)` product `erfc_inv_half`
+     already computes, so `erfinv`'s tail can reduce on `n = 1-|x|` and
+     reuse it verbatim while keeping its own central arm on `x`. Direct
+     ulp row, quick fuzz: `erfinv` avg 0.3853 / **max 69** at
+     `x = 9.9982935e-1`, against a poly-only floor of ~16. Untested.
+
+180. **`erfinv_tail_poly` is ~16 ulp through its own Estrin chain**
+     (idealized minimax at degree 8 over `w` in `[0.673, 15.94]` is
+     11.46), and after #179 it would be the binding term for all three
+     of `erfinv`/`erfc_inv`/`probit`. Degree 9 reaches 7.36 idealized,
+     degree 10 5.24, degree 11 1.30 -- but the poly is shared, so budget
+     the mca cost on every caller as certain (see the degree-bump entry
+     in graveyard.md). `w` is the right variable: `sqrt(w)` measures
+     22.2 and every reciprocal variable 100+.
+
+181. **`probit` can drop its `sqrt(2)` multiply on the tail arm.**
+     `sqrt(2) * sqrt(w) * Q(w)` is `sqrt(2w) * Q(w)`, so folding the
+     scale into the sqrt removes both the multiply and `fl(sqrt 2)`'s
+     0.287-ulp-low bias, which is the last single-word irrational
+     constant in the function. Only the tail arm; the central arm still
+     needs `sqrt(2) * x * P(x^2)`. Costs a duplicated tail, which is why
+     it was not done when `probit` was rewritten onto `erfc_inv_half`.
