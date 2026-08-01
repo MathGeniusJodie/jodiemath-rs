@@ -1075,25 +1075,41 @@ pub fn sinc_unnormalized(x: f32) -> f32 {
     if x == 0.0 { 1.0 } else { normal }
 }
 
-// tan(t) = t * Q(t^2), `t = pi*e` with e in [-0.25, 0.25], degree 5,
-// Estrin-grouped with the top pair folded in at the `u^2` level so `u^4`
-// is never formed (exp_r_poly!'s own fold), leading coefficient pinned to
-// exactly 1.0. An ulp-weighted minimax (LP) fit of tan(t)/t against t^2
-// -- weighted by `|d tanpi / d Q| / ulp(tanpi)` for whichever of
-// `tan_core`'s two branches (direct `t*Q`, reflected `1/(t*Q)`) binds
-// harder at each point, then coordinate-descended over the f32
-// quantisation. Not a transcription of any published algorithm's
-// constants.
+// tan(t) = t * Q(t^2), `t = pi*e` with e in [-0.25, 0.25], degree 6,
+// two-group Estrin (`lo + u^4*hi`) so no group is deeper than the `u^4`
+// it multiplies, leading coefficient pinned to exactly 1.0. An
+// ulp-weighted minimax (LP) fit of tan(t)/t against t^2 -- weighted by
+// `|d tanpi / d Q| / ulp(tanpi)` for whichever of `tan_core`'s two
+// branches (direct `t*Q`, reflected `1/(t*Q)`) binds harder at each point
+// -- then coordinate-descended over the f32 quantisation against the real
+// chain. Not a transcription of any published algorithm's constants.
+//
+// Degree 6, not 5, because this poly is `tanpi`'s binding term and
+// nothing else's. An oracle screen (the chain run with a correctly-rounded
+// `tan(t)/t` in place of `Q`) puts the chain's own floor at max 3.7 ulp
+// against degree 5's real 7.8, so the fit was carrying the error rather
+// than the roundings; degree 6 lands near that floor and degree 7
+// idealises 5x better again without converting.
+//
+// The grouping is load-bearing, not cosmetic. Horner-on-`u^2` at the top
+// (`l0 + u2*(l1 + u2*l2)`) needs `l2` a full degree-2 group, so the extra
+// term lands *on* the Estrin spine: same instruction count as this form
+// minus one, but a fourth dependency level, which llvm-mca prices at
+// tanpi latency 88.72 against this form's 76.00 (the shipped degree-5's
+// own 78.88 for reference). It buys max ulp 5 -> 4. Not taken: 17% of
+// tanpi's latency is a steep price for one ulp when the average is
+// already better here (0.2267 against 0.2309).
 #[inline(always)]
 fn tan_poly(u: f32) -> f32 {
-    let c: [f32; 6] =
-        [1.0, 0.33335274, 0.13290501, 0.056999072, 0.012793141, 0.020254191];
+    let c: [f32; 7] = [
+        1.0, 0.3333313, 0.13338836, 0.053408977, 0.024446711, 0.0030841262, 0.009410244,
+    ];
     let u2 = u * u;
+    let u4 = u2 * u2;
     let l0 = fma(c[1], u, c[0]);
     let l1 = fma(c[3], u, c[2]);
-    let l2 = fma(c[5], u, c[4]);
-    let r0 = fma(l2, u2, l1);
-    fma(r0, u2, l0)
+    let l2 = fma(c[6], u2, fma(c[5], u, c[4]));
+    fma(u4, l2, fma(u2, l1, l0))
 }
 
 // tan(pi*e) (idea #128, tanpi only -- the same direct-poly idea applied

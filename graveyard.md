@@ -5111,3 +5111,49 @@ Cost of the shipped version, `pow_2_3_throughput` region: instructions
 as the single version rather than a `_fast`/`_accurate` split: 7 max ulp
 was outside the crate's 0.5 avg / 2 max budget to begin with, so the old
 body was not a pareto point.
+- **`tan_poly` degree 5 -> 6, and the Estrin grouping is the whole
+  decision.** `tanpi`'s max 8 / avg 0.386 was the crate's remaining
+  accuracy outlier. Two screens ran before any fitting:
+  - **The `PI*r` argument rounding is not the mechanism**, contrary to
+    the obvious suspicion (`PI` as f32 sits 2.78e-8 relative from real
+    pi, and the product rounds again). Instrumented over 20M samples in
+    `[-4, 4]`, splitting the error into "exact tan of the f32 argument
+    the chain actually forms" versus everything downstream: of the
+    4680400 samples above 3 ulp, **1030 (0.02%)** have the argument term
+    contributing even half. Argument-only avg is 0.44 ulp against a
+    total of 2.05. So folding `pi` into the coefficients -- which would
+    delete both effects and two `vmulps` -- cannot pay for a refit, and
+    is not attempted.
+  - **Oracle screen says the fit really is binding**, which is the
+    unusual verdict here: running the chain with a correctly-rounded
+    `tan(t)/t` in place of `Q` gives max 3.66 / avg 0.61 against degree
+    5's 7.85 / 2.05. Contrast `ln_normal` and `asin_poly`, where the
+    same screen found the headroom fake. An ulp-weighted LP reproduces
+    the shipped degree-5 coefficients almost exactly (idealised 3.53 vs
+    shipped 3.55), confirming they were already optimal *for that
+    degree*; degree 6 idealises 0.354 and degree 7 0.065.
+  - Degree 6 converts nearly to the oracle floor: real-chain max 4.28 /
+    avg 0.71 against the oracle's 3.66 / 0.61. Degree 7 cannot convert
+    and is not worth its fma.
+  - **The grouping decides the cost, and the two options do not
+    dominate each other.** Keeping the shipped Horner-on-`u^2` spine
+    (`l0 + u2*(l1 + u2*l2)`) forces `l2` to be a full degree-2 group, so
+    the new term lands *on* the spine: exhaustive max **4**, avg 0.2309,
+    but llvm-mca latency **88.72** (+12.5% on the shipped degree-5's
+    78.88) for +5 instructions. Regrouping to two halves
+    (`lo + u^4*hi`, `u4` reused) costs one more instruction again but no
+    fourth dependency level: exhaustive max **5**, avg **0.2267**,
+    latency **76.00** -- *below* the shipped degree-5 -- throughput
+    2.031 -> 2.223 (+9.4%).
+  - **Shipped: the two-group form.** 17% of tanpi's latency is too much
+    for one max ulp when the two-group form's *average* is the better of
+    the two anyway. Exhaustive: `tanpi` 0.3856/8 -> **0.2267/5**,
+    `tan2pi` -> 0.2273/5. The 4-ulp variant is recorded here rather than
+    shipped as a second tier: it is worse on avg, worse on latency, and
+    better on max by one -- too thin a pareto point to carry an API.
+  - Reusable: this is the first poly in this file where a **degree bump
+    was the right answer**, and the reason it worked is exactly what the
+    other bumps lacked -- `tan_poly` has two callers (`tanpi`, `tan2pi`)
+    and no shared-kernel blast radius, so the extra fma is paid only by
+    the function that needed it. Check the caller list *before* pricing
+    a degree bump, not after.
