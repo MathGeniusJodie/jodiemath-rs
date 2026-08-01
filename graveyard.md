@@ -7560,3 +7560,217 @@ quantiles. Iteration counts are not padding: 5 seed / 6 tail-Newton /
 `2^-25` absolute and therefore `1.7e-4` *relative* at the measured worst
 case `x = 0.99983`. `(1-|x|)*(1+|x|)` is the same product
 `erfc_inv_half` already computes. IDEAS.md #179-#181.
+
+## `ln_normal`: the peel, and the `k` combine that was worth more than the peel
+
+`log_2`'s leading-term peel (#202), transplanted to `ln_normal` as IDEAS.md
+proposed -- and it works, but the entry's own framing was only half right.
+Two independent mechanisms live in this function, they were measured
+separately, and **the one nobody had proposed is the larger of the two.**
+
+Exhaustive over all 2130706432 positive normal f32, hardware fma, scored
+against `f64::ln` rounded to f32 (this is exactly `ln_unchecked`):
+
+| chain | avg | max |
+|---|---|---|
+| shipped (`fma(p, s, fma(k, LN2_LO, k*LN2_HI))`, un-peeled deg-8 `P`) | 0.234319 | 3 |
+| **shipped `P`, k-combine restructured only** | **0.009211** | 3 |
+| peeled deg-8 `Q`, old k-combine | 0.232666 | 1 |
+| peeled deg-7 `Q` + restructured combine (**shipped**) | **0.007262** | **1** |
+| peeled deg-8 `Q` + restructured combine | 0.006315 | 1 |
+| oracle: correctly-rounded `s^2*Q` + restructured combine | 0.005725 | 1 |
+
+Restricted to the `k == 0` octave (all 8388608 mantissas the decomposition
+can produce), which is the region `log1p`/`asinh`/`acosh`/`atanh` actually
+live in:
+
+| chain | avg | max |
+|---|---|---|
+| shipped | 0.453148 | 3 |
+| shipped `P`, k-combine restructured | 0.453148 | 3 |
+| peeled deg-7 (**shipped**) | 0.216130 | 1 |
+| peeled deg-8 | 0.059757 | 1 |
+| oracle | 0.042246 | 1 |
+
+Read the two tables together and the attribution is clean: **the peel owns
+the max and the near-1 octave; the k-combine owns the aggregate average.**
+Neither one alone gets both. IDEAS.md predicted the first and did not
+mention the second.
+
+### The k combine: two full-weight roundings where one will do
+
+`fma(p, s, fma(k, LN2_LO, k*LN2_HI))` was adopted for a good reason -- it
+replaced `fma(p, s, k_hi) + k*LN2_LO`'s fma+mul+add with two fma, output
+bit-identical. But *both* of its roundings land at the result's own scale:
+the inner fma rounds `k*ln2`, which for `|k| >= 1` **is** the answer to
+within `|s|`, and then the outer fma rounds the whole thing again.
+
+    let base = fma(k, LN2_LO, s);      // off the critical path, |base| <= 0.415
+    fma(k, LN2_HI, base + sq)          // k*LN2_HI is exact -> one rounding
+
+Same three operations. `k*LN2_HI` is exact by construction (LN2_HI's low 9
+mantissa bits are zero), so the closing fma is the *only* full-weight
+rounding in the function; everything before it happens at `|s| <= 0.415`,
+far under `ulp(result)` once `|k| >= 1`. Aggregate average **0.2343 ->
+0.0073, a 32x drop, for zero operations.** For `k == 0` it changes nothing
+at all, which is why it had never shown up: the near-1 region is where
+everyone looks.
+
+Three placements of `s` were measured and only one is right:
+
+- `s` into the `k` word (**shipped**) -- 0.007262, and `base` is ready
+  before the polynomial is, so the poly's critical path grows by one add
+  and one fma, not two fma;
+- `s + sq` first, then the two-fma k combine -- 0.006879, 14% better and
+  **one dependency level deeper**. Not worth 4 cycles on every caller;
+- `s` folded into the polynomial's own low group (`a = fma(s2, l0, s)`,
+  one operation cheaper) -- 0.007143 but **max 1 -> 2**: it puts a second
+  full-weight rounding back exactly where the peel removed one.
+
+This supersedes the `fma(p, s, fma(k, LN2_LO, k_hi))` fold recorded in
+"**`ln_normal`/`log10_normal`: fuse trailing `+k*LN2_LO` into the fma**"
+above, and it is worth being precise about what it gives back. That fold
+took `ln_unchecked` 38.22/1.113 -> 34.06/1.018 -- it bought both latency
+*and* throughput. This change keeps the throughput (1.021, RThroughput
+identical) and hands the latency back (38.06). So the fold's own ledger,
+end to end, is: **throughput win kept, latency win spent on 32x of average
+accuracy and a max of 3 -> 1.**
+
+That entry also concluded that the same fold was "genuinely worse" for
+`log10_normal` because `LOG10_2_LO` is 3.2x larger relative to its HI word.
+**That conclusion does not carry over to the restructure here**, and anyone
+citing it for `log10` should stop and re-measure: the failure it describes
+is of a form that rounds `p*s + k_hi` before the LO word arrives, whereas
+this one never forms anything at the result's scale until the closing fma.
+Screened for `log10` (all positive normals, stride 251): shipped 0.254374
+max 2 -> restructured-combine-only 0.009362 max 2 -> peeled degree 7
+0.007301 **max 1**. Not shipped here; it needs the `exp10_checked` domain.
+
+### The peel, and why degree 7
+
+`ln(m) = s + s^2*Q(s)` with `Q(s) = (ln(1+s)/s - 1)/s`, fitted by an
+ulp-weighted LP against `s^2/ln(1+s)`. This is a *better* peel than
+`log_2`'s: `log_2` still has to round `s*log2(e)`, while `ln`'s leading
+coefficient is exactly `1.0` and `s` is exact, so its leading term is
+carried with no error whatsoever.
+
+Degree 7, one lower than the `P` it replaces, which is what keeps the
+instruction count flat. Degree 8 is a genuine Pareto point and was
+rejected on measurement: aggregate 0.006315 vs 0.007262 and `k == 0`
+0.0598 vs 0.2161, but +3 instructions, +4 uOps and **Block RThroughput
+16 -> 17 on `ln_unchecked`**, 21 -> 22 on `log1p`, 42 -> 44 on `asinh`,
+40 -> 42 on `acosh`. On the real public functions that 3.6x on the `k == 0`
+average is worth only 3-14% (100M-sample quick fuzz, degree 8 vs degree 7:
+`ln` 0.0031 vs 0.0036, `log1p` 0.0239 vs 0.0249, `asinh` 0.0330 vs 0.0341,
+`acosh` and `logit` identical to four places, every max identical), so it buys a rounding error nobody can see for a throughput
+regression on fourteen functions. Its coefficients, if a caller ever wants
+that point:
+
+    -0.499999881, 0.333333254, -0.250016093, 0.20002006, -0.166084245,
+    0.141808674, -0.132478848, 0.129123241, -0.0761848763
+
+evaluated with `w0 = fma(l2, s2, l1)`, `w1 = fma(c8, s2, l3)`,
+`v = fma(w1, s4, w0)`, `sq = fma(v, s4, a)`.
+
+### The LP was silently returning garbage until it was rescaled
+
+Worth its own paragraph because it would have wasted the session. The
+minimax LP minimises `t` subject to `w(s)*|P(s) - Q(s)| <= t`, and here
+`t` is ~1e-8. **HiGHS's default primal feasibility tolerance is 1e-7**, so
+every constraint is satisfied at `t = 0` and the solver returns a
+degenerate vertex -- a *feasible arbitrary* coefficient set, reported with
+`status == 0` and an objective of `-0.0`. The tell was that the reported
+degree-8 optimum (2.6e-10) was ~500x better than the Chebyshev-ellipse
+estimate for this function (~1e-7). Scaling the weights by `2^24` so the
+objective is in ulp units fixes it, and the deg-8 optimum becomes 0.0685
+ulp-equivalent. **Any LP in this repo whose objective is a raw relative
+error needs the same scaling**; the accidentally-degenerate coefficients
+still measured max 1 in the real chain, so a screen would not have caught
+it either.
+
+Sequential quantisation (fix one coefficient to f32, re-solve the LP over
+the rest, try both f32 neighbours at each step -- a hand-rolled fpminimax,
+which IDEAS.md #2/#102 propose in more sophisticated MIP/LLL forms) is
+worth a real 13% here: degree 7 goes 0.5832 -> 0.5059 ulp-equivalent and
+degree 8 goes 0.0855 -> 0.0703, against continuous optima of 0.5033 and
+0.0685. Small, but free, and it is the first time the joint-rounding gap
+has been measured in this repo rather than argued about.
+
+### What it costs and what it buys
+
+Instruction counts are **identical** in every changed `*_throughput`
+region except `clog_re` (258 -> 266, register pressure in a 60-instruction
+region), and Block RThroughput is identical in 13 of 14: `ln` 19, `log1p`
+21, `asinh` 42, `acosh` 40, `atanh` 29, `logit` 47, `xlogy` 20, `xlog1py`
+22, `erfinv` 45, `erfc_inv` 46, `probit` 47, `compound` 42 all unchanged,
+`clog_re` 61 -> 62. The cycles column moves 0.3-3% on several rows with
+instructions, uOps *and* RThroughput all flat, which is the documented
+scheduler-window artifact.
+
+Latency pays the peel's one extra dependency level, ~4 cycles, everywhere:
+`ln_unchecked` 34.06 -> 38.06 (+11.7%), `ln` 44.14 -> 49.13 (+11.3%),
+`log1p` 47.24 -> 51.25 (+8.5%), `acosh` 89.08 -> 97.88 (+9.9%), `asinh`
+69.41 -> 74.49 (+7.3%), `logit` 59.91 -> 63.94 (+6.7%), `atanh` 96.83 ->
+100.83 (+4.1%). Same bill `log_2`'s peel paid (+11.2%) for the same
+reason, and it is a real +1 fma on the serial chain, not an mca artifact --
+`ln_unchecked_latency` is branchless, so the arm caveat does not apply.
+
+The readme's two **wall-clock** tables were deliberately not re-recorded.
+They carry an explicit "recorded together in one sitting" caveat and a
+measured 2.5x within-session swing on their own control function, so
+appending rows measured today would break the only property they have.
+`ln`/`ln_unchecked`/`log1p` are the three affected rows there and they now
+understate latency by roughly the mca delta.
+
+**No `ln_latency` variant was minted.** The pre-change code is dominated
+32x on the average and 3x on the max for 10% of latency; if a caller ever
+turns up that wants the old point, it is `fma(p, s, fma(k, LN2_LO,
+k*LN2_HI))` over the un-peeled degree-8 `P` and it is recorded above.
+
+### Transferable
+
+- **A Cody-Waite combine can still round twice at full weight.** The
+  split makes `k*HI` exact; it does not by itself stop the *rest* of the
+  expression from being rounded at the result's scale first. Check where
+  each rounding lands, not just whether the constant is split. `log10_normal`
+  has the same shape (`fma(p, s, k_hi) + k*LOG10_2_LO`) and is untouched
+  here.
+- **`k == 0`-only and aggregate-only mechanisms are invisible to each
+  other.** The k-combine fix is worth 32x on the aggregate and *exactly
+  nothing* at `k == 0`; the peel is the reverse. A single-number sweep
+  would have found either one and stopped. Score any reduced-argument
+  function on its reduced octave *and* on the whole domain, as two rows.
+- **A minimax LP whose objective is a raw relative error is inside its
+  own solver's feasibility tolerance.** Scale the weights until the
+  objective is order 1. The failure is silent: `status == 0`, an
+  objective of `-0.0`, and a coefficient set that is merely feasible.
+- **The oracle screen answers "is the fit binding", not "is the chain
+  fixable".** `ln_normal`'s 2.8x headroom row was correctly closed on
+  exactly that screen -- a degree-9 fit 22x better measures *worse* --
+  and the function still had 32x of average and 2 ulp of max sitting in
+  it. A closed headroom row means stop refitting, not stop looking.
+
+### Verification status, stated precisely
+
+**Exhaustive** (`accuracy thorough`, every f32 bit pattern, 4294967296
+samples each): `ln` **0.117/3 -> 0.0036/1**, `ln_unchecked`
+**0.235/3 -> 0.0073/1**, `log1p` **0.097/4 -> 0.0249/2**, `asinh`
+**0.149/3 -> 0.0340/2**, `acosh` **0.060/4 -> 0.0031/3**, `atanh`
+**unchanged at 0.0037/2**, `log1pmx` unchanged at 0.0632/3 (it has its own
+polynomial). Every readme row this change touches is on this list. Plus
+the standalone 2130706432-input real-chain enumeration the tables above
+come from, and `worst_corpus` re-blessed -- 51 entries moved, every one
+spot-checked from 1 ulp to 0.
+
+**`acosh` is the case for having waited.** Quick fuzz reported max **2**;
+exhaustive says **3**. One more entry for "quick-mode max is
+systematically optimistic, not merely noisy" -- it would have gone into
+the readme as a 2.
+
+**Quick fuzz only** (100M samples; avg trustworthy to ~+-0.0001, max not):
+`logit` 0.263 -> 0.0505 (no readme accuracy row), `erfinv`/`probit`/
+`erfc_inv` round-trip metrics unchanged, `xlogy`/`xlog1py`/`compound`/
+`clog` unchanged. None regressed on any axis. `logaddexp`'s quick max
+moved 731 -> 897 between two runs of *identical* code -- that is its
+documented heavy tail resampling, not this change (it routes through
+`log1p_unit`, and no `logaddexp` region appears in the asm diff).

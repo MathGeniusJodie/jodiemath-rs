@@ -119,25 +119,44 @@ the bar by construction if they find anything.
   peel), so what is left is 1 ulp against std's own 1, i.e. at most a
   correctly-rounded-vs-faithful distinction.
 
-- **Peel the leading term out of `ln_normal`/`log10_normal` too**
-  (graveyard #202's log_2 lever, transplanted). Both are the same
-  `k*c + s*P(s)` shape with the same rounding-chain-dominated 3-ulp max
-  that `log_2` had, and both currently evaluate their leading coefficient
-  *inside* `P`, so for `x` near 1 all of `P`'s full-weight roundings land
-  straight on the answer. `ln` is the more promising of the two by some
-  margin: its leading coefficient is exactly `1.0`, so the peeled form is
-  `ln(m) = s + s^2*Q(s)` with an **exact** leading term -- strictly
-  better than `log_2`'s, which still rounds `s*log2(e)`. Reuse all three
-  things that had to be right there: an ulp-weighted LP fit of `Q`
-  (weight `s^2/ln(1+s)`, *not* a term dropped off `P`); `k`'s Cody-Waite
-  combine joining last so it keeps its single rounding; and the `s^2`
-  factor riding into the poly's own low group so the shape stays three
-  Estrin levels deep. Budget the +1 dependency level as certain (log_2
-  paid +11% latency for it at flat throughput). Big blast radius --
-  `ln`/`log10`/`log1p`/`log2p1`/`asinh`/`acosh`/`atanh`/`compound`/
-  `logit`/`xlogy`/`xlog1py`/`softplus`/`logaddexp`/`logsigmoid`/`clog`
-  all route through these -- so it wants its own exhaustive pass per
-  function, which is why it was not done alongside `log_2`.
+- **Peel the leading term out of `log10_normal`.** `ln_normal`'s half is
+  **done and shipped** (max 3 -> 1, avg 0.234 -> 0.0073 exhaustively, at a
+  flat instruction count) -- see graveyard.md, and read it first, because
+  the larger of the two mechanisms it found was *not* the peel: it was the
+  `k` Cody-Waite combine rounding twice at the result's own scale, worth
+  32x on the aggregate average for zero operations. **`log10_normal` has
+  exactly that same second defect** (`fma(p, s, k_hi) + k*LOG10_2_LO`
+  rounds `p*s + k_hi` at full weight and then rounds again), so the free
+  half should be tried on its own before the poly is touched at all.
+  The peel proper is harder here than for `ln` and easier than for
+  `log_2`: the leading coefficient is `f32(log10(e))`, so `s*LOG10_E` must
+  stay *inside* the closing fma (`fma(s, LOG10_E, sq)`) or it rounds at
+  full weight, which is the thing the peel exists to prevent (measured:
+  forming it early is max 1 -> 2). **Do not cite the old "`log10_normal`'s
+  half is genuinely worse" rejection against this** -- that was the
+  `fma(p, s, fma(k, LN2_LO, k_hi))` fold, which rounds at the result's
+  scale before the LO word arrives; this shape never does.
+  Already screened in the real chain over all positive normals at stride
+  251: shipped **0.254374 max 2** -> restructured combine alone 0.009362
+  max 2 -> peeled degree 7 **0.007301 max 1** -> degree 8 0.006591, against
+  a chain oracle of 0.005707. The fits are cut too (ulp-weighted LP with
+  the weights scaled to ulp units -- see graveyard for why that matters --
+  then sequentially quantised): degree 7 reaches 0.5968 ulp-equivalent and
+  degree 8 0.3903, both ~5x looser than `ln`'s because `log10`'s weight
+  `s^2/log10(1+s)` is ln(10) times larger. Degree 7 would be one op
+  *cheaper* than the shipped shape, so this should be a free win on both
+  axes; what is left to do is the mca check (+1 dependency level, as
+  `ln` paid) and the exhaustive pass. Callers: `log10`,
+  `log10_unchecked`, `log10p1` (the worst log-family sibling at 0.232
+  avg). Needs the `exp10_checked` domain.
+
+- **Degree 8 for `ln_normal`'s peeled `Q` is a real, measured, unshipped
+  Pareto point.** Aggregate avg 0.006315 vs the shipped degree 7's
+  0.007262, and 0.0598 vs 0.2161 over the `k == 0` octave, for +3
+  instructions and Block RThroughput 16 -> 17 on `ln_unchecked` (21 -> 22
+  `log1p`, 42 -> 44 `asinh`, 40 -> 42 `acosh`). Rejected because on the
+  real public functions it is worth only 3-14% of the average and no max
+  at all. Coefficients are in graveyard.md if a caller ever wants it.
 
 - **Exponent-splitting the other `log_2`-then-`exp2` composites.**
   `rootn` was fixed (45 -> 1 max ulp, 10.1 -> 0 avg) not by the

@@ -40,11 +40,11 @@ cbrt_accurate_unchecked |    0.000   |     1     | (bit-identical to cbrt_accura
 ```
                          | jodie avg  | jodie max | std avg | std max
 -------------------------|------------|-----------|---------|--------
-                      ln |    0.117   |     3     |  0.000  |    1
-     ln_unchecked (+)    |    0.235   |     3     | (bit-identical to ln on its domain)
+                      ln |    0.004   |     1     |  0.000  |    1
+     ln_unchecked (+)    |    0.007   |     1     | (bit-identical to ln on its domain)
                    log10 |    0.127   |     3     |  0.000  |    0
    log10_unchecked (+)   |    0.255   |     3     | (bit-identical to log10 on its domain)
-                   log1p |    0.097   |     4     |  0.000  |    0
+                   log1p |    0.025   |     2     |  0.000  |    1
                  log2p1  |    0.102   |     3     | (no std log2p1)
                 compound |    0.196   |   ~200    | (no std compound; the exponent n*log1p(x) amplifies its own ulp by |n*log1p(x)|, up to ~88 -- see its doc comment)
        compound_accurate |    0.001   |     1     | (no std compound; f64 exponent, ~1.7x compound's throughput cost)
@@ -64,8 +64,8 @@ cosh_throughput (in-domain)| 0.049    |     3     |  0.000  |    0
                  sigmoid |    0.091   |     3     | (no std sigmoid)
         softplus (|x|<80)|    0.075   |     3     | (no std softplus)
 logaddexp (|a|,|b|<80)|    0.141   |  ~1e3-1e5, heavy-tailed (real, narrow cancellation -- see its own doc comment) | (no std logaddexp)
-                  asinh |    0.149   |     3     | 
-                  acosh |    0.060   |     4     |  0.000  |    1
+                  asinh |    0.034   |     2     | 
+                  acosh |    0.003   |     3     |  0.000  |    1
                   atanh |    0.004   |     2     | 
                    asin |    0.019   |     5     |  0.000  |    0
                    acos |    0.056   |     4     |  0.000  |    0
@@ -367,13 +367,13 @@ sinc                |          53.02 |             1.256
 sind                |          48.00 |             1.151
 cosd                |          56.00 |             1.406
 tand                |          70.02 |             2.533
-ln                  |          44.14 |             1.611
-ln_unchecked        |          34.06 |             1.018
+ln                  |          49.13 |             1.625
+ln_unchecked        |          38.06 |             1.021
 log10               |          48.14 |             1.635
 log10_unchecked     |          38.22 |             1.113
-log1p               |          47.24 |             1.857
+log1p               |          51.25 |             1.903
 log2p1              |          51.36 |             1.876
-compound            |          96.75 |             3.724
+compound            |          99.69 |             3.829
 compound_accurate   |         120.77 |             6.173
 exp                 |          42.00 |             1.195
 exp_checked         |          50.00 |             1.466
@@ -391,9 +391,9 @@ tanh                |          85.64 |             1.731
 sigmoid             |          61.00 |             1.222
 softplus            |          74.11 |             2.449
 logaddexp           |          74.11 |             2.449
-asinh               |          69.41 |             4.136
-acosh               |          89.08 |             3.828
-atanh               |          96.83 |             2.903
+asinh               |          74.49 |             4.159
+acosh               |          97.88 |             3.948
+atanh               |         100.83 |             2.974
 asin                |          56.74 |             0.900
 acos                |          39.99 |             0.820
 atan                |          61.27 |             1.491
@@ -428,10 +428,10 @@ the arms fuse into one artificial chain whenever the second reads a register
 the first clobbered. Worst offenders: `exp2m1` 80.00 against arms of
 37.00/48.00, `exp10m1` 112.00 against 37.00/80.00, `expm1_checked` 78.00
 against 32.00/51.00, `tanh` 85.64 against 53.00/62.00, `erf` 87.00 against
-44.00/65.98, `asin` 56.74 against 26.99/40.99, `acosh` 89.08 against
-46.08/77.02. The opposite failure also happens: where both arms write the
+44.00/65.98, `asin` 56.74 against 26.99/40.99, `acosh` 97.88 against
+51.08/82.02. The opposite failure also happens: where both arms write the
 same register and the *cheap* one is laid out last, mca times the cheap one
--- `asinh` publishes 69.41 where its real in-domain chain is **88.02**.
+-- `asinh` publishes 74.49 where its real in-domain chain is **84.02**.
 
 Run `tools/mca_arms.py <mca_target-*.s> <region>_latency` before quoting or
 comparing any latency row; it prints each arm in isolation. The **throughput**

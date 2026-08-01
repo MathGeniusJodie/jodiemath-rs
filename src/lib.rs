@@ -2165,53 +2165,53 @@ pub fn ln(x: f32) -> f32 {
 }
 
 /// Core of ln for positive normal finite x only -- see log_2_normal, same
-/// contract. Reuses log_2_normal's exact decomposition (s = m - 1) and
-/// poly *shape*, but with coefficients fitted for ln directly (log_2's own
-/// c[i] * LN_2, each individually rounded to f32) and a Cody-Waite combine
-/// with k instead of a single fma: `k*LN2_HI` is exact (see LN2_HI's own
-/// comment), and `k*LN2_LO` adds back the tiny residual LN2_HI dropped, so
-/// the correction's own rounding only ever affects a small term instead of
-/// the whole (k-dominated) result, unlike the naive `log_2(x) * LN_2` where
-/// the second rounding scales everything.
+/// contract, same decomposition (`s = m - 1`, exact by Sterbenz) and the
+/// same *peeled* poly shape: `ln(m) = s + s^2*Q(s)`, with the leading term
+/// kept out of the polynomial rather than evaluated as its constant
+/// coefficient. `ln`'s peel is the strictly better of the two, because its
+/// leading coefficient is exactly `1.0` and `s` is exact -- so unlike
+/// `log_2`, which still has to round `s*log2(e)`, the leading term here is
+/// carried with no error at all.
 ///
-/// Both correction terms are folded in as `fma(p, s, fma(k, LN2_LO, k_hi))`
-/// -- two fma against the older `fma(p, s, k_hi) + k*LN2_LO`'s fma + mul +
-/// add, output bit-identical (verified exhaustively for `ln` and `log1p`).
-/// The association is load-bearing and was measured both ways: folding the
-/// LO word into the `k` term *first* is what wins, while doing the poly
-/// first reproduces a +1-cycle latency regression. `log10_normal`
-/// deliberately does *not* mirror this -- same transform, but there it
-/// costs real accuracy; see IDEAS.md.
+/// `k` joins through a Cody-Waite split of ln(2): `k*LN2_HI` is exact (see
+/// LN2_HI's own comment) and `k*LN2_LO` adds back the residual LN2_HI
+/// dropped, so the whole `k` term reaches the result inside a single fma
+/// rounding.
 #[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
 pub fn ln_normal(x: f32, koff: f32) -> f32 {
-    // Degree 8 (backlog idea #4), not `log_family_normal!`'s shared
-    // degree 9 -- a real least-squares refit (scipy), not the old
-    // coefficients with the last one dropped. Real max ulp (exhaustive)
-    // stayed at 3 (same as degree 9): the degree-9 poly's own idealized
-    // fit error was ~5e-9 (~0.05 ulp) against a real 3-ulp max that's
-    // entirely rounding-chain-dominated (the reduction's own fma combine),
-    // so degree 9 had spare accuracy well beyond what it needed --
-    // confirmed before implementing, not assumed, by checking the
-    // degree-8 refit's own idealized error (~2.4e-8, ~0.3 ulp-equivalent)
-    // stays far under both 1 ulp and that 3-ulp floor. `log10` shares
-    // this same reduction shape and same "already at its degree-9
-    // optimum" diagnosis, but was not independently re-verified at
-    // degree 8 -- do that before assuming this transfers.
     let e = (x.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23;
     let m = f32::from_bits((x.to_bits() as i32).wrapping_sub(e << 23) as u32);
     let k = e as f32 + koff;
     let s = m - 1.0;
-    let c: [f32; 9] = [
-        1.0,
-        -0.49999994,
-        0.33334,
-        -0.25001356,
-        0.19962999,
-        -0.16583247,
-        0.14908722,
-        -0.14196032,
-        0.08632387,
+    // `Q(s) = (ln(1+s)/s - 1)/s`, degree 7, fitted by an ulp-weighted LP
+    // against `s^2/ln(1+s)` -- the weight that makes the fit minimise the
+    // *result*'s relative error, since this poly only ever reaches the
+    // answer scaled by `s^2` -- and not by dropping a term off the older
+    // `P(s) = ln(1+s)/s`. Written that way the answer for x near 1 (k == 0)
+    // simply *was* `s*P(s)`, so all three of P's full-weight evaluation
+    // roundings landed straight on the result at ~2^-24 each; peeling
+    // demotes every one of them by `s^2/ln(1+s) <= 0.5`.
+    //
+    // One degree lower than the un-peeled `P` it replaces, which is what
+    // keeps the whole function at its old instruction count: `Q` reaches
+    // the answer diluted, so the fit no longer has to carry the budget on
+    // its own. Degree 8 is a real Pareto point and is not taken -- it buys
+    // 3-14% of the average back for a real +1 Block RThroughput on every
+    // caller; see IDEAS.md.
+    //
+    // The coefficients are quantised to f32 sequentially (fix one, re-solve
+    // the LP over the rest), not independently: on a fit this tight the
+    // joint rounding is worth ~13% of the total error.
+    let c: [f32; 8] = [
+        -0.4999999,
+        0.33333948,
+        -0.2500179,
+        0.1996218,
+        -0.16569935,
+        0.14916396,
+        -0.1431012,
+        0.08741673,
     ];
     let s2 = s * s;
     let s4 = s2 * s2;
@@ -2219,17 +2219,26 @@ pub fn ln_normal(x: f32, koff: f32) -> f32 {
     let l1 = fma(c[3], s, c[2]);
     let l2 = fma(c[5], s, c[4]);
     let l3 = fma(c[7], s, c[6]);
-    let r0 = fma(l1, s2, l0);
-    let r1 = fma(l3, s2, l2);
-    // c[8] (the odd 9th coefficient, degree 8) folds into r1 at the s4
-    // level instead of needing its own s8 = s4*s4 level: r1b*s4 ==
-    // (c4+c5*s+c6*s2+c7*s3+c8*s4)*s4, correctly placing c8 at s8 with
-    // one more fma but no new multiply, keeping the same op count
-    // `log_family_normal!`'s degree-9 form uses for s2/s4 alone.
-    let r1b = fma(c[8], s4, r1);
-    let p = fma(r1b, s4, r0);
-    let k_hi = k * LN2_HI; // exact, see LN2_HI's comment
-    fma(p, s, fma(k, LN2_LO, k_hi))
+    // The `s^2` factor rides into the poly's own low group (`a = s2 * l0`)
+    // instead of multiplying the finished `Q`, the same way `log_2_normal`
+    // does it: same op count, but it keeps the whole thing three Estrin
+    // levels deep. Folding `s` in here as well (`a = fma(s2, l0, s)`) saves
+    // a further op and is not taken -- it puts a second full-weight
+    // rounding back on the result and costs max 1 -> 2.
+    let a = s2 * l0;
+    let u = fma(l3, s2, l2);
+    let w = fma(u, s2, l1);
+    let sq = fma(w, s4, a);
+    // `s` joins the `k` word rather than `sq`, so the only thing left on
+    // the polynomial's critical path is one add and one fma. `base` is
+    // exact for k == 0 and rounds at `|s| <= 0.415` otherwise, far under
+    // ulp(result) once |k| >= 1; `fma(k, LN2_HI, .)` is then the single
+    // full-weight rounding in the whole function. Threading `k` in earlier
+    // -- `(s + k*ln2) + sq`, or the older `fma(p, s, fma(k, LN2_LO, k_hi))`
+    // -- rounds twice at the result's own scale and costs 37x on the
+    // average.
+    let base = fma(k, LN2_LO, s);
+    fma(k, LN2_HI, base + sq)
 }
 
 /// ln without domain checks: valid for positive normal finite x only, see

@@ -1550,10 +1550,12 @@ fn real_main() {
     check("logit(-0.1)", logit(-0.1), f32::NAN);
     check("logit(1.1)", logit(1.1), f32::NAN);
     check("logit(nan)", logit(f32::NAN), f32::NAN);
-    // 1 ulp high, not exact: p=0.7 is outside logit's central band, so
-    // this round trip goes through the ln/log1p arm, where the seam is
-    // placed precisely because a ulp there is already cheap.
-    check("sigmoid(logit(0.7))", sigmoid(logit(0.7)), 0.70000005);
+    // Exact: p=0.7 is outside logit's central band, so this round trip
+    // goes through the ln/log1p arm. It used to land 1 ulp high, and the
+    // seam is still placed on the argument that a ulp there is cheap --
+    // so this pin is a floor the arm currently clears, not a claim that
+    // the arm is correctly rounded everywhere.
+    check("sigmoid(logit(0.7))", sigmoid(logit(0.7)), 0.7);
     // The central band is where the old difference form cancelled: both
     // its logs were ~-ln(2) while their difference was ~4*(p-0.5). These
     // sit where it measured its worst (~1024 ulp), against f64
