@@ -4728,3 +4728,61 @@ is a constant 2.4, so the amplification is bounded and the inputs are
 
 `linear_to_srgb` (7 max ulp) is the same chain with `1/2.4`, which is why it
 is ~2x better: the exponent multiplies the log's absolute error directly.
+
+### sin/cos/tan
+
+- **sin/cos/tan: two-word `1/pi` in the magic round** (2026-08-01,
+  **SHIPPED**): `sin` 219 -> **2**, `cos` 2762 -> **2**, `tan` 3019 ->
+  **4** max ulp over the whole documented `|x| < 2^22*pi` domain, avg
+  0.0594/0.2902/0.3231 -> **0.0422/0.0833/0.1177**. Verified
+  exhaustively (every f32 bit pattern, both signs) over
+  `[1e-6, 2^22*pi)`, not just fuzzed.
+  - The diagnosis in the "Fast-tier reduction upgrade via two_prod"
+    entry above is **wrong and should not be reused**: it says the
+    ~1.3e7 cliff is "the magic-round producing a wrong `q`
+    (`|x/pi| >= 2^22`)". The magic round is fine everywhere in-domain --
+    `x*FRAC_1_PI` tops out at 4194303.63, under `2^22`. What is wrong is
+    the *constant*: a single f32 `1/pi` is only `2^-25` relative, so
+    `x*FRAC_1_PI` sits up to `|x|*2^-25/pi` = **0.17** away from `x/pi`
+    at the top of the domain, and `q` lands a whole integer off whenever
+    `x/pi`'s fraction is within 0.17 of a half. That is ~25% of inputs
+    up there, not a corner.
+  - Being one off is *self-consistent* (parity comes from the same `q`),
+    so this is not a wrong-answer cliff -- it is `sinf_poly` being
+    evaluated at `|r|` up to `pi/2 + 0.17*pi = 2.1` when it is a
+    degree-9 minimax fitted on `[-pi/2, pi/2]`. Pure extrapolation cost.
+  - Screen that settled it in one run: replace `q` with
+    `((x as f64)/PI).round() as f32` and re-measure. 222 -> 2, 2780 -> 2,
+    3057 -> 4 on a dense sweep of `[1.2e7, 2^22*pi)`. Everything else in
+    the reduction is already exact enough -- the four `PI_A..D` words
+    leave `pi` to `1.9e-22`, so `q*(pi - sum)` is `8e-16` at `q = 2^22`,
+    a thousand times under the fma roundings.
+  - **`cos` was twice as bad as `sin` for a second, separate reason**:
+    `fma(x, FRAC_1_PI, -0.5) + ROUND_MAGIC` rounds *twice*. The fma's
+    own result is quantized to `ulp(x/pi)`, already 0.5 at the top of the
+    domain, so the magic round downstream is handed an exact tie and
+    ties-to-even sends it the wrong way -- measured `k` a full 0.79 off
+    at `x = 1.3176051e7`. The new form never materializes `x/pi - 0.5`.
+  - Shipped shape: `n = round(x*RPI_HI)` (magic, on the *exact* product),
+    `f = fma(x, FRAC_1_PI, -n)` recovers that product's fraction, and
+    `fc = fma(x, RPI_LO, f)` folds in the second word of `1/pi`. `sin`
+    then re-rounds with `qb = fc + nb` (a second magic round that lands
+    the parity bit back in `qb`'s low mantissa bit for free -- 3
+    instructions cheaper and 4 latency cycles better than
+    `n + fc.round_ties_even()`, which needs its own parity XOR). `cos`
+    needs no second round at all: the half-odd-integer nearest `x/pi` is
+    just `n + copysign(0.5, fc)`.
+  - `RPI_TINY` is not needed -- it contributes at most `2e-9` over the
+    domain against `fc`'s own `~6e-8` rounding.
+  - Cost, mca, ladder-checked (instructions / uOps / Block RThroughput,
+    because the throughput column overstated all three): `sin`
+    1.151 -> 1.776 cyc/elem, instructions +20%, uOps +22%, RThroughput
+    14 -> 18 (+29%); latency 48 -> 64. `cos` 1.406 -> 1.654, instructions
+    +18%, uOps +18%, RThroughput 16 -> 17 (+6%); latency 56 -> 61. `tan`
+    2.532 -> 3.153, instructions +8%, uOps +8%, RThroughput 30 -> 31
+    (+3%); latency 71 -> 78.
+  - Worth it because the accurate alternative is far more expensive:
+    `sin_checked` is 5.232 cyc/elem and `cos_checked` 4.603, so this
+    reaches their accuracy over `sin`'s own domain at ~3x less cost.
+    `sin` now matches `sin_checked` exactly on `|x| <= 1e6`
+    (0.0357/2 vs 0.0356/2).

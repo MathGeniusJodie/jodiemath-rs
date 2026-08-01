@@ -20,8 +20,8 @@ cbrt_accurate_unchecked |    0.000   |     1     | (bit-identical to cbrt_accura
           exp10_checked |    0.008   |     1     | (no std exp10)
                    log2 |    0.003   |     1     |  0.000  |    1
    log2_unchecked (+)   |    0.006   |     1     | (bit-identical to log2 on its domain)
-         sin (|x|<=1e6) |    0.036   |     3     |  0.002  |    1
-         cos (|x|<=1e6) |    0.078   |     3     |  0.002  |    1
+         sin (in-domain) |    0.042   |     2     |  0.003  |    1
+         cos (in-domain) |    0.083   |     2     |  0.002  |    1
  sin_checked (|x|<=1e6) |    0.036   |     2     |  0.000  |    1
  cos_checked (|x|<=1e6) |    0.081   |     3     |  0.000  |    1
         sinpi (all f32) |    0.197   |     2     | (no std sinpi)
@@ -67,7 +67,7 @@ logaddexp (|a|,|b|<80)|    0.141   |  ~1e3-1e5, heavy-tailed (real, narrow cance
                    acos |    0.056   |     4     |  0.000  |    0
                    atan |    0.067   |     4     |  0.000  |    0
            atan_latency |    0.052   |     3     |  0.000  |    0
-        tan (in-domain) |    0.331   |  2967     |  0.000  |    0
+        tan (in-domain) |    0.118   |     4     |  0.000  |    0
                    erf  |    0.318   |     4     | (no std erf)
          erfc (|x|<=10) |    0.199   |     7     | (no std erfc)
         erfcx (|x|<=20) |    0.215   |     6     | (no std erfcx)
@@ -337,9 +337,9 @@ exp10               |          52.00 |             1.461
 exp10_checked       |          55.00 |             1.657
 log2                |          38.06 |             1.583
 log2_unchecked      |          38.06 |             1.021
-sin                 |          48.00 |             1.151
+sin                 |          64.00 |             1.776
 sin_checked         |         117.02 |             5.232
-cos                 |          56.00 |             1.406
+cos                 |          61.00 |             1.654
 cos_checked         |         122.00 |             4.603
 sinpi               |          42.02 |             1.133
 cospi               |          47.00 |             1.226
@@ -380,7 +380,7 @@ acos                |          39.99 |             0.820
 atan                |          61.27 |             1.491
 atan_latency        |          61.99 |             1.591
 atan2               |          67.19 |             1.694
-tan                 |          71.02 |             2.532
+tan                 |          78.00 |             3.153
 erf                 |          83.98 |             2.037
 erfc                |          62.28 |             2.899
 erfcx               |          66.99 |             2.896
