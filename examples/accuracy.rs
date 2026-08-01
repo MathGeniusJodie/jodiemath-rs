@@ -2182,8 +2182,11 @@ fn main() {
         // No sleef bucket for Dawson's function, so the reference here is
         // a real independent computation, not a round-trip: Simpson's-rule
         // quadrature of the defining integral D(x) = x * integral_0^1
-        // exp(-x^2*(1-s^2)) ds for |x| <= 5 (N=800, empirically >60x more
-        // accurate there than dawson()'s own ~6e-6 worst relative error),
+        // exp(-x^2*(1-s^2)) ds for |x| <= 5 (N=800; measured against
+        // scipy.special.dawsn, its own relative error is <1e-11 out to
+        // x=2, 1.5e-8 (0.13 f32 ulp) at x=4 and 8.8e-8 (0.74 ulp) at the
+        // x=5 handover -- so it is a real reference below x~4, and adds
+        // up to ~1 ulp of its own noise in [4,5]),
         // the literal double-factorial asymptotic series for |x| > 5 (15
         // terms, converges to near f64 precision well before the series'
         // own eventual divergence past its optimal truncation point).

@@ -4617,3 +4617,76 @@ change (+52 net lines, confined to `norm_cdf`/`norm_pdf`) reported
 `dawson`, `erfc_inv` and `probit` as "NOT YOURS". Verify by checking
 which lines the diff *removes* -- those are in pre-image coordinates and
 are not shifted.
+
+## `dawson`: the crate's worst avg ulp was one coefficient, 1 ulp above 1.0
+
+`dawson` held the crate's worst *average* error (0.805 ulp, ~5x the next
+function) and 60 max. Both had a single, unglamorous cause each.
+
+**avg: `pc[0]` was `1.0000001`, which is exactly `1.0 + 2^-23`.** The
+central branch is `x * P(u)/Q(u)` with `u = x^2`, and for small `|x|` the
+whole rational collapses to `P(0)/Q(0) = pc[0]/qc[0]`. So `dawson(x)`
+returned `x * (1 + 2^-23)` -- which rounds to 1 or 2 ulp above `x` depending
+on the mantissa, mean exactly 1.5 -- for *every* `x` below about `2^-13`.
+Measured per-octave avg was a flat `1.5000` from `2^-14` all the way down.
+That is ~54% of the harness's uniform-over-bit-patterns samples, and
+`0.54 * 1.5 = 0.81` is the entire reported 0.805.
+
+Pinning `pc[0] = 1.0` makes every octave below `2^-14` score exactly **0**.
+
+This is the counter-example to the "pinning an exact coefficient costs"
+entry (which is about `erfc`, and still true there). The distinguishing
+question is not "is the value famous" but **"does the exact value make an
+entire region of the domain exact?"** Here `P/Q` is then exactly `1.0` and
+`x * 1.0` is exact, so a whole half of the domain becomes error-free; the
+cost is one constant term the minimax would have placed within its own
+~6 ulp error band of 1 anyway. It did cost ~0.4 avg ulp in `|x|` in
+[0.125,0.5], which the refit below took back.
+
+**max: the fit minimised *absolute* error while ulp is *relative*.**
+`dawsn(x)/x` falls 30x across `u in [0,16]`, so a least-squares objective
+spends its budget near `u=0` and leaves the top of the range ~30x worse in
+ulp. Per-octave avg was 0.4 in the middle and **10.2** over `[2,4)`, with
+the max sitting at the `|x|=4` seam. A relative-error minimax (linearised
+`P - g*Q` residual, LP via HiGHS, 12 iterations, `pc[0]`/`qc[0]` pinned)
+drops the idealised fit error to 6.5 ulp.
+
+**Net, both changes, zero cost:** harness avg **0.805 -> 0.154**, max
+**60 -> 15**; a dense 14.7M-point scan of the central branch against
+`scipy.special.dawsn` says **61 -> 16**. llvm-mca *improves*: throughput
+1.969 -> 1.938, and the throughput region goes 78 -> **77** instructions,
+because `pc[0] = 1.0` now shares the `1.0` broadcast `qc[0]` already needed.
+So this supersedes the "REJECT (axis trade)" verdict in the poly-headroom
+table above (`dawson_central_ratio`, 7.2x headroom, "max 61 -> 13 for avg
+0.806 -> 2.993"). **That rejection was real but was measuring the `pc[0]`
+mechanism, not the refit**: an unpinned minimax moves `P(0)/Q(0)` a few ulp
+off 1, which wrecks the small-`|x|` half of the domain and shows up as
+exactly the +2.2 avg that entry reports. Pin `pc[0]` and the trade vanishes.
+
+Two things measured and *not* shipped:
+
+- **`dawson_tail_poly` relative-minimax refit** (same treatment, `c[0]`
+  pinned): fit error 10.94 -> 2.59 ulp in exact arithmetic, but a
+  **regression in the real chain** -- harness avg 0.1537 -> 0.1692, max
+  15 -> 16. Minimax spreads error uniformly over `v in (0,1/16]`, and the
+  shipped least-squares fit is far better than uniform at *small* `v`,
+  which is where nearly all the tail branch's samples are (`|x| > 4` is
+  ~50% of all f32, and almost all of it has `v ~ 0`). Per-octave avg
+  `2^3` 0.80 -> 2.37 and `2^4` 0.64 -> 2.33 for a seam max of 12 -> 7 that
+  **does not move the reported number**, because the central branch's 15
+  is the binding max. Revisit only if the central branch ever drops below
+  ~10, and then fit L1-under-a-max-cap rather than pure minimax.
+- **avg/max pareto sweep of the central fit** (minimise weighted L1 subject
+  to a hard cap on the max, cap swept 7..60 ulp): the frontier is **flat**
+  -- L1 moves only 1.101 -> 1.305 as the cap tightens from 60 to 7 ulp. At
+  this degree there is no avg to buy back by loosening the max, so plain
+  minimax is the right corner. Do not re-run this sweep.
+
+The accuracy harness's `dawson` reference was also checked rather than
+trusted, since it is the one hand-rolled reference in the file: Simpson's
+rule at N=800 has relative error <1e-11 out to `x=2`, 1.5e-8 (**0.13 f32
+ulp**) at `x=4`, 8.8e-8 (0.74 ulp) at the `x=5` handover to the asymptotic
+series. So it is a real reference and the 0.805 avg was never a reference
+artifact -- but treat anything under ~1 ulp in `[4,5]` as noise. (The
+separate, still-valid caveat is that `dawson` is capped at 2M samples even
+in `thorough` mode, so its max is sampled, not exhaustive.)

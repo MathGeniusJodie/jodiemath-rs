@@ -4564,20 +4564,35 @@ pub fn norm_pdf(x: f32) -> f32 {
 // dawson's central branch (backlog idea #138): `x*P(u)/Q(u)`, `u=x^2`,
 // degree 5/5, Estrin-grouped with each side's top pair folded in at the
 // `u^2` level so `u^4` is never formed (exp_r_poly!'s own fold, applied
-// to the numerator and the denominator alike). Real least-squares fit
-// (scipy) of `dawsn(x)/x` against `u` over `|x| <= 4`, not a
-// transcription of any published algorithm's constants.
+// to the numerator and the denominator alike). Real fit (scipy/HiGHS) of
+// `dawsn(x)/x` against `u` over `|x| <= 4`, not a transcription of any
+// published algorithm's constants.
+//
+// Minimax in *relative* error, not least squares: `dawsn(x)/x` falls by
+// 30x across `u in [0,16]`, so an absolute-error objective spends its
+// whole budget near `u=0` and leaves the top of the range 30x worse in
+// the ulp that actually gets measured.
+//
+// `pc[0]` and `qc[0]` are both pinned to exactly `1.0`, which is what
+// makes `dawson(x) == x` exact for small `|x|` -- the ratio is then
+// exactly 1 there, and `x * 1.0` is exact. This is the one place where
+// pinning a coefficient to its mathematically exact value pays for
+// itself many times over rather than costing (cf. `erfc`): the pin is
+// worth ~1.5 avg ulp across every octave below `2^-13`, which is most
+// of the domain by sample count, and it costs only the fit freedom of a
+// single constant term the minimax would otherwise have placed within
+// its own error band of 1 anyway.
 #[inline(always)]
 fn dawson_central_ratio(u: f32) -> f32 {
     let pc: [f32; 6] = [
-        1.0000001,
-        -0.059783164,
-        0.034603007,
-        0.00048943725,
-        0.00017723245,
-        -6.4844915e-7,
+        1.0,
+        -0.04486033,
+        0.034414444,
+        0.00092847738,
+        0.00022258201,
+        -4.9580024e-7,
     ];
-    let qc: [f32; 6] = [1.0, 0.6068863, 0.17250682, 0.029904548, 0.0033391602, 0.00026631297];
+    let qc: [f32; 6] = [1.0, 0.62182093, 0.1821982, 0.032993324, 0.0038007316, 0.00037382546];
     let u2 = u * u;
     let pl0 = fma(pc[1], u, pc[0]);
     let pl1 = fma(pc[3], u, pc[2]);
