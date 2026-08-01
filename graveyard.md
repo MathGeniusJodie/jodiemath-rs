@@ -6693,3 +6693,83 @@ a way 12% of throughput is not. If a caller ever needs the throughput
 back, the pre-split form is a valid `srgb_to_linear_fast` -- it is
 Pareto-optimal on exactly one axis, and the numbers to wire it up are the
 table above.
+
+## `compound_accurate`: the same f64 port, and this one is clean on every counter
+
+Third and last application of the `Df32`-is-doing-f64's-job lever, on what
+was (after `powf` landed) the crate's most expensive function. Unlike
+`powf`, there is no counter that moves the wrong way.
+
+```
+                       instrs   uOps  BlockRT   cyc/elem            latency
+  compound_accurate   255->159 302->211 84.5->76  9.239 -> 6.173 (-33.2%)  153.56 -> 120.77 (-21.4%)
+  accuracy (quick):   avg 0.0194 -> 0.0007, max 5-6 -> 1
+```
+
+Block RThroughput *improves* here where `powf`'s got worse, and the reason
+is the whole point: `powf`'s f32 version was already fairly lean, so the
+f64 port only cut 10-18% of the instructions against f64's 2x per-lane
+port cost. `log2p1_df` was not lean -- it carried an error-free recovery
+of `1+x`'s lost bits, a separately-refined `c/u` correction with its *own*
+low word, a split `LOG2_E`, and a full (not quick) two-sum -- so the port
+cut 38%, which clears the 2x comfortably.
+
+### The cancellation becomes structurally absent, not recovered
+
+`log2p1_df` needed all that machinery for one reason: whenever `1+x`
+rounds back to exactly `1`, `log2_df(u)` is exactly `Df32(0,0)` and the
+`log2(1 + c/u)` correction *is* the entire answer -- so it had to carry
+full precision of its own.
+
+The atanh form deletes the problem instead of compensating it:
+
+```text
+log2(1+x) = 2*log2(e) * atanh(x/(2+x))
+```
+
+`x` appears as its own **exact factor** and the denominator is only ever
+needed to *relative* accuracy, so `2+x` rounding at `2^-52` is a `2^-53`
+relative error however small `x` is. There is no cancellation to recover.
+
+The two regimes then differ in exactly one term, which is worth recording
+because it is not obvious: `1+x` is exact in an f64 for every
+`|x| >= 2^-29`, and `|x| < 0.25` also pins `k` to 0 -- so on that side
+`m - 1` and `x` are *the same number* right up until the sum starts
+rounding, at which point `x` is the one still carrying the information.
+And `m + 1` is `2 + x` to a relative `2^-52` when `k` is 0, so it serves
+as the denominator on both sides unchanged. The whole two-branch reduction
+is therefore a **single select on the numerator**:
+
+```rust
+let s = if xd.abs() < 0.25 { xd } else { m - 1.0 };
+let dd = m + 1.0;
+```
+
+### Dead code removed
+
+With `powf` and `compound_accurate` both off the double-float route,
+nothing in the crate uses it any more: `log2_df`, `log2p1_df`,
+`exp2_checked_df`, `LOG2_ATANH_RCP`, `LOG2_ATANH_G`, `LOG2E_2_HI`,
+`LOG2E_2_LO` and `LOG2E_LO` are all deleted -- 115 lines of `src/lib.rs`,
+most of it the hand-derived `tl`-refinement and `s - 2*th` Sterbenz
+argument that the f64 reduction no longer needs. `Df32` itself stays: it
+is a public module and `sqrt1pm1`'s `two_prod` still uses it.
+
+### The whole f64 lever, summarised
+
+Three functions in one session, all the same shape -- an f32 chain doing
+error-free-transform bookkeeping to reach a precision one f64 has for
+free:
+
+| | cyc/elem | latency | max ulp |
+|---|---|---|---|
+| `remainder_wide` | 7.688 -> 2.266 | 171.17 -> 58.13 | contract 2^48 -> 2^53 |
+| `powf` | 8.459 -> 6.996 | 125.17 -> 125.81 | 3 -> 1 |
+| `compound_accurate` | 9.239 -> 6.173 | 153.56 -> 120.77 | 5 -> 1 |
+
+The screen that predicts the size of the win is **how much of the f32
+version is bookkeeping rather than arithmetic**, because f64 costs exactly
+2x per lane here (`vfmadd213pd %zmm` RThroughput 1.0 vs `vfmadd213ps
+%ymm`'s 0.5, both 8 lanes). Halve the instruction count and it is a rout;
+cut 10% and it is a wash. `sin_checked`'s earlier port and these three all
+fit that rule.

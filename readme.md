@@ -47,7 +47,7 @@ cbrt_accurate_unchecked |    0.000   |     1     | (bit-identical to cbrt_accura
                    log1p |    0.097   |     4     |  0.000  |    0
                  log2p1  |    0.102   |     3     | (no std log2p1)
                 compound |    0.196   |   ~200    | (no std compound; the exponent n*log1p(x) amplifies its own ulp by |n*log1p(x)|, up to ~88 -- see its doc comment)
-       compound_accurate |    0.019   |     5     | (no std compound; double-float exponent, ~2.5x compound's throughput cost)
+       compound_accurate |    0.001   |     1     | (no std compound; f64 exponent, ~1.7x compound's throughput cost)
          exp (in-domain) |    0.071   |     3     |  0.000  |    1
              exp_checked |    0.037   |     3     |  0.000  |    1
        expm1 (in-domain) |    0.129   |     5     |  0.000  |    0
@@ -374,7 +374,7 @@ log10_unchecked     |          38.22 |             1.113
 log1p               |          47.24 |             1.857
 log2p1              |          51.36 |             1.876
 compound            |          96.75 |             3.724
-compound_accurate   |         153.56 |             9.239
+compound_accurate   |         120.77 |             6.173
 exp                 |          42.00 |             1.195
 exp_checked         |          50.00 |             1.466
 expm1               |          69.00 |             1.604
