@@ -5033,14 +5033,22 @@ pub fn probit(p: f32) -> f32 {
 /// argument is in range, asserted next to the constant.
 #[inline(always)]
 pub fn norm_pdf(x: f32) -> f32 {
-    const INV_SQRT_2PI: f32 = 0.3989422804014327;
+    // `1/sqrt(2*pi)` as a double-`f32` pair, same shape as
+    // `RSQRT2_HI`/`RSQRT2_LO`. The single-word constant is correctly
+    // rounded and still sits 0.48 ulp above the true value, which the
+    // final multiply hands straight to the result as a 0.24-0.48 ulp
+    // bias -- there is nothing else in the chain to cancel it, unlike
+    // `sinc`, where the same constant appears on both sides of a ratio.
+    const INV_SQRT_2PI_HI: f32 = 0.3989423;
+    const INV_SQRT_2PI_LO: f32 = -1.133517e-8;
     let xa = x.abs();
     let xs = if xa > NORM_CDF_XS_CLAMP { NORM_CDF_XS_CLAMP } else { xa };
     let h = 0.5 * xs;
     let p = h * xs;
     let pe = fma(h, xs, -p);
     let e = exp_reduce!(-p);
-    INV_SQRT_2PI * fma(-pe, e, e)
+    let y = fma(-pe, e, e);
+    fma(y, INV_SQRT_2PI_HI, y * INV_SQRT_2PI_LO)
 }
 
 // dawson's central branch (backlog idea #138): `x*P(u)/Q(u)`, `u=x^2`,

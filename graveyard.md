@@ -7143,3 +7143,65 @@ evidence only if someone checked the other side.** Worth a systematic pass
 over the remaining hand-picked bounds in that file -- and note that
 `clog`'s case needed the *reference* replaced too, not just the sampling,
 so "sample harder" is not by itself the audit.
+
+## `norm_pdf`: the last unsplit inexact constant, and why `sinc` is not one
+
+2026-08-01. The two-word-constant sweep that shipped `asind`, `atand`,
+`atan2d`, `atanpi`, `atan2pi` and `asinpi`'s small branch was run by
+*name* (`180/pi`, then `1/pi`). Re-running it by **shape** -- grep every
+multiply by a named or hand-typed irrational constant, not by which
+constant it is -- turns up exactly one more live site.
+
+**Shipped: `norm_pdf`, avg 0.0320 -> 0.0269, max 4 -> 3.** `fl(1/sqrt(2*pi))`
+is correctly rounded and still sits **0.4767 ulp above** the true value,
+which the trailing `INV_SQRT_2PI * y` hands straight to the result as a
+0.24-0.48 ulp bias with nothing downstream to cancel it. `fma(y, HI, y*LO)`
+with `HI = 0.3989423`, `LO = -1.133517e-8` names the constant to a relative
+`1.3e-9` ulp-equivalent. Two `worst_corpus` entries move and both are the
+bias leaving: `norm_pdf(0.111)` +1.07 -> **+0.07** ulp, `norm_pdf(0.01)`
++0.68 -> **-0.32**.
+
+The headline avg moves only 16% because ~94% of bit patterns give an
+output that cannot carry the bias at all -- `|x| > 14.4` returns exactly
+`0`, and tiny `|x|` returns the correctly-rounded peak. Over the ~6% that
+can, removing a 0.35-ulp bias against a +-0.5-ulp rounding is worth ~0.13
+ulp each, which is the 0.005 that showed up. Same "the bulk mass sits
+where the answer is representable" caveat as `acosd`; the max moving 4 -> 3
+is the honest signal here.
+
+Cost: **+4 instructions, +4 uOps, Block RThroughput 24 -> 25, and latency
+62.09 -> 66.09** (+4 cycles, exactly the one dependent `fma`). mca's
+throughput *cycle* column went the other way (2.029 -> 1.909, -5.9%),
+contradicting all three rungs above it, so the honest reading is that the
+four instructions are free in a region that is not front-end bound -- not
+that this made anything faster.
+
+### `sinc` looks like the same bug and is not: the constant cancels
+
+`sinc(x) = sinpi(x) / (f32::consts::PI * x)` has a single-word `PI` in the
+denominator, `PI` is 0.47 ulp high, and `sinc`'s avg is 0.0937 -- it reads
+as the identical defect. **Do not fix it.** `sinpi` computes
+`sinf_poly_raw(PI * r)` with *the same constant*, so its own result is high
+by the same 0.47 ulp relative, and the ratio cancels it. That is visible in
+the numbers already published: `sinpi` alone measures avg 0.197 and `sinc`,
+which is built on it and adds a division, measures **0.094**. Correcting
+only the denominator would break the cancellation and roughly double
+`sinc`'s average.
+
+(`sinpi`'s own 0.197 is not the constant either, and both ways of removing
+it are already closed in the trig section above: `two_prod(pi, r)` plus a
+derivative correction left it bit-for-bit unchanged because `sinf_poly`'s
+fit dominates, and folding `pi` into a dedicated fit regressed it on both
+axes, 0.1969 -> 0.2065 and max 2 -> 3.)
+
+### The rest of the sweep, for completeness
+
+`probit`'s `SQRT_2 * erfinv(...)` is the one remaining single-word
+multiply by an irrational (`fl(sqrt 2)` is 0.287 ulp low). Not done here
+because `accuracy.rs` scores `probit` by a `norm_cdf(probit(p))` round-trip
+residual rather than in ulp, so there is no standing measurement to show a
+win against -- it needs a harness row first. `norm_cdf`'s
+`xa * FRAC_1_SQRT_2` is a real 0.14-0.29 ulp bias by the same argument, but
+the fix is not a two-word multiply: the constant feeds `erfcx_pos`, so it
+needs `gelu`'s `RSQRT2_HI`/`RSQRT2_LO` + `erfc(z+dz) = erfc(z)*(1-2z*dz)`
+treatment, which is several ops rather than one `fma`.
