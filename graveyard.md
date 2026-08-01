@@ -6227,3 +6227,92 @@ being perfectly vectorized (`vcvtps2pd %ymm -> %zmm`, 8 f32 lanes per
 iteration). Fixed to accept `pd\t` as well. This gap would have hit any
 future f64-internal function; `reduce_pi64`'s callers never tripped it
 only because they keep an f32 polynomial.
+## `asinh`: deleting the rescale arm is free code, and mca's own model says no
+
+**Rejected 2026-08-01.** `asinh`'s `ax >= 2048` arm (`sq = fma(0.5, 1/ax,
+ax)`, graveyard #54b) is *removable*, not just cheapenable: the function
+already carries an `ln(ax) + LN_2` arm for the `ax^2`/`2*ax` overflow
+case, and `asinh(ax) - ln(2*ax) = 1/(4*ax^2) - ...` is 0.0625 ulp at
+`ax = 2048` and 0.0039 ulp at `8192`, falling as `1/ax^2`. So the
+overflow arm can serve the whole tail and the rescale arm, its division,
+its fma, the `sq`/`sm1` selects and the `d.is_finite()` test all go --
+`d.is_finite()` becomes `ax < 8192`, which is ready at cycle 1 instead of
+after the `sqrt`+divide.
+
+The static ladder says take it, unanimously:
+
+| | instrs | uOps | BlockRT | vdivps | FPDiv press | Port0 | Port5 |
+|---|---|---|---|---|---|---|---|
+| shipped | 156 | 163 | 42.0 | 6 | 42.00 | 51.37 | 35.59 |
+| this | 145 | 151 | 40.0 | 4 | 32.00 | 48.52 | 29.94 |
+
+Every expensive opcode is down too (`vfmadd213ps` 30 -> 28, `vaddps`
+18 -> 16). Accuracy is unchanged: quick fuzz avg **0.1493**, max **3**,
+identical to shipped to four places.
+
+**And mca's cycle column says +15.1% throughput** (6618 -> 7616,
+4.136 -> 4.760 cyc/elem) **and +78.5% latency** (69.41 -> 123.88).
+
+Both halves of that were run down, and they have different answers.
+
+- **The latency number is an artifact, and it is the *shipped* side that
+  is wrong.** In the scalar latency harness LLVM lowers `if small` to a
+  real branch, laying the two arms out sequentially. llvm-mca has no
+  branch predictor and executes the region as straight-line code, so the
+  value that survives into `d = ax + sm1` is whichever arm is written
+  *last* -- here `.LBB263_1`, the rescale arm (`vdivss`, `vfmadd132ss`,
+  `vaddss`, ~22 cyc from `ax`) rather than the direct arm (`vmulss`,
+  `vaddss`, `vsqrtss`, `vaddss`, `vdivss`, ~41 cyc). Removing the branch
+  forces mca to simulate the real path. Confirmed three ways: the asm
+  layout above, a hand count of the honest chain (~90-100 cyc, i.e.
+  nearer 124 than 69), and wall clock, where the two builds' latency is
+  statistically identical (shipped 42.50/37.86/33.20/36.72 ns, this
+  37.18/37.41/35.61/37.71 ns) as it must be, since the in-domain chain
+  differs only by two deleted selects. **`asinh`'s published mca latency
+  of 69.41 has never been its in-domain latency.** `acosh` (89.08) has
+  the same two-arm shape and is likely understated the same way.
+- **The throughput number is a model effect, not an artifact, and it does
+  not transfer.** Every region in this crate is scheduler-queue-bound in
+  mca, not port-bound -- `SCHEDQ - Scheduler full` is 87-99% of cycles on
+  `ln`/`exp`/`acosh`/`atanh`/`tanh`/`erfc`/`cbrt`/`asinh` alike, and every
+  region simulates 1.06-1.74x its own `Block RThroughput`. mca models the
+  ICX scheduler as 60 entries; the real Ice Lake/Tiger Lake unified RS is
+  160. Under a 60-entry window, the shipped form wins because `1.0/ax` is
+  an *independent* long-latency op that issues at cycle ~5 and frees its
+  slots while the `sqrt`->divide chain runs; the new form has nothing to
+  overlap and clogs the window. Under a 160-entry window that pressure
+  mostly disappears.
+
+**So the tie-break was real hardware, and it says neither.** 20 alternating
+rounds of two prebuilt `quickbench` binaries under the bench lock, with
+`acosh` (byte-identical in both builds) as an in-binary drift control:
+
+```
+        asinh min   asinh p25   asinh med | acosh min  acosh med
+shipped   1.042       1.490       1.615   |   0.910      1.422
+this      0.979       1.440       1.562   |   0.867      1.426
+```
+
+Normalised on the control's min, 1.145 vs 1.129: **-1.4%, i.e. a wash.**
+The control's own min moved 4.7% between the interleaved runs, which
+bounds what this machine can resolve. The divider and port savings do not
+convert because the region is latency-bound on `ax^2 -> +1 -> sqrt -> +1
+-> divide -> ... -> ln_normal` on real hardware too, and that chain is
+untouched by the change.
+
+Not shipped: no axis improves. Accuracy identical, real speed a wash, and
+the crate's published mca number would get 15% worse for it.
+
+Two things worth carrying forward:
+
+- **`SCHEDQ - Scheduler full` at ~99% is the tell for this class of
+  disagreement.** When it is pegged and `Block RThroughput` moves the
+  *opposite* way from the cycle count, mca is ranking how well the code
+  fills a 60-entry window, not how much work it does. Check it before
+  spending a wall-clock A/B: it is one `--all-stats` run.
+- **A branch-shaped region can make mca's latency column measure the
+  wrong arm entirely**, not merely mis-time the right one. The existing
+  memory covers mca over-reporting latency for branchy code; this is the
+  other direction, and it is worse, because the too-*good* number is the
+  one that gets published. The tell is a function whose mca latency is
+  well under a hand count of its own dependency chain.
