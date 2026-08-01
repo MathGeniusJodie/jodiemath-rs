@@ -1147,6 +1147,17 @@ fn real_main() {
     check("rootn(-inf,-3)", rootn(f32::NEG_INFINITY, -3), -0.0);
     check("rootn(-inf,2)", rootn(f32::NEG_INFINITY, 2), f32::NAN);
     check("rootn(nan,3)", rootn(f32::NAN, 3), f32::NAN);
+    // n == -1 is the reciprocal, the one n whose result can overflow or
+    // land denormal -- and the reason the general path is only ever
+    // entered with |n| >= 2 (see rootn's own doc comment).
+    check("rootn(4,-1)", rootn(4.0, -1), 0.25);
+    check("rootn(-4,-1)", rootn(-4.0, -1), -0.25);
+    check("rootn(0,-1)", rootn(0.0, -1), f32::INFINITY);
+    check("rootn(-0,-1)", rootn(-0.0, -1), f32::NEG_INFINITY);
+    check("rootn(inf,-1)", rootn(f32::INFINITY, -1), 0.0);
+    check("rootn(denormal_min,-1)", rootn(f32::from_bits(1), -1), f32::INFINITY);
+    check("rootn(max,-1)", rootn(f32::MAX, -1), 1.0 / f32::MAX);
+    check("rootn(nan,-1)", rootn(f32::NAN, -1), f32::NAN);
 
     // fast_round_int (backlog idea #185): the ROUND_MAGIC idiom exposed
     // standalone. Sign-of-zero pins are load-bearing, not decorative --

@@ -4786,3 +4786,98 @@ is ~2x better: the exponent multiplies the log's absolute error directly.
     reaches their accuracy over `sin`'s own domain at ~3x less cost.
     `sin` now matches `sin_checked` exactly on `|x| <= 1e6`
     (0.0357/2 vs 0.0356/2).
+## `rootn`: 45 max / 10.1 avg ulp was `log2(|x|)` being an `f32` at all
+
+`rootn(x, n)` was `exp2_checked(log_2(|x|) / (n as f32))`, and its error was
+neither a fit problem nor a `log_2` problem. `log2(|x|)` ranges over
+`[-149, 128]`, so *storing it in an `f32`* costs up to `ulp(149)/2 = 7.6e-6`
+absolute -- and `exp2` turns an absolute error in its argument straight into
+a relative one, `ln(2) * 7.6e-6 = 5.3e-6`, which is **44 ulp**. Dividing by
+`n` first only scales that down proportionally, which is why the function
+got *more* accurate as `|n|` grew and was worst at the small `|n|` a caller
+is most likely to write. The measured shape matched exactly:
+
+| n | avg ulp | max ulp |
+|---|---|---|
+| -1 | 10.10 | 45 |
+| 3 / -3 | 5.07 / 4.95 | 43 / 44 |
+| 2 / -2 | 2.71 / 2.60 | 44 / 42 |
+| 7 / -7 | 2.16 / 2.15 | 20 / 20 |
+
+The standing proposal (IDEAS.md) was a `Df32` route -- `log2_df(ax)` divided
+by `n as f32` through a real double-float division. That would have worked,
+but it is the wrong shape of fix: the value that needs more bits is not the
+logarithm, it is the *exponent*, and the exponent is an integer.
+
+**Fix: never form `log2(|x|)` as a float.** Split `|x| = m * 2^e` on
+`log_2_normal`'s own `[sqrt(2)/2, sqrt(2))` window, then use the exact
+Euclidean split `e = q*n + rr`, `0 <= rr < |n|`:
+
+```text
+log2(|x|)/n = q + (rr + log2(m))/n
+```
+
+`q` is an integer and goes straight into `exp2_kf`'s exponent field, so `e`
+never touches the float path. The fractional argument is *self-normalising*:
+`rr < |n|` bounds the sum `rr + log2(m)`'s own rounding at `|n| * 2^-25`, and
+the division by `n` scales it right back to `2^-25` -- independent of both
+`e` and `n`. Accuracy becomes flat in `n` instead of degrading as `|n|` falls.
+
+Three details are load-bearing:
+
+- **The `[sqrt(2)/2, sqrt(2))` window, not `frexp`'s `[0.5, 1)`.** It is
+  `log_2_normal`'s own window, so `log_2_unchecked(m)` computes `k == 0` and
+  never pays its `lm + k` rounding -- `log2(m)` comes back in `[-0.5, 0.5)`
+  with full *relative* accuracy, so an exact power of two costs nothing.
+  Doing the split by hand (`denormal_rescale!` plus the same two bit ops
+  `log_2_normal` uses) rather than `frexp` + an octave shift also drops
+  `frexp`'s zero/infinite selects, which the degenerate arm redoes anyway:
+  37 instructions.
+- **`|n| >= 2` on the general path is what makes `exp2_kf` legal.** Its
+  contract is `k` in `[-126, 128)` and a normal result, and at `|n| >= 2`
+  the result exponent is at most `~149/2`, so it is always normal --
+  no saturating scale, no `ldexp`. `|n| == 1` is the one case that can
+  overflow or go denormal, and it is excluded rather than accommodated.
+- **The `|n| == 1` closed forms and the zero/infinite/NaN arm are the same
+  select.** `|x|` for `n > 0` and `1/|x|` for `n < 0` is simultaneously the
+  exact `|n| == 1` identity (correctly rounded by hardware over the whole
+  domain, including the overflowing and denormal results the general path
+  could not produce) *and* the right magnitude for zero, infinite and NaN
+  `x` at any `n` (where only `sign(n)` matters). The existing sign/parity
+  logic finishes both, so `n == 1 -> x` and `n == -1 -> 1.0/x` need no
+  selects of their own. `n == 0` falls into the same arm and is discarded
+  by the domain-error select that was already there.
+
+Result: max ulp **45 -> 1** (2 on a few `n`), avg **10.10 -> 0.00** at
+`n = -1` and **5.07 -> 0.15** at `n = 3`, uniformly across a 24-value `n`
+sweep spanning `+-1` to `i32::MIN`/`i32::MAX`. Confirmed **exhaustively**
+(all 2^32 bit patterns against an f64 reference) rather than left on the
+fuzz, since a 2-arg function has no `thorough` mode and its fuzz max is
+optimistic:
+
+| n | avg ulp | max ulp | finite samples |
+|---|---|---|---|
+| 2 | 0.13738 | 1 | 2.14e9 |
+| -2 | 0.13613 | 1 | 2.14e9 |
+| 3 | 0.15088 | 2 | 4.28e9 |
+| -3 | 0.17085 | 1 | 4.28e9 |
+
+(The even-`n` avgs read ~2x the fuzz's because the harness divides by
+`n_samples`, not by the number of *scored* samples, and negative `x` with
+even `n` is a skipped domain error. Pre-existing, and it cancels in a
+before/after comparison.)
+
+Cost, by instruction count in
+a standalone `--emit=asm` probe (`rootn` cannot be `llvm-mca`'d -- its
+multi-exit branching corrupts the region markers, see its doc comment):
+`rootn(x, 3)` 91 -> 101, `rootn(x, -3)` 91 -> 111 (the `1.0/|x|` arm stays
+live for negative constant `n`), dynamic `n` 104 -> 143 (Rust's
+`div_euclid`/`rem_euclid` lower to a real `idiv` when `n` is not a
+constant; for a literal `n`, which is the normal call, LLVM
+strength-reduces it away). A 25-45x accuracy gain for 11-22% instructions
+at constant `n`.
+
+Note what this does *not* transfer to: the trick needs the outer exponent to
+be one the integer part survives. `1/n` is exact integer division;
+`srgb_to_linear`'s `2.4` is not (`2.4*e` is not an integer), so it would need
+a two-term split of `2.4*e` and is a different, non-free change.

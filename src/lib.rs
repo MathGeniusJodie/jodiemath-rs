@@ -5829,21 +5829,41 @@ pub fn powf_unchecked(x: f32, y: f32) -> f32 {
 /// directly, matching the actual C23 semantics: real for negative `x`
 /// only when `n` is odd, domain error (`NaN`) for negative `x` with
 /// even `n` or for `n == 0` regardless of `x` (verified against the
-/// real glibc rootn implementation notes, not guessed). The magnitude
-/// itself reuses `powf`'s own `log_2`/`exp2_checked` machinery on `|x|`:
-/// `log_2`'s own error is on an absolute scale, and dividing it by `n`
-/// shrinks that error proportionally before `exp2_checked` sees it, so
-/// accuracy genuinely improves as `|n|` grows (measured: avg/max ulp
-/// falls from ~2.7/44 at `n=2` to ~0.06/1 at `n=1000`) -- but `n=1`
-/// (`1/n = 1`, no shrinking at all) is the *worst* case by this same
-/// logic, not a favorable one, measured at avg/max ulp ~11/45, worse
-/// than every other `n` tested. Special-cased directly (`x` is already
-/// available, so the override costs nothing extra) since `n=1` is also
-/// the single most likely real call. `x == 0`/`x` infinite need no
-/// extra special-casing beyond that: `log_2(0) == -inf` and
-/// `exp2_checked`'s own saturation already give the right zero/infinity
-/// magnitude through the same formula, for both positive and negative
-/// `n` (verified directly, not assumed, before relying on it).
+/// real glibc rootn implementation notes, not guessed).
+///
+/// The magnitude never forms `log2(|x|)` as a single `f32`. That value
+/// carries `|x|`'s whole binary exponent (up to 149), so its own last
+/// place is worth `ulp(149) ~ 1.5e-5` -- an absolute error `exp2` turns
+/// straight back into a relative one, and one that dividing by `n`
+/// only shrinks proportionally, so it is worst exactly at the small
+/// `|n|` a caller is most likely to write. Instead the exponent leaves
+/// the float path entirely: `|x| = m * 2^e` split on `log_2`'s own
+/// `[sqrt(2)/2, sqrt(2))` window (so `log_2_unchecked` never pays its
+/// `lm + k` rounding either), and the *exact* Euclidean split
+/// `e = q*n + rr` with `0 <= rr < |n|` gives
+///
+/// ```text
+/// log2(|x|)/n = q + (rr + log2(m))/n
+/// ```
+///
+/// `q` is an integer handed to [`exp2_kf`] as its exponent field, and
+/// the fractional argument `(rr + log2(m))/n` is self-normalising:
+/// `rr < |n|` bounds the sum's own rounding by `|n|*2^-25`, which the
+/// division by `n` scales right back down to `2^-25` no matter how
+/// large `e` or `n` are. Accuracy is then flat in `n` rather than
+/// degrading as `|n|` falls.
+///
+/// `|n| == 1` is excluded from that path rather than accommodated by
+/// it, which is what keeps the `exp2_kf` contract (`q` in
+/// `[-126, 128)`, normal result) satisfiable without a saturating
+/// scale: at `|n| >= 2` the result exponent is at most `~149/2` in
+/// magnitude, so it is always normal, while `|n| == 1` is the one case
+/// that can overflow or go denormal. Both are exact closed forms
+/// anyway -- `|x|` for `n == 1` and `1/|x|` for `n == -1`, correctly
+/// rounded by hardware over the whole domain including the overflowing
+/// and denormal results -- and that same pair is *also* the right
+/// magnitude for zero, infinite and NaN `x` at any `n`, so one select
+/// covers both and the shared sign/parity logic finishes each.
 ///
 /// Not wired into `examples/mca.rs`/`mca_target.rs`: this function's own
 /// multi-exit-path branching (`n==0`/`n==1`/negative-even-domain-error)
@@ -5853,17 +5873,50 @@ pub fn powf_unchecked(x: f32, y: f32) -> f32 {
 #[inline(always)]
 pub fn rootn(x: f32, n: i32) -> f32 {
     let ax = x.abs();
-    let mag = exp2_checked(log_2(ax) / (n as f32));
+    // |x| = m * 2^e with m in [sqrt(2)/2, sqrt(2)) -- log_2_normal's own
+    // window and its own bit trick, so log_2_unchecked(m) sees k == 0 and
+    // returns log2(m) in [-0.5, 0.5) with no exponent to add back and no
+    // `lm + k` rounding. Reaching for frexp instead costs its [0.5, 1) ->
+    // window shift and its zero/infinite selects, which the `degenerate`
+    // arm below re-does anyway.
+    let (xs, koff) = denormal_rescale!(ax);
+    let bits = xs.to_bits() as i32;
+    let ew = bits.wrapping_sub(0x3f35_04f3) >> 23;
+    let m = f32::from_bits(bits.wrapping_sub(ew << 23) as u32);
+    let e = ew + koff as i32;
+    // |n| >= 2 for the general path; n in {-1, 0, 1} takes the closed-form
+    // arm below, so any stand-in works and 2 keeps both the integer
+    // division and exp2_kf's exponent range well defined.
+    let small = n.unsigned_abs() < 2;
+    let nz = if small { 2 } else { n };
+    let q = e.div_euclid(nz);
+    let rr = e.rem_euclid(nz);
+    let t = (rr as f32 + log_2_unchecked(m)) / (nz as f32);
+    // t is in (-1, 1], so this only ever moves one octave; exp2_kf wants
+    // the fraction separately anyway, and folding q into the same integer
+    // is what keeps e's magnitude off the float path.
+    let tk = t.floor();
+    let mag_normal = exp2_kf(q as f32 + tk, t - tk);
+    // `|x|` for `n > 0` and `1/|x|` for `n < 0` is the whole answer for
+    // three separate reasons at once: it is the exact `|n| == 1`
+    // identity, and it is also the right magnitude for zero, infinite
+    // and NaN `x` (where the mantissa split reads nothing meaningful and
+    // only `n`'s sign matters). `n == 0` lands here too and is discarded
+    // by the domain-error select at the end.
+    let degenerate = ax == 0.0 || !ax.is_finite();
+    let mag = if degenerate || small {
+        if n > 0 {
+            ax
+        } else {
+            1.0 / ax
+        }
+    } else {
+        mag_normal
+    };
     let n_odd = n % 2 != 0;
     let signed = if n_odd { mulsign(mag, x) } else { mag };
     let neg_even_domain_error = x < 0.0 && !n_odd;
     let r = if neg_even_domain_error { f32::NAN } else { signed };
-    // n==1 is the identity, but the general log_2/exp2_checked round trip
-    // doesn't land on it exactly (found by fuzzing, not assumed: avg 11 /
-    // max 45 ulp there, the worst of any n tested, since dividing by 1
-    // doesn't shrink log_2's own error the way larger n does). x is
-    // already available for free, so this override costs nothing extra.
-    let r = if n == 1 { x } else { r };
     if n == 0 { f32::NAN } else { r }
 }
 

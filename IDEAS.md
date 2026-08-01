@@ -139,20 +139,20 @@ the bar by construction if they find anything.
   all route through these -- so it wants its own exhaustive pass per
   function, which is why it was not done alongside `log_2`.
 
-- **`rootn` is now the family's odd one out**: 43-45 max ulp at `|n|<=3`,
-  where `powf` is 3. It is still `exp2_checked(log_2(ax) / n)`, i.e. the
-  single-f32 route `powf` just left, and its error is the same
-  `y`-amplified one (`|log2(x)/n|` reaches ~63 at n=2). The df route
-  fixes it, but not for free and not by simply multiplying by `1/n as
-  f32` -- that constant's own 2^-24 error is amplified right back, so it
-  needs `log2_df(ax) / (n as f32)` through `Df32`'s real division (a
-  hardware `divps` plus ~5 ops). Worth doing only if a caller cares;
-  `rootn` gets *more* accurate as `|n|` grows, so the bad region is
-  exactly the small `n` a caller could write as `cbrt`/`sqrt` instead.
-  `srgb_to_linear`/`linear_to_srgb` (13/7 max ulp) sit on the same
-  fence with the same fix available and a much stronger case for leaving
-  them alone -- their exponent is a constant `2.4`, so the amplification
-  is bounded and their inputs are `[0,1]`.
+- **Exponent-splitting the other `log_2`-then-`exp2` composites.**
+  `rootn` was fixed (45 -> 1 max ulp, 10.1 -> 0 avg) not by the
+  double-float log this entry used to propose but by never forming
+  `log2(|x|)` as a single `f32` at all: split `|x| = m * 2^e` first,
+  keep `e` in `i32`, and hand the integer part of `e/n` straight to
+  `exp2_kf`'s exponent field. That costs no precision anywhere and is
+  far cheaper than a `Df32` division. What makes it work is that the
+  outer exponent is `1/n` and integer division is exact, so the split
+  is exact; `srgb_to_linear`/`linear_to_srgb`'s `2.4` and `1/2.4` are
+  not (`2.4*e` is not an integer), so the same trick would need a
+  two-term split of `2.4*e` and is not obviously free -- and their
+  13/7 max ulp is already argued down to a bounded round trip on a
+  `[0,1]` domain (see graveyard.md). `powf` proper is already on
+  `log2_df` and does not want this.
 
 - **Ulp-staircase-aware LP grids**: densify fit grids near output
   power-of-2 boundaries where ulp weight steps 2x. Complements the
