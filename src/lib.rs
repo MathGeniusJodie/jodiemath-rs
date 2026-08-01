@@ -5112,53 +5112,62 @@ fn dawson_central_ratio(u: f32) -> f32 {
     num / den
 }
 
-// dawson's tail branch: `R(v)/(2x)`, `v=1/x^2`, Estrin-grouped so that
-// `v^4` is never formed -- a real fit of `2*x*dawsn(x)` against `v` over
-// `|x| > 4` (`v` in `[0, 1/16]`), matching the `1 + v/2 + O(v^2)`
-// asymptotic shape but fit directly rather than truncated from that
-// series.
+// dawson's tail branch: `R(z)*w`, `w = 1/(2x)`, `z = w^2 = 1/(4x^2)`,
+// Estrin-grouped so that `z^4` is never formed -- a real fit of
+// `2*x*dawsn(x)` against `z` over `|x| > 4` (`z` in `[0, 1/64]`),
+// matching the `1 + 2z + O(z^2)` asymptotic shape but fit directly
+// rather than truncated from that series.
 //
-// Terms `1, v, v^2, v^3, v^5`: the objective is a *weighted L1 under a
+// The argument is `w^2` rather than `1/x^2` so that the branch needs one
+// division instead of two, and the resulting factor of four folds into
+// these coefficients for free.
+//
+// Terms `1, z, z^2, z^3, z^5`: the objective is a *weighted L1 under a
 // hard max cap*, not plain minimax and not plain least squares, and the
-// term set falls out of it -- the `v^4` coefficient sits at zero, so its
-// group carries `v^5` alone. The weight is what makes this the right
+// term set falls out of it -- the `z^4` coefficient sits at zero, so its
+// group carries `z^5` alone. The weight is what makes this the right
 // objective: a bit-pattern-uniform caller reaches every octave of `|x|`
-// equally often, so nearly all of this branch's inputs have `v` within a
+// equally often, so nearly all of this branch's inputs have `z` within a
 // few octaves of zero, where a plain minimax spreads error it does not
 // need to. The cap is what stops the free end of that trade from parking
-// the error at `v = 1/16`, which is exactly where the previous
+// the error at the top of the range, which is exactly where the previous
 // least-squares degree-4 fit left it: 22 ulp-equivalent at the `|x| = 4`
 // seam against 0.3 average, i.e. the whole of `dawson`'s reported max.
 //
-// Every coefficient is positive, which is what keeps `v = +inf` (the
+// Every coefficient is positive, which is what keeps `z = +inf` (the
 // discarded arm for small `|x|`) combining to a consistently-signed
 // `+inf` rather than `erfinv`'s opposite-signed-infinity `NaN`.
 #[inline(always)]
-fn dawson_tail_poly(v: f32) -> f32 {
-    let c: [f32; 5] = [1.0, 0.50000554, 0.74808973, 2.0591528, 113.96649];
-    let v2 = v * v;
-    let l0 = fma(c[1], v, c[0]);
-    let l1 = fma(c[3], v, c[2]);
-    let l2 = c[4] * v;
-    let r0 = fma(l2, v2, l1);
-    fma(r0, v2, l0)
+fn dawson_tail_poly(z: f32) -> f32 {
+    let c: [f32; 5] = [1.0, 2.0000212, 11.969649, 131.78029, 116698.56];
+    let z2 = z * z;
+    let l0 = fma(c[1], z, c[0]);
+    let l1 = fma(c[3], z, c[2]);
+    let l2 = c[4] * z;
+    let r0 = fma(l2, z2, l1);
+    fma(r0, z2, l0)
 }
 
 /// Dawson's function `F(x) = exp(-x^2) * integral_0^x exp(t^2) dt`
 /// (backlog idea #138): odd, `F(0)=0`, a single interior maximum
 /// `F(x)~0.5410442` near `x~0.9241389`, decaying like `1/(2x)` for large
 /// `|x|`. Two branches, same rational/asymptotic-tail shape as
-/// [`erfcx`]: `x*P(u)/Q(u)` (`u=x^2`) for `|x| <= 4`, `R(v)/x` (halved
-/// first, `v=1/x^2`) past it.
+/// [`erfcx`]: `x*P(u)/Q(u)` (`u=x^2`) for `|x| <= 4`, `R(z)*w` past it,
+/// where `w = 0.5/x` and `z = w^2`.
 ///
-/// The tail branch halves before dividing by `x`, not after: `x` itself
-/// never overflows (it's a finite input), but `2.0*x` does, for any
-/// `|x|` above `f32::MAX/2` -- found by fuzzing, not assumed, since it
-/// silently produces a wrong `0.0` (millions of ulp off) instead of the
-/// correct tiny subnormal result there, rather than an obviously-wrong
-/// `NaN`/`inf`. Halving first instead of last avoids this: halving never
-/// overflows, and the following divide-by-`x` only shrinks the result
-/// further.
+/// The tail's whole argument chain hangs off that one `w`, so it costs a
+/// single division rather than the two an explicit `1/x^2` and `/x`
+/// would: `z = w^2` is `1/(4x^2)`, and the factor of four is absorbed
+/// into `dawson_tail_poly`'s coefficients. The halving lives in the
+/// dividend (`0.5/x`, never `.../(2.0*x)`) because `2.0*x` overflows for
+/// any `|x|` above `f32::MAX/2` even though `x` itself is finite -- found
+/// by fuzzing, not assumed, since it silently produced a wrong `0.0`
+/// (millions of ulp off) rather than an obviously-wrong `NaN`/`inf`.
+/// `w` going subnormal near `f32::MAX` costs nothing: `R(z)` has already
+/// rounded to exactly `1.0` for every `|x| > 2897`, so the result is `w`
+/// itself there, exactly as a two-division `R/(2x)` would compute it --
+/// verified over all 1.96e9 patterns above that bound, not argued. Only
+/// `|x|` in `(4, 2897]` sees the second rounding, worth at most 1 ulp.
 ///
 /// Neither branch needs an explicit infinity override the way
 /// `erfinv`'s tail does: the branch actually *returned* never sees its
@@ -5179,8 +5188,8 @@ fn dawson_tail_poly(v: f32) -> f32 {
 pub fn dawson(x: f32) -> f32 {
     let u = x * x;
     let central = x * dawson_central_ratio(u);
-    let v = 1.0 / u;
-    let tail = dawson_tail_poly(v) * 0.5 / x;
+    let w = 0.5 / x;
+    let tail = dawson_tail_poly(w * w) * w;
     if x.abs() <= 4.0 { central } else { tail }
 }
 

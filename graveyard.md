@@ -6773,3 +6773,60 @@ version is bookkeeping rather than arithmetic**, because f64 costs exactly
 %ymm`'s 0.5, both 8 lanes). Halve the instruction count and it is a rout;
 cut 10% and it is a wash. `sin_checked`'s earlier port and these three all
 fit that rule.
+
+### Follow-on: `dawson`'s tail needs one division, not two, and the scale is free
+
+Same session, same claim. The entry above left `dawson` throughput +2.8%
+over where it started; this takes it to **-12.2%**, i.e. the whole
+function is now a win on every axis against the pre-session baseline.
+
+`dawson`'s throughput region was **divide-bound and nothing else**: three
+`vdivps` (`num/den`, `1.0/u`, `.../x`) at RThroughput 5.0 each is exactly
+the 30.00 Block RThroughput mca reported, which is why the central
+branch's +6 instructions in the entry above cost nothing measurable. The
+tail was spending two of those three: `v = 1.0/u` for the polynomial's
+argument, and `/x` for the `1/(2x)` factor.
+
+Both come off one division. `w = 0.5/x` is the factor; `z = w*w` is
+`1/(4x^2)`, i.e. the old `v` scaled by four -- and **a constant scale
+folds into the polynomial's coefficients for free** (`c'_k = c_k * 4^k`),
+so the branch is `dawson_tail_poly(w*w) * w` with no compensating
+multiply anywhere. Re-running the quantization descent in the new
+variable rather than just rescaling and re-rounding is worth 0.0005 ulp
+of L1, so it is barely more than bookkeeping: L1 0.0617 -> 0.0612.
+
+Measured (llvm-mca, `tools/mca_region.py`):
+
+| | instrs | uOps | BlockRT | throughput | latency |
+|---|---|---|---|---|---|
+| two divisions | 85 | 94 | 30.00 | 1.992 | 68.97 |
+| one division | 84 | 92 | **23.00** | **1.701** | **62.11** |
+
+-14.6% throughput and -9.9% latency, and the RThroughput drop from 30 to
+23 is the removed `vdivps` showing up exactly where the model says it
+should. Against the pre-session baseline: throughput 1.938 -> 1.701
+(-12.2%), latency 65.89 -> 62.11 (-5.7%).
+
+**The cost, priced rather than waved through.** `R(z)*w` rounds twice
+where `R/(2x)` rounded once, so this is not free in principle. In
+practice it is nearly free, and the reason is worth recording as a
+general screen: **the second rounding only exists where the polynomial is
+not exactly 1.0.** `fma(c1, z, 1.0)` rounds to exactly `1.0` for every
+`|x| > 2897` -- verified over all 1.96e9 patterns above that bound, not
+argued -- so the result there is `w` itself, bit-identical to what the
+two-division form produced, including where `w` goes subnormal near
+`f32::MAX`. Only `|x|` in `(4, 2897]` pays, ~7% of the tail's inputs by
+bit-pattern measure, at most 1 ulp each. Whole-function effect: avg
+0.0561 -> 0.0585 (+4.3%), max unchanged at 5, and one `worst_corpus`
+entry moved (`dawson(100)` -0.19 -> -1.19 ulp).
+
+Not split into a second public function: 14.6% throughput against
+0.0024 avg ulp and an identical max is far inside the spread `gelu_fast`
+was already rejected at (7% against a 20x accuracy gap).
+
+**Transferable:** any function whose mca Block RThroughput equals
+`5.0 * (number of vdivps)` is divide-bound, and there polynomial degree
+is free while a division is worth ~7 RThroughput. Look for two divisions
+whose arguments are powers of the same quantity -- `1/x^2` and `1/x`,
+`1/x` and `1/x^3` -- because one of them is a multiply away from the
+other and any constant left over lands in the coefficients.

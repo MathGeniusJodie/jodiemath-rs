@@ -77,7 +77,7 @@ logaddexp (|a|,|b|<80)|    0.141   |  ~1e3-1e5, heavy-tailed (real, narrow cance
          erfc (|x|<=10) |    0.195   |     6     | (no std erfc)
         erfcx (|x|<=20) |    0.208   |     6     | (no std erfcx)
          erfcx (x>=20)  |    0.268   |     2     | (no std erfcx)
-       dawson (all f32) |    0.056   |     5     | (no std dawson; sampled, not exhaustive, see accuracy.rs)
+       dawson (all f32) |    0.059   |     5     | (no std dawson; sampled, not exhaustive, see accuracy.rs)
                   atan2 |    0.069   |     3     |  0.000  |    0
     atan2_unchecked (+) |    0.069   |     3     | (bit-identical to atan2 on its domain)
               atan2_pos |    0.063   |     3     | (no std atan2_pos)
