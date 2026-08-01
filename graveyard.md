@@ -6316,3 +6316,77 @@ Two things worth carrying forward:
   other direction, and it is worse, because the too-*good* number is the
   one that gets published. The tell is a function whose mca latency is
   well under a hand count of its own dependency chain.
+
+## `clog`: 4717 max ulp was `cabs`, and it did not have to be composed on
+
+**Shipped 2026-08-01.** `clog`'s real part measured **max 4717 ulp**
+(`re=1.0001993, im=3.7058e-4`) in the standing fuzz -- the crate's worst
+undocumented max. Its doc comment attributed that to
+"an information-theoretic floor of composing on top of plain `f32`
+`cabs` ... not something reachable without a compensated/double-float
+magnitude ... out of scope for this composite". **The premise was wrong:
+the floor is real, but only for code that composes on `cabs`, and the
+near-1 branch does not have to.**
+
+`ln|z| = 0.5*log1p(|z|^2 - 1)` reaches the same answer without ever
+rounding at magnitude 1. `re^2 + im^2 - 1` is built exactly:
+
+```rust
+let p1 = re * re;  let e1 = fma(re, re, -p1);
+let p2 = im * im;  let e2 = fma(im, im, -p2);
+let (s, es) = two_sum(p1, p2);
+0.5 * log1p_guarded((s - 1.0) + ((e1 + e2) + es))
+```
+
+`s + es + e1 + e2` *is* `re^2 + im^2`, with no error at all, and
+`s - 1.0` is Sterbenz-exact wherever the result is small enough to care
+(`s` in `[0.5, 2]`). The branch guard still uses `cabs`, which is
+harmless -- it only has to be right to a factor of two.
+
+- **Accuracy: max ulp re 4717 -> 3**, stable across 3 reruns (im
+  unchanged at 3). Both fuzz numbers are sampling-limited, so the honest
+  statement is the manifold one below, not the ratio.
+- **mca: latency 170.63 -> 158.93 (-6.9%)**, throughput 8.166 -> 8.227
+  (**+0.75%**), for +26 instructions and +32 uOps in the region
+  (`Block RThroughput` 65 -> 71). The latency *improves* because the
+  value path no longer waits on `cabs`'s `sqrt` at all -- only the branch
+  select does -- and the +13 ops per element land in slack on an already
+  long chain. Compare `logit`'s own precedent (max 1024 -> 3 for +11.8%
+  throughput): this one is nearly free.
+- All 8 standing gates, `approx_bounds` and 26 tests pass; `worst_corpus`
+  needed no re-bless.
+
+**Two intermediate results worth keeping.**
+
+- **Half the fix is not most of the fix.** The first version compensated
+  only `re` (`fma(re, re, -1.0) + im*im`) and took max 4717 -> **1466**,
+  not to single digits -- the new worst case simply moved to
+  `re=-9.04e-13, im=1.0002066`, where the surviving rounding is `im*im`'s
+  at magnitude 1. Symmetric problem, symmetric fix required. Ordering the
+  pair by magnitude and compensating only the larger would have failed
+  the same way on the `|re| ~ |im| ~ 1/sqrt(2)` diagonal, where both
+  squares round at magnitude 1/2 and then cancel.
+- **The fuzz's max is a sampling artifact for this function, in both
+  directions.** `clog`'s error lives on the `|z| = 1` manifold, which
+  random `(re, im)` f32 pairs essentially never land on; the reported max
+  is just how close 5M samples got. A targeted 400k-point sweep *along*
+  that manifold (pick `re`, solve `im`, then jitter `im` by +-40 ulp)
+  puts the old form at **1.68e7 ulp** and the new one at **2048** at the
+  same points -- and the old figure is generous to the old code, since
+  the probe gave it a correctly-rounded `hypot` where the shipped `cabs`
+  carries up to 1 ulp. Neither is bounded, and neither can be: as
+  `|z| -> 1` the true answer goes to zero and so does its ulp. What the
+  fix actually buys is moving the breakdown from `|z^2-1| ~ 2^-24` down
+  to `~2^-48`.
+
+**Method note: `clog` still must not be mca-wired permanently.** The
+numbers above came from temporarily adding `clogtmp_latency`/
+`clogtmp_throughput` to `mca_target.rs` and reverting it. That is safe as
+an A/B (identical wiring on both sides, and the region's +26 instructions
+are exactly the +13 added ops x 2 vector iterations), and `ln`/`cabs`'s
+own regions came back bit-identical -- but a full 295-region diff shows
+adding it **does** corrupt `remainder_wide_latency` (4056 -> 1495
+instructions) and `remainder_wide_throughput` (134 -> 67), exactly the
+multi-exit-path marker corruption `mca_target.rs` documents. So the
+existing decision not to wire it stands; check the *whole* region list,
+not two controls, before believing otherwise.

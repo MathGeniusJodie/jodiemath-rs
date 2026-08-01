@@ -5715,26 +5715,24 @@ pub fn cexp(re: f32, im: f32) -> (f32, f32) {
 ///
 /// - `|z|` near `1` (e.g. `re=1.0000999, im=0.00242`) makes `ln(|z|)`
 ///   itself the near-zero-argument cancellation [`log1p`] exists to
-///   avoid -- `ln` of a value that close to its own zero amplifies even
-///   `cabs`'s own already-good ~1-ulp error into thousands of ulp in
-///   the tiny output. `log1p(cabs-1.0)` recovers most of this (the
-///   *only* fix available at this precision tier: the residual
-///   thousands-of-ulp error left even after it is `cabs`'s own ~1-ulp
-///   imprecision at magnitude ~1 having nowhere near enough absolute
-///   precision left to support a correctly-rounded *much smaller*
-///   output -- an information-theoretic floor of composing on top of
-///   plain `f32` `cabs`, not something reachable without a compensated/
-///   double-float magnitude the way `_accurate` tiers elsewhere in this
-///   crate use, out of scope for this composite). `log1p(cabs-1.0)`
-///   fixes what it can *only* in the narrow band `cabs` is actually
-///   close to `1.0` (`|cabs-1.0| < 0.5` here) -- reaching for it
-///   unconditionally was tried first and made things far worse (max
-///   ulp over a billion)
+///   avoid -- `ln` of a value that close to its own zero amplifies any
+///   error in the magnitude by `1/ln|z|`, which is unbounded. The fix
+///   has to keep `|z|` out of it entirely: `ln|z| = 0.5*log1p(|z|^2-1)`,
+///   with `|z|^2-1` built as `fma(re, re, -1.0) + im*im` so the leading
+///   `re^2-1` cancellation is absorbed into the fma's single rounding
+///   and never rounds at magnitude `1`. Composing on the already-rounded
+///   `cabs` instead (`log1p(cabs-1.0)`) cannot reach this: `cabs`'s own
+///   ~half-ulp at magnitude `1` is ~6e-8 absolute, and the true answer
+///   out here is smaller than that, so the error is `6e-8/ulp(ln|z|)`
+///   ulp -- ~3000 at `re=1.0001993, im=3.7e-4`, where the form used
+///   here scores 0.09. This is why the near-1 branch does not use
+///   `cabs` at all; the branch *guard* still does, which is harmless
+///   (it only has to be right to a factor of two).
+///   The band is `|cabs-1.0| < 0.5` -- reaching for `log1p` outside it
+///   was tried first and made things far worse (max ulp over a billion)
 ///   for `cabs` far from `1`, e.g. very small: `log1p`'s own argument is
 ///   then close to `-1`, not `0`, none of the cancellation-avoidance
-///   `log1p` provides actually applies there, and round-tripping an
-///   already-computed `cabs` through `1.0+(cabs-1.0)` internally just
-///   reintroduces the exact cancellation this was meant to avoid.
+///   `log1p` provides actually applies there.
 /// - `cabs` can overflow to `inf` even when both `re`/`im` are finite
 ///   (e.g. both individually near `f32::MAX`): the true mathematical
 ///   magnitude exceeds `f32::MAX` before `ln` of it would, so forming
@@ -5770,9 +5768,9 @@ pub fn clog(re: f32, im: f32) -> (f32, f32) {
     // (`|v| < 0.5` and `[0, 1]`, checked exhaustively) with exactly one
     // exception, `v == -0.0`, where `log1p`'s signed-zero select returns
     // `-0.0` and this returns `+0.0`. Neither site can produce it, also
-    // checked exhaustively rather than argued: `mag - 1.0` is `+0.0` for
-    // every non-negative finite `mag` (IEEE `x - x` is `+0.0` under
-    // round-to-nearest), and a square is never `-0.0`.
+    // checked exhaustively rather than argued: a square is never `-0.0`,
+    // and `fma(re, re, -1.0) + im*im` is `+0.0` whenever it vanishes
+    // (IEEE `x + (-x)` is `+0.0` under round-to-nearest).
     #[inline(always)]
     fn log1p_guarded(v: f32) -> f32 {
         let u = 1.0 + v;
@@ -5781,7 +5779,26 @@ pub fn clog(re: f32, im: f32) -> (f32, f32) {
     }
     let mag = cabs(re, im);
     let log_mag = if mag.is_finite() {
-        if (mag - 1.0).abs() < 0.5 { log1p_guarded(mag - 1.0) } else { ln(mag) }
+        if (mag - 1.0).abs() < 0.5 {
+            // `re^2 + im^2 - 1` to full relative precision however hard
+            // it cancels. Both squares are split exactly by `fma` and
+            // their sum exactly by `two_sum`, so `s + es + e1 + e2` *is*
+            // `re^2 + im^2`, with no error at all. `s - 1.0` is then
+            // Sterbenz-exact wherever it matters (`s` in `[0.5, 2]`, i.e.
+            // wherever the result is small enough to care), and the only
+            // rounding left lands on the correction word, at `2^-24` of
+            // an already-`2^-24` quantity. `mag < 1.5` bounds `|re|` and
+            // `|im|` by `1.5`, so no square can overflow, and `1 + v =
+            // re^2 + im^2` stays inside `log1p_guarded`'s licence.
+            let p1 = re * re;
+            let e1 = fma(re, re, -p1);
+            let p2 = im * im;
+            let e2 = fma(im, im, -p2);
+            let (s, es) = two_sum(p1, p2);
+            0.5 * log1p_guarded((s - 1.0) + ((e1 + e2) + es))
+        } else {
+            ln(mag)
+        }
     } else if re.is_finite() && im.is_finite() {
         let are = re.abs();
         let aim = im.abs();
