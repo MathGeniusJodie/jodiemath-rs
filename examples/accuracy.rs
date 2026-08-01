@@ -564,8 +564,6 @@ fn main() {
         // function fed inputs it was never meant for" (blows up to ~1e8
         // ulp there, swamping the number that's actually informative)
         let positive_normal = |x: f32| x >= f32::MIN_POSITIVE && x.is_finite();
-        let s = measure!(positive_normal, cbrt_throughput, cbrt_u35);
-        report("cbrt_throughput (+)", &s, t0);
         let s = measure!(positive_normal, cbrt_fast, cbrt_u35);
         report("cbrt_fast (+)", &s, t0);
         let s = measure!(everywhere, |x: f32| x.cbrt(), cbrt_u35);

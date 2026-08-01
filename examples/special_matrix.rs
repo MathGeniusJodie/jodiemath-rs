@@ -67,7 +67,6 @@ fn main() {
         ("cbrt_approx", cbrt_approx as fn(f32) -> f32),
         ("cbrt_fast", cbrt_fast as fn(f32) -> f32),
         ("cbrt_normal", cbrt_normal as fn(f32) -> f32),
-        ("cbrt_throughput", cbrt_throughput as fn(f32) -> f32),
         ("cbrt_unchecked", cbrt_unchecked as fn(f32) -> f32),
         ("cos", cos as fn(f32) -> f32),
         ("cos2pi", cos2pi as fn(f32) -> f32),

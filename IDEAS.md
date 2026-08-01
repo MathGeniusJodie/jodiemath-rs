@@ -257,7 +257,8 @@ the bar by construction if they find anything.
      now have real doc-comment error bounds (max relative/absolute
      error, see lib.rs/git log) — still open: add sin_approx/tanh_approx
      members for ML-inference users, explicitly outside the 0.5/2 budget
-     (cbrt_throughput's tier, done properly). sigmoid_approx folds into
+     (`cbrt_fast`'s tier, done properly -- `cbrt_throughput` was deleted
+     as pareto-dominated, see graveyard.md). sigmoid_approx folds into
      #191's own PWL+correction design instead of a separate bit-trick.
      **Those three bounds are now verified, and the tier's remaining three
      members documented, 2026-07-27** (`examples/approx_bounds.rs`; ulp is

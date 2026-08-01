@@ -160,7 +160,6 @@ fn main() {
     bench!("cbrt_unchecked", cbrt_unchecked);
     bench!("cbrt_accurate", cbrt_accurate);
     bench!("cbrt_accurate_unchecked", cbrt_accurate_unchecked);
-    bench!("cbrt_throughput", cbrt_throughput);
     bench!("cbrt_fast", cbrt_fast);
     bench!("rcbrt", rcbrt);
     bench!("pow_3_2", pow_3_2);

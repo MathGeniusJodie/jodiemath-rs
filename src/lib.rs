@@ -1964,24 +1964,6 @@ pub fn rcbrt(x: f32) -> f32 {
     if ax == 0 || ax >= EXPONENT_MASK { spec } else { r }
 }
 
-/// Higher-throughput `cbrt` approximation (backlog idea #137): a bit-trick
-/// seed (`0xd461ff81 - x.to_bits()/3`) refined by two Halley-style
-/// inverse-cbrt iterations. Positive, finite, normal `x` only -- no
-/// zero/negative/denormal/inf/nan handling, unlike `cbrt`/`cbrt_unchecked`.
-/// Approx tier: avg ulp 6.73, max ulp 74 (positive-normal domain) -- this
-/// function's error doesn't repeat across octaves the way `cbrt_normal`'s
-/// does, so a magic-constant retune was tried and rejected (see
-/// `tune.rs`'s own `cbrt_throughput_c` history): grid-tuning traded a
-/// lower max ulp for a much worse average instead of improving both.
-#[inline(always)]
-pub fn cbrt_throughput(x: f32) -> f32 {
-    let r = f32::from_bits(0xd461ff81u32.wrapping_sub(x.to_bits() / 3));
-    let r = fma(r * r, (r * r) * x, r * f32::from_bits(0x3fb6e3d7));
-    let r = fma(r * r, (r * r) * x, r * f32::from_bits(0x3fe09c2a));
-    r * r * x
-}
-
-
 /// Bit-trick `cbrt` seed plus two rational refinement steps (backlog idea
 /// #188's remaining members): max relative error **~5e-6** for `x` in
 /// `[1e-30, 1e30]` -- far tighter than its `_approx` siblings, since unlike
@@ -2050,17 +2032,36 @@ pub fn rsqrt_approx(x: f32) -> f32 {
     f32::from_bits(0x5F33E79F - (x.to_bits() >> 1))
 }
 
-// 50 average ulp error 32 cycle latency 5.5 cycle rthroughput
+/// Latency-optimal `cbrt` approximation: two bit-trick seeds -- one for
+/// `x^(1/3)`, one for `x^(-2/3)/3` -- and two coupled Newton steps
+/// `s <- s + r*(x - s^3)`, spelled `fma(s*s, s*-r, fma(r, x, s))` so each
+/// step is only two dependent FP levels deep. `r` is never refined, which
+/// is the whole design: it is what keeps a step at two levels instead of
+/// the four an inverse-cbrt iteration needs, and it is also the accuracy
+/// floor (the residual after two steps is `~u0*(u0+v)*v` for seed errors
+/// `u0`, `v` of a few percent each, so no amount of constant tuning gets
+/// this near an ulp -- `cbrt_normal` is 0.28 avg / 3 max for 25% more
+/// latency, and is what to reach for unless the dependency chain is the
+/// binding constraint).
+///
+/// Positive, finite, normal `x` only -- no zero/negative/denormal/inf/nan
+/// handling, unlike [`cbrt`]/[`cbrt_unchecked`]. Approx tier, deliberately
+/// outside the crate's 0.5/2 ulp budget: avg ulp 57.4, max ulp 554
+/// (positive-normal domain), llvm-mca latency 28.05 cyc and throughput
+/// 0.839 cyc/elem -- against `cbrt_unchecked`'s 35.06 / 0.906.
+///
+/// Both seeds scale the exponent field by a shift-multiply rather than an
+/// exact `bits/3`, and both Newton steps share one reciprocal seed. Two
+/// tuned variants that improve on this -- a second reciprocal-seed offset,
+/// and the exact `bits/3` -- are measured in graveyard.md and not taken:
+/// each buys 16-31% of the max ulp but gives back part of the latency or
+/// throughput edge that is the only reason this tier exists.
+#[inline(always)]
 pub fn cbrt_fast(x: f32) -> f32 {
-    let s = f32::from_bits(0x2a4ddef1u32.wrapping_add((x.to_bits()>>16)*0x5556u32));
-    let r = f32::from_bits(0x68ff2381u32.wrapping_sub((x.to_bits()>>16)*0xaaacu32));
+    let s = f32::from_bits(0x2a4d_def1u32.wrapping_add((x.to_bits() >> 16) * 0x5556u32));
+    let r = f32::from_bits(0x68ff_2381u32.wrapping_sub((x.to_bits() >> 16) * 0xaaac));
     let s = fma(s * s, s * -r, fma(r, x, s));
     fma(s * s, s * -r, fma(r, x, s))
-}
-pub fn cbrt_constant(x: f32, c: &[u32]) -> f32 {
-	let y = f32::from_bits(c[0] + (x.to_bits() / 3));
-	let y = (x + 2.*(y*y)*y) / (3.*(y*y));
-    y
 }
 
 /// `x * sign(y)` (backlog idea #184): an xor of sign bits, genuinely
@@ -6683,17 +6684,6 @@ mod tests {
         println!(
             "jodie cbrt accurate error: {}",
             ulp_error(1..10000, 1.0, cbrt_accurate, |x| x.cbrt())
-        );
-        println!(
-            "std   cbrt error: {}",
-            ulp_error(1..10000, 1.0, |x| x.cbrt(), |x| x.cbrt())
-        );
-    }
-    #[test]
-    fn cbrt_throughput_precision() {
-        println!(
-            "jodie cbrt throughput error: {}",
-            ulp_error(1..10000, 1.0, cbrt_throughput, |x| x.cbrt())
         );
         println!(
             "std   cbrt error: {}",

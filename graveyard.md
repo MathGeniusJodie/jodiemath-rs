@@ -5465,3 +5465,70 @@ at this degree, is the lever. Note also that Horner beats Estrin on both
 axes with the plain `v` and *loses* on max once `v` is corrected -- the two
 choices are not independent, and Estrin is there for depth anyway (the
 division is already on the critical path ahead of it).
+## `cbrt_throughput` was dominated on every axis; deleted
+
+Not a tuning failure -- a pareto check nobody had run. llvm-mca (this
+worktree, `tools/mca_region.py`) against the accuracy sweep:
+
+| function | avg ulp | max ulp | latency | throughput | domain |
+|---|---|---|---|---|---|
+| `cbrt_fast` | 57.4 | 554 | **28.05** | **0.839** | positive normal |
+| `cbrt_unchecked` | **0.282** | **3** | 35.06 | 0.906 | normal, both signs |
+| `cbrt_throughput` | 6.74 | 74 | 42.05 | 0.917 | positive normal |
+| `cbrt_accurate_unchecked` | **0.000** | **1** | 63.00 | 2.067 | rescaled range |
+
+`cbrt_throughput` loses to `cbrt_unchecked` on **all four**: 24x the avg
+ulp, 25x the max, +20% latency, +1.2% throughput -- and it accepts a
+*narrower* domain (no negatives, no denormals) to do it. A function named
+for throughput that is slower than the accurate one it was meant to
+undercut has no pareto point to sit on. Deleted, along with the dead
+`cbrt_constant` (a `&[u32]`-parameterised helper with no callers and no
+doc comment; `tune.rs` carries its own copies of that shape).
+
+The reason it lost is structural, and it is the transferable part.
+`cbrt_throughput` iterates the inverse cube root, `r <- fma(r*r, (r*r)*x,
+r*K)`, which is **four** dependent FP levels per step (`r*r`, `*x`, the
+fma, and the final `r*r*x`). `cbrt_fast` iterates the coupled pair
+`s <- s + r*(x - s^3)` spelled `fma(s*s, s*-r, fma(r, x, s))`, which is
+**two** -- `s*s`, `s*-r` and `fma(r,x,s)` all issue together. Two prior
+sessions tried to rescue `cbrt_throughput` by tuning its constants (see
+the two entries above); the constants were never the problem.
+
+### `cbrt_fast`: two tuned variants measured, neither taken
+
+Both dominate the shipped constants on accuracy and both give back part of
+the only edge the tier has. Constants from a pareto-accepting coordinate
+descent (accept only if one axis improves and the other does not worsen --
+the max-first tuple scoring that wrecked `cbrt_throughput`'s average is
+recorded above), scored on a 130k-point grid spanning every positive
+normal octave and verified on 2.08M.
+
+| variant | avg | max | latency | throughput |
+|---|---|---|---|---|
+| shipped | 57.4 | 554 | **28.047** | **0.839** |
+| + second reciprocal-seed offset | 53.7 | 464 | **28.047** | 0.910 (+8.5%) |
+| + exact `bits/3` as well | 52.8 | 383 | 29.047 (+3.6%) | 0.854 (+1.8%) |
+
+- **A second reciprocal-seed offset is the bigger lever and the cheaper
+  one on paper**: the two Newton steps want different reciprocals -- step 1
+  wants `1/(3*s0^2)`, whose error carries the `s0` seed's own `2*u0`
+  (~6%), step 2 wants `1/(3*x^(2/3))` -- so one offset cannot centre both.
+  A second `from_bits(B2 - w)` is one integer add, entirely off the
+  critical path, and latency is indeed unchanged to the cycle. It still
+  costs 8.5% of throughput (+3 instrs on a 34-instr vector body), which
+  puts `cbrt_fast` at 0.910 -- level with `cbrt_unchecked`'s 0.906, i.e.
+  it trades away half of what makes the tier exist.
+- **Exact `bits/3`** (`mulhi`+`shr`, then `t<<1` for the `-2/3` seed
+  instead of a second multiply) removes a real slope error: `(bits>>16) *
+  0x5556` scales by 0.33334351 instead of 1/3, a drift reaching 0.25% of
+  the seed at the top of the range -- which is exactly where the worst
+  point sits (`x = 4.25e37`). Worth another 17% of the max, for one cycle
+  of latency.
+- Not shipped because the accuracy floor is structural, not constant-bound:
+  with seed errors `u0`, `v`, two steps of a fixed-`r` Newton leave
+  `~u0*(u0+v)*v`, and `u0 ~ 3%` is what *any* single magic constant gives.
+  Even a perfect `r` bottoms out near `u0^4 ~ 1e-6` (~18 ulp). Tuning
+  moves 554 -> 383; nothing in this shape reaches an ulp, so paying
+  latency or throughput for a 400-vs-550-ulp approximation buys nothing a
+  caller of this tier can use. Adopt one only if `cbrt_fast` ever acquires
+  a caller that cares about its error at all.
