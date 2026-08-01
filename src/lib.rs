@@ -4142,8 +4142,8 @@ pub fn asind(x: f32) -> f32 {
 // because idea #123's own RAD_TO_DEG fold measured worse for asind --
 // verified separately since it's a different constant, not just a
 // relabeling. Real exhaustive fuzz (pilot-tested here before extending
-// to acospi/atanpi/atan2pi): folded gives avg/max ulp 0.2375/7 vs the
-// plain `asin(x)/PI` composite's 0.2440/9 -- a real win on *both* axes
+// to acospi/atanpi/atan2pi): folded gives avg/max ulp 0.0159/5 vs the
+// plain `asin(x)/PI` composite's 0.2430/7 -- a real win on *both* axes
 // here, unlike asind's fold (worse on max ulp there). Plausible reason
 // for the opposite verdict: `1/pi` (~0.318) keeps rescaled coefficients
 // in a similar-or-smaller magnitude range, while `180/pi` (~57.3)
@@ -4153,12 +4153,26 @@ pub fn asind(x: f32) -> f32 {
 #[inline(always)]
 fn asinpi_small(x: f32) -> f32 {
     let x2 = x * x;
-    let c0 = 0.31830987f32;
     let c1 = 0.053056117f32;
     let c2 = 0.023659006f32;
     let c3 = 0.017134449f32;
-    let p = fma(fma(fma(c3, x2, c2), x2, c1), x2, c0);
-    x * p
+    // The leading coefficient is 1/pi, and unlike `asin_small`'s exact
+    // 1.0 it is irrational: carrying it as the single word `FRAC_1_PI`
+    // hands every result in this branch that constant's own 0.43-ulp low
+    // bias (see [`FRAC_1_PI_LO`]) -- and this branch is where almost
+    // every f32 in `asinpi`'s domain lands. So it is peeled out of the
+    // Horner chain and carried as the double-f32 pair: `FRAC_1_PI_LO`
+    // takes the trailing slot the leading coefficient used to hold (same
+    // three fmas), the tail is scaled by `x` on its own, and the one
+    // remaining fma adds `x*FRAC_1_PI` exactly, rounding once at the
+    // result's own magnitude. `x*t`'s own rounding is ~0.004 ulp of the
+    // result at the branch edge and vanishes from there down.
+    //
+    // `FRAC_1_PI_LO > 0` is also what keeps `asinpi(-0.0)` at `-0.0`:
+    // `x*t` stays `-0.0` rather than becoming `+0.0`, so the fma adds two
+    // negative zeros. See RAD_TO_DEG_LO's comment for the same argument.
+    let t = fma(fma(fma(c3, x2, c2), x2, c1), x2, FRAC_1_PI_LO);
+    fma(x, FRAC_1_PI, x * t)
 }
 
 // asin's `0.5 - sqrt(1-a)*P(a)` branch in half-turns, degree 6 over
@@ -4188,7 +4202,10 @@ fn asinpi_poly(x: f32) -> f32 {
 /// same reason as [`asin`]'s -- and the cancellation here is sharper
 /// (`0.5 - 0.412 = 0.088` just above the crossover, ~5.7x, against
 /// asin's 4.7x), so the product's own rounding was worth even more.
-/// Current: max ulp 5, avg 0.236 (exhaustive).
+/// Current: max ulp 5, avg 0.016 (exhaustive). The remaining max is the
+/// big branch's, at `|x|` just above the crossover; the average is the
+/// small branch's, and see `asinpi_small` for why it needs the two-word
+/// `1/pi` that `acospi` (trailing constant exactly `0.5`) does not.
 #[inline(always)]
 pub fn asinpi(x: f32) -> f32 {
     let a = x.abs();

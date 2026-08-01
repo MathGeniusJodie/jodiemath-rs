@@ -5648,8 +5648,12 @@ degree-6 fit of `acos(a)/(pi*sqrt(1-a))` with the `1/pi` already inside
 the coefficients and a trailing term pinned to exactly 0.5. There is no
 second rounding to remove. The `acosd`-style "bulk mass sits where the
 true answer is representable" argument was lined up for it and never
-needed. `asinpi` is the same shape and equally not applicable, so this
-closes the whole half-turn family.
+needed.
+
+**`asinpi` was written off in the same sentence and that was wrong** --
+see the entry below. Reasoning from `acospi`'s shape to `asinpi`'s
+skipped the fact that `asinpi` has a *second* branch that `acospi` has
+not got.
 
 **The split lands the right way round for free here.** `1/pi` needs no
 hand-picked low neighbour the way `180/pi` did: `fl(1/pi)` already sits
@@ -5694,6 +5698,49 @@ dependent `fma`, so there is no branch artifact to arbitrate here.
 `atanpi`'s instruction and cycle counts come out identical to `atand`'s
 in the entry above, which is the expected cross-check: same `atan`, same
 two-word tail.
+
+### The half-turn family was *not* closed: `asinpi`'s small branch, 0.2375 -> 0.0159 avg
+
+The entry above closed the family on `acospi`'s shape and said "`asinpi`
+is the same". `asinpi` is not the same, and the difference is visible
+without measuring anything: `acospi` is a single expression, `asinpi` is
+**two branches**, and only the big one is `sqrt(1-a)*poly`. Below
+`|x| < 0.27` it takes `asinpi_small`, an odd poly `x * P(x^2)` whose
+leading coefficient is a lone `FRAC_1_PI` -- exactly the single-word
+`1/pi` multiply the family was being swept for, just spelled as a
+polynomial coefficient instead of a `*` at the end.
+
+The tell was in the table the whole time and is the reusable part:
+**`asinpi` 0.2365 avg against its own siblings `acospi` 0.0437 and
+`atanpi` 0.0775, and against `asin` 0.0187.** A function 5x worse than
+the sibling it shares a construction with, and 13x worse than the
+function it is a rescale of, is a defect in what differs, not a floor.
+`asin_small` has the identical Horner shape and does *not* have this
+problem for one reason: its leading coefficient is exactly `1.0`.
+
+Fix is the crate's now-standard peel: give `FRAC_1_PI_LO` the trailing
+Horner slot the leading coefficient used to hold (so the tail poly is
+still three fmas), scale the tail by `x` on its own, and finish with
+`fma(x, FRAC_1_PI, x*t)` -- one rounding, at the result's own magnitude,
+with `x*FRAC_1_PI` exact inside the fma. `x*t`'s own rounding is ~0.004
+ulp of the result at the branch edge and falls away from there. No
+refit: the coefficients' mathematical values are untouched, only the
+leading one's representation.
+
+Exhaustive over all 2^32 patterns: **avg 0.2375 -> 0.0159**, max 5 both
+sides (the max is the *big* branch's, at `|x|` just above the crossover,
+and this does not touch it). The naive `asin(x)/PI` control row on the
+same run is 0.2430/7, so the folded form is now decisively better on
+both axes rather than marginally.
+
+Cost, all three counters agreeing so mca's cycle column needs no
+arbitration: 56 -> 61 instrs, 62 -> 68 uOps, BlockRT 13 -> 14,
+throughput 0.901 -> 0.981 cyc/elem (+8.9%), latency 56.735 -> 60.845
+(+7.2%). One extra `fma` plus its broadcast, the same price `atanpi`,
+`atand`, `asind` and `erf` each paid this session for the same class of
+fix. Dropping `c3` to pay for it does not work: the branch is a minimax
+of degree 3 in `x^2` over `[0, 0.0729]` and the degree-2 truncation is
+~5.4e-7 relative, ~9 ulp.
 
 ## `sin_checked`/`cos_checked`: three op-level removals, all bit-identical
 
