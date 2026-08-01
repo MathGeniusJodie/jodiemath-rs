@@ -71,6 +71,25 @@ fn sin_ref(v: F64xN) -> F64xN {
 fn cos_ref(v: F64xN) -> F64xN {
     trig_safe(v, cos_u35)
 }
+/// Ground truth for the magnitude-band rows (`band` below): glibc's own
+/// scalar f64 `sin`/`cos`, one call per lane. Those bands run all the way
+/// out to f32::MAX, so they take the reference with the strongest
+/// guarantee rather than the fastest one: glibc does a full Payne-Hanek
+/// reduction and is exact-argument-correct at every f32 magnitude, whereas
+/// `sleef`'s `rempi` (the large-argument path behind `sin_u35`/`cos_u35`)
+/// indexes a table by the input's exponent -- the same construction that
+/// makes it panic outright on non-finite input, see `trig_safe` above.
+/// Belt and braces rather than a correction: the two agree to 0 f32 ULP on
+/// every one of these bands, so the band rows stay directly comparable to
+/// the `sleef`-referenced rows around them. Scalar is affordable only
+/// because `band` draws every sample inside the band rather than filtering
+/// a full-range fuzz down to it.
+fn sin_ref_exact(v: F64xN) -> F64xN {
+    F64xN::from_array(v.to_array().map(f64::sin))
+}
+fn cos_ref_exact(v: F64xN) -> F64xN {
+    F64xN::from_array(v.to_array().map(f64::cos))
+}
 fn tan_ref(v: F64xN) -> F64xN {
     trig_safe(v, tan_u35)
 }
@@ -226,11 +245,18 @@ struct Stats {
     max: u64,
     worst_x: f32,
     n: u64,
+    /// Scored samples where the function returned a non-finite value but the
+    /// reference is finite -- i.e. the function blew up, not the maths. This
+    /// needs its own counter because the ULP columns cannot express it: an
+    /// infinite result against a finite reference is just an ordinary
+    /// (large) `ulp_diff`, indistinguishable from a merely very wrong finite
+    /// answer, and averaging it in says nothing useful either.
+    nonfinite: u64,
 }
 
 impl Stats {
     fn zero() -> Stats {
-        Stats { sum: 0, max: 0, worst_x: 0.0, n: 0 }
+        Stats { sum: 0, max: 0, worst_x: 0.0, n: 0, nonfinite: 0 }
     }
     fn combine(self, other: Stats) -> Stats {
         Stats {
@@ -238,19 +264,30 @@ impl Stats {
             max: self.max.max(other.max),
             worst_x: if self.max >= other.max { self.worst_x } else { other.worst_x },
             n: self.n + other.n,
+            nonfinite: self.nonfinite + other.nonfinite,
         }
     }
 }
 
 fn report(name: &str, s: &Stats, since: Instant) {
     println!(
-        "{:24} avg ulp {:>10.4}  max ulp {:>10}  worst x {:e} ({:>12} samples, {:>7.2}s elapsed)",
+        "{:24} avg ulp {:>10.4}  max ulp {:>10}  worst x {:e} ({:>12} samples, {:>7.2}s elapsed){}",
         name,
         s.sum as f64 / s.n as f64,
         s.max,
         s.worst_x,
         s.n,
         since.elapsed().as_secs_f64(),
+        if s.nonfinite > 0 {
+            format!(
+                " NON-FINITE RESULT in {:.2}% of samples ({} of {})",
+                100.0 * s.nonfinite as f64 / s.n as f64,
+                s.nonfinite,
+                s.n
+            )
+        } else {
+            String::new()
+        },
     );
 }
 
@@ -279,6 +316,30 @@ fn worker_threads() -> u64 {
 }
 
 const BATCH: usize = 4096;
+
+/// Magnitude bands shared by every sin/cos comparison row, so `sin`,
+/// `sin_fast` and `sin_checked` (and the cos trio) can be read off against
+/// each other band for band instead of each family having its own rows on
+/// its own ranges. The bands deliberately straddle `sin`/`cos`'s own
+/// documented domain limit, 2^22*pi = 1.3176794e7: what the unchecked
+/// functions do on the far side of it is exactly what these rows exist to
+/// show.
+const TRIG_BANDS: [(&str, f32, f32); 7] = [
+    ("[1e3,1e5)", 1e3, 1e5),
+    ("[1e5,1.3e7)", 1e5, 1.3e7),
+    ("[1.3e7,1e8)", 1.3e7, 1e8),
+    ("[1e8,1e10)", 1e8, 1e10),
+    ("[1e10,1e13)", 1e10, 1e13),
+    ("[1e13,1e15)", 1e13, 1e15),
+    ("[1e15,3.4e38)", 1e15, 3.4e38),
+];
+
+/// Per-band sample count in quick mode. Every one of these is a *scored*
+/// sample, since `band` draws inside the band rather than filtering, so a
+/// band row costs a fraction of a second and still gets several times the
+/// samples a full-range `fuzz` would leave it (a band this narrow catches
+/// well under 2% of a uniform bit-pattern draw).
+const BAND_SAMPLES: u64 = 4_000_000;
 
 /// Runs `total` trials split across half the machine's cores. `bit_at(i)`
 /// maps a trial index to the f32 bit pattern to test. `in_domain` filters
@@ -339,11 +400,15 @@ fn sweep(
                                 let x = xs[k + idx];
                                 if in_domain(x) {
                                     let rf = r[idx] as f32;
-                                    let d = ulp_diff(ys[k + idx], rf);
+                                    let got = ys[k + idx];
+                                    let d = ulp_diff(got, rf);
                                     s.sum += d;
                                     if d > s.max {
                                         s.max = d;
                                         s.worst_x = x;
+                                    }
+                                    if rf.is_finite() && !got.is_finite() {
+                                        s.nonfinite += 1;
                                     }
                                     s.n += 1;
                                 }
@@ -504,6 +569,42 @@ fn fuzz(
     reference: impl Fn(F64xN) -> F64xN + Sync,
 ) -> Stats {
     sweep(samples, |_| rand::rng().random::<u32>(), in_domain, f, reference)
+}
+
+/// Sweeps one magnitude band `lo <= |x| < hi` (both signs, `lo`/`hi`
+/// positive and finite), drawing every sample *inside* the band instead of
+/// fuzzing the whole f32 range and filtering. A plain `fuzz` with a band
+/// `in_domain` throws away ~99% of its samples and pays for the reference
+/// on all of them, which is what makes a scalar reference unaffordable and
+/// leaves the narrow bands with too few scored samples to be stable.
+///
+/// `thorough` visits every f32 bit pattern in the band exactly once, so the
+/// band's max ULP is then a real maximum rather than the sampling estimate
+/// `quick` gives -- worth knowing, because in a heavy-tailed band the
+/// sampled max moves by an order of magnitude run to run while the average
+/// barely shifts.
+fn band(
+    thorough: bool,
+    samples: u64,
+    lo: f32,
+    hi: f32,
+    f: impl Fn(f32) -> f32 + Sync,
+    reference: impl Fn(F64xN) -> F64xN + Sync,
+) -> Stats {
+    // Bit patterns of positive f32s are monotonic in value, so the band is
+    // a contiguous [lo_bits, hi_bits) range and the sign is one free bit.
+    let (lo_bits, hi_bits) = (lo.to_bits(), hi.to_bits());
+    let span = u64::from(hi_bits - lo_bits);
+    let pattern = move |i: u64| {
+        let sign = ((i / span) as u32 & 1) << 31;
+        sign | (lo_bits + (i % span) as u32)
+    };
+    let in_band = move |x: f32| x.abs() >= lo && x.abs() < hi;
+    if thorough {
+        sweep(span * 2, pattern, in_band, f, reference)
+    } else {
+        sweep(samples, move |_| pattern(rand::rng().random::<u64>()), in_band, f, reference)
+    }
 }
 
 fn main() {
@@ -695,6 +796,23 @@ fn main() {
         report("sin_checked (all f32)", &s, t0);
         let s = measure!(everywhere, |x: f32| x.sin(), sin_ref);
         report("std sin (all f32)", &s, t0);
+        // The three families on identical bands (see TRIG_BANDS). Past the
+        // domain limit `sin`/`sin_fast` are being asked for something they
+        // never promised, and the interesting part is *how* they fail: the
+        // residual `pi_reduce_and_poly!` hands `sinf_poly` grows with |x|,
+        // and from ~1e10 up it is far enough out that the degree-9
+        // polynomial's own `x^9` term overflows -- so the answer stops
+        // being merely wrong and stops being finite. That is what the
+        // NON-FINITE RESULT annotation counts; an infinite result against a
+        // finite reference is otherwise just another large ULP number.
+        // `sin_checked` clamps the residual to POLY_SAFE_BOUND before its
+        // poly, which is what keeps its rows finite all the way out.
+        for (bandname, lo, hi) in TRIG_BANDS {
+            let row = |fname: &str, s: &Stats| report(&format!("{fname} {bandname}"), s, t0);
+            row("sin", &band(thorough, BAND_SAMPLES, lo, hi, sin, sin_ref_exact));
+            row("sin_fast", &band(thorough, BAND_SAMPLES, lo, hi, sin_fast, sin_ref_exact));
+            row("sin_checked", &band(thorough, BAND_SAMPLES, lo, hi, sin_checked, sin_ref_exact));
+        }
     }
     if run("cos") {
         let cos_domain = |x: f32| x.abs() < (1u32 << 22) as f32 * std::f32::consts::PI;
@@ -745,6 +863,14 @@ fn main() {
         report("cos_checked (all f32)", &s, t0);
         let s = measure!(everywhere, |x: f32| x.cos(), cos_ref);
         report("std cos (all f32)", &s, t0);
+        // Same bands as the sin trio above, same reading -- see that loop's
+        // comment for what the NON-FINITE RESULT annotation means.
+        for (bandname, lo, hi) in TRIG_BANDS {
+            let row = |fname: &str, s: &Stats| report(&format!("{fname} {bandname}"), s, t0);
+            row("cos", &band(thorough, BAND_SAMPLES, lo, hi, cos, cos_ref_exact));
+            row("cos_fast", &band(thorough, BAND_SAMPLES, lo, hi, cos_fast, cos_ref_exact));
+            row("cos_checked", &band(thorough, BAND_SAMPLES, lo, hi, cos_checked, cos_ref_exact));
+        }
     }
     if run("sinpi") {
         // sinpi_ref/cospi_ref (above) already mirror sinpi/cospi's own
