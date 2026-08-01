@@ -4931,3 +4931,39 @@ a two-term split of `2.4*e` and is a different, non-free change.
     removes one of the ~4 ulp-equivalent terms feeding that plateau. The
     remaining ones are `asin_poly`'s own evaluation error and the
     `1.0 - a` / `sqrt` roundings, both still amplified ~4x.
+
+- **logaddexp: precision budget for the ~1e4-ulp cancellation**
+  (2026-08-01, analysis only, no code -- redirected to sin/cos/tan
+  before implementing; recorded so the next attempt does not re-derive
+  it). `logaddexp` returns `m + corr`, `corr = log1p(exp(-d))` in
+  `(0, ln2]`, and cancels when `m` is negative and close to `-corr`,
+  i.e. `m` in `[-ln2, 0)`. Fuzz max swings 1549..27783 run to run purely
+  from how close a sample lands to the zero curve `e^a + e^b = 1`
+  (2-arg sampling noise -- repeat before trusting either number).
+  - **`softplus` and `logsigmoid` do not share the defect and need no
+    fix**: `softplus(x) = max(x,0) + corr` has `max(x,0)` and `corr` both
+    non-negative, so nothing cancels, and `ax = |x|` is exact besides.
+    Only `logaddexp`'s `d = |a-b|` is inexact and only its `m` can be
+    negative.
+  - Ranked error budget, all relative to `|m|`: (1) `d = fl(m-n)`'s
+    rounding, `d*2^-25`, up to `2.6e-6` at `d=87`; (2) `exp_narrow`'s own
+    ~`2^-24`; (3) `log1p_unit`'s ~`0.1` ulp; (4) the final `m + corr`
+    add, `2^-25`. Only (1) is cheap to remove (`two_sum(m, -n)` then
+    `e -= e*dl`, ~7 ops) and it buys only `(d+1.7)/1.7` -- a factor 2.6
+    at `d~3.6`, 50 at `d~87`, and it does *not* set the floor.
+  - After that the floor is `exp`'s own `2^-24`, so **any real fix needs
+    a `2^-40`-ish `exp`** -- max ulp is `2^(24-b) * |m|/|result|`, and
+    the observed cancellation depth `|m|/|result| ~ 1e4..1e5` wants
+    `b >= 37`. Confirms the "double-float `log1p_unit`, an `_accurate`
+    tier" verdict in the two_sum entry above, and sharpens it: the
+    expensive half is `exp`, not `log1p`.
+  - Three reformulations were checked on paper and all reduce to the
+    same requirement, so do not re-try them: `log1p(expm1(m) + exp(n))`
+    (both terms are themselves `~|m|`, identical budget);
+    `log1p(e) - log1p(expm1(-m))` via `2*atanh` (algebraically the same
+    quantity); and a Newton step `corr = c0 + ((1+E) - exp(c0))/exp(c0)`
+    (limited by `exp(c0)`'s *relative* accuracy, which is the thing being
+    fixed). A `2^-42` `exp(r)` with `|r| <= ln2/2` needs double-float
+    terms through `r^5`; a 16-entry `2^(j/16)` table cuts `|r|` to
+    `ln2/32` and lets the f32 tail start at `r^3`, which is the cheap
+    construction if someone builds it.
