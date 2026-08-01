@@ -1591,31 +1591,28 @@ fn main() {
         // edgecheck's sin(wrap_pi(x)) == sin_checked(x) invariant is what
         // covers the reduction (out to 1e9).
         //
-        // TAU is carried as two words (TAU_HI + TAU_LO) rather than one.
-        // That is not pedantry: with a single-word TAU the reference itself
-        // is off by ~25 ulp at the worst points, i.e. it would be the less
-        // accurate of the two things being compared. Measured directly --
-        // at x = 8953.539 a 1-word and 2-word f64 reference disagree by
-        // 24.56 ulp.
-        //
-        // Even with the 2-word reference the reported max stays large, and
-        // it is the crate's usual near-a-true-zero artifact rather than a
-        // real defect: the worst inputs are the ones sitting almost exactly
-        // on a multiple of 2*pi, where the answer is ~1e-7 formed by near
-        // total cancellation of operands ~1e4, so one f32 ulp of the
-        // *result* is a vanishingly small absolute quantity. Away from
-        // those points wrap_pi measures <= 0.41 ulp. Same class as
-        // compound's documented near-zero case.
+        // TAU is Cody-Waite split into *three* words, and carrying more
+        // words is not the point -- zeroing their low bits is. The worst
+        // inputs sit almost exactly on a multiple of 2*pi, where a ~1e-7
+        // answer is what survives cancelling operands of ~1e4, so the
+        // reference has to form `q*tau` with no rounding at all: an
+        // ordinary two-word `q * tau_hi` still rounds at the magnitude of
+        // x (~9e-13 for |x| ~ 1e4), which is ~60 ulp of the cancelled
+        // result and swamps everything being measured. Each word here has
+        // its low mantissa bits cleared (TAU1 is a multiple of 2^-30, TAU2
+        // of 2^-58) so that `q * word` is exact in f64 for every |q| <=
+        // 1592 this domain can produce, and the reference then reproduces
+        // an exact-rational computation to ~2^-29 ulp -- verified against
+        // 60-digit decimal arithmetic at wrap_pi's four worst points.
         let wrap_domain = |x: f32| x.abs() <= 1e4;
         let s = measure!(wrap_domain, wrap_pi, |v: F64xN| {
-            // 2*pi split into two f64 words: TAU_LO holds the part that the
-            // nearest-f64 TAU_HI drops.
-            let tau_hi = F64xN::splat(6.283185307179586);
-            let tau_lo = F64xN::splat(2.4492935982947064e-16);
+            let tau1 = F64xN::splat(f64::from_bits(0x401921fb54400000)); // 6746518852 * 2^-30
+            let tau2 = F64xN::splat(f64::from_bits(0x3df0b4611c000000)); // 70064199 * 2^-58
+            let tau3 = F64xN::splat(f64::from_bits(0xbc39d9cceba3f91f));
             let pi = F64xN::splat(std::f64::consts::PI);
-            let tau = tau_hi + tau_lo;
-            let q = (v / tau_hi).round();
-            let r = (v - q * tau_hi) - q * tau_lo;
+            let tau = tau1 + tau2; // nearest f64 to 2*pi
+            let q = (v / tau).round();
+            let r = ((v - q * tau1) - q * tau2) - q * tau3;
             // fold into (-pi, pi]: r lands in [-tau/2, tau/2] but the
             // half-open convention needs r > pi pulled down and
             // r <= -pi pushed up.

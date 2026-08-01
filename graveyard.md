@@ -5334,3 +5334,96 @@ are the same fact seen twice: four `vdivps` leave (`ICXFPDivider` was 17.7%
 of the throughput bottleneck and is now absent) and are replaced by cheaper
 integer work that lands on port 5. Taken as one shipped version, not a
 tier -- a wash on cost is not a pareto point.
+## `wrap_pi`'s 41 max ulp was the harness's own reference, not `wrap_pi`
+
+Exhaustive (`|x| <= 1e4`, every f32 bit pattern, both signs) reported avg
+0.0244 / max **41** at `x = 8953.539`, and had done since the first sweep.
+The comment above it in `examples/accuracy.rs` wrote that off as "the
+crate's usual near-a-true-zero artifact", which is exactly the excuse the
+`cospi` postmortem says must be verified. Verified: it is false in both
+halves. Against 60-digit decimal arithmetic at the four worst points:
+
+| x | wrap_pi | old f64 reference |
+|---|---|---|
+| 8953.5390625 | **0.029** ulp | 44.168 ulp |
+| 1011.5928344726562 | **0.369** ulp | 10.007 ulp |
+| 3185.574951171875 | **0.352** ulp | 6.864 ulp |
+| 7231.9462890625 | **0.754** ulp | 7.485 ulp |
+
+`wrap_pi` was already the *more* accurate of the two things being compared.
+
+The reference's defect is not the one its own comment guarded against. It
+already carried `tau` as two f64 words -- but two words fixes the
+*truncation* of tau, and the error here is the *rounding of the product*:
+`q * tau_hi` with `q ~ 1425` and `x ~ 1e4` rounds at `ulp_f64(1e4)/2 =
+9.1e-13`, and the answer at those points is `~2e-7` formed by cancelling
+operands of `~1e4`, so 9.1e-13 is ~64 ulp of it. Carrying a third word
+would not have helped either; nothing short of an exact product does.
+
+**Fix: Cody-Waite the reference, don't just lengthen it.** Three words with
+their low mantissa bits cleared -- `TAU1` a multiple of `2^-30` (33
+significant bits), `TAU2` a multiple of `2^-58` (27 bits), `TAU3` the
+remainder -- make every `q * word` exact in f64 for the `|q| <= 1592` this
+domain can produce, so `((x - q*TAU1) - q*TAU2) - q*TAU3` carries only
+relative-`2^-53` roundings of a result that never cancels again. Verified
+to ~2^-29 ulp against decimal. Reported: **0.0244 / 41 -> 0.0244 / 1**.
+
+Generalizable: a multi-word constant in a *reference* is only worth its
+words if the products are exact. Any reference of the form
+`x - round(x/c)*c` over a wide `x` range needs the split chosen against
+`max|q|`, not against how many digits of `c` are written down.
+
+### Two `wrap_pi` improvements measured and not shipped
+
+With a correct reference the remaining error is real but small, and both
+candidates cost more than a sub-ulp is worth. Note the "avg ulp" column
+counts *integer* bit distance, so it reads as a misrounding rate.
+
+- **Two-word `pi` in the half-turn fold.** For odd `q` the answer is
+  `r -+ pi`, which always lands in `[pi/2, pi]`, and `std::f32::consts::PI`
+  is 8.7e-8 above `pi` -- **0.73 ulp of the result, one-signed across that
+  entire branch**, which is the whole of the residual max (1.233 ulp
+  fractional, at `|result| ~ 1.5711`). Two forms measured, exhaustively:
+  - `quick_two_sum(-ph, r)` then `s + (e - pl)` (one final rounding):
+    avg **0.0244 -> 0.0043**, fractional max **1.233 -> 0.766**. mca
+    throughput 4.281 -> 4.687 cyc/elem (+9.5%, instrs 134->147, uOps
+    144->157, BlockRT 51->55 all agreeing), latency 92.02 -> **115.02
+    (+25%)**. The latency is not the known branch artifact -- the region
+    has *fewer* branches after (128 vs 256); it is 5 genuinely serial FP
+    ops on the tail.
+  - Plain `(r - ph) - pl`: avg 0.0168, latency 98.02 (+6.5%). Strictly
+    the worse trade -- 30% of the accuracy for 26% of the cost.
+  - Not shipped, and not shipped as a second tier either: the *reported*
+    max is 1 either way, both forms are inside the crate's 0.5/2 budget,
+    and `0.766` vs `1.233` ulp is not an API's worth of difference. The
+    floor is anyway `r`'s own rounding as an f32 (~0.27 ulp transported
+    into the fold), so even a perfect fold cannot reach correct rounding
+    without the fold moving *inside* `reduce_pi`, which is a core-lock
+    change on sin/cos's shared kernel.
+
+- **Reduce `x/2` mod pi instead of `x`, and double (REJECTED, broken).**
+  Superficially strictly better: `round_x_over_pi`'s `q` becomes
+  `round(x/2pi)`, so `2*r` is the wrapped angle outright -- no fold, no
+  `pi` to represent, no parity sign to combine, and both scalings are
+  exact powers of two. It deletes ops rather than adding them. It is
+  also **wrong**, and the reason is worth keeping:
+  - The decision boundary of `round(x/2pi)` sits exactly on `wrap_pi`'s
+    own `+pi`/`-pi` discontinuity (odd multiples of `pi`). `round_x_over_pi`
+    resolves a near-tie through `rem = (p0 - qh) + lo`, an f32 at
+    magnitude 0.5 -- so once `|x/2pi - (k+1/2)|` drops below `2^-25`,
+    `rem` rounds to exactly `+-0.5`, `round_ties_even` returns 0, and `q`
+    keeps whatever ties-away gave it. Wrong side of the cut = wrong
+    answer by `2*pi`. Exhaustive: avg **5.50**, max **2.16e9** (i.e.
+    `+pi` returned where `-pi` was correct) at `x = 47.12389 ~ 15*pi`;
+    a handful of points, but each worth ~2^31 ulp.
+  - The shipped mod-`pi` structure is immune *by construction*, and this
+    is the part to remember: its own rounding ties fall at odd multiples
+    of `pi/2`, where `wrap_pi` is smooth, and a `q` off by one there
+    flips the parity sign too, so the fold silently compensates. Reducing
+    modulo the period puts the tie on the branch cut; reducing modulo
+    *half* the period and folding puts it somewhere harmless. Any
+    "reduce modulo the full period instead" idea for a function with a
+    branch cut needs this checked first.
+  - Also needs a guard `wrap_pi` did not: halving a denormal (or anything
+    in the smallest normal binade) drops its last bit, so `x*0.5` is not
+    exact there.
