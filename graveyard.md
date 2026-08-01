@@ -4967,3 +4967,21 @@ a two-term split of `2.4*e` and is a different, non-free change.
     terms through `r^5`; a 16-entry `2^(j/16)` table cuts `|r|` to
     `ln2/32` and lets the f32 tail start at `r^3`, which is the cheap
     construction if someone builds it.
+
+- **Same `fma` contraction applied to `asinpi`'s `0.5 - sqrt(1-a)*P(a)`**
+  -- second and last site of this shape in lib.rs (a full grep of
+  `k - p*q` over the file finds exactly three: `asin`, `asinpi`, and
+  `acos`/`acospi`, whose `sqrt(1-a)*poly` is not subtracted from
+  anything and so has nothing to contract). Exhaustive: max ulp
+  **7 -> 5**, avg 0.2375 -> 0.2364; llvm-mca 58 -> 56 instructions,
+  64 -> 62 uOps, Block RThroughput 14 -> 13, throughput 0.974 ->
+  **0.901** (-7.5%), latency 60.99 -> **56.74** (-7.0%). The
+  cancellation is sharper here than in `asin` (`0.5 - 0.412 = 0.088`
+  just above the crossover, 5.7x, against asin's 4.7x), which is why the
+  same edit buys 2 max ulp rather than 1.
+  - Screened for the mirror pattern `p*q + k` at the same time (Rust
+    contracts neither): only 3 non-comment sites survive in lib.rs and
+    none is on an accuracy-critical path. The crate's explicit `fma`
+    helper has already absorbed essentially all of them -- these two
+    subtractions were the leftovers, presumably because `k - p*q` does
+    not *look* like an fma the way `p*q + k` does.

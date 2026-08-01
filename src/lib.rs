@@ -3907,11 +3907,17 @@ fn asinpi_poly(x: f32) -> f32 {
 /// comment) -- unlike `asind`'s analogous fold (rejected, see IDEAS.md),
 /// this one measured as a real win, so it's used here instead of the
 /// plain composite.
+///
+/// The big branch is one `fma`, not a multiply and a subtract, for the
+/// same reason as [`asin`]'s -- and the cancellation here is sharper
+/// (`0.5 - 0.412 = 0.088` just above the crossover, ~5.7x, against
+/// asin's 4.7x), so the product's own rounding was worth even more.
+/// Current: max ulp 5, avg 0.236 (exhaustive).
 #[inline(always)]
 pub fn asinpi(x: f32) -> f32 {
     let a = x.abs();
     let small = asinpi_small(x);
-    let big = mulsign(0.5 - (1.0 - a).sqrt() * asinpi_poly(a), x);
+    let big = mulsign(fma(-(1.0 - a).sqrt(), asinpi_poly(a), 0.5), x);
     if a < 0.27 { small } else { big }
 }
 
