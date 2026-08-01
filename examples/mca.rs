@@ -192,6 +192,8 @@ fn main() {
         "logsigmoid",
         "logaddexp",
         "gelu",
+        "silu",
+        "softsign",
         "sqrt1pm1",
         "asinh",
         "acosh",

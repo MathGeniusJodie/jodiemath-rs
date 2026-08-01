@@ -56,6 +56,14 @@ accuracy sweep for the **whole crate** before landing, not just your domain.
 - Accuracy sweeps use half the cores and self-nice; two at once is fine, three
   thrashes.
 
+### Never use `git stash`
+
+`refs/stash` lives in the shared `.git` dir, **not** per worktree. Every
+instance pushes onto one stack, so a mistimed `git stash pop` silently applies
+another instance's work into your tree. Use `./tools/jm stash` /
+`./tools/jm unstash`, which keep the patch in your worktree-private git dir.
+(Tracked files only; untracked files are left in place and reported.)
+
 ### Landing your work
 
 ```sh

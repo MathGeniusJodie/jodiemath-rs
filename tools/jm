@@ -399,6 +399,38 @@ cmd_wt() {
     esac
 }
 
+# ------------------------------------------------------------------- stash
+# `git stash` is NOT per-worktree: refs/stash lives in the common .git dir, so
+# every instance pushes onto one shared stack and a mistimed `git stash pop`
+# silently takes another instance's work. These keep the patch in the
+# worktree-private git dir instead. Tracked files only -- untracked files are
+# left alone, and reported.
+stash_file() { echo "$(git -C "$TOPLEVEL" rev-parse --path-format=absolute --git-dir)/jm-stash.patch"; }
+
+cmd_stash() {
+    local f; f=$(stash_file)
+    [[ -e $f ]] && die "a jm stash already exists ($f) -- jm unstash first"
+    git -C "$TOPLEVEL" diff HEAD > "$f"
+    if [[ ! -s $f ]]; then
+        rm -f "$f"; note "nothing to stash (tracked files clean)"; return 0
+    fi
+    # Never discard until the patch is proven to re-apply.
+    git -C "$TOPLEVEL" apply --check --reverse "$f" 2>/dev/null || {
+        rm -f "$f"; die "refusing to stash: saved patch does not verify"; }
+    git -C "$TOPLEVEL" checkout HEAD -- .
+    echo "${c_grn}stashed${c_off} to $f  ${c_dim}(jm unstash to restore)${c_off}"
+    local untracked; untracked=$(git -C "$TOPLEVEL" ls-files --others --exclude-standard | head -5)
+    [[ -n $untracked ]] && note "untracked files left in place: $(echo "$untracked" | tr '\n' ' ')"
+}
+
+cmd_unstash() {
+    local f; f=$(stash_file)
+    [[ -s $f ]] || die "no jm stash for this worktree"
+    git -C "$TOPLEVEL" apply "$f" || die "apply failed; patch kept at $f"
+    rm -f "$f"
+    echo "${c_grn}restored${c_off} from stash"
+}
+
 cmd_gc() {
     local n=0
     for d in "$CLAIMS"/*/; do
@@ -443,6 +475,8 @@ case ${1:-status} in
     sync)    shift; cmd_sync "$@" ;;
     land)    shift; cmd_land "$@" ;;
     wt)      shift; cmd_wt "$@" ;;
+    stash)   shift; cmd_stash "$@" ;;
+    unstash) shift; cmd_unstash "$@" ;;
     gc)      shift; cmd_gc "$@" ;;
     doctor)  shift; cmd_doctor "$@" ;;
     domains) shift; cat "$(map_path)" ;;
