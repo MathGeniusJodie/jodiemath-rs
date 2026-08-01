@@ -5589,3 +5589,68 @@ Still on the single-word multiply and *not* investigated here: `atanpi`
 correctly-rounded constant, so there is no wrong-constant bug in that
 family -- but it still carries a -0.338 ulp relative bias that the same
 two-word `fma` would remove.
+
+### The same treatment for `1/pi`: `atanpi` and `atan2pi` ship, `acospi` was a false lead
+
+Following up the note directly above. Two of the three named there took
+the two-word `fma(y, HI, y*LO)`; the third turned out not to be a
+single-word multiply at all.
+
+| | before | after | verdict |
+|---|---|---|---|
+| `atanpi` | 0.2783 avg / 4 max | **0.0775 / 4** | ship |
+| `atan2pi` | 0.1383 / 4 | **0.1137 / 4** | ship |
+| `acospi` | -- | -- | **not applicable** |
+
+**`acospi` never had a `1/pi` multiply to fix.** The note above listed it
+from its avg alone; it is `sqrt(1-a) * acospi_poly(a)`, a *dedicated*
+degree-6 fit of `acos(a)/(pi*sqrt(1-a))` with the `1/pi` already inside
+the coefficients and a trailing term pinned to exactly 0.5. There is no
+second rounding to remove. The `acosd`-style "bulk mass sits where the
+true answer is representable" argument was lined up for it and never
+needed. `asinpi` is the same shape and equally not applicable, so this
+closes the whole half-turn family.
+
+**The split lands the right way round for free here.** `1/pi` needs no
+hand-picked low neighbour the way `180/pi` did: `fl(1/pi)` already sits
+**0.43 ulp below** the real value, so `std::f32::consts::FRAC_1_PI`
+doubles as the HI word and the only new constant is the positive tail
+`FRAC_1_PI_LO = 1.28412765e-8`. Positive LO is what keeps `-0.0` signed
+through the `fma`, the same trap `RAD_TO_DEG_LO` documents; `atanpi(-0)`
+is pinned in edgecheck and passes.
+
+That 0.43 ulp on the constant is a 0.34-0.68 ulp bias on the *result*
+depending on where in its binade the result lands, which is the whole of
+the gap between `atan` (0.0675) and old `atanpi` (0.2783). After the fix
+`atanpi` is 0.0775 against `atan`'s 0.0675 -- essentially just `atan`'s
+own error plus binade shift.
+
+**`atan2pi` gains less than `atanpi` because it is already near its
+floor.** `atan2`'s result spans `[-pi, pi]`, and dividing by pi shifts
+`~pi -> ~1` and `~pi/2 -> ~0.5`, each a binade step that *doubles* the
+error measured in ulp. So `atan2pi`'s floor is about 2x `atan2`'s 0.0681,
+i.e. ~0.136, and it now measures 0.1137. Nothing further to take here
+without changing `atan2` itself.
+
+**The rescaled-coefficient fold stays rejected, and this does not
+resurrect it.** Folding `1/pi` into `atan_poly`'s coefficients measures
+0.2432 avg / 4 max at 1.612 cyc/elem -- *worse on both axes* than the
+two-word form's 0.0775 at 1.657, and barely better than the plain
+composite it replaced while costing more than it. `atan_poly` is a Pade
+rational whose numerator and denominator share the same unscaled
+trailing `+1.0`, so one broadcast normally serves both; scaling only the
+numerator's copy breaks the sharing and forces a second. This is the
+opposite verdict from `acospi_poly`/`asinpi_poly`, which are plain Horner
+polys with a single trailing constant and fold for free -- the shared
+constant is the whole difference.
+
+Cost, from `tools/mca_region.py` (Block RThroughput unchanged in both
+throughput regions, so this is +3 instructions each and no new port
+bottleneck): `atanpi` 55 -> 58 instrs, 57 -> 60 uOps, throughput
+2487 -> 2651 cycles; `atan2pi` 65 -> 68 instrs, 67 -> 70 uOps,
+throughput 3009 -> 3137. Latency is +4 cycles per unit on both
+(`atanpi` 67.079 -> 71.079, `atan2pi` 71.188 -> 75.188) -- exactly one
+dependent `fma`, so there is no branch artifact to arbitrate here.
+`atanpi`'s instruction and cycle counts come out identical to `atand`'s
+in the entry above, which is the expected cross-check: same `atan`, same
+two-word tail.

@@ -4087,6 +4087,17 @@ pub fn asin(x: f32) -> f32 {
 const RAD_TO_DEG_HI: f32 = 57.2957763671875;
 const RAD_TO_DEG_LO: f32 = 3.1458948e-6;
 
+// The same double-f32 treatment for 1/pi, for the half-turn composites.
+// Here [`FRAC_1_PI`] is *already* the low neighbour -- the correctly
+// rounded `fl(1/pi)` sits 0.43 ulp *below* the real 1/pi -- so it also
+// serves as the HI word and only this positive tail has to be named.
+// A lone `y * FRAC_1_PI` is therefore biased low by 0.34 to 0.68 ulp of
+// the result depending on where in its binade the result lands, which is
+// the whole of the gap between `atan`/`atan2` and their `pi` composites.
+// LO being positive is what keeps `-0.0` signed through the `fma`, for
+// exactly the reason spelled out for RAD_TO_DEG_LO above.
+const FRAC_1_PI_LO: f32 = 1.28412765e-8;
+
 /// asin(x) in degrees (backlog idea #123). The idea as originally
 /// proposed -- "fold 180/pi into the poly/combine constants" -- was tried
 /// and measured worse on max ulp than a post-multiply (see IDEAS.md
@@ -4219,21 +4230,23 @@ pub fn atand(x: f32) -> f32 {
     fma(y, RAD_TO_DEG_HI, y * RAD_TO_DEG_LO)
 }
 
-/// atan(x)/pi (backlog idea #85): plain composite. A rescaled-coefficient
-/// fold (per asinpi/acospi's own precedent) was tried and measured a real
-/// accuracy win (avg/max ulp 0.2432/4 vs this composite's 0.2782/4) but
-/// also a real throughput cost (1.612 cyc/elem vs this composite's 1.554,
-/// worse even than the naive extra multiply it was meant to replace) --
-/// `atan_poly` is a Pade rational whose numerator and denominator happen
-/// to share the exact same unscaled trailing `+1.0` constant (so normally
-/// one broadcast serves both), and folding 1/pi into only the numerator's
-/// copy breaks that sharing, forcing a second broadcast. Unlike
-/// asinpi/acospi's plain Horner polys (a single trailing constant, so the
-/// fold is genuinely free), atan_poly's shared-constant structure makes
-/// this fold a net loss. Not attempted again without new evidence.
+/// atan(x)/pi (backlog idea #85), the C23 half-turn convenience family.
+/// A composite over `atan`, but not a single-word multiply: `atan`'s
+/// result is already a rounded f32 and `1/pi` is irrational, so a plain
+/// `atan(x) * K` rounds twice and the second rounding inherits the f32
+/// `K`'s own 0.43-ulp low bias (see [`FRAC_1_PI_LO`]). The `fma` form
+/// rounds once, at the result's own magnitude, which leaves essentially
+/// only `atan`'s error behind.
+///
+/// A rescaled-coefficient fold (per asinpi/acospi's own precedent) is
+/// deliberately not used here: `atan_poly` is a Pade rational whose
+/// numerator and denominator share one unscaled trailing `+1.0`, so
+/// folding 1/pi into the numerator's copy alone costs a second broadcast
+/// and measures worse on both axes -- see graveyard.md.
 #[inline(always)]
 pub fn atanpi(x: f32) -> f32 {
-    atan(x) * (1.0 / std::f32::consts::PI)
+    let y = atan(x);
+    fma(y, FRAC_1_PI, y * FRAC_1_PI_LO)
 }
 
 /// atan(x), `|x| <= 1` contract (backlog idea #61): `atan_poly` alone is
@@ -4413,16 +4426,16 @@ pub fn atan2d(y: f32, x: f32) -> f32 {
     if r.abs() < f32::MIN_POSITIVE && x != 0.0 { tiny } else { normal }
 }
 
-/// atan2(y,x)/pi (backlog idea #85, C23 half-turn family): plain
-/// composite -- `atan2` composes the same `atan_poly` Pade rational
-/// `atanpi`'s own doc comment already rejected a fold for (numerator and
-/// denominator share one unscaled trailing constant; folding 1/pi into
-/// only the numerator's copy breaks that sharing and costs more than the
-/// naive multiply here does), so not attempted again on the larger,
-/// more branch-heavy `atan2` for the same reason.
+/// atan2(y,x)/pi (backlog idea #85, C23 half-turn family): a composite
+/// over `atan2`, with the same two-word `1/pi` multiply `atanpi` uses and
+/// for the same reason (see [`FRAC_1_PI_LO`]). A rescaled-coefficient
+/// fold is not used here either -- `atan2` composes the very `atan_poly`
+/// Pade rational whose shared trailing constant makes that fold a loss in
+/// `atanpi`, and `atan2` is the larger, more branch-heavy caller of it.
 #[inline(always)]
 pub fn atan2pi(y: f32, x: f32) -> f32 {
-    atan2(y, x) * (1.0 / std::f32::consts::PI)
+    let r = atan2(y, x);
+    fma(r, FRAC_1_PI, r * FRAC_1_PI_LO)
 }
 
 /// atan2 without the x==0/both-zero/both-infinite special cases: contract
