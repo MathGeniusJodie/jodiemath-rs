@@ -4690,3 +4690,41 @@ series. So it is a real reference and the 0.805 avg was never a reference
 artifact -- but treat anything under ~1 ulp in `[4,5]` as noise. (The
 separate, still-valid caveat is that `dawson` is capped at 2M samples even
 in `thorough` mode, so its max is sampled, not exhaustive.)
+
+## `srgb_to_linear`'s 13 max ulp is the log2/exp2 round trip, not its own algebra
+
+Attributed rather than assumed, over a 4.9M-point scan of the power arm
+(`c > 0.04045`) against an f64 reference, splitting the error into the
+rounding of the argument `b = (c+0.055)/1.055` and everything downstream:
+
+| source | avg ulp | max ulp |
+|---|---|---|
+| total | 1.496 | 13 |
+| rounding of `b` | 1.670 | 6 |
+| `log_2_normal` -> `*2.4` -> `exp2_checked` | 1.730 | 13 |
+
+**At the worst point (`c = 0.04841894`, total 13) the `b` term contributes
+exactly 0 and the chain contributes all 13.** So the gelu-style fix -- carry
+`b` as a double-`f32` and put the lost bits back with a first-order
+correction -- is available and would take the *avg* down, but it cannot move
+the reported max, because the max is entirely the round trip.
+
+The mechanism is `exp2` amplifying an *absolute* argument error: with
+`a = log2(b)*2.4`, `exp2(a+da) = exp2(a)*(1 + da*ln2)`, so `log_2_normal`'s
+own ~1 ulp of a `log2(b)` near `-3.34` (absolute ~2.4e-7) becomes
+`2.4 * 2.4e-7 * ln2 = 4e-7` relative, ~3.3 ulp, before `exp2_checked`'s own
+error and the `*2.4` rounding are counted. Nothing in `srgb_to_linear`
+itself is wrong.
+
+Closing it properly needs a genuinely more accurate `log2`, and that is the
+known dead end: `log2_df` is *not* higher precision (see the "Df32
+bookkeeping is not precision" entry -- it is capped by its own f32 kernel's
+evaluation rounding at ~2^-23 relative), and `log_2_normal` is a shared
+kernel behind 9+ public functions, so moving it is a core-lock change that
+would have to be justified by all of them, not by sRGB. IDEAS.md's existing
+note already reaches the same verdict from the other direction (the exponent
+is a constant 2.4, so the amplification is bounded and the inputs are
+`[0,1]`); this is the measurement behind it.
+
+`linear_to_srgb` (7 max ulp) is the same chain with `1/2.4`, which is why it
+is ~2x better: the exponent multiplies the log's absolute error directly.
