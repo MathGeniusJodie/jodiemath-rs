@@ -35,21 +35,27 @@ note() { echo "${c_dim}$*${c_off}"; }
 # ---------------------------------------------------------------- domain map
 # Built from master's lib.rs, cached against master's blob hash so it is
 # regenerated exactly when master's lib.rs actually changes.
-map_path() {
-    local h
-    h=$(git -C "$REPO_MAIN" rev-parse master:src/lib.rs)
-    local out="$JM/domains-$h.json"
+map_for_rev() {
+    local rev=${1:-master}
+    local h g
+    h=$(git -C "$TOPLEVEL" rev-parse "$rev:src/lib.rs")
+    # The generator's own hash is part of the key. Keying on lib.rs alone
+    # serves a map built by an older jm_domains.py -- which is how adding
+    # const support silently kept reporting owned coefficient arrays as NEW.
+    g=$(sha1sum "$REPO_MAIN/tools/jm_domains.py" | cut -c1-8)
+    local out="$JM/domains-$h-$g.json"
+    find "$JM" -maxdepth 1 -name 'domains-*.json' ! -name "*-$g.json" -delete 2>/dev/null || true
     if [[ ! -s $out ]]; then
         local tmp="$JM/.libsnap-$h.rs"
-        git -C "$REPO_MAIN" show master:src/lib.rs > "$tmp"
+        git -C "$TOPLEVEL" show "$rev:src/lib.rs" > "$tmp"
         python3 "$REPO_MAIN/tools/jm_domains.py" "$tmp" > "$out.tmp" \
             || { rm -f "$out.tmp" "$tmp"; die "domain map generation failed"; }
         mv "$out.tmp" "$out"
         rm -f "$tmp"
-        find "$JM" -maxdepth 1 -name 'domains-*.json' ! -name "domains-$h.json" -delete 2>/dev/null || true
     fi
     echo "$out"
 }
+map_path() { map_for_rev master; }
 
 # jq is not assumed to exist; python3 is already a hard dependency here.
 pyq() { python3 -c "$1" "$(map_path)" "${@:2}"; }
@@ -201,13 +207,34 @@ print("\n  {} free / {} total".format(len(free), len(m["domains"])))
 # -------------------------------------------------------------------- check
 # What does my working tree touch, and am I allowed to touch it?
 cmd_check() {
-    local base=${1:-master}
+    # Diff against the merge-base, not master's tip. Once another instance
+    # lands, a plain `diff master` shows THEIR work as part of yours and
+    # reports it NOT YOURS -- which made `jm check` misleading unless you
+    # happened to rebase first. The merge-base is what "changed on this
+    # branch" actually means.
+    local base=${1:-}
+    if [[ -z $base ]]; then
+        base=$(git -C "$TOPLEVEL" merge-base HEAD master 2>/dev/null || echo master)
+        local behind
+        behind=$(git -C "$TOPLEVEL" rev-list --count "$base"..master 2>/dev/null || echo 0)
+        [[ ${behind:-0} -gt 0 ]] && note "master is $behind commit(s) ahead; checking against the merge-base (jm sync to rebase)"
+    fi
     git -C "$TOPLEVEL" diff --quiet "$base" -- src/lib.rs && \
         { note "no changes to src/lib.rs vs $base"; }
+    # A claim records its unit list at claim time, which keeps it stable if the
+    # map later drifts. But a claim taken before the map learned about a unit
+    # (coefficient consts, say) would not cover it, so union in whatever the
+    # current map says the held domains contain.
     local mine="$JM/.mine.$$"; : > "$mine"
     for d in "$CLAIMS"/*/; do
         [[ -d $d ]] || continue
-        [[ $(cat "$d/owner" 2>/dev/null) == "$AGENT" ]] && cat "$d/units" >> "$mine"
+        [[ $(cat "$d/owner" 2>/dev/null) == "$AGENT" ]] || continue
+        cat "$d/units" >> "$mine"
+        pyq '
+import json,sys
+d=json.load(open(sys.argv[1]))["domains"].get(sys.argv[2])
+if d: print("\n".join(d["public"]+d["private"]))
+' "$(basename "$d")" >> "$mine" 2>/dev/null || true
     done
     local core_held=0
     [[ -d "$LOCKS/core" && $(cat "$LOCKS/core/owner" 2>/dev/null) == "$AGENT" ]] && core_held=1
@@ -222,6 +249,7 @@ cmd_check() {
     local wmap="$JM/.workmap.$$"
     python3 "$REPO_MAIN/tools/jm_domains.py" "$TOPLEVEL/src/lib.rs" > "$wmap" 2>/dev/null \
         || cp "$(map_path)" "$wmap"
+    local bmap; bmap=$(map_for_rev "$base")
     local rc=0
     pyq '
 import json,re,sys
@@ -229,6 +257,7 @@ m=json.load(open(sys.argv[1]))
 mine=set(x.strip() for x in open(sys.argv[2]) if x.strip())
 core_held=sys.argv[4]=="1"
 w=json.load(open(sys.argv[5]))
+b=json.load(open(sys.argv[6]))   # the merge-base: pre-image coordinates
 
 def ranges(mm):
     core={c[2]:(c[0],c[1]) for c in mm["core_ranges"]}
@@ -238,7 +267,11 @@ def ranges(mm):
     return own,core
 own_m,core_m=ranges(m)
 own_w,core_w=ranges(w)
-master_all=set(own_m)|set(core_m)
+own_b,core_b=ranges(b)
+# Core set comes from master -- the contract every instance claimed against.
+# "Known" spans base and master both, so a function another instance deleted
+# does not read as newly added here.
+master_all=set(own_m)|set(core_m)|set(own_b)|set(core_b)
 
 pre=[];post=[]
 for line in open(sys.argv[3]):
@@ -259,7 +292,7 @@ def hits(spans,own,core):
             if not (b<s or a>e): names.add(name); h=True
         if not h: miss.append((a,b))
     return names,miss
-n_pre,miss_pre=hits(pre,own_m,core_m)
+n_pre,miss_pre=hits(pre,own_b,core_b)
 n_post,miss_post=hits(post,own_w,core_w)
 touched=n_pre|n_post
 unowned=miss_pre+miss_post
@@ -289,7 +322,7 @@ if unowned:
           + ", ".join("{}-{}".format(a,b) for a,b in unowned[:6]))
 if not touched and not unowned: print("  (nothing in src/lib.rs)")
 raise SystemExit(1 if bad else 0)
-' "$mine" "$JM/.diff.$$" "$core_held" "$wmap" || rc=$?
+' "$mine" "$JM/.diff.$$" "$core_held" "$wmap" "$bmap" || rc=$?
     rm -f "$mine" "$JM/.diff.$$" "$wmap"
 
     # shared harness files: no runtime interference (separate target dirs),

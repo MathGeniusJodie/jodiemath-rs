@@ -38,6 +38,18 @@ DEF_RE = re.compile(
     r"^(?P<vis>pub(?:\([a-z]+\))?\s+)?(?:const\s+|unsafe\s+)*fn\s+(?P<name>\w+)"
 )
 MACRO_RE = re.compile(r"^macro_rules!\s+(?P<name>\w+)")
+# Top-level consts, chiefly the per-function polynomial coefficient arrays.
+# These are where most of this crate's real edits land, so they have to be
+# attributable to an owner. Ownership is by *reference* rather than position:
+# a coefficient array belongs to whichever domain names it. `const fn` is
+# excluded by requiring a SCREAMING_CASE identifier.
+# The name must start with a letter: this crate uses `const _: () = assert!(..)`
+# for compile-time checks, and every one of those is called `_`. They collapse
+# into a single unit, and a bare `_` is a token in half the bodies in the file,
+# so admitting them welds unrelated domains together.
+CONST_RE = re.compile(
+    r"^(?P<vis>pub(?:\([a-z]+\))?\s+)?(?:const|static)\s+(?P<name>[A-Z][A-Z_0-9]*)\s*:"
+)
 MOD_RE = re.compile(r"^(?:pub\s+)?mod\s+(?P<name>\w+)\s*\{")
 ATTR_RE = re.compile(r"^\s*(?://|#\[|#!\[)")
 
@@ -93,8 +105,36 @@ def parse_units(lines):
     while i < n:
         line = lines[i]
         m = DEF_RE.match(line) or MACRO_RE.match(line) or MOD_RE.match(line)
-        if not m:
+        cm = None if m else CONST_RE.match(line)
+        if not m and not cm:
             i += 1
+            continue
+        if cm is not None:
+            # A const ends where its brackets balance on a line carrying the
+            # terminating semicolon -- covers both the one-liner and the
+            # multi-line coefficient array.
+            name = cm.group("name")
+            depth = 0
+            end = i
+            for j in range(i, n):
+                depth += lines[j].count("[") - lines[j].count("]")
+                depth += lines[j].count("(") - lines[j].count(")")
+                if depth <= 0 and lines[j].rstrip().endswith(";"):
+                    end = j
+                    break
+            else:
+                end = i
+            units.append(
+                {
+                    "name": name,
+                    "kind": "const",
+                    "pub": False,  # shared unit, attributed to its referrers
+                    "start": i + 1,
+                    "end": end + 1,
+                    "def_line": i + 1,
+                }
+            )
+            i = end + 1
             continue
         kind = (
             "fn"
