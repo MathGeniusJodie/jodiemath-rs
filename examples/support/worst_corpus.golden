@@ -2079,8 +2079,8 @@ cos_checked 80800000 3f800000
 cos_checked 00000001 3f800000
 cos_checked 80000001 3f800000
 cos_checked 007fffff 3f800000
-cos_checked 7f7fffff bf800000
-cos_checked ff7fffff 3f800000
+cos_checked 7f7fffff 3f800000
+cos_checked ff7fffff bf800000
 cos_checked 3e800000 3f780aa6
 cos_checked be800000 3f780aa6
 cos_checked 3e8a3d71 3f76b9b1
@@ -7299,8 +7299,8 @@ sin_checked 80800000 80800000
 sin_checked 00000001 00000001
 sin_checked 80000001 80000001
 sin_checked 007fffff 007fffff
-sin_checked 7f7fffff 3f800000
-sin_checked ff7fffff bf800000
+sin_checked 7f7fffff bf800000
+sin_checked ff7fffff 3f800000
 sin_checked 3e800000 3e7d5777
 sin_checked be800000 be7d5777
 sin_checked 3e8a3d71 3e889106
@@ -7389,8 +7389,8 @@ sinc_unnormalized 80800000 3f800000
 sinc_unnormalized 00000001 3f800000
 sinc_unnormalized 80000001 3f800000
 sinc_unnormalized 007fffff 3f800000
-sinc_unnormalized 7f7fffff 00200000
-sinc_unnormalized ff7fffff 00200000
+sinc_unnormalized 7f7fffff 80200000
+sinc_unnormalized ff7fffff 80200000
 sinc_unnormalized 3e800000 3f7d5777
 sinc_unnormalized be800000 3f7d5777
 sinc_unnormalized 3e8a3d71 3f7ce6a2
@@ -9279,8 +9279,8 @@ wrap_pi 80800000 80800000
 wrap_pi 00000001 00000001
 wrap_pi 80000001 80000001
 wrap_pi 007fffff 007fffff
-wrap_pi 7f7fffff 67830cd8
-wrap_pi ff7fffff e7830cd8
+wrap_pi 7f7fffff e70c0604
+wrap_pi ff7fffff 670c0604
 wrap_pi 3e800000 3e800000
 wrap_pi be800000 be800000
 wrap_pi 3e8a3d71 3e8a3d71

@@ -5806,3 +5806,69 @@ Downstream, all unchanged or marginally better: `wrap_pi` 0.0244 avg
 (its exhaustive baseline), `sinc` 0.0938 / 3 max, `sinc_unnormalized`
 0.0716 -> 0.0715, `tan_checked` 3.2835e8 -> 3.2750e8 avg with the same
 ~2.3e9 ceiling. edgecheck clean, 26 tests pass.
+
+### Two parity levers priced and both rejected
+
+The `parity(qh)` / `parity(ql)` / compare / masked-xor block is 8 of
+`sin_checked`'s ~70 vector instructions per iteration -- the largest
+single remaining block. Two ways to shrink it, both measured, both no.
+
+**Round `p0` to the nearest *even* integer instead of the nearest
+integer.** `parity(qh)` is then identically 0, so the whole sign fixup
+collapses to "is `ql` odd" -- `(ql*0.5).floor() != ql*0.5` straight into
+a mask, no `fma`, no second `parity`. `qh` costs the same 3 ops either
+way (`mul`, `vroundps $8`, `h+h` against `vpternlogd`, `add`,
+`vroundps $11`), and the `+-1` that `qh` gives up is absorbed by `ql`,
+which was already unbounded. `PI_TINY`'s term has to move from `qh` to
+`qh + ql` (+1 op) or the reduction silently drops it whenever the even
+round sends `qh` to 0.
+
+- **mca refuses it**: -9 instrs, -11 uOps and -3 BlockRT on both
+  functions, but throughput *up* -- `sin_checked` 4.546 -> 4.701 (+3.4%)
+  and `cos_checked` 4.037 -> **5.020 (+24.4%)** -- and latency up 3
+  cycles on both (108.02 -> 111.03, 113.00 -> 116.02). Instructions and
+  ports both say win, cycles say lose, on both callers and on both axes.
+  Not adopted on a counter disagreement this size.
+- **And the accuracy is a genuine pareto, not a wash.** On the near-zero
+  probe (11.5M f32 within 4 ulp of a zero of sin or cos) `sin_checked`'s
+  max goes 1.516 -> 2.199 while `cos_checked`'s goes 3.460 -> **2.199**;
+  band averages are unchanged for sin and ~5% *better* for cos at
+  `(pi/4,10]` through `[1.3e7,1e8)`. So the pair's worst case improves
+  while sin's alone gets worse. Worth knowing if `cos_checked` ever needs
+  its average pulled down, but it is not the "free speed" this was.
+- Without the `PI_TINY` fix the same variant is a straight regression:
+  near-zero max **5.801** for both functions, worst at x = 505.8, where
+  the even round makes `qh = 162, ql = -1` and `fma(qh, PI_TINY, c5)`
+  then applies pi's third word to the wrong integer.
+
+**`qh = round_ties_even` (the recorded 2 -> 6 cos regression),
+re-screened on the current code because that measurement predates three
+changes to its neighbourhood.** It does not go stale: `cos_checked`'s
+near-zero max is 3.460 with `f32::round` and **5.801** with
+`round_ties_even`, same worst x (252.9) as the even-round failure above,
+i.e. the same mechanism -- cos's `-0.5` folded into `lo` turns `qh`'s
+exact-tie cases into a wrong integer. `sin_checked` is completely
+unaffected, as recorded.
+- Methodology: **4M random samples per band see none of this.** Every
+  band row for `round_ties_even` matches the shipped code to five
+  decimal places (one is marginally *better*), max and worst-x
+  included. The near-zero probe finds it in under a second. When a
+  suspected loss is a *relative* error at a near-zero result, sample the
+  near-zeros directly -- uniform-in-band fuzzing is the wrong instrument
+  no matter how many samples it gets.
+
+### Note for whoever fixes `wrap_pi`'s extreme tail
+
+Blessing `worst_corpus` after the `RPI_TINY` change turned up a
+pre-existing contract violation, unrelated to that change but visible in
+the same rows: `wrap_pi(f32::MAX)` returns 1.2377339e24 on master and
+-6.612423e23 after. **Both are outside `(-pi, pi]`**, which is
+`wrap_pi`'s whole documented contract. It rides `reduce_pi_checked`'s
+deliberately unclamped `r`, so once the two-word `q` gives up (`|x|` past
+~8.85e14) `r` is a large number and `wrap_pi` passes it straight through
+-- `sin_checked`/`cos_checked` are protected by their own
+`clamp(-1, 1)`, `wrap_pi` has no equivalent. A `+-pi` clamp on the
+`sign > 0.0` branch would restore the invariant the same way, in the same
+"pay to fix wrong output" spirit. Not done here: it is `wrap_pi`'s call
+to make, not the reduction's, and it is orthogonal to anything in this
+session.

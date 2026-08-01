@@ -293,8 +293,10 @@ the bar by construction if they find anything.
   #47's implementation (2026-07-27, see its entry below): the two_prod
   `PI_HI`/`PI_LO`/`PI_TINY` reduction hits `sin_checked`'s exact
   `|x|<=1e6` accuracy (avg/max 0.0356/2) at 1.278 cyc/elem vs
-  `sin_checked`'s 5.311 — **~4.2x cheaper for the same accuracy** over
-  that range, and ~11% dearer than fast `sin`'s 1.151. Correctly rejected
+  `sin_checked`'s 4.546 — **~3.6x cheaper for the same accuracy** over
+  that range, and ~11% dearer than fast `sin`'s 1.151. (The ratio was
+  4.2x when this was written; `sin_checked` has since come down from
+  5.311, so re-measure both sides before quoting it again.) Correctly rejected
   as a fast-tier *replacement*; as a *new* `sin_mid`/`cos_mid` it's
   additive and zero-risk. Caveat that bounds the value: it does not move
   the ~1.3e7 cliff (same `q` failure as fast sin), so the tier's domain
