@@ -2258,17 +2258,41 @@ pub fn log1p(x: f32) -> f32 {
 /// own Taylor series converges too slowly for a pure truncation to
 /// reach f32 precision at any useful radius (measured: even a degree-5
 /// pure-Taylor `Q` is ~4.6 ulp-equivalent at just `|x|<0.1`), so this
-/// uses a real minimax refit over `|x|<0.5` instead -- a genuinely wide
-/// branch (degree 12) traded for keeping the direct branch's own real
-/// cancellation error out of the answer entirely, rather than a
-/// narrower poly plus a direct branch that's still measurably lossy
-/// right where they'd meet. `x=+inf` is the one input the direct form
-/// alone mishandles (`inf-inf` is indeterminate; the true limit is
-/// `-inf`, `log` growing arbitrarily slower than `x`), corrected with a
+/// uses a real minimax refit over `|x|<0.5` (degree 12) instead.
+///
+/// That one series then covers the *whole* domain, not just `|x| < 0.5`.
+/// Past there the argument handed to it is `w = m - 1`, the residual of
+/// `ln`'s own `u = 1+x = 2^k * m` reduction (`m` in `[1/sqrt2, sqrt2)`,
+/// so `w` is exact and already inside the fitted range), and
+/// `ln(u) = k*ln2 + w + log1pmx(w)` rebuilds the answer from it. So no
+/// separate `ln` polynomial is evaluated here at all, and no arm ever
+/// rounds `ln(1+x)` into a single f32 and *then* subtracts `x` -- that
+/// is the form that hands `ln`'s own few ulp to a cancellation whose
+/// amplification, `|x / log1pmx(x)|`, peaks at ~5.3 just past
+/// `|x| = 0.5`. `x=+inf` is the one input the reduction alone
+/// mishandles (`inf-inf` is indeterminate; the true limit is `-inf`,
+/// `log` growing arbitrarily slower than `x`), corrected with a
 /// trailing override, same mechanism as `sqrt1pm1`'s own `x=+inf` fix.
 #[inline(always)]
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
 pub fn log1pmx(x: f32) -> f32 {
-    let x2 = x * x;
+    let u = 1.0 + x;
+    let c = x - (u - 1.0);
+    let corr = c / u;
+    let corr = if corr.is_finite() { corr } else { 0.0 };
+    // ln_normal's own reduction, done here rather than by calling it:
+    // u = 2^k * m with m in [1/sqrt2, sqrt2), so w = m - 1 is exact
+    // (Sterbenz) and lands in [-0.293, 0.415] -- inside the same |z| < 0.5
+    // the poly below is fitted over. That is what lets one poly serve both
+    // arms.
+    let e = (u.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23;
+    let m = f32::from_bits((u.to_bits() as i32).wrapping_sub(e << 23) as u32);
+    let k = e as f32;
+    let w = m - 1.0;
+    // |x| < 0.5 evaluates the series at x itself; past that at w, whose
+    // own log1pmx the identity below turns back into log1pmx(x).
+    let z = if x.abs() < 0.5 { x } else { w };
+    let z2 = z * z;
     const C1: f32 = -0.6666664970675296;
     const C2: f32 = 0.4999995348856975;
     const C3: f32 = -0.40001991139756876;
@@ -2281,26 +2305,48 @@ pub fn log1pmx(x: f32) -> f32 {
     const C10: f32 = 0.09945676037713247;
     const C11: f32 = -0.32486571239903606;
     const C12: f32 = 0.32005194082375105;
-    let q = fma(C12, x, C11);
-    let q = fma(q, x, C10);
-    let q = fma(q, x, C9);
-    let q = fma(q, x, C8);
-    let q = fma(q, x, C7);
-    let q = fma(q, x, C6);
-    let q = fma(q, x, C5);
-    let q = fma(q, x, C4);
-    let q = fma(q, x, C3);
-    let q = fma(q, x, C2);
-    let q = fma(q, x, C1);
-    let q = fma(q, x, 1.0);
-    let small = -0.5 * x2 * q;
-    // `log1p(x)` minus its trailing signed-zero select: that select only
-    // ever fires at `x == 0.0`, where the poly arm above is selected
-    // instead, so it can never reach the result. Everything else `log1p`
-    // does is still live -- `u = 1+x` really is `0`/negative/`+inf` on
-    // this arm's own domain.
-    let big = log1p_nonzero!(x) - x;
-    let normal = if x.abs() < 0.5 { small } else { big };
+    // `z` is only available after the reduction below has produced `w`, so
+    // this chain sits on the critical path and a 12-deep serial Horner
+    // would dominate it. Estrin instead -- five fma levels rather than
+    // twelve, for two extra multiplies -- but only *below* the leading
+    // term: `C1..C12` are grouped, then the `1.0` is added by a single
+    // trailing fma. Grouping the `1.0` in as well costs real accuracy,
+    // because that is the one step whose rounding lands at full weight;
+    // every rounding inside the grouped part enters attenuated by `z`.
+    // `|z| < 0.5` throughout, so no grouped partial sum can overflow the
+    // way an Estrin split can at an infinite argument.
+    let z4 = z2 * z2;
+    let z8 = z4 * z4;
+    let a0 = fma(C2, z, C1);
+    let a1 = fma(C4, z, C3);
+    let a2 = fma(C6, z, C5);
+    let a3 = fma(C8, z, C7);
+    let a4 = fma(C10, z, C9);
+    let a5 = fma(C12, z, C11);
+    let b0 = fma(a1, z2, a0);
+    let b1 = fma(a3, z2, a2);
+    let b2 = fma(a5, z2, a4);
+    let c0 = fma(b1, z4, b0);
+    let g = fma(b2, z8, c0);
+    let q = fma(g, z, 1.0);
+    let p = -0.5 * z2 * q;
+    // ln(u) = k*ln2 + ln(m) = k*ln2 + w + log1pmx(w), so
+    //   log1pmx(x) = ln(u) - x + c/u = (k*LN2_HI - x + w) + p + (k*LN2_LO + c/u)
+    // with p the same series value the |x| < 0.5 arm returns directly.
+    // Every large term is now differenced *before* anything small is added:
+    // k*LN2_HI is exact, w is exact, and over the whole band where
+    // |x/log1pmx(x)| is big (it peaks at ~5.3 just past |x| = 0.5) both
+    // partial differences are Sterbenz-exact too, so nothing is rounded at
+    // ln(u)'s scale and then amplified. Evaluating ln(u) as a single f32
+    // and subtracting x afterwards -- the direct `log1p(x) - x` -- instead
+    // hands that cancellation ln's own few ulp, magnified fourfold.
+    // Reusing the series for ln(m) is also why no separate `ln` poly is
+    // evaluated here at all.
+    let big = log_family_edges!(u, {
+        let t = fma(k, LN2_HI, -x) + w;
+        t + (p + fma(k, LN2_LO, corr))
+    });
+    let normal = if x.abs() < 0.5 { p } else { big };
     if x == f32::INFINITY { f32::NEG_INFINITY } else { normal }
 }
 

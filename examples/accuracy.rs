@@ -886,12 +886,26 @@ fn main() {
         // log1pmx (backlog idea #145): direct f64 log1p_u10(v)-v cancels
         // for tiny v the same way the naive f32 form does, just at f64's
         // own (much smaller) precision floor -- rationalized for |v| below
-        // that floor via the leading-order term (higher Taylor terms are
-        // utterly negligible there), same "reference must itself avoid
-        // the cancellation trap" precedent as sqrt1pm1's own reference.
+        // that floor via the Taylor series, same "reference must itself
+        // avoid the cancellation trap" precedent as sqrt1pm1's own
+        // reference. The series is carried to v^7 rather than to its
+        // leading term alone: `-v^2/2` on its own is short by `v^3/3`,
+        // i.e. `(2/3)|v|` in *relative* terms, which is ~11 f32 ulp just
+        // under a 1e-6 cutoff -- the reference, not log1pmx, was the less
+        // accurate of the two things being compared there. Degree 7 over
+        // |v| < 1e-3 truncates at `(1/4)v^6 <= 2.5e-19` relative, and at
+        // the 1e-3 handover log1p_u10(v)-v still cancels only down to
+        // ~7e-6 f32 ulp, so both sides of the switch are far under the
+        // measurement floor.
         let log1pmx_ref = |v: F64xN| {
-            let tiny = v.abs().simd_lt(F64xN::splat(1e-6));
-            let small_ref = v * v * F64xN::splat(-0.5);
+            let tiny = v.abs().simd_lt(F64xN::splat(1e-3));
+            let q = F64xN::splat(1.0 / 7.0);
+            let q = q * v - F64xN::splat(1.0 / 6.0);
+            let q = q * v + F64xN::splat(1.0 / 5.0);
+            let q = q * v - F64xN::splat(1.0 / 4.0);
+            let q = q * v + F64xN::splat(1.0 / 3.0);
+            let q = q * v - F64xN::splat(1.0 / 2.0);
+            let small_ref = v * v * q;
             let big_ref = log1p_u10(v) - v;
             let is_pos_inf = v.simd_eq(F64xN::splat(f64::INFINITY));
             let normal = tiny.select(small_ref, big_ref);

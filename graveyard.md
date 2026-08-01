@@ -5212,3 +5212,75 @@ so this costs nothing.
 So this is specific to 180/pi, not a general rule about deriving from
 `PI`. **`acosd`, `atand` and `atan2d` all still spell it
 `180.0 / std::f32::consts::PI`** and carry the same -0.46 ulp bias.
+## `log1pmx`: 11 max ulp was the *reference*, and the fix was one shared poly
+
+The recorded 11 max ulp at `x = 9.53e-7` was never `log1pmx`'s. The harness
+reference switched to a rationalized form below `|v| < 1e-6` and that form
+was the *leading term alone*, `-v^2/2`. Dropping `v^3/3` is `(2/3)|v|` in
+relative terms, which at `v` just under the cutoff is **10.6 f32 ulp** --
+computed exactly against a 60-digit series at the recorded worst `x`, and
+that is the whole 11. Same class as `wrap_pi`'s own TAU-carried-as-two-words
+note: the reference was the less accurate of the two things being compared.
+The direct `log1p_u10(v) - v` arm it was protecting only cancels below
+`|v| ~ 1e-7`, so the cutoff was two decades too conservative *and* the
+replacement too short. Reference now carries the series to `v^7` and hands
+over at `1e-3`, where both sides are under 1e-5 ulp.
+
+Against a correct reference the real number was **8**, at `x = 5.01e-1` --
+one ulp past the `|x| < 0.5` poly boundary, on the direct arm. Three things
+were then measured, in order:
+
+- **Reorder alone: no.** `(ln(u) - x) + corr` instead of `(ln(u) + corr) - x`
+  is free and strictly better conditioned (`ln(u)` and `x` are within a
+  factor of two over most of the arm, so the difference is Sterbenz-exact
+  and `corr`'s rounding lands at the result's own scale). It moved the worst
+  point from 5.42e-1 to 5.01e-1 and **left the max at 8**: the binding term
+  was never `corr`, it was `ln_normal`'s own few ulp amplified by
+  `|x / log1pmx(x)|`, which peaks at ~5.3 exactly there.
+- **Widening the poly: priced and not needed.** The degree-12 fit is a tight
+  minimax over exactly `[-0.5, 0.5]` -- 0.53 ulp-equivalent at the boundary,
+  32 at 0.55, 291 at 0.6. Reaching `x = 1` (where the amplification is 3.26
+  instead of 5.29) needs degree ~16 by the Bernstein-ellipse estimate for
+  the `x = -1` singularity, i.e. +4 fma for 8 -> ~5.
+- **Reusing the same poly on `ln`'s own reduced argument: yes, and it is
+  cheaper.** `u = 1+x = 2^k * m` with `m` in `[1/sqrt2, sqrt2)`, so
+  `w = m - 1` is exact *and* already inside the fitted `|z| < 0.5`. Then
+  `ln(u) = k*ln2 + w + log1pmx(w)` rebuilds the answer from the series this
+  function already evaluates, and the whole `ln` polynomial disappears. The
+  large terms difference before anything small is added, and over the band
+  where the amplification is worst both partial differences are
+  Sterbenz-exact. **8 -> 2 max.**
+
+Summation order inside that arm is a real axis, not bookkeeping. Three were
+measured: `(t + p) + last` 0.0648 avg / 2 max, `t + (p + last)` **0.0631 /
+2**, and small-terms-first `fma(k,LN2_HI,-x) + ((w + p) + last)` 0.0594 /
+**4**. The last one wins the average and loses the max, because grouping
+`w + p` rounds at 0.29's scale where the result is 0.095. Balanced tree
+shipped. Folding `p` into the arm with `fma(h, q, t)` also measured (0.0648
+/ 2): it removes `p`'s own rounding but costs one *more* rounding at the
+result's scale in the far field, where nearly all the sample mass is.
+
+The rewrite put the degree-12 chain on the critical path (`z` now depends on
+`u`), so it was Estrined -- and *where* the split goes is the whole result:
+
+| poly form | avg | max |
+|---|---|---|
+| Horner, 12 deep | 0.0631 | 2 |
+| full Estrin | 0.0685 | 4 |
+| Estrin from `C2`, `1 + C1*z` peeled | 0.0668 | 3 |
+| Estrin from `C1`, `1.0` peeled | **0.0632** | **2** |
+
+Only the last is free. Grouping the `1.0` in puts two or more roundings at
+full weight; peeled, there is exactly one, and everything inside the grouped
+part enters attenuated by `z`. Same lever as `log_2`'s own peeled `c0*s`.
+
+Net, all three axes. Exhaustive (all 2^32 patterns, both sides, against the
+corrected reference): max **8 -> 3**, avg 0.0541 -> 0.0632 -- the average is
+the one real cost, and it is the far field, where the old form reached the
+answer in one rounding at `x`'s scale and this one takes two.
+`log1pmx_throughput` **151 -> 133** instructions (-12%), uOps 17100 -> 15000,
+Block RThroughput 37 -> 29 (-22%); `log1pmx_latency` 4991 -> 4603 instructions
+(-8%), total cycles 387804 -> 371712 (-4.1%). No pareto variant needed --
+cost fell on both axes. (The 100M fuzz reports 2 for the shipped version and
+8 for the old one, so fuzz-to-fuzz is 8 -> 2; the exhaustive 3 is the honest
+number, fuzz being optimistic about a max as usual.)
