@@ -1336,42 +1336,58 @@ pub fn tand_unchecked(x: f32) -> f32 {
 // exact-integer ceiling) off by a whole integer, shifting the residual by
 // a whole multiple of pi and putting sinf_poly hopelessly outside its
 // fitted domain -- a relocatable *cliff*, not a slope, no matter how q is
-// rounded. This version instead gives q a second, small f32 word
-// (qh, ql) via `two_prod`/`two_sum` error-free transforms (each transform
-// is exact for any inputs, unlike the PI_A..D trick, which needs bounded
-// q): the dominant cross term and the two next-biggest (~x*2^-24) get
-// real two_prod treatment; the smallest tier (~x*2^-48) is folded in with
-// plain multiplies/adds, whose own rounding error is already far below
-// 1 ulp of the O(1) result.
+// rounded. And the reduction must then carry more bits of pi than a
+// working f32 can hold. Both are f64's natural size, so the `_checked`
+// tier does its reduction there and returns to f32 only for the poly.
 //
-// Two words of 1/pi, not three: a third word only ever perturbs *which
-// integer* `ql` rounds to, and a perturbation that small can only move
-// `ql` where the residual sits within it of a half-integer -- exactly
-// where either choice is self-consistent (`q -> q+-1` flips the parity
-// and shifts `r` by `-+pi`, giving the same answer). Its only real reach
-// is past |x| ~ 3.4e15, where its own contribution exceeds 0.5 -- deep
-// inside the region the two-word q has already lost anyway.
+// Why f64 rather than a wider f32 scheme -- three separate walls, all
+// measured, none of them movable by spending more f32 ops:
 //
-// Individual transforms being exact does *not* make qh/ql exact at any
-// magnitude: together they resolve q to roughly 48 bits, so once the true
-// round(x/pi) needs more -- around |x| > 2^48*pi ~ 8.85e14 -- qh+ql comes
-// out off by whole integers (measured: off by 1 at x=1e15, by 14 at
-// x~1e16). The cliff is relocated from ~2^24 to ~2^48, not eliminated.
-// Nothing here bounds sinf_poly's input -- see sin_checked's own
-// `.clamp(-1,1)` for what keeps sin_checked/cos_checked inside [-1,1]
-// regardless.
+//   * the *grid*: `ROUND_MAGIC + q` only has ulp 1 for |q| < 2^22, which
+//     is exactly where `sin`/`cos`'s documented domain ends. Feeding the
+//     unchecked chain an oracle q extends it to |q| < 2^24 and no
+//     further -- past that an integer is not representable in an f32.
+//   * the *Cody-Waite chain*: after removing word k the residual is
+//     ~q*eps_k but is quantized at word k's lowest bit, so the step is
+//     exact only while log2|q| <= 24 + (that word's trailing zero run in
+//     pi's binary expansion) - 1. Pi has no zero run longer than 4 in
+//     its first 100 bits, so *no* f32 splitting of pi survives past
+//     |q| ~ 2^26; the shipped PI_A..PI_D bind at 2^25.6. Measured with
+//     an exact two-word q: clean at 2^25, max 262145 ulp at 2^26.
+//   * the *residual*: any coarse-then-fine two-stage scheme has to store
+//     an intermediate of magnitude ~2^k in one f32, whose ulp there is
+//     2^(k-24) against the 2^-24 the answer needs. So k <= 0.
 //
-// pre_offset (cos's -0.5 phase shift) MUST be folded into the *low*
-// correction term, never into the two_prod's dominant term p0: once |x|
-// is large enough that p0's own ulp exceeds 1 (|x| ~ 1.68e7), adding 0.5
-// to p0 rounds away to nothing, silently dropping cos's phase shift and
-// reducing to an off-by-a-whole-pi residual. sin (pre_offset = 0) is
-// unaffected either way.
-const RPI_HI: f32 = 0.31830987334251404;
+// Everything past |q| ~ 2^25 therefore needs a wider-than-f32 residual.
+// The double-f32 error-free-transform version this replaced was one such
+// (and cost ~2x); f64 is the other, and is both cheaper and good three
+// decades further out.
+//
+// The splitting rule below is what makes it cheap: x carries 24 bits, so
+// giving each 1/pi word at most 26 significant bits makes every
+// `x * IPI64_*` product *exact* in f64 with no error-free transform at
+// all. On the pi side, PI64_HI's lowest bit at 2^-23 leaves the step-1
+// residual (~q*2^-24.9, quantized at 2^-23) exact for log2|q| <= 53.9 --
+// so the same analysis that caps f32 at 2^25 caps this at 2^53. What
+// actually binds first is the parity extraction at 2^51; see
+// `reduce_pi64`'s own comment.
+//
+// BOTH pi words must be POSITIVE -- pi truncated *downward*, not rounded
+// to nearest. This is invisible from the arithmetic and is not a
+// stylistic choice: with a negative low word, `-q * PI64_LO` at q = +0.0
+// is `+0.0`, and `-0.0 + 0.0` is `+0.0`, so sin(-0.0) silently returns
+// +0.0. Fuzzing and llvm-mca both missed that; edgecheck caught it.
 const RPI_LO: f32 = 1.2841276486597053e-8;
-const PI_HI: f32 = 3.1415927410125732;
-const PI_LO: f32 = -8.742277657347586e-8;
-const PI_TINY: f32 = -3.4302490200117637e-15;
+// 1/pi and pi, each split so the leading word has <= 26 significant bits.
+const IPI64_HI: f64 = 0.31830988079309464;
+const IPI64_LO: f64 = 5.390696036528002e-09;
+const PI64_HI: f64 = 3.1415926218032837;
+const PI64_LO: f64 = 3.178650954705639e-08;
+// 1.5 * 2^52: the f32 `ROUND_MAGIC` trick one exponent range up. Adding
+// it to an exact integer |q| < 2^51 changes no bits of q but parks q's
+// parity in bit 0 of the f64, where a 63-bit shift turns it straight
+// into a sign mask.
+const ROUND_MAGIC64: f64 = 6755399441055744.0;
 
 /// Error-free transformation (Knuth's `two_sum`, backlog idea #184):
 /// returns `(s, e)` such that `s = fl(a+b)` (the ordinary rounded sum)
@@ -1385,10 +1401,14 @@ const PI_TINY: f32 = -3.4302490200117637e-15;
 /// can reach it.
 ///
 /// `e` recovers the rounding error the plain `+` silently dropped -- the
-/// building block this crate's own wide-range reductions (`round_x_over_pi`/
-/// `reduce_pi`, the exp/log families' own compensated combines) are
-/// built from, exposed directly for users composing their own
-/// compensated arithmetic instead of reinventing it (often incorrectly:
+/// building block a compensated (double-float) reduction is made of,
+/// exposed for users composing their own. This crate no longer builds
+/// one itself: its own wide-range pi reduction used to, and now reduces
+/// in f64 instead, which is both cheaper and good three decades further
+/// out (see `reduce_pi64`). That is a statement about f32 pi reduction
+/// specifically, not about the technique -- reach for these whenever the
+/// next-wider float is unavailable or too slow, and prefer them to
+/// reinventing the transform (often incorrectly:
 /// the naive `e = (a+b) - a - b` loses exactly the precision this
 /// exists to keep, since `(a+b)` has already rounded away the part
 /// being recovered).
@@ -1404,32 +1424,18 @@ pub fn two_sum(a: f32, b: f32) -> (f32, f32) {
 /// #184): `s + e == a + b` exactly *only if* `|a| >= |b|` -- violate
 /// that and `e` is off by up to ~1 ulp of `s` instead of exact (still
 /// bounded, unlike a plain `+` alone, just not the unconditional
-/// guarantee `two_sum` gives for any `a`, `b`). This crate's own
-/// internal callers sometimes violate the ordering deliberately (see
-/// `reduce_pi`'s own doc comment) after verifying the bounded error is
-/// lost in the noise of everything else already inexact there --
-/// that's a per-call-site judgment call, not something this function
-/// itself checks, so callers should confirm `|a| >= |b|` (or that
-/// bounded slop is acceptable) rather than assume it. Same overflow
+/// guarantee `two_sum` gives for any `a`, `b`). Violating the ordering
+/// deliberately can still be right, once the bounded error is verified
+/// to be lost in the noise of everything else already inexact at that
+/// site -- but that is a per-call-site judgment call, not something this
+/// function itself checks, so callers should confirm `|a| >= |b|` (or
+/// that bounded slop is acceptable) rather than assume it. Same overflow
 /// caveat as [`two_sum`]: if `a + b` overflows, `s` is infinite and `e`
 /// is infinite too (of the opposite sign), not a usable correction.
 #[inline(always)]
 pub fn quick_two_sum(a: f32, b: f32) -> (f32, f32) {
     let s = a + b;
     let e = b - (s - a);
-    (s, e)
-}
-
-// Fast2Diff: `quick_two_sum(a, -b)` with the negation folded into the
-// subtraction instead of materialised. `(a - s) - b` is the same
-// expression as `(-b) - (s - a)` reassociated (float addition commutes,
-// and `a - s` is the exact negative of `s - a`), so it is bit-identical
-// -- one vxorps cheaper each time. Same `|a| >= |b|` caveat as
-// [`quick_two_sum`].
-#[inline(always)]
-fn quick_two_diff(a: f32, b: f32) -> (f32, f32) {
-    let s = a - b;
-    let e = (a - s) - b;
     (s, e)
 }
 
@@ -1457,8 +1463,6 @@ fn quick_two_diff(a: f32, b: f32) -> (f32, f32) {
 /// normal" rule of thumb suggests: exactness was verified over ~41M
 /// random in-range pairs against an `f64` reference with zero
 /// violations, while `2^-103` still admits real failures.
-/// This crate's own callers (`reduce_pi`'s `PI_HI`/`PI_LO` products)
-/// sit far inside the safe band by construction.
 #[inline(always)]
 pub fn two_prod(a: f32, b: f32) -> (f32, f32) {
     let p = a * b;
@@ -1466,89 +1470,69 @@ pub fn two_prod(a: f32, b: f32) -> (f32, f32) {
     (p, e)
 }
 
-/// round(x/pi + pre_offset), split into a double-float integer pair
-/// (qh, ql). pre_offset is 0 for sin (`HALF = false`), -0.5 for cos
-/// (`HALF = true`). It is a const generic rather than an `f32` argument
-/// because `+ 0.0` is *not* a no-op LLVM may delete -- it turns `-0.0`
-/// into `+0.0` -- so sin's callers paid a real add for nothing.
+/// `x - q*pi` reduced in f64, plus the sign the caller owes the result.
+///
+/// `q` is `round(x/pi)` for `HALF = false` (sin's grid) and the nearest
+/// half-odd-integer for `HALF = true` (cos's), so `r` lands in
+/// `[-pi/2, pi/2]` either way. Returns `(r, sgn)` with `sgn` already a
+/// bare sign *mask* (0 or `SIGN_MASK`) rather than a `+-1.0` multiplier:
+/// every caller either xors it into `r` before an odd polynomial or xors
+/// it into a `1.0` to publish, and both are one instruction from the
+/// mask while the multiplier form costs a select plus a multiply.
+///
+/// `HALF` is a const generic rather than an `f32` pre-offset because
+/// `+ 0.0` is *not* a no-op LLVM may delete -- it turns `-0.0` into
+/// `+0.0` -- so sin's callers would pay a real add for nothing.
+///
+/// Accurate to 2 ulp through `|x| < 1e13`, then degrading gradually:
+/// max 906 at `[1e13,1e14)`, 1200 at `[1e14,1e15)`, ~55000 by `7e15`.
+/// The cliff is at **`2^51*pi` = 7.07e15** and it is `ROUND_MAGIC64`'s
+/// window, not the reduction's -- `n` stays an exact integer to `2^53`,
+/// but `n + ROUND_MAGIC64` only has ulp 1 (so only carries the parity in
+/// bit 0) while `|n| < 2^51`. A sign-dependent magic would buy one more
+/// octave for two more ops, and is not worth it: an f32's own ulp at
+/// 7e15 is already ~5e8 radians, 8e7 whole periods between neighbours.
+/// Nothing in here bounds the *output* past that -- see `sin_checked`'s
+/// `.clamp(-1,1)` for what keeps `|sin| <= 1` at every magnitude.
+///
+/// The cost profile assumes AVX-512 (this crate builds `-C
+/// target-cpu=native`): the f32 lanes vectorize 256 bits wide, so the
+/// f64 half widens to 512-bit ZMM at the *same instruction count*.
+/// Without AVX-512 the f64 half needs two vectors per f32 vector and
+/// roughly doubles.
 #[inline(always)]
-fn round_x_over_pi<const HALF: bool>(x: f32) -> (f32, f32) {
-    let (p0, e0) = two_prod(x, RPI_HI);
-    // A quick_two_sum(p0, e0) here would be dead work: its error term's
-    // only use would be `s + e1` immediately after, and for a Fast2Sum
-    // pair fl(s + e1) is just `s` itself again (verified exhaustively) --
-    // so the whole call collapses to a plain add.
-    //
-    // One fma, not `e0 + x * RPI_LO`: the product is exact inside the
-    // fma, so this is both one op and one rounding cheaper.
-    let lo = fma(x, RPI_LO, e0);
-    // pre_offset folded in here, NOT into p0 -- see the constants' comment
-    let lo = if HALF { lo - 0.5 } else { lo };
-    // ql: ties-to-even -- q only needs to be *an* integer within 0.5 of
-    // the true residual, so any consistent nearest-rounding rule works,
-    // and round_ties_even lowers to a single vroundps (ql is the
-    // last-ready value out of this function, see reduce_pi).
-    //
-    // qh MUST stay f32::round (ties-away), despite the same "any
-    // consistent rule" argument applying in principle: switching qh to
-    // ties-even regressed cos_checked's max ulp from 2 to 6 inside its
-    // documented-accurate range (cos's -0.5 folded into `lo` makes qh's
-    // rare exact-tie cases interact badly with the offset in a way sin's
-    // never does), while ql alone reproduces zero in-domain regression.
-    let qh = p0.round();
-    let rem = (p0 - qh) + lo;
-    let ql = rem.round_ties_even();
-    (qh, ql)
-}
-
-/// x - (qh+ql)*pi, accurate well beyond a single f32's exact-integer range.
-#[inline(always)]
-fn reduce_pi(x: f32, qh: f32, ql: f32) -> f32 {
-    let (p1, e1) = two_prod(qh, PI_HI);
-    let (p2, e2) = two_prod(qh, PI_LO);
-    let (p3, e3) = two_prod(ql, PI_HI);
-    // smallest tier (~x*2^-48): a plain multiply/add is fine here, its
-    // rounding error is far below 1 ulp of the O(1) result
-    let c5 = ql * PI_LO;
-    let c45 = fma(qh, PI_TINY, c5);
-    let tier2 = (e2 + e3) + c45;
-    // p3 and tier2 both depend on ql, the last-ready value out of
-    // round_x_over_pi (qh is ready much earlier). Combining p3+tier2 here
-    // runs fully parallel with the qh-only chain instead of stacking two
-    // more sequential merges after it, shortening the ql-dependent tail
-    // by one two_sum of latency. NB: p3t + e3t == p3 + tier2, so
-    // subtracting (p3+tier2) means subtracting *both* -- e3t must be
-    // SUBTRACTED from err below, not added (getting this backwards breaks
-    // cos badly near its zero crossings, where p3 and tier2 nearly cancel
-    // and e3t is large, not negligible).
-    //
-    // quick_two_sum, not two_sum, despite p3 = ql*PI_HI being the term
-    // that goes to zero: |tier2| is bounded by ~|qh|*2^-46 + |ql|*2^-23
-    // while a nonzero ql forces |p3| >= pi, so the |a| >= |b| ordering
-    // holds by a wide margin over the whole f32 line -- and at ql == 0
-    // the Fast2Sum is exact anyway (`e = b - (s - 0)` is exactly zero).
-    let (p3t, e3t) = quick_two_sum(p3, tier2);
-    // x - p1 is exact by Sterbenz's lemma, not assumption: p1 = qh*PI_HI
-    // with qh ~ round(x/pi), so whenever qh != 0, p1 sits within a factor
-    // ~(1 +- 2^-24) of x, comfortably inside [x/2, 2x]; qh == 0 makes the
-    // subtraction trivially exact. So a full two_sum here collapses to a
-    // plain subtract (edge cases at the qh = 0/+-1 boundary confirmed
-    // clean by the exhaustive sweep).
-    let s0 = x - p1;
-    // All three merges use the Fast2Sum form, each violating the |a|>=|b|
-    // ordering assumption somewhere in the domain, but that bounded error
-    // measured harmless in every case (see quick_two_sum's comment). p2's
-    // merge isn't on the ql-dependent critical path (p2 only needs qh),
-    // so downgrading it from full two_sum saves no latency -- but it's
-    // still 3 fewer ops of port pressure, and mca confirmed a real
-    // throughput win from exactly that.
-    let (s1, e1b) = quick_two_diff(s0, e1);
-    let (s2, e2b) = quick_two_diff(s1, p2);
-    let (s3, e3b) = quick_two_diff(s2, p3t);
-    // flat left-to-right; a depth-2 rebalance measured *worse* latency at
-    // identical throughput (scheduling side effects), see IDEAS.md
-    let err = e1b + e2b + e3b - e3t;
-    s3 + err
+fn reduce_pi64<const HALF: bool>(x: f32) -> (f32, u32) {
+    let xd = x as f64;
+    // Both products are exact: x carries 24 bits, each word at most 26.
+    let t = xd * IPI64_HI;
+    let tl = xd * IPI64_LO;
+    // `t - nh` is exact (both are multiples of ulp(t)), so `fr` is
+    // `x/pi - nh` to a relative 2^-53 with no error-free transform --
+    // this is why the f64 version is *cheaper* than the double-f32 one
+    // it replaced, which needed a `two_prod` at exactly this step.
+    let nh = t.round_ties_even();
+    let fr = (t - nh) + tl;
+    let d = fr.round_ties_even();
+    // n = round(x/pi), exact for |n| < 2^53. Formed as `nh + d` rather
+    // than rounding `t + tl` directly: that add would quantize at
+    // ulp(t), which is already past 1 for the magnitudes this tier
+    // exists to serve.
+    let n = nh + d;
+    // x/pi - n, exact by Sterbenz, |fc| <= 0.5.
+    let fc = fr - d;
+    // The half-odd-integer nearest x/pi is `n + copysign(0.5, fc)` --
+    // no second rounding, the same construction the unchecked `cos`
+    // uses and for the same reason.
+    let q = if HALF { n + 0.5f64.copysign(fc) } else { n };
+    let r = f64::mul_add(-q, PI64_HI, xd);
+    let r = f64::mul_add(-q, PI64_LO, r);
+    // parity of n, straight out of bit 0 of `n + ROUND_MAGIC64`.
+    let par = ((n + ROUND_MAGIC64).to_bits() as u32) << 31;
+    // sin: (-1)^n. cos: (-1)^(k+1) for k = round(x/pi - 0.5), which is
+    // `n` when fc >= 0 and `n - 1` when fc < 0 -- so the half-turn adds
+    // one more flip exactly when fc's sign bit is clear.
+    let sgn = if HALF { par ^ ((!(fc.to_bits() >> 32)) as u32 & SIGN_MASK) } else { par };
+    (r as f32, sgn)
 }
 
 // parity of an exact-integer float q via floor-based "mod 2" (q*0.5 and
@@ -1575,40 +1559,33 @@ const POLY_SAFE_BOUND: f32 = 1000.0;
 
 #[inline(always)]
 pub fn sin_checked(x: f32) -> f32 {
-    let (qh, ql) = round_x_over_pi::<false>(x);
-    let r = reduce_pi(x, qh, ql);
-    // sin(x) = (-1)^q * sin(r); q = qh+ql, so parity(q) = (parity(qh) +
-    // parity(ql)) mod 2. parity(qh) and parity(ql) are each exactly 0.0 or
-    // 1.0, so their sum mod 2 is just whether they differ (XOR), cheaper
-    // than a 3rd floor-based parity() call on the sum.
-    //
-    // sin is odd, so (-1)^q * sin(r) == sin((-1)^q * r): flip r's sign bit
-    // *before* sinf_poly instead of negating its result after. Bit-exact
-    // with the old `s * (1.0 - 2.0 * par)` (both IEEE negation and a
-    // multiply by exactly +-1 only ever flip the sign bit, never round),
-    // but the flip mask depends solely on qh/ql -- ready long before r
-    // exits reduce_pi -- so it hides entirely in the reduction's shadow
+    // sin is odd, so (-1)^q * sin(r) == sin((-1)^q * r): flip r's sign
+    // bit *before* sinf_poly instead of negating its result after.
+    // Bit-exact with a `s * (1.0 - 2.0 * par)` tail (both IEEE negation
+    // and a multiply by exactly +-1 only ever flip the sign bit, never
+    // round), but the mask depends solely on q -- ready long before r
+    // exits the reduction -- so it hides in the reduction's shadow
     // instead of costing a real fma+mul on sinf_poly's tail.
-    let pq = parity(qh);
-    let pl = parity(ql);
-    let flip = if pq == pl { 0 } else { SIGN_MASK };
+    let (r, flip) = reduce_pi64::<false>(x);
     let r = f32::from_bits(r.to_bits() ^ flip);
-    // Calls the copysign-free `sinf_poly_raw`, not `sinf_poly` -- the
-    // `x == 0.0` guard below already overrides the result at the one
-    // point copysign would matter, so paying for that instruction here
-    // would be pure waste.
+    // `sinf_poly`, not the copysign-free `sinf_poly_raw`: the reduction
+    // does carry `-0.0` through intact (that is what the positive pi
+    // words buy), but `sinf_poly_raw` then loses it on its own -- its
+    // last step is `fma(p, x3, x)` with `p < 0` and `x3 = -0.0`, so the
+    // product is `+0.0` and `+0.0 + -0.0` is `+0.0`. Cheaper and more
+    // local than the `if x == 0.0 { x }` guard this replaced, which sat
+    // at the end of the function blaming the reduction for it.
     //
-    // `.clamp(-1.0, 1.0)`: `round_x_over_pi`'s double-float q genuinely
-    // loses precision once |x| exceeds roughly 2^48*pi (~8.85e14) -- q
-    // comes out off by whole integers, shifting r by multiples of pi and
-    // putting it wildly outside sinf_poly's fitted domain (a degree-9 poly
-    // at |r|=1000 is ~2.6e21). Without this clamp, sin_checked/cos_checked
-    // could silently return values up to ~2.6e21 for legitimate (if
-    // extreme) finite input -- a genuine `|sin(x)| <= 1` invariant
-    // violation, much worse than the documented gradual degradation. The
-    // clamp doesn't fix accuracy that far out (a real fix needs a
-    // wider-than-double-float q) but restores the one invariant every
-    // caller can rely on at any magnitude.
+    // `.clamp(-1.0, 1.0)`: past `2^51*pi` (~7.07e15) the parity comes out
+    // of the wrong bit and `q` eventually stops being an exact integer at
+    // all, shifting r by multiples of pi and putting it wildly outside
+    // sinf_poly's fitted domain (a degree-9 poly at |r| = 1000 is
+    // ~2.6e21). Without this clamp sin_checked/cos_checked could silently
+    // return values that large for legitimate (if extreme) finite input,
+    // a genuine `|sin(x)| <= 1` violation. The clamp doesn't fix accuracy
+    // that far out -- nothing can, an f32's own ulp there is ~5e8 radians
+    // -- but it restores the one invariant every caller can rely on at
+    // any magnitude.
     //
     // It also subsumes a `POLY_SAFE_BOUND` clamp on `r` itself: for every
     // f32 residual, `sinf_poly_raw` keeps the sign of `r` and only ever
@@ -1617,59 +1594,33 @@ pub fn sin_checked(x: f32) -> f32 {
     // (verified exhaustively over all 2^32 residuals). A NaN residual
     // (x itself nan or +-inf) survives both clamps unchanged, so
     // sin/cos(nan/inf) still come out nan with no extra selects.
-    //
-    // Measured per-decade (accuracy.rs's own magnitude buckets, found by
-    // an unrelated cross-function identity fuzz -- see IDEAS.md): max
-    // ulp is still bounded (not yet "any wrong answer in [-1,1]") through
-    // 6583 at `[1e12,1e13)` and 22073 at `[1e13,1e14)`, but `[1e14,1e15)`
-    // -- straddling the ~8.85e14 cliff above -- already reaches the same
-    // maximal ulp `[1e15,1e16)` shows. So the cliff isn't a clean step
-    // exactly at 8.85e14: individual inputs as low as ~6.2e14 (still
-    // under it) already hit the fully-degraded regime, not just a
-    // gradually-worsening one.
-    let result = sinf_poly_raw(r).clamp(-1.0, 1.0);
-    // reduce_pi's own multi-term error-compensation chain loses x's sign
-    // at x = +-0.0 (an opposite-signed-zero addition somewhere inside it,
-    // the same IEEE754 mechanism as sinf_poly's own -0.0 fix and the
-    // atan2(-0.0,+0.0) bug), well before sinf_poly ever sees it -- guard
-    // here rather than trace through reduce_pi's whole two_sum/two_prod
-    // chain to find the exact spot.
-    if x == 0.0 { x } else { result }
+    sinf_poly(r).clamp(-1.0, 1.0)
 }
 #[inline(always)]
 pub fn cos_checked(x: f32) -> f32 {
-    // k = round(x/pi - 0.5), q = k + 0.5, r = x - q*pi in [-pi/2, pi/2]
-    let (kh, kl) = round_x_over_pi::<true>(x);
-    // q = k + 0.5; fold the 0.5 into the small word kl, not the (possibly
-    // huge) kh word, for the same reason pre_offset itself is folded into
-    // the low correction term above -- kl stays small enough that + 0.5
-    // is always exact
-    let r = reduce_pi(x, kh, kl + 0.5);
-    // cos(x) = (-1)^(k+1) * sin(r); k = kh+kl. Same sign-flip-before-the-
-    // poly trick as sin_checked above (also odd in r), inverted since the
-    // exponent is k+1 instead of k.
-    let pk = parity(kh);
-    let pl = parity(kl);
-    let flip = if pk == pl { SIGN_MASK } else { 0 };
+    // q = the half-odd-integer nearest x/pi, so r = x - q*pi is in
+    // [-pi/2, pi/2] and cos(x) = +-sin(r). Same sign-flip-before-the-poly
+    // trick as sin_checked above (sinf_poly is odd in r too); the
+    // half-turn's extra flip is already folded into the mask.
+    let (r, flip) = reduce_pi64::<true>(x);
     let r = f32::from_bits(r.to_bits() ^ flip);
-    // See sin_checked's own doc comment for why this clamp is needed (and
-    // why it is the only one needed): round_x_over_pi's double-float q
-    // loses precision for |x| beyond ~2^48*pi, and without this clamp
-    // cos_checked could silently return values like 2.6e21 for legitimate
-    // finite input, violating `|cos(x)| <= 1`.
+    // See sin_checked's own comment for why this clamp is needed and why
+    // it is the only one needed: `q` stops being an exact integer past
+    // |x| ~ 2^53*pi, and without this clamp cos_checked could silently
+    // return values like 2.6e21 for legitimate finite input, violating
+    // `|cos(x)| <= 1`.
     sinf_poly(r).clamp(-1.0, 1.0)
 }
 
 /// Reduce `x` modulo `pi`, accurate well beyond a single f32's
-/// exact-integer range (backlog idea #88): the same double-float
-/// `round_x_over_pi`/`reduce_pi` machinery `sin_checked` builds on,
-/// exposed for power users composing their own periodic kernels (the
-/// "public checked pi-reduction API" companion to a public `Df32`
-/// module, idea #87). Returns `(r, sign)`: `r` is `x - q*pi` for the
-/// nearest integer `q`, unclamped (see `sin_checked`'s own doc comment
-/// for why *it* clamps to `POLY_SAFE_BOUND` before its own poly --
-/// that's specific to `sinf_poly`'s fitted domain, not a general
-/// reduction contract, so it's on the caller here); `sign` is `+-1.0`
+/// exact-integer range (backlog idea #88): the same f64 `reduce_pi64`
+/// machinery `sin_checked` builds on, exposed for power users composing
+/// their own periodic kernels (the "public checked pi-reduction API"
+/// companion to a public `Df32` module, idea #87). Returns `(r, sign)`:
+/// `r` is `x - q*pi` for the nearest integer `q`, unclamped (see
+/// `sin_checked`'s own comment for why *it* clamps its result to
+/// `[-1, 1]` -- that's specific to `sinf_poly`'s fitted domain, not a
+/// general reduction contract, so it's on the caller here); `sign` is `+-1.0`
 /// such that `sin(x) = sign * f(r)` for any odd `f` approximating `sin`
 /// on `[-pi/2, pi/2]` -- a plain multiplier rather than a "which way
 /// does this bool go" convention deliberately, found necessary by
@@ -1678,16 +1629,16 @@ pub fn cos_checked(x: f32) -> f32 {
 /// below (verified by reconstructing `cos_checked` from it and finding
 /// a real sign mismatch, not just a doc typo -- the bool's *value* was
 /// right, only which case meant "negate" was swapped). Only the
-/// `pre_offset=0.0` (sin) convention is exposed -- see
-/// [`reduce_pi_half_checked`] for the `-0.5` (cos) one; arbitrary
-/// `pre_offset` values are `round_x_over_pi`'s own internal contract,
-/// not verified for other conventions.
+/// integer-`q` (sin) convention is exposed -- see
+/// [`reduce_pi_half_checked`] for the half-odd-integer (cos) one;
+/// `reduce_pi64`'s `HALF` flag has only those two settings and no
+/// general pre-offset contract to expose.
 #[inline(always)]
 pub fn reduce_pi_checked(x: f32) -> (f32, f32) {
-    let (qh, ql) = round_x_over_pi::<false>(x);
-    let r = reduce_pi(x, qh, ql);
-    let sign = if parity(qh) != parity(ql) { -1.0 } else { 1.0 };
-    (r, sign)
+    let (r, flip) = reduce_pi64::<false>(x);
+    // the mask is already in the sign-bit position, so `+-1.0` is one xor
+    // away -- no compare, no select.
+    (r, f32::from_bits(1.0f32.to_bits() ^ flip))
 }
 
 /// Reduce `x` modulo `pi`, offset by half a turn (backlog idea #88):
@@ -1706,10 +1657,8 @@ pub fn reduce_pi_checked(x: f32) -> (f32, f32) {
 /// exponent (folded in here, not left for the caller to get backwards).
 #[inline(always)]
 pub fn reduce_pi_half_checked(x: f32) -> (f32, f32) {
-    let (kh, kl) = round_x_over_pi::<true>(x);
-    let r = reduce_pi(x, kh, kl + 0.5);
-    let sign = if parity(kh) == parity(kl) { -1.0 } else { 1.0 };
-    (r, sign)
+    let (r, flip) = reduce_pi64::<true>(x);
+    (r, f32::from_bits(1.0f32.to_bits() ^ flip))
 }
 
 /// Largest magnitude [`wrap_pi`] can return: the largest `f32` whose
@@ -2161,7 +2110,7 @@ const FRAC_PI_4: f32 = std::f32::consts::FRAC_PI_4;
 // never produces |k| past a couple hundred) is *exact* -- no rounding at all,
 // confirmed by brute force for k in [-300, 300]. LN2_LO is the f32-rounded
 // residual (LN2 - LN2_HI as f64, then rounded). This is the same trick
-// reduce_pi already uses for pi/2's own hi/lo split.
+// PI_A..PI_D and PI64_HI/PI64_LO use for pi's own splits.
 const LN2_HI: f32 = 0.693145751953125;
 const LN2_LO: f32 = 1.428606765330187e-6;
 const LOG10_2_HI: f32 = 0.301025390625;
@@ -3536,8 +3485,9 @@ pub fn logaddexp(a: f32, b: f32) -> f32 {
     if a.is_nan() || b.is_nan() { f32::NAN } else { normal }
 }
 
-/// `1/sqrt(2)` as a double-`f32` pair, same shape as `RPI_HI`/`RPI_LO`
-/// above: `RSQRT2_HI` is the nearest `f32` and `RSQRT2_LO` the next
+/// `1/sqrt(2)` as a double-`f32` pair, same shape as
+/// `FRAC_1_PI`/`RPI_LO` above: `RSQRT2_HI` is the nearest `f32` and
+/// `RSQRT2_LO` the next
 /// 24 bits of the remainder, together naming the constant to a relative
 /// `2^-49`. Used by [`gelu`] to hand `erfc` an argument that is exact to
 /// far more than `f32`, which its tail needs -- see [`gelu`]'s comment.
