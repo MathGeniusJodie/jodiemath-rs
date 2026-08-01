@@ -6614,3 +6614,82 @@ binding.
   1.0)` is already exactly `1.0` for `v < 1.2e-7` whatever `c[1]` is, so
   the pin buys nothing and costs a real degree of freedom.
 - The `[7/6]`/`[7/7]` rationals, on the quantization result above.
+## `srgb_to_linear`: split the integer power out, and the round trip stops mattering
+
+**Shipped 2026-08-01, and it reopens a closed entry.** The
+"`srgb_to_linear`'s 13 max ulp is the log2/exp2 round trip, not its own
+algebra" entry above measured the attribution correctly and then drew the
+wrong conclusion from it -- "closing it properly needs a genuinely more
+accurate `log2`, and that is the known dead end". It does not. Exhaustive
+over the whole `[0,1]` domain:
+
+| | avg ulp | max ulp | mca latency | mca throughput |
+|---|---|---|---|---|
+| was | 0.1046 | 14 | 110.02 | 3.831 |
+| now | **0.0823** | **7** | **104.30 (-5.2%)** | 4.289 (+12.0%) |
+
+`linear_to_srgb` is untouched and re-measures bit-identically (0.1209 /
+max 8 -- note 8, not the 7 the quick fuzz reports).
+
+**Two changes, and neither works without the other.**
+
+1. **`b^2.4` as `b*b * b^0.4`.** The entry above derives the round trip's
+   contribution as `exp2` amplifying an *absolute* argument error:
+   `relerr = ln2 * |y| * relerr(log2)` for `y = 2.4*log2(b)`. Read that
+   with `y = log2(result)`, and it says the amplification depends only on
+   how far the *result* is from 1 -- which is why re-associating as
+   `(b^2)^1.2` or `sqrt(b)^4.8` buys nothing. But peeling off an *integer*
+   power does, because that factor is then computed by a multiply instead
+   of through the log: `b*b` is exact but for one rounding, and the log
+   and `exp2` are left carrying `0.4*log2(b)` instead of `2.4*log2(b)`,
+   a 6x smaller absolute error to amplify. Same lever as `rootn`'s
+   exponent split (45 -> 1 max ulp), and it needs no more accurate `log2`
+   -- which is the whole point, since `log_2_normal` is a core-locked
+   kernel behind 9+ functions.
+2. **`b = fma(c, INV_1055, OFF_1055)`** with both constants the nearest
+   `f32` to the *exact* `1/1.055` and `0.055/1.055`, replacing
+   `(c + 0.055) * (1.0 / 1.055)`. One rounding instead of two, one op
+   cheaper, and it fixes a real constant bug: `1.0f32 / 1.055f32` divides
+   by an already-rounded `1.055` and lands **0.53 ulp** above the true
+   `1/1.055`.
+
+**The trap, and it is the interesting part: change 2 alone is a
+regression.** Keeping `*2.4` and only fixing `b` measures avg
+**0.1046 -> 0.1339** and max **14 -> 15**, exhaustively worse on both,
+despite being strictly fewer roundings on strictly better constants. The
+two systematic errors were **cancelling**: `f32(2.4)` is 9.5e-8 high, so
+`b^f32(2.4)` runs `2.4 * 9.5e-8 = 2.3e-7` *low* for `b < 1`, while the
+0.53-ulp-high `1/1.055` ran the result `2.4 * 6.3e-8 = 1.5e-7` *high*.
+Removing either one alone exposes the other. Change 1 happens to fix the
+exponent constant too -- `2 + f32(0.4)` names 2.4 sixteen times more
+closely than `f32(2.4)` does -- which is why the pair works.
+
+Generalisable: **a systematic constant error that has been sitting in a
+composite for a while may be load-bearing.** Before "correcting" a
+constant to its exact value, check the other constants on the same path
+for an opposing bias -- the crate already knows pinning a *fitted*
+coefficient to its exact value costs (the `erfc` entry); this is the same
+hazard for constants nobody ever fitted.
+
+**Two things measured and not taken.**
+
+- **`b = (c + 0.055) / 1.055`** (a real division, one correctly-rounded
+  operation instead of a multiply by a rounded reciprocal): exhaustively
+  *worse*, avg 0.1016 max 8 against the fma form's 0.0823/7, because
+  `f32(1.055)` is itself 0.44 ulp low. The fma with two exact-value
+  constants beats both, and costs a division less.
+- **Compensating `b*b`** (`bb = b*b; be = fma(b,b,-bb); fma(be, p, bb*p)`):
+  **zero movement**, avg 0.0922 max 7 to four places, identical to the
+  plain `b*b*p` at that stage. `b^2`'s own rounding is not the binding
+  term once the round trip is down; reverted, 2 ops cheaper.
+
+**The cost is real and is on throughput only.** +2 instructions, +5 uOps,
+`Block RThroughput` flat at 41, but port pressure genuinely up (Port0
+44.04 -> 46.04, Port1 44.71 -> 47.03 -- exactly the two added multiplies)
+and simulated cycles +12.0%. Latency *improves* 5.2%. Taken on the same
+trade `logit` was (max 1024 -> 3 for +11.8% throughput): 14 ulp on a
+`[0,1]` colour transfer function is outside this crate's stated budget in
+a way 12% of throughput is not. If a caller ever needs the throughput
+back, the pre-split form is a valid `srgb_to_linear_fast` -- it is
+Pareto-optimal on exactly one axis, and the numbers to wire it up are the
+table above.

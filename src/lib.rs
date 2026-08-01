@@ -6555,6 +6555,15 @@ pub fn rootn(x: f32, n: i32) -> f32 {
     if n == 0 { f32::NAN } else { r }
 }
 
+// `1/1.055` and `0.055/1.055` as the nearest `f32` to each *exact* value,
+// so `b = (c+0.055)/1.055` is one fma with one rounding instead of an add
+// and a multiply with two. Written out rather than left to the compiler:
+// `1.0f32 / 1.055f32` divides by an already-rounded `1.055` and lands
+// 0.53 ulp above the true `1/1.055`, which `^2.4` turns into a systematic
+// 1.3 ulp of `srgb_to_linear`.
+const SRGB_INV_1055: f32 = 0.9478672742843628;
+const SRGB_OFF_1055: f32 = 0.05213269963860512;
+
 /// sRGB -> linear (backlog idea #146), IEC 61966-2-1's piecewise
 /// transfer function: a linear "toe" near black (avoiding the power
 /// curve's infinite slope at 0) below `0.04045`, `((c+0.055)/1.055)^2.4`
@@ -6572,12 +6581,23 @@ pub fn rootn(x: f32, n: i32) -> f32 {
 /// arm alone (see `log_family_wrapper_discarded_unless_normal!`).
 /// `powf_pos`'s two overrides go too: `y == 0.0` is a constant here, and
 /// `x == 1.0` is redundant because `log_2(1) * y` is exactly `0`.
+///
+/// `b^2.4` is evaluated as `b*b * b^0.4`, not as a single
+/// `exp2(log2(b)*2.4)`. `exp2` amplifies an *absolute* argument error, so
+/// the round trip's own contribution is `ln2 * |log2(result)| * relerr` --
+/// and splitting off an integer power moves most of `|log2(result)|` into
+/// a multiply that is exact but for its single rounding, leaving the log
+/// and `exp2` to carry `0.4*log2(b)` instead of `2.4*log2(b)`. Same lever
+/// as `rootn`'s exponent split, and it needs no more accurate `log2` to
+/// work. It also lands on a better exponent constant for free: `2 +
+/// f32(0.4)` names 2.4 sixteen times more closely than `f32(2.4)` does.
 #[inline(always)]
 #[allow(clippy::neg_cmp_op_on_partial_ord)]
 pub fn srgb_to_linear(c: f32) -> f32 {
     let low = c * (1.0 / 12.92);
-    let b = (c + 0.055) * (1.0 / 1.055);
-    let high = exp2_checked(log_family_wrapper_discarded_unless_normal!(b, log_2_normal) * 2.4);
+    let b = fma(c, SRGB_INV_1055, SRGB_OFF_1055);
+    let p = exp2_checked(log_family_wrapper_discarded_unless_normal!(b, log_2_normal) * 0.4);
+    let high = b * b * p;
     if c <= 0.04045 { low } else { high }
 }
 
