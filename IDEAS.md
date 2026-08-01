@@ -309,6 +309,27 @@ the bar by construction if they find anything.
   Only viable inside a slice tier (scalar fusion attempts already failed,
   see rejected section).
 
+- **The f64 lever is exhausted for now, and here is the screen.** Four
+  functions have moved an f32 double-float/EFT chain into f64
+  (`sin_checked`/`cos_checked`, then `remainder_wide`, `powf`,
+  `compound_accurate` -- all in graveyard.md with numbers). What predicts
+  the size of the win is **how much of the f32 version is bookkeeping
+  rather than arithmetic**, because f64 costs exactly 2x per lane on this
+  machine: `vfmadd213pd %zmm` is Block RThroughput 1.0 against
+  `vfmadd213ps %ymm`'s 0.5, and both do 8 lanes. Halve the instruction
+  count and it is a rout (`remainder_wide` -70%); cut 10% and it is a wash
+  (`powf` -17% throughput but +0.5% latency, and its Block RThroughput
+  went *up*). The two EFT sites left in the crate both fail that screen
+  and should not be re-attempted without a new argument:
+  `cbrt_accurate`'s `Df32::from_mul(y,y)`/`y2*y` and `clog`'s
+  `two_prod`+`two_sum` for `re^2+im^2-1` are each ~5 ops inside a ~60-op
+  function, so 2x on the other 55 swamps anything the 5 can give back.
+  Also priced while doing this, so nobody re-derives it: `vdivpd %zmm` is
+  **16.0** Block RThroughput, so a division stays the wrong answer in f64
+  too; and f64 constants cause real register pressure -- one draft had 23
+  of them and llvm-mca showed 24 `vbroadcastsd` *inside* the unrolled loop
+  body.
+
 ## Open: infrastructure, build and harness
 
 Tooling, feature flags, and portability. None of these change an existing
