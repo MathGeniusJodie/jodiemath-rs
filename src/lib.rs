@@ -900,6 +900,46 @@ pub fn cos(x: f32) -> f32 {
     f32::from_bits(s.to_bits() ^ parity)
 }
 
+/// [`sin`] with `q` from a *single* word of `1/pi` -- the whole
+/// `frac_x_over_pi!` refinement dropped, two fmas and a round cheaper
+/// (mca: 1.776 -> 1.151 cyc/elem throughput, 64 -> 48 latency).
+///
+/// The price is exactly the extrapolation `sin`'s own comment describes:
+/// `q` lands one integer off once `|x|*2^-25/pi` grows comparable to the
+/// distance from `x/pi`'s fraction to a half, and `sinf_poly` is then
+/// evaluated outside its fitted `[-pi/2, pi/2]`. That error scales with
+/// `|x|`, so this is a *narrower accurate range*, not a uniformly looser
+/// one: at `|x| <= 1e6` it is indistinguishable from `sin` (0.0358 avg,
+/// 2 max, both), and only past there does it separate -- 0.0592 avg and
+/// 219 max over the whole shared `|x| < 2^22*pi` domain. Prefer this
+/// whenever the argument is known to stay under ~1e6.
+#[inline(always)]
+pub fn sin_fast(x: f32) -> f32 {
+    let qb = fma(x, FRAC_1_PI, ROUND_MAGIC);
+    let q = qb - ROUND_MAGIC;
+    let s = pi_reduce_and_poly!(x, q);
+    let parity = qb.to_bits() << 31;
+    f32::from_bits(s.to_bits() ^ parity)
+}
+
+/// [`cos`]'s counterpart to [`sin_fast`], same tradeoff and the same
+/// single-word `q` (mca: 1.654 -> 1.406 cyc/elem, 61 -> 56 latency).
+/// Degrades faster than `sin_fast` does: `k = round(x/pi - 0.5)` rounds
+/// twice (see `cos`), which costs another half-integer of `q` error on
+/// top of the single-word one, so max ulp reaches 2780 over the domain
+/// against `sin_fast`'s 219. At `|x| <= 1e6` it is 3 against `cos`'s 2,
+/// on an identical 0.0779 average.
+#[inline(always)]
+pub fn cos_fast(x: f32) -> f32 {
+    // k = round(x/pi - 0.5), q = k + 0.5, r = x - q*pi in [-pi/2, pi/2]
+    let kb = fma(x, FRAC_1_PI, -0.5) + ROUND_MAGIC;
+    let q = (kb - ROUND_MAGIC) + 0.5;
+    let s = pi_reduce_and_poly!(x, q);
+    // cos(x) = (-1)^(k+1) * sin(r)
+    let parity = !kb.to_bits() << 31;
+    f32::from_bits(s.to_bits() ^ parity)
+}
+
 /// sin(pi*x), argument in half-turns instead of radians. Unlike `sin`'s
 /// own reduction (which needs a multi-constant Cody-Waite pi split
 /// because pi itself isn't exactly representable), `sinpi`'s reduction

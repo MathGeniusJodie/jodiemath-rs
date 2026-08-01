@@ -655,6 +655,13 @@ fn main() {
         }
         let s = measure!(sin_domain, sin, sin_ref);
         report("sin (in-domain)", &s, t0);
+        // sin_fast: same domain, single-word `q`. Its error grows with
+        // |x| (see its doc comment), so both the restricted and the
+        // full-domain rows matter for the pareto comparison.
+        let s = measure!(|x: f32| x.abs() <= 1e6, sin_fast, sin_ref);
+        report("sin_fast |x|<=1e6", &s, t0);
+        let s = measure!(sin_domain, sin_fast, sin_ref);
+        report("sin_fast (in-domain)", &s, t0);
         let s = measure!(sin_domain, |x: f32| x.sin(), sin_ref);
         report("std sin (in-domain)", &s, t0);
         // std on the same |x|<=1e6 restriction the readme's row quotes, so
@@ -705,6 +712,10 @@ fn main() {
         }
         let s = measure!(cos_domain, cos, cos_ref);
         report("cos (in-domain)", &s, t0);
+        let s = measure!(|x: f32| x.abs() <= 1e6, cos_fast, cos_ref);
+        report("cos_fast |x|<=1e6", &s, t0);
+        let s = measure!(cos_domain, cos_fast, cos_ref);
+        report("cos_fast (in-domain)", &s, t0);
         let s = measure!(cos_domain, |x: f32| x.cos(), cos_ref);
         report("std cos (in-domain)", &s, t0);
         // std on the same |x|<=1e6 restriction the readme's row quotes.

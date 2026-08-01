@@ -201,11 +201,17 @@ throughput_fn!(thr_log2_unchecked, "log2_unchecked_throughput", log_2_unchecked)
 latency_fn!(lat_sin, "sin_latency", sin);
 throughput_fn!(thr_sin, "sin_throughput", sin);
 
+latency_fn!(lat_sin_fast, "sin_fast_latency", sin_fast);
+throughput_fn!(thr_sin_fast, "sin_fast_throughput", sin_fast);
+
 latency_fn!(lat_sin_checked, "sin_checked_latency", sin_checked);
 throughput_fn!(thr_sin_checked, "sin_checked_throughput", sin_checked);
 
 latency_fn!(lat_cos, "cos_latency", cos);
 throughput_fn!(thr_cos, "cos_throughput", cos);
+
+latency_fn!(lat_cos_fast, "cos_fast_latency", cos_fast);
+throughput_fn!(thr_cos_fast, "cos_fast_throughput", cos_fast);
 
 latency_fn!(lat_cos_checked, "cos_checked_latency", cos_checked);
 throughput_fn!(thr_cos_checked, "cos_checked_throughput", cos_checked);
@@ -791,6 +797,8 @@ fn main() {
         lat_log2, thr_log2;
         lat_log2_unchecked, thr_log2_unchecked;
         lat_sin, thr_sin;
+        lat_sin_fast, thr_sin_fast;
+        lat_cos_fast, thr_cos_fast;
         lat_sin_checked, thr_sin_checked;
         lat_cos, thr_cos;
         lat_cos_checked, thr_cos_checked;
