@@ -396,19 +396,52 @@ fn real_main() {
         wrap_pi(-f32::from_bits(1)),
         -f32::from_bits(1),
     );
-    check_bounded("wrap_pi(pi)+pi", wrap_pi(std::f32::consts::PI) + std::f32::consts::PI, 1e-5);
+    // x = pi wraps to pi - 2*pi, whose correctly-rounded f32 is exactly
+    // -WRAP_PI_MAX -- and *not* -f32::consts::PI, which is 8.7e-8 past
+    // the open end of the range.
+    check("wrap_pi(pi)", wrap_pi(std::f32::consts::PI), -WRAP_PI_MAX);
+    check("wrap_pi(-pi)", wrap_pi(-std::f32::consts::PI), WRAP_PI_MAX);
     for &x in &[1.0f32, 3.0, 4.0, -4.0, 100.0, -1e9, 1e6] {
         let w = wrap_pi(x);
         check_bounded(&format!("sin(wrap_pi({x}))-sin_checked({x})"), w.sin() - sin_checked(x), 1e-4);
         check_bounded(&format!("cos(wrap_pi({x}))-cos_checked({x})"), w.cos() - cos_checked(x), 1e-4);
-        // in-range check: 0 when w is in (-pi,pi], positive by however
-        // far out of range otherwise (w=-pi itself, the excluded
-        // boundary, would show up here as pi - (-pi) = 2*pi).
-        let over = (w - std::f32::consts::PI).max(0.0);
-        let under = (-std::f32::consts::PI - w).max(0.0);
-        check_bounded(&format!("wrap_pi({x}) in (-pi,pi]"), over + under, 1e-6);
+    }
+    // The range invariant itself, at every magnitude -- including the
+    // regime where the reduction has lost all its precision. wrap_pi rode
+    // reduce_pi_checked's deliberately unclamped `r`, so it returned
+    // 3.2e5 at 1e20 and -6.6e23 at f32::MAX: a documented `(-pi, pi]`
+    // that was false for 1.27e9 of the 4.3e9 f32 inputs, the same shape
+    // of bug as sin_checked's old 2.6e21 (fixed the same way, with a
+    // final clamp). This used to be checked only out to |x| = 1e9, with
+    // a 1e-6 slop that also let the -f32::consts::PI boundary case
+    // through, which is how it survived. Exhaustively re-verified over
+    // all 2^32 bit patterns after the fix; these pins are the cheap
+    // permanent guard.
+    for &x in &[
+        1.0f32,
+        3.0,
+        -4.0,
+        1e6,
+        -1e9,
+        1e15,
+        1e20,
+        -1e20,
+        1e30,
+        1e38,
+        f32::MAX,
+        f32::MIN,
+        // the smallest |x| that ever violated, from the exhaustive sweep
+        f32::from_bits(0x5814d039),
+        // and the input whose old result was worst, |w| = 1.1e24
+        f32::from_bits(0x7f7ff72f),
+    ] {
+        check_bounded(&format!("wrap_pi({x:e}) in (-pi,pi]"), wrap_pi(x), WRAP_PI_MAX);
     }
     check("wrap_pi(nan)", wrap_pi(f32::NAN), f32::NAN);
+    // the clamp must not turn an infinite input into +-WRAP_PI_MAX: both
+    // vmaxps/vminps operand orders propagate the NaN residual through.
+    check("wrap_pi(inf)", wrap_pi(f32::INFINITY), f32::NAN);
+    check("wrap_pi(-inf)", wrap_pi(f32::NEG_INFINITY), f32::NAN);
 
     // sin_prereduced/cos_prereduced (backlog idea #127): bit-identical
     // to each other (both are exactly sinf_poly) -- see their own doc

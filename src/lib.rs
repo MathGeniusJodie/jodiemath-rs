@@ -1712,6 +1712,19 @@ pub fn reduce_pi_half_checked(x: f32) -> (f32, f32) {
     (r, sign)
 }
 
+/// Largest magnitude [`wrap_pi`] can return: the largest `f32` whose
+/// *exact* value is below `pi`, one ulp under `f32::consts::PI`.
+///
+/// `f32::consts::PI` itself is `pi + 8.7e-8`, so it is not in `(-pi,
+/// pi]` and cannot be a legal `wrap_pi` result at either end -- which
+/// makes the legal set symmetric, `|wrap_pi(x)| <= WRAP_PI_MAX`, and
+/// this a single two-sided clamp rather than an asymmetric one. The
+/// cost is that a true wrapped angle in `(WRAP_PI_MAX, pi]` comes back
+/// as `WRAP_PI_MAX` (under 1 ulp low) instead of rounding up out of
+/// range; exposed so range assertions can be written against the same
+/// bound the implementation enforces.
+pub const WRAP_PI_MAX: f32 = f32::from_bits(0x40490fda);
+
 /// Wrap `x` (radians) to `(-pi, pi]` (backlog idea #126): the public
 /// angle-normalization primitive robotics/geometry callers keep
 /// reinventing, riding [`reduce_pi_checked`]'s own accurate-well-beyond-
@@ -1722,18 +1735,41 @@ pub fn reduce_pi_half_checked(x: f32) -> (f32, f32) {
 /// and `sign=(-1)^q` for `q=round(x/pi)` -- if `q` is even, `x` and `r`
 /// already sit in the same `2*pi` branch, so `r` alone is the answer;
 /// if `q` is odd, `x = q*pi + r` sits a half-turn away, so the true
-/// wrapped angle is `r +- pi` (whichever keeps the result in
-/// `(-pi,pi]`: `r+pi` when `r<=0`, `r-pi` when `r>0`).
+/// wrapped angle is `r +- pi` -- whichever keeps the result in
+/// `(-pi,pi]`, i.e. `r - copysign(pi, r)`. That is written as a
+/// copysign rather than an `r > 0.0` select because it is one
+/// `vpternlogd` instead of a compare plus a blend, and the two are
+/// bit-identical over the whole f32 line (the only input that could
+/// tell them apart is an odd `q` with `r` exactly `+0.0`, which the
+/// reduction never produces).
+///
+/// The `(-pi,pi]` range is a hard guarantee for every finite `x`, not
+/// just where the reduction is accurate: past `|x| ~ 6.5e14` the
+/// double-float `q` starts coming out off by whole integers, so `r`
+/// leaves `[-pi/2,pi/2]` and the wrapped value degrades to noise (from
+/// `|x| ~ 2.8e22` up, *every* input is in that regime). The result is
+/// clamped to [`WRAP_PI_MAX`] so callers relying on the range still
+/// get an angle rather than something like `1e24`; accuracy out there
+/// is gone either way, and a caller who needs to know should range-check
+/// its own input. `wrap_pi(nan)`/`wrap_pi(+-inf)` are `nan`, which the
+/// clamp passes through unchanged.
 #[inline(always)]
 pub fn wrap_pi(x: f32) -> f32 {
     let (r, sign) = reduce_pi_checked(x);
     let normal = if sign > 0.0 {
         r
-    } else if r > 0.0 {
-        r - std::f32::consts::PI
     } else {
-        r + std::f32::consts::PI
+        r - std::f32::consts::PI.copysign(r)
     };
+    // See WRAP_PI_MAX: this is what makes the documented range true, and
+    // it costs two instructions with no branch, so it vectorizes with
+    // everything above it. It also absorbs the one in-range case the
+    // `r - copysign(PI, r)` step gets wrong on its own: `PI` is
+    // `pi + 8.7e-8`, so a small positive `r` lands on exactly `-PI`, which
+    // is *outside* `(-pi, pi]` however it is rounded (16 inputs over the
+    // whole f32 line). Clamping those to WRAP_PI_MAX is also the more
+    // accurate answer, not just the in-range one.
+    let normal = normal.clamp(-WRAP_PI_MAX, WRAP_PI_MAX);
     // x=-0.0 needs the same guard sinpi uses, for the same reason: inside
     // `reduce_pi_checked` the residual is formed by subtracting equal
     // signed zeros, which IEEE754 resolves to +0.0, so `r` arrives with

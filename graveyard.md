@@ -5857,7 +5857,7 @@ unaffected, as recorded.
   near-zeros directly -- uniform-in-band fuzzing is the wrong instrument
   no matter how many samples it gets.
 
-### Note for whoever fixes `wrap_pi`'s extreme tail
+### `wrap_pi`'s extreme tail: the contract violation, measured and closed
 
 Blessing `worst_corpus` after the `RPI_TINY` change turned up a
 pre-existing contract violation, unrelated to that change but visible in
@@ -5867,11 +5867,51 @@ the same rows: `wrap_pi(f32::MAX)` returns 1.2377339e24 on master and
 deliberately unclamped `r`, so once the two-word `q` gives up (`|x|` past
 ~8.85e14) `r` is a large number and `wrap_pi` passes it straight through
 -- `sin_checked`/`cos_checked` are protected by their own
-`clamp(-1, 1)`, `wrap_pi` has no equivalent. A `+-pi` clamp on the
-`sign > 0.0` branch would restore the invariant the same way, in the same
-"pay to fix wrong output" spirit. Not done here: it is `wrap_pi`'s call
-to make, not the reduction's, and it is orthogonal to anything in this
-session.
+`clamp(-1, 1)`, `wrap_pi` has no equivalent. **Fixed with the same shape
+of clamp; see lib.rs.** What the exhaustive sweep of all 2^32 bit
+patterns added to the diagnosis:
+
+- **Scale.** 1,273,675,032 of the 4.28e9 finite inputs -- 30% -- were out
+  of range, not a tail. Every input from `|x| ~ 2.83e22` up violated; the
+  fraction of a binade that violates is already 1.4% at `|x| ~ 8.4e14`
+  and passes 50% by `|x| ~ 5.4e16`.
+- **The cliff is at 6.544881e14 (`0x5814d039`), not the ~8.85e14 that
+  `sin_checked`'s comment documents.** Same 25% discrepancy, same
+  direction, as the `sin_checked` cliff entry: `2^48*pi` is where the
+  two-word `q` is *guaranteed* gone, not where the first input loses it.
+- **A second, unrelated violation the same clamp fixes**: 16 inputs
+  across the whole line returned exactly `-f32::consts::PI`, which is
+  `pi + 8.7e-8` in magnitude and so outside `(-pi, pi]` at the open end.
+  These are not reduction failures -- they are `r - PI` for a small
+  positive `r`, and no amount of accuracy in the fold repairs them,
+  because the nearest f32 to `-pi` *is* out of range. That makes the
+  legal result set symmetric and bounded by `WRAP_PI_MAX`, the largest
+  f32 below `pi` (`0x40490fda`), which is what the clamp uses, and which
+  is *also* the correctly-rounded answer at `x = f32::consts::PI` (the
+  old `-PI` there was 0.73 ulp off). Any "wrap to a half-open interval"
+  contract has this problem; state the bound as a representable constant.
+- **Cost, and how it was paid for.** `clamp` is exactly `vmaxps` +
+  `vminps` (verified in the asm; both operand orders propagate a NaN
+  residual, so `wrap_pi(nan)`/`wrap_pi(+-inf)` still come out `nan` with
+  no extra select). Naively that is throughput 3.756 -> 4.031 cyc/elem
+  and latency 91.111 -> 99.111 (+8.8%, exactly the 2x4-cycle chain, not
+  the known branch artifact -- both regions have zero branches).
+  Rewriting the half-turn fold from an `r > 0.0` select to
+  `r - PI.copysign(r)` gives back 3 of those 8 cycles: LLVM lowers the
+  copysign to a single `vpternlogd`, replacing a compare plus a blend,
+  which is both the same instruction count and a shorter dependency
+  chain. Shipped: throughput **3.854 (+2.6%)**, latency **96.017
+  (+5.4%)**, instrs 118->124, uOps 128->134, BlockRT 46->48.
+  Bit-identical to the select over all 2^32 inputs -- the only input that
+  could tell them apart is an odd `q` with `r` exactly `+0.0`, which the
+  same sweep confirms the reduction never produces.
+- **Accuracy: unchanged.** Exhaustive `accuracy thorough wrap_pi` gives
+  0.0244 avg / max 1 at worst x 1.5707964 before and after.
+- **Why it survived**: `edgecheck` did pin the range, but only out to
+  `|x| = 1e9` -- three decades under the cliff -- and with a `1e-6` slop
+  that also let the `-PI` boundary case through. The pins now run to
+  `f32::MAX`, include both exhaustively-found worst inputs, and compare
+  against `WRAP_PI_MAX` exactly.
 
 ### The whole `< 1e13` accuracy claim, verified exhaustively rather than sampled
 
