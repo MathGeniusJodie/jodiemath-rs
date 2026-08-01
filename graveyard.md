@@ -7767,9 +7767,12 @@ exhaustive says **3**. One more entry for "quick-mode max is
 systematically optimistic, not merely noisy" -- it would have gone into
 the readme as a 2.
 
+`logit` landed its exhaustive pass just after the commit: **0.0504 / max
+3**, against a pre-change quick-fuzz 0.263 / max 3 -- average down 5.2x,
+max unchanged. It has no readme accuracy row.
+
 **Quick fuzz only** (100M samples; avg trustworthy to ~+-0.0001, max not):
-`logit` 0.263 -> 0.0505 (no readme accuracy row), `erfinv`/`probit`/
-`erfc_inv` round-trip metrics unchanged, `xlogy`/`xlog1py`/`compound`/
+`erfinv`/`probit`/`erfc_inv` round-trip metrics unchanged, `xlogy`/`xlog1py`/`compound`/
 `clog` unchanged. None regressed on any axis. `logaddexp`'s quick max
 moved 731 -> 897 between two runs of *identical* code -- that is its
 documented heavy tail resampling, not this change (it routes through
