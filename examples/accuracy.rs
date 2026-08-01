@@ -1529,6 +1529,8 @@ fn main() {
         let compound_ref = |x: F64xN, n: F64xN| exp_u10(n * log1p_u10(x));
         let s = fuzz2(TWOARG_SAMPLES, compound_domain, compound, compound_ref);
         report("compound", &s, t0);
+        let s = fuzz2(TWOARG_SAMPLES, compound_domain, compound_accurate, compound_ref);
+        report("compound_accurate", &s, t0);
     }
     if run("rsqrt") {
         // x > 0.0 only (0/negative/nan/inf are all correct "for free" via

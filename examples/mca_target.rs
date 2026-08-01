@@ -479,6 +479,14 @@ throughput_fn!(thr_compound, "compound_throughput", {
     let n = black_box(5.0);
     move |x: f32| compound(x, n)
 });
+latency_fn!(lat_compound_accurate, "compound_accurate_latency", {
+    let n = black_box(5.0);
+    move |x: f32| compound_accurate(x, n)
+});
+throughput_fn!(thr_compound_accurate, "compound_accurate_throughput", {
+    let n = black_box(5.0);
+    move |x: f32| compound_accurate(x, n)
+});
 
 // xlogy/xlog1py must take a *varying* y, unlike atan2/hypot/powf above,
 // which are fine with a loop-invariant second argument because their own
@@ -871,6 +879,7 @@ fn main() {
         lat_norm_pdf, thr_norm_pdf;
         lat_logit, thr_logit;
         lat_compound, thr_compound;
+        lat_compound_accurate, thr_compound_accurate;
         lat_xlogy, thr_xlogy;
         lat_xlog1py, thr_xlog1py;
         lat_erfcx, thr_erfcx;

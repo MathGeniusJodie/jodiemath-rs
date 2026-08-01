@@ -1932,6 +1932,11 @@ pub fn mulsign(x: f32, y: f32) -> f32 {
 
 const LN_2: f32 = std::f32::consts::LN_2;
 const LOG2_E: f32 = std::f32::consts::LOG2_E;
+// log2(e) - LOG2_E, i.e. what the f32 constant is short by. Only
+// `log2p1_df` needs it: everywhere else log2(e) multiplies a value whose
+// own error already swamps 2^-24 of it, but there the product *is* the
+// answer whenever `1+x` rounds back to `1`.
+const LOG2E_LO: f32 = 1.9259630e-8;
 const FRAC_PI_2: f32 = std::f32::consts::FRAC_PI_2;
 const FRAC_PI_4: f32 = std::f32::consts::FRAC_PI_4;
 
@@ -4718,11 +4723,20 @@ pub fn xlog1py(x: f32, y: f32) -> f32 {
 /// gives `NaN` for `compound(0.0, NaN)` (`log1p(0)=0`, `NaN*0=NaN`)
 /// rather than `powf`'s C99-mandated `1.0` -- a real, deliberate
 /// deviation for a thin composite, not something worth its own
-/// override here. Fuzzing can report large-looking max ulp for extreme
-/// `(x,n)` pairs that legitimately underflow to (or just past) zero --
-/// e.g. `compound(-0.0015, 1e5) ~ e^-150`, astronomically smaller than
-/// any denormal -- a "the true value is far below anything f32 can
-/// represent" artifact, not a real precision defect.
+/// override here.
+///
+/// Max ulp is in the hundreds, and that is real, not an artifact of
+/// results near zero: `exp`'s error is `|n*log1p(x)| * relerr(log1p)`,
+/// so a single ulp of the exponent is amplified by the exponent's own
+/// magnitude, which reaches ~88 before the result overflows either way.
+/// Both the `n * log1p(x)` product's own rounding and `log1p`'s ~1-2
+/// ulp go through that multiplier, and both are already spent by the
+/// time `exp_checked` sees them. Ordinary, fully-normal `(x, n)` pairs
+/// land there -- it is the same amplification `powf` left the collapsed
+/// single-f32 route to escape (see `powf_df_mag!`). [`compound_accurate`]
+/// is that route here, at roughly twice the cost; this tier is the one
+/// to reach for when `|n*log1p(x)|` stays modest, which for the
+/// compound-interest reading of the arguments it usually does.
 #[inline(always)]
 pub fn compound(x: f32, n: f32) -> f32 {
     // `log1p` minus its trailing signed-zero select: that select only
@@ -4730,6 +4744,91 @@ pub fn compound(x: f32, n: f32) -> f32 {
     // maps both zeros to exactly `1.0`, so the sign never reaches the
     // result.
     exp_checked(n * log1p_nonzero!(x))
+}
+
+// log2(1+x) as a double-float, `compound_accurate`'s exponent. Same
+// shape as `log2p1`: `u = 1+x` with the bits that sum threw away
+// recovered exactly as `c = x - (u-1)`, then `log2(u+c) = log2(u) +
+// log2(1 + c/u)` with `|c/u| <= 2^-24`. Two differences, both forced by
+// the fact that the result is about to be *multiplied* by an
+// unrestricted `n` rather than returned:
+//
+//   - the leading term is `log2_df`, not `log_2`. Collapsing it to one
+//     f32 first would throw away exactly the low bits `n` then
+//     amplifies -- the same reason `powf` stopped doing that, see
+//     `powf_df_mag!`.
+//   - the correction has to carry its own low word too. `log2p1` can
+//     round `(c/u) * LOG2_E` once because there it is a ulp-scale
+//     addition onto a much bigger number. Here it is *not* small
+//     compared to the leading term: whenever `1+x` rounds back to
+//     exactly `1`, `log2_df(u)` is exactly `Df32(0, 0)` and the
+//     correction is the entire answer, which is precisely the
+//     small-`x` case `compound` exists for. So `LOG2_E` is split
+//     hi/lo and the product kept as a pair.
+//
+// The quadratic Taylor term (`-e^2/2`) is not decoration either: at
+// `u == 1` the answer is `log2(1+x)` for the full width of `x`, and
+// dropping it leaves a relative `x/2` that `n` amplifies straight back
+// into the tens of ulp.
+//
+// Degenerate `u` (`0`, negative, `+inf`, NaN) route around `log2_df`'s
+// bit-level decomposition on the *high word only*, exactly as
+// `powf_df_mag!` does and for the same reason: every path that reads
+// the low word ends at `exp2_checked_df`'s own non-finite guard.
+#[inline(always)]
+fn log2p1_df(x: f32) -> Df32 {
+    let u = 1.0 + x;
+    let c = x - (u - 1.0);
+    let l = log2_df(u);
+    // e = c/u, as a pair. The residual is not optional: whenever `1+x`
+    // rounds back to `1` the correction *is* the answer, so the single
+    // rounding a bare `c/u` leaves gets amplified by `n` exactly like
+    // the leading term's would be. One reciprocal serves both the
+    // quotient and its refinement; `fma(-eh, u, c)` is exact.
+    let rcp = 1.0 / u;
+    let eh = c * rcp;
+    let el = fma(-eh, u, c) * rcp;
+    // log2(1+e) = (e - e^2/2) * log2(e) to well past double-float
+    // precision at |e| <= 2^-24, as an exact two-product against the
+    // split constant. `e^2` is already ~2^-48, so only its high word
+    // is worth forming.
+    let tl = fma(-0.5 * eh, eh, el);
+    let ch = eh * LOG2_E;
+    let cl = fma(eh, LOG2_E, -ch) + fma(eh, LOG2E_LO, tl * LOG2_E);
+    // Full two-sum, not the quick form: `l.0` is exactly `0` for every
+    // `x` small enough that `1+x` rounds to `1`, so `|l.0| >= |ch|` is
+    // the one ordering that cannot be assumed here.
+    let p = l.sloppy_add(ch);
+    let q = Df32::from_quick_add(p.0, p.1 + cl);
+    // Degenerate `u` replaces the *whole pair*, not just its high word
+    // the way `powf_df_mag!` can get away with. There the low word is
+    // only ever read by `exp2_checked_df`'s non-finite guard; here the
+    // two-sum above would feed it back into the high word (`inf - inf`
+    // in the residual, poisoning an otherwise correct `+-inf` into NaN).
+    // `u == 0` is `x == -1`, exactly `0^n`; `u < 0` is `x < -1`, where
+    // the real power does not exist; `u` non-finite is `x` non-finite.
+    // `exp2_checked_df`'s clamp turns each into the right saturation.
+    let deg = if u == 0.0 { f32::NEG_INFINITY } else { u };
+    let deg = if u < 0.0 { f32::NAN } else { deg };
+    if u > 0.0 && u < f32::INFINITY { q } else { Df32(deg, 0.0) }
+}
+
+/// (1+x)^n, accurate tier (see [`compound`] for the construction and
+/// for why `1+x` is never formed in f32). [`compound`]'s exponent
+/// `n * log1p(x)` is a single f32, and `exp`'s error is
+/// `|n*log1p(x)| * relerr(log1p)`: one ulp in that product is amplified
+/// by the exponent's own magnitude, which reaches ~88 before the result
+/// overflows, so ordinary inputs land in the hundreds of ulp -- not the
+/// near-zero-underflow artifact its doc comment used to claim (over 20M
+/// samples, 5435 of the 5440 worst had a perfectly normal result).
+/// This tier keeps the exponent a double-float from `log2p1_df` all the
+/// way through the multiply by `n` and the `exp2` reconstruction,
+/// collapsing to one f32 only at the very end -- the same fix, and the
+/// same machinery, `powf` uses. Costs roughly twice [`compound`]; both
+/// are kept because that is a real trade, not a free win.
+#[inline(always)]
+pub fn compound_accurate(x: f32, n: f32) -> f32 {
+    exp2_checked_df(log2p1_df(x) * n)
 }
 
 /// erfcx(x) = e^(x^2)*erfc(x), the "scaled complementary error

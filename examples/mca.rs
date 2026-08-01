@@ -220,6 +220,7 @@ fn main() {
         "norm_pdf",
         "logit",
         "compound",
+        "compound_accurate",
         "xlogy",
         "xlog1py",
         "erfcx",

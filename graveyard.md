@@ -660,6 +660,44 @@ open. Two rules that recur often enough to state up front:
   this entry never tested what it claimed to, and the thing that actually
   fixed `log_2` was free — see idea #202's peel, which needed no extra
   precision at all, only a different place to put the leading term.
+- **compound's "underflows to zero" excuse: measured false, third time
+  this species has hidden a real defect.** `compound`'s doc claimed its
+  ~200 max ulp came from `(x,n)` pairs whose true value is below any
+  denormal. Instrumented over 20M uniform samples: of the 5440 worst
+  (>50 ulp), **5435 have a perfectly normal result** and every one has
+  `|n*log1p(x)|` between 30 and 86. It is the plain `y`-amplified error
+  `powf_df_mag!` documents — `exp`'s error is `|n*log1p(x)| *
+  relerr(log1p)`, and both `log1p`'s ulp *and* the `n*log1p(x)`
+  product's own rounding go through that multiplier, which reaches ~88
+  before the result overflows. Same excuse, same shape, as
+  `cospi`/`atan2_pos`.
+  - **`compound` is not redundant, though** — the obvious "just call
+    `powf(1+x, n)`" scores **1.07e9 max / 5.0e6 avg** on the same
+    filtered distribution (finite `n`, finite nonzero result) where
+    `compound` scores 240/0.29. Forming `1+x` in f32 is exactly the
+    catastrophe it exists to avoid; the 200 ulp is a second, unrelated
+    problem.
+  - **Fixed as a second tier, not in place**: `compound_accurate` =
+    `exp2_checked_df(log2p1_df(x) * n)` with a new double-float
+    `log2p1_df`. Max ulp **236 -> 4-5**, avg **0.195 -> 0.019**. Cost is
+    real and is why `compound` stays: throughput **3.724 -> 9.239
+    cyc/elem** (2.5x), latency 96.75 -> 153.56.
+  - Two things had to be right in `log2p1_df` that `log2p1` gets away
+    without. (1) The `c = x - (u-1)` correction needs its *own* low
+    word: whenever `1+x` rounds back to exactly `1`, `log2_df(u)` is
+    exactly `Df32(0,0)` and the correction **is** the whole answer, so
+    `LOG2_E` has to be split hi/lo and the `c/u` division has to carry
+    its residual (`fma(-eh, u, c) * rcp`). Skipping just the division's
+    residual measured **44** max ulp instead of 5 — one rounding, 9x the
+    error, because `n` amplifies it identically to the leading term's.
+    (2) The `-e^2/2` Taylor term is load-bearing for the same reason.
+  - And the degenerate-`u` override has to replace the **whole pair**,
+    not just the high word the way `powf_df_mag!` does. There the low
+    word is only ever read by `exp2_checked_df`'s non-finite guard; here
+    the two-sum that folds the correction in feeds it back into the high
+    word, so an `inf - inf` residual turned correct `+-inf` answers into
+    NaN. Caught by edgecheck (`compound_accurate(-1,5)`, `(-1,-5)`,
+    `(inf,1)`), invisible to both fuzz and mca.
 
 ### sin / cos / tan / sinpi / cospi / sind / cosd / tanpi / tand
 

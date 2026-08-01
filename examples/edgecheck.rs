@@ -1546,6 +1546,19 @@ fn real_main() {
     // log1p is keeping this precise even for tiny x (1 ulp off the
     // exact constant here, not a real discrepancy).
     check_known_1ulp("compound(1e-8,1e8)", compound(1.0e-8, 1.0e8), std::f32::consts::E);
+    // compound_accurate: same contract at every edge, double-float exponent.
+    check("compound_accurate(0,5)", compound_accurate(0.0, 5.0), 1.0);
+    check("compound_accurate(-1,5)", compound_accurate(-1.0, 5.0), 0.0);
+    check("compound_accurate(-1,-5)", compound_accurate(-1.0, -5.0), f32::INFINITY);
+    check("compound_accurate(-2,5)", compound_accurate(-2.0, 5.0), f32::NAN);
+    check("compound_accurate(x,0)", compound_accurate(0.05, 0.0), 1.0);
+    check("compound_accurate(nan,1)", compound_accurate(f32::NAN, 1.0), f32::NAN);
+    check("compound_accurate(0,nan)", compound_accurate(0.0, f32::NAN), f32::NAN);
+    check("compound_accurate(inf,1)", compound_accurate(f32::INFINITY, 1.0), f32::INFINITY);
+    check("compound_accurate(1,5)", compound_accurate(1.0, 5.0), 32.0);
+    // the (1+1/n)^n -> e limit the whole family exists for: exact here,
+    // where the single-f32 exponent tier is a ulp off.
+    check("compound_accurate(1e-8,1e8)", compound_accurate(1.0e-8, 1.0e8), std::f32::consts::E);
 
     // erfcx(x) = e^(x^2)*erfc(x), backlog idea #51. For x>=0 the
     // exponentials cancel exactly (see its doc comment), so erfcx(0)
