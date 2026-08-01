@@ -66,6 +66,18 @@ accuracy sweep for the **whole crate** before landing, not just your domain.
 - Accuracy sweeps use half the cores and self-nice; two at once is fine, three
   thrashes.
 
+### If this worktree holds work that is not yours, stop
+
+One worktree is meant to have one instance in it, but a session that was
+waiting on a long background job can wake up after a newer instance has taken
+over its worktree. If you find uncommitted changes you did not make, or a
+claim held by this worktree that you did not take:
+
+**Report it and change nothing.** Do not commit, `git checkout`, stash,
+revert, or `jm release` any of it — every one of those destroys in-progress
+work belonging to the current occupant. `jm status` shows which claims this
+worktree holds.
+
 ### Never use `git stash`
 
 `refs/stash` lives in the shared `.git` dir, **not** per worktree. Every
