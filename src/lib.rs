@@ -3780,15 +3780,22 @@ fn asin_small(x: f32) -> f32 {
 /// worst case moved to just above the old 0.25 boundary, still inside
 /// asin_small's error curve at that point, so shifting the boundary
 /// (coefficients untouched) covers it with the small branch instead.
-/// Current: max ulp 6, avg 0.020 (exhaustive). An earlier three-branch
-/// design with a rational mid-branch was strictly worse -- see IDEAS.md
-/// §asin/acos for that history and the rejected refit variants.
+///
+/// The big branch is one `fma`, not a multiply and a subtract: the
+/// product `sqrt(1-a)*P(a)` is ~4x larger than the difference it feeds
+/// just above the crossover (1.297 against 0.274), so rounding it to
+/// f32 first costs ~2 ulp of the *result*. `fma` rounds once, at the
+/// result's own magnitude, and is a whole instruction cheaper than the
+/// `vmulps`/`vsubps` pair it replaces. Current: max ulp 5, avg 0.019
+/// (exhaustive). An earlier three-branch design with a rational
+/// mid-branch was strictly worse -- see IDEAS.md §asin/acos for that
+/// history and the rejected refit variants.
 #[doc(alias = "asinf")]
 #[inline(always)]
 pub fn asin(x: f32) -> f32 {
     let a = x.abs();
     let small = asin_small(x);
-    let big = mulsign(FRAC_PI_2 - (1.0 - a).sqrt() * asin_poly(a), x);
+    let big = mulsign(fma(-(1.0 - a).sqrt(), asin_poly(a), FRAC_PI_2), x);
     if a < 0.27 { small } else { big }
 }
 

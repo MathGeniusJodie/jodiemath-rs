@@ -4881,3 +4881,53 @@ Note what this does *not* transfer to: the trick needs the outer exponent to
 be one the integer part survives. `1/n` is exact integer division;
 `srgb_to_linear`'s `2.4` is not (`2.4*e` is not an integer), so it would need
 a two-term split of `2.4*e` and is a different, non-free change.
+
+- **`asind`'s 11 max ulp is NOT the `atan2d` denormal mechanism** -- the
+  lead left in this file's own `atan2d` entry ("same shape: `asind`/
+  `acosd`/`atand` all multiply by `180/pi` and `asin(x) ~ x` can be
+  denormal too") is measured **false**. Instrumented over all 8388608
+  f32 in `[0.2, 0.4)`, the band both maxima live in: **0 of the 45835
+  samples scoring >= 4 ulp have a denormal `asin(x)`** -- not a small
+  fraction, zero. `asind`'s worst x is `2.74e-1`, nowhere near
+  underflow.
+  - What it actually is: `asind = asin(x) * (180/pi)` inherits `asin`'s
+    *relative* error, and the two land in binades with different
+    ulp-per-unit-value. `x/ulp(x)` ranges over `[2^23, 2^24)` within a
+    binade; `asin(0.274) = 0.2775` sits at `1.09*2^23` (ulp buys the
+    most) while `asind(0.274) = 15.9` sits at `1.96*2^23` (ulp buys the
+    least). Measured mean amplification over those 45835 samples:
+    **1.8836**, against the pure binade-geometry prediction **1.7905**
+    at the worst point. That is the whole factor: `asin` 6 -> `asind`
+    11, and after the fma fix below, `asin` 5 -> `asind` 9.
+  - So `asind`/`acosd`/`atand` have no defect of their own and nothing
+    to fix in the composite; they are exactly as good as `asin`/`acos`/
+    `atan` are, read on an unluckier ruler. Any future work belongs in
+    the radian function.
+- **`asin`'s big branch: contract `pi/2 - sqrt(1-a)*P(a)` into one
+  `fma`** -- shipped, a win on *every* axis, and the cheapest thing in
+  this whole section. The product is ~4.7x larger than the difference it
+  feeds just above the crossover (`1.297` vs `0.274`), so rounding it to
+  f32 first costs ~2 ulp of the result; `fma(-s, P, FRAC_PI_2)` rounds
+  once at the result's own magnitude. Exhaustive: `asin` max 6 -> **5**,
+  avg 0.0199 -> 0.0188; `asind` max 11 -> **9**. llvm-mca, full ladder,
+  every rung agreeing: instructions 57 -> 55, uOps 62 -> 60, Block
+  RThroughput 14.0 -> 13.0, throughput 0.968 -> **0.900** cyc/elem
+  (-7.0%), latency 60.99 -> **56.74** (-7.0%); `asind` 1.064 -> 0.981
+  and 68.99 -> 64.74.
+  - Rust does not contract `a - b*c` into an fma without fast-math, so
+    any `k - p*q` written literally in this crate is still a `vmulps`
+    plus a `vsubps` and still rounds the product. **The accuracy win and
+    the instruction saving are the same edit** -- worth sweeping for the
+    pattern wherever a product is subtracted from a constant.
+  - Reached via `two_prod` first (`(pi/2 - q) - e`), which measured the
+    *identical* max 5 / avg 0.0188 -- of course it does, both compute
+    `pi/2 - s*P` with a single final rounding -- but cost 61
+    instructions and 1.150 cyc/elem (**+18.8%**). Same value, opposite
+    verdict on cost. If an error-free transform is being used only to
+    un-round one product that is then added to something, the fma is
+    strictly the better spelling.
+  - This does not touch the diagnosis in entry 110 below (`asin`'s error
+    is a broad plateau over `[0.27, 0.5)`, not a seam artifact) -- it
+    removes one of the ~4 ulp-equivalent terms feeding that plateau. The
+    remaining ones are `asin_poly`'s own evaluation error and the
+    `1.0 - a` / `sqrt` roundings, both still amplified ~4x.

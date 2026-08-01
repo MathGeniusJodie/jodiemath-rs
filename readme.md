@@ -63,7 +63,7 @@ logaddexp (|a|,|b|<80)|    0.141   |  ~1e3-1e5, heavy-tailed (real, narrow cance
                   asinh |    0.149   |     3     | 
                   acosh |    0.060   |     4     |  0.000  |    1
                   atanh |    0.004   |     2     | 
-                   asin |    0.020   |     6     |  0.000  |    0
+                   asin |    0.019   |     5     |  0.000  |    0
                    acos |    0.056   |     4     |  0.000  |    0
                    atan |    0.067   |     4     |  0.000  |    0
            atan_latency |    0.052   |     3     |  0.000  |    0
@@ -375,7 +375,7 @@ logaddexp           |          74.11 |             2.449
 asinh               |          69.41 |             4.136
 acosh               |          89.08 |             3.828
 atanh               |          96.83 |             2.903
-asin                |          60.99 |             0.968
+asin                |          56.74 |             0.900
 acos                |          39.99 |             0.820
 atan                |          61.27 |             1.491
 atan_latency        |          61.99 |             1.591
