@@ -299,10 +299,12 @@ fn real_main() {
     check("cbrt_accurate_unchecked(1e30)", cbrt_accurate_unchecked(1e30), cbrt_accurate(1e30));
     check("cbrt_accurate_unchecked(1e-16)", cbrt_accurate_unchecked(1e-16), cbrt_accurate(1e-16));
 
-    // rcbrt(x) = 1/cbrt(x). Every special case falls out of composing
-    // cbrt with a plain division purely from IEEE754 semantics (verified
-    // by hand before writing the function) -- no override needed at all,
-    // unlike rhypot's one inf-vs-NaN case.
+    // rcbrt has its own inverse-cbrt seed rather than composing cbrt with a
+    // division, so these no longer fall out of IEEE754 semantics for free:
+    // they come from one `EXPONENT_MASK - ax` bit trick (see rcbrt's doc
+    // comment), which makes them a real regression guard rather than a
+    // restatement of the division's own contract. The exact +-0.5 at +-8
+    // and +-1 at +-1 pin the kernel itself, not a wrapper.
     check("rcbrt(8)", rcbrt(8.0), 0.5);
     check("rcbrt(-8)", rcbrt(-8.0), -0.5);
     check("rcbrt(0)", rcbrt(0.0), f32::INFINITY);

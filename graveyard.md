@@ -5284,3 +5284,53 @@ Block RThroughput 37 -> 29 (-22%); `log1pmx_latency` 4991 -> 4603 instructions
 cost fell on both axes. (The 100M fuzz reports 2 for the shipped version and
 8 for the old one, so fuzz-to-fuzz is 8 -> 2; the exhaustive 3 is the honest
 number, fuzz being optimistic about a max as usual.)
+
+## `rcbrt`: two divisions to none, by putting the reciprocal in the seed
+
+`1.0 / cbrt(x)` looked like the free composition -- "division is already
+correctly rounded, just compose", the same reasoning `rsqrt`/`rhypot` use --
+and it does hand every special case over for nothing. But it pays *two*
+divisions, not one: `cbrt_normal` needs its own `1.0/a` to form the residual
+`r = (s^3 - a)/a`, and then the composition divides again. And it pays
+`cbrt`'s error in the wrong units: a relative error costs up to twice as many
+ulp after a reciprocal, since the same relative size can sit at either end of
+a binade. Hence 5 max against `cbrt`'s own 3.
+
+Both go away if the bit-trick seed goes *down* the exponent instead of up.
+`t = from_bits(K - ax/3)` approximates `a^(-1/3)` directly, and then
+`e = a*t^3 - 1` is an fma, not a division -- because `a*t^3` is already O(1),
+which is exactly what `cbrt_normal` needed the reciprocal for. The correction
+is the same `(1+e)^(-1/3)` shape, so the *structure* transfers verbatim; only
+the coefficients don't.
+
+- `K = 0x54a20d0e`, from the `(4/3)*(127-sigma)*2^23` derivation then swept.
+  Residual range is **exactly** `[-0.100965, 0.103657]` over all normals, not
+  sampled: `e` is exactly periodic in the exponent with period 3 (adding
+  `3<<23` to `ax` adds exactly `1<<23` to `ax/3`, so `a` scales by 8, `t` by
+  2, and `a*t^3` not at all), so three consecutive exponents times all 2^23
+  mantissas is the whole domain. Worth knowing generally -- it makes any
+  `ax/3` seed exhaustively checkable in 25M evaluations instead of 2^31.
+- **Reusing `cbrt_normal`'s four coefficients does not work**: on this range
+  their idealized relative error is 11 ulp-equivalent (it is 3.7 on
+  `cbrt`'s own `[-0.0998, 0.0893]`). The ranges look similar and are not.
+- A degree-3 correction refit by minimax-LP for this range measured **max 2,
+  avg 0.768** -- max fixed, average nearly doubled. Its own idealized floor
+  is 1.6 ulp-equivalent, and a minimax error curve equioscillates, so most
+  of the domain sits near that bound. The average *is* the fit here, and one
+  more coefficient collapses it: degree 4 has an idealized floor of 0.19
+  ulp-equivalent, six times lower, which is well under the evaluation
+  roundings and therefore invisible. Shipped least-squares at degree 4.
+- Specials, which the composition used to get free: `EXPONENT_MASK - ax` is
+  the reciprocal's own magnitude on exactly the inputs that need one
+  (`0 -> inf`, `inf -> 0`) and wraps into the NaN encodings for a NaN input,
+  so one subtract plus `x`'s sign bit covers all of them with no division.
+
+**Exhaustive: max 5 -> 1, avg 0.418 -> 0.117.** Cost is a wash, and the
+ladder disagrees with itself, so all of it: `rcbrt_throughput` 75 -> 76
+instructions, uOps 7900 -> 8400 (+6%), **Block RThroughput 20 -> 15 (-25%)**,
+simulated total cycles 2666 -> 2704 (+1.4%); `rcbrt_latency` 2505 -> 2817
+instructions, total cycles 384206 -> 390106 (+1.5%). The `-25%` and the `+6%`
+are the same fact seen twice: four `vdivps` leave (`ICXFPDivider` was 17.7%
+of the throughput bottleneck and is now absent) and are replaced by cheaper
+integer work that lands on port 5. Taken as one shipped version, not a
+tier -- a wash on cost is not a pareto point.

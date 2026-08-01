@@ -1903,17 +1903,65 @@ pub fn cbrt_accurate_unchecked(x: f32) -> f32 {
     cbrt_accurate_normal(x, 1.0)
 }
 
-/// x^(-1/3): composes `cbrt` with a single hardware division, the same
-/// "division is already correctly rounded, just compose" reasoning as
-/// `rsqrt`/`rhypot`. Every zero/inf/nan/negative special case falls out
-/// of the composition for free via IEEE754 semantics: `rcbrt(0)=inf`,
-/// `rcbrt(-0)=-inf` (cbrt is odd, so is its reciprocal), `rcbrt(inf)=0`,
-/// `rcbrt(-inf)=-0`, `rcbrt(nan)=nan`, `rcbrt(-8)=-0.5` -- no override
-/// needed (unlike `rhypot`'s one inf-vs-NaN case). Costs one more
-/// rounding than `cbrt` itself.
+/// Core of rcbrt for normal finite x, the mirror of [`cbrt_normal`]:
+/// bit-trick seed, then a single degree-3 correction on the same
+/// `(1+r)^(-1/3)` shape. The seed goes *down* the exponent
+/// (`K - ax/3`, not `ax/3 + K`), so `t ~ a^(-1/3)` directly and
+/// `e = a*t^3 - 1` is formed by an fma with no division anywhere -- which
+/// is the whole point, since `1.0 / cbrt(x)` pays two (`cbrt_normal`'s own
+/// `1.0/a` reciprocal for its residual, plus the final reciprocal).
+/// `a*t^3` is O(1) at every scale, so nothing here can overflow or
+/// underflow. The correction poly is `rcbrt`'s own, not `cbrt_normal`'s:
+/// the two seeds' residual ranges differ enough (`[-0.101, 0.104]` here,
+/// exact over all normals) that reusing those coefficients would cost
+/// several ulp.
+#[inline(always)]
+fn rcbrt_normal(x: f32) -> f32 {
+    let ax = x.to_bits() & !SIGN_MASK;
+    let a = f32::from_bits(ax);
+    let t = f32::from_bits(0x54a20d0eu32.wrapping_sub(ax / 3));
+    let t2 = t * t;
+    let e = fma(a * t2, t, -1.0);
+    let d1 = -0.3333333134651184f32;
+    let d2 = 0.22221790254116058f32;
+    let d3 = -0.17284449934959412f32;
+    let d4 = 0.14551934599876404f32;
+    let d5 = -0.12521736323833466f32;
+    let e2 = e * e;
+    let a1 = fma(d2, e, d1);
+    let b1 = fma(d4, e, d3);
+    let p = fma(fma(d5, e2, b1), e2, a1);
+    // rcbrt is odd (so is cbrt); the seed was built from |x|, so put the
+    // sign back on before the correction rather than after it
+    let ts = f32::from_bits(t.to_bits() | (x.to_bits() & SIGN_MASK));
+    fma(ts * e, p, ts)
+}
+
+/// x^(-1/3). Not `1.0 / cbrt(x)`: a dedicated inverse-cbrt seed (see
+/// [`rcbrt_normal`]) reaches the answer with no division at all and one
+/// fewer rounding, since the reciprocal is folded into the seed's
+/// exponent rather than applied to a finished `cbrt`.
+///
+/// Composing did make every special case fall out for free; here they are
+/// restored by one bit trick instead. `EXPONENT_MASK - ax` *is* the
+/// magnitude of the reciprocal on exactly the inputs that need one:
+/// `0 -> inf` and `inf -> 0`, and it wraps into the NaN encodings for a
+/// NaN input, so a single subtract plus `x`'s own sign bit covers
+/// `rcbrt(+-0) = +-inf`, `rcbrt(+-inf) = +-0` and `rcbrt(nan) = nan`.
+/// Denormals rescale by `2^24` on the way in and `2^8` on the way out
+/// (`(2^24)^(-1/3) = 2^-8`), the same shape as `cbrt`'s own rescale --
+/// and, as there, applied to the *return value* rather than threaded
+/// through as a parameter, so LLVM doesn't duplicate the kernel per
+/// branch.
 #[inline(always)]
 pub fn rcbrt(x: f32) -> f32 {
-    1.0 / cbrt(x)
+    let ax = x.to_bits() & !SIGN_MASK;
+    let tiny = ax < 0x0080_0000; // denormal or zero
+    let xs = if tiny { x * 16777216.0 } else { x };
+    let scale = if tiny { 256.0 } else { 1.0 };
+    let r = rcbrt_normal(xs) * scale;
+    let spec = f32::from_bits(EXPONENT_MASK.wrapping_sub(ax) | (x.to_bits() & SIGN_MASK));
+    if ax == 0 || ax >= EXPONENT_MASK { spec } else { r }
 }
 
 /// Higher-throughput `cbrt` approximation (backlog idea #137): a bit-trick

@@ -13,7 +13,7 @@ All functions auto-vectorize, it's a hard requirement
          cbrt_unchecked |    0.282   |     3     | (bit-identical to cbrt on its domain)
           cbrt_accurate |    0.000   |     1     |    0    |    0
 cbrt_accurate_unchecked |    0.000   |     1     | (bit-identical to cbrt_accurate on its domain)
-                  rcbrt |    0.418   |     5     | (no std rcbrt)
+                  rcbrt |    0.117   |     1     | (no std rcbrt)
                    exp2 |    0.026   |     1     |  0.000  |    1
            exp2_checked |    0.014   |     1     |  0.000  |    1
                   exp10 |    0.031   |     2     | (no std exp10)
@@ -334,7 +334,7 @@ cbrt                |          35.06 |             1.629
 cbrt_unchecked      |          35.06 |             0.906
 cbrt_accurate       |          63.00 |             3.129
 cbrt_accurate_unchecked |      63.00 |             2.067
-rcbrt               |          60.03 |             1.666
+rcbrt               |          60.95 |             1.690
 exp2                |          35.00 |             0.854
 exp2_checked        |          47.00 |             1.399
 exp10               |          52.00 |             1.461
