@@ -810,17 +810,25 @@ const FRAC_1_PI: f32 = std::f32::consts::FRAC_1_PI;
 // in the low mantissa bits (round-to-nearest-even).
 const ROUND_MAGIC: f32 = 12582912.0;
 
-/// sin(x) via single-f32 range reduction: `q = round(x/pi)` (the
-/// round-via-fma magic-constant trick) is exact only while |x| stays under
-/// ~1.3e7 (2^22 * pi). Past that, q can land a whole integer off, shifting
-/// the residual by a whole multiple of pi and pushing it outside
-/// sinf_poly's fitted domain [-pi/2, pi/2] -- including returning inf for
-/// some large finite x, since nothing here clamps the residual. Use
-/// sin_checked for full-range gradual degradation instead of this cliff;
-/// this version is much faster.
+// The same trick two binades up: adding this to |v| < 2^24 lands v on
+// the multiples of 4 instead of the integers. Four times the reach for an
+// index whose parity is then known a priori (even) rather than read out
+// of the sum -- which is the trade `sin` wants, since it has a cheaper
+// place to get the one parity bit back from. See `frac_x_over_pi!`.
+const ROUND_MAGIC_4: f32 = 50331648.0;
+
+/// sin(x) via single-f32 range reduction, accurate for `|x| < 2^24 * pi`
+/// (~5.27e7). `q = round(x/pi)` has to be an exactly-representable f32
+/// integer for `pi_reduce_and_poly!`'s residual to mean anything, and 2^24
+/// is the largest integer f32 counts by ones; past the limit q lands whole
+/// integers off, shifting the residual by whole multiples of pi and
+/// pushing it outside sinf_poly's fitted domain [-pi/2, pi/2] -- including
+/// returning inf for some large finite x, since nothing here clamps the
+/// residual. Use sin_checked for full-range gradual degradation instead of
+/// this cliff; this version is much faster.
 ///
 /// Inside that domain the residual stays in [-pi/2, pi/2] to within
-/// ~2e-7 and max ulp is 2 all the way to the top -- see the
+/// ~7e-7 and max ulp is 2 all the way to the top -- see the
 /// `frac_x_over_pi!` macro below, which is what the two extra fmas over
 /// a naive single-word magic round buy.
 // Shared by sin/cos: the Cody-Waite pi-split reduction (given each
@@ -837,25 +845,44 @@ macro_rules! pi_reduce_and_poly {
     }};
 }
 
-// `q = round(x/pi)` refined to two words of 1/pi. A single f32 `1/pi` is
-// only good to `2^-25` *relative*, i.e. `|x|*2^-25/pi` absolute, which
-// reaches 0.17 at the top of sin/cos's own documented `|x| < 2^22*pi`
-// domain: `q` there lands a whole integer off whenever `x/pi`'s fraction
-// sits within 0.17 of a half, and the residual leaves `sinf_poly`'s
-// fitted `[-pi/2, pi/2]` by that same slice of pi. The answer stays
-// self-consistent (parity comes from the same `q`), so this is not a
-// wrong-branch cliff -- it is the poly being extrapolated, and it costs
-// hundreds of ulp near the domain edge while `|x| <= 1e6` barely notices.
+// An index `n` on the grid `$magic` implies, plus the leftover fraction
+// `fc = x/pi - n` refined to two words of 1/pi.
 //
-// `n` is the magic round of the *exact* `x*RPI_HI` product (that is what
-// the fma buys), `f` recovers that product's fraction about `n`, and one
-// more fma folds in `RPI_LO` -- so `fc = x/pi - n` to ~`2^-25` absolute
-// rather than `|x|*2^-25`. `RPI_TINY` is not needed: it contributes at
-// most `2e-9` over the domain, against `fc`'s own ~`6e-8` rounding.
+// The refinement is what the two extra fmas over a naive single-word
+// magic round buy. A single f32 `1/pi` is only good to `2^-25`
+// *relative*, i.e. `|x|*2^-25/pi` absolute, which reaches 0.68 at the top
+// of sin's domain: an index built from it alone lands a whole integer off
+// whenever `x/pi`'s fraction sits within 0.68 of a half, and the residual
+// leaves `sinf_poly`'s fitted `[-pi/2, pi/2]` by that same slice of pi.
+// The answer stays self-consistent (parity comes from the same `q`), so
+// that is not a wrong-branch cliff -- it is the poly being extrapolated,
+// and it costs hundreds of ulp near the domain edge while `|x| <= 1e6`
+// barely notices.
+//
+// `nb` is the magic round of the *exact* `x*FRAC_1_PI` product (that is
+// what the fma buys), `f` recovers that product's fraction about `n`, one
+// more fma folds in `RPI_LO` -- so `fc = x/pi - n` to ~`2.4e-7` absolute
+// rather than `|x|*2^-25`. A third word of 1/pi would be dead weight
+// here: it contributes at most `8e-9` over the domain, against `fc`'s own
+// rounding. Neither error reaches the answer anyway -- both only decide
+// *which* `q` the caller lands on, and only when `x/pi` is that close to
+// the midpoint between two candidates, where either choice is
+// self-consistent; `pi_reduce_and_poly!` then derives the residual from
+// that `q` and `x` alone.
+//
+// `$magic` picks the grid `n` lands on. `ROUND_MAGIC` gives the plain
+// integers, and with them `|n - x*FRAC_1_PI| <= 0.5`, which is what `cos`
+// needs: its `n + copysign(0.5, fc)` is the nearest half-odd-integer to
+// `x/pi` only while `|fc| <= 1`, and `fc` already carries `|x*RPI_LO|`
+// (0.17 at the top of cos's domain) on top of that half. `ROUND_MAGIC_4`
+// gives the multiples of 4 and four times the reach, at an `|fc|` up to
+// ~2.7 -- fine for `sin`, whose own second magic round absorbs any `fc`,
+// and which wants the reach because its `q` is a whole integer and so
+// stays exact twice as far out as cos's half-odd one.
 macro_rules! frac_x_over_pi {
-    ($x:expr) => {{
-        let nb = fma($x, FRAC_1_PI, ROUND_MAGIC);
-        let n = nb - ROUND_MAGIC;
+    ($x:expr, $magic:expr) => {{
+        let nb = fma($x, FRAC_1_PI, $magic);
+        let n = nb - $magic;
         let f = fma($x, FRAC_1_PI, -n);
         (nb, n, fma($x, RPI_LO, f))
     }};
@@ -864,21 +891,28 @@ macro_rules! frac_x_over_pi {
 #[doc(alias = "sinf")]
 #[inline(always)]
 pub fn sin(x: f32) -> f32 {
-    let (nb, _, fc) = frac_x_over_pi!(x);
-    // `fc + nb` is a second magic round, of `x/pi` this time instead of
-    // `x*RPI_HI`: `nb` is already `ROUND_MAGIC + n` on the integer grid,
-    // so adding the (corrected, |fc| <= 0.67) fraction back rounds to
-    // `ROUND_MAGIC + round(x/pi)` -- and leaves the parity bit sitting in
-    // `qb`'s low mantissa bit exactly as the single-word round did, so
-    // the sign fixup below is unchanged.
-    let qb = fc + nb;
-    let q = qb - ROUND_MAGIC;
+    let (_, n, fc) = frac_x_over_pi!(x, ROUND_MAGIC_4);
+    // A second, *fine* magic round, of `fc` this time -- an O(1) value, so
+    // the plain integer grid has room to spare: `qb` is `ROUND_MAGIC +
+    // round(fc)`, and `q = n + round(fc)` is round(x/pi) exactly, an
+    // f32-exact integer for every `|q| <= 2^24` (which is exactly the
+    // documented domain). `n - ROUND_MAGIC` is exact (both are multiples
+    // of 4) and hangs off `n`, not off `fc`, so the whole `q` chain is no
+    // deeper than the single round it replaces -- one add wider, but the
+    // same latency.
+    let nm = n - ROUND_MAGIC;
+    let qb = fc + ROUND_MAGIC;
+    let q = nm + qb;
     let s = pi_reduce_and_poly!(x, q);
-    // sin(x) = (-1)^q * sin(r); parity of q is the lowest mantissa bit of qb
+    // sin(x) = (-1)^q * sin(r); n is a multiple of 4, so q's parity is
+    // round(fc)'s, sitting in qb's lowest mantissa bit.
     let parity = qb.to_bits() << 31;
     f32::from_bits(s.to_bits() ^ parity)
 }
-/// Same domain limits as sin (see its doc comment); use cos_checked for
+/// cos(x). `q` here is the nearest *half-odd-integer* to `x/pi`, which
+/// costs a mantissa bit that sin's whole-integer `q` does not, so cos is
+/// documented over the narrower `|x| < 2^22 * pi` (~1.32e7) -- see
+/// graveyard.md for what widening it would cost. Use cos_checked for
 /// full-range gradual degradation.
 #[doc(alias = "cosf")]
 #[inline(always)]
@@ -890,7 +924,7 @@ pub fn cos(x: f32) -> f32 {
     // there: `fma(x, FRAC_1_PI, -0.5)` quantizes to `ulp(x/pi)`, already
     // 0.5 at the top of the domain, so the magic round downstream saw a
     // tie and cos left the poly's domain roughly twice as often as sin.)
-    let (nb, n, fc) = frac_x_over_pi!(x);
+    let (nb, n, fc) = frac_x_over_pi!(x, ROUND_MAGIC);
     let q = n + 0.5f32.copysign(fc);
     let s = pi_reduce_and_poly!(x, q);
     // cos(x) = (-1)^n * cos(r +- pi/2) = -+(-1)^n * sin(r), so the
@@ -900,19 +934,22 @@ pub fn cos(x: f32) -> f32 {
     f32::from_bits(s.to_bits() ^ parity)
 }
 
-/// [`sin`] with `q` from a *single* word of `1/pi` -- the whole
-/// `frac_x_over_pi!` refinement dropped, two fmas and a round cheaper
-/// (mca: 1.776 -> 1.151 cyc/elem throughput, 64 -> 48 latency).
+/// [`sin`] with `q` from a *single* word of `1/pi` and a single magic
+/// round -- the whole `frac_x_over_pi!` refinement dropped, and sin's
+/// second round with it: two fmas and three adds cheaper (mca: 1.778 ->
+/// 1.151 cyc/elem throughput, 64 -> 48 latency).
 ///
-/// The price is exactly the extrapolation `sin`'s own comment describes:
+/// The price is paid twice over. That one round puts `q` on the plain
+/// integer grid, so this is documented over `|x| < 2^22*pi` (~1.32e7),
+/// two binades narrower than `sin`'s own domain. And inside even that,
 /// `q` lands one integer off once `|x|*2^-25/pi` grows comparable to the
 /// distance from `x/pi`'s fraction to a half, and `sinf_poly` is then
-/// evaluated outside its fitted `[-pi/2, pi/2]`. That error scales with
-/// `|x|`, so this is a *narrower accurate range*, not a uniformly looser
-/// one: at `|x| <= 1e6` it is indistinguishable from `sin` (0.0358 avg,
-/// 2 max, both), and only past there does it separate -- 0.0592 avg and
-/// 219 max over the whole shared `|x| < 2^22*pi` domain. Prefer this
-/// whenever the argument is known to stay under ~1e6.
+/// evaluated outside its fitted `[-pi/2, pi/2]`. That second error scales
+/// with `|x|`, so it is a *narrower accurate range*, not a uniformly
+/// looser one: at `|x| <= 1e6` it is indistinguishable from `sin` (0.0358
+/// avg, 2 max, both), and only past there does it separate -- 0.0592 avg
+/// and 219 max over its own `|x| < 2^22*pi` domain. Prefer this whenever
+/// the argument is known to stay under ~1e6.
 #[inline(always)]
 pub fn sin_fast(x: f32) -> f32 {
     let qb = fma(x, FRAC_1_PI, ROUND_MAGIC);
@@ -4522,12 +4559,34 @@ pub fn atan2_pos(y: f32, x: f32) -> f32 {
     if y.is_sign_negative() { r + std::f32::consts::TAU } else { r }
 }
 
-/// Straight port of jodiemath's tanf: sin(x)/cos(x), same domain limits as
-/// this crate's sin/cos (see their doc comments).
+/// Straight port of jodiemath's tanf: sin(x)/cos(x), over `cos`'s domain
+/// `|x| < 2^22 * pi` (~1.32e7), the narrower of the two (see their doc
+/// comments).
 #[doc(alias = "tanf")]
 #[inline(always)]
 pub fn tan(x: f32) -> f32 {
-    sin(x) / cos(x)
+    sin_over_cos_domain(x) / cos(x)
+}
+
+// [`sin`] restricted to [`cos`]'s domain, and built from [`cos`]'s own
+// `frac_x_over_pi!` grid rather than sin's wider multiple-of-4 one. Same
+// `q`, same residual, same output as `sin` for every x inside that domain
+// -- a ratio is only right as far out as its *denominator* is, so sin's
+// extra two binades would buy `tan` nothing while costing it a second,
+// non-shared reduction (mca: tan 105 -> 120 instrs, BlockRT 31 -> 36,
+// latency 78 -> 89, for byte-identical output).
+#[inline(always)]
+fn sin_over_cos_domain(x: f32) -> f32 {
+    let (nb, _, fc) = frac_x_over_pi!(x, ROUND_MAGIC);
+    // `fc + nb` is a second magic round, of `x/pi` this time instead of
+    // `x*FRAC_1_PI`: `nb` is already `ROUND_MAGIC + n` on the integer grid,
+    // so adding the (corrected, |fc| <= 0.67) fraction back rounds to
+    // `ROUND_MAGIC + round(x/pi)` and leaves the parity bit in `qb`'s low
+    // mantissa bit. `sin` cannot reuse this shape -- its coarse grid is
+    // too wide for `nb` to sit on the integer grid at all.
+    let qb = fc + nb;
+    let s = pi_reduce_and_poly!(x, qb - ROUND_MAGIC);
+    f32::from_bits(s.to_bits() ^ (qb.to_bits() << 31))
 }
 
 // degree-6 minimax poly feeding erf's exp2-based tail (|x| >= 0.28),

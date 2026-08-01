@@ -5992,3 +5992,153 @@ where it says 21. Per-band max from quick mode is a lower bound on a
 long tail, not an estimate of it: for a band this narrow the exhaustive
 sweep is only ~30 seconds, so just run it rather than repeating the
 fuzz. (The averages, by contrast, are stable to 4 digits.)
+
+## `sin`: a coarser magic grid plus a second, fine round -- 4x the domain
+
+`sin` is now documented and measured over `|x| < 2^24*pi = 5.2707178e7`,
+four times the old `2^22*pi = 1.3176794e7`, with **max ulp still 2** and
+every other function in the crate byte-identical. It cost one add.
+
+**The old ceiling was the magic-round grid, not `1/pi`'s precision.**
+`ROUND_MAGIC = 1.5*2^23` puts `v` on the integer grid only while
+`|v| < 2^22` -- past there the sum leaves the `[2^23, 2^24)` binade and
+the grid coarsens -- and `2^22*pi` is exactly where sin's documented
+domain stopped. That is a suspicious coincidence and it was the real
+cause: feeding the *unchanged* `pi_reduce_and_poly!` chain an oracle `q`
+computed in f64 gives avg 0.318 / max 2 across `[1.318e7, 5.27e7)`, where
+shipped `sin` was ~1e9 avg. `RPI_HI`/`RPI_LO` resolve `x/pi` to ~6e-8
+absolute out there, three orders better than needed.
+
+**The fix.** A magic constant's reach and its grid trade off exactly:
+`1.5*2^k` holds `|v| < 2^(k-1)` on a grid of `2^(k-23)`, so the ratio is
+always `2^22`. `ROUND_MAGIC_4 = 1.5*2^25` buys `|v| < 2^24` at a grid of
+4. The coarse index `n` that comes back is a multiple of 4 rather than the
+nearest integer, which costs the free parity bit -- the same magic that
+parks `q` on the grid is what parks parity in a fixed mantissa bit -- and
+leaves `|fc| = |x/pi - n|` up to ~2.7 instead of ~0.7. Both are cheap to
+repair: a *second* magic round, of `fc` (an O(1) value, so `ROUND_MAGIC`
+has room to spare), gives `round(fc)` with its parity in the low bit
+again, and `q = n + round(fc)` is `round(x/pi)` exactly. `n` is a multiple
+of 4 so `q`'s parity is `round(fc)`'s.
+
+The one added op is kept off the critical path: `q = (n - ROUND_MAGIC) +
+(fc + ROUND_MAGIC)`, where `n - ROUND_MAGIC` is exact (both are multiples
+of 4) and hangs off `n`, which is ready three ops before `fc` is. So the
+`q` chain is one add *wider* and the same depth.
+
+```
+region              instrs      uOps    BlockRT   cyc/elem   latency
+sin_throughput      59->64    62->68    18->19   1.776->1.778
+sin_latency                                                  64.00->64.00
+```
+
+Everything else is byte-identical asm, checked region by region:
+`cos_throughput`, `cos_latency`, `tan_throughput`, `tan_latency`,
+`sin_fast_throughput`, `cos_fast_throughput`, `sind_throughput`,
+`cospi_throughput`.
+
+**`|q| <= 2^24` is the hard ceiling for this architecture** and the new
+domain sits exactly on it: `q` has to be an *exactly representable f32
+integer* for `pi_reduce_and_poly!`'s residual to mean anything, and 2^24
+is the last integer f32 counts by ones. Confirmed independently with an
+oracle two-word `q` and an 8-fma chain: clean max 3 at `2^25`, max 262145
+at `2^26`, where a second wall appears -- after dropping Cody-Waite word
+`k` the residual is `~q*eps_k` quantised at that word's lowest bit, so the
+step stays exact only while `log2|q| <= 24 + (L_k - T_{k+1}) - 1`, and the
+slack there is the length of pi's binary zero-run at that position (never
+more than 4 in the first 100 bits). Getting past 2^24 needs a two-word
+`q`, which *is* `sin_checked`.
+
+**Rejected on the way (all measured):**
+
+- **The same trick for `cos`: broken, not merely expensive.** cos's
+  `q = n + copysign(0.5, fc)` is the nearest half-odd-integer to `x/pi`
+  only while `|fc| <= 1`, and a magic round only ever bounds
+  `|n - x*RPI_HI|`; the `RPI_LO` correction inside `fc` then adds up to
+  0.17 at `2^22*pi` and 0.34 at `2^23*pi` on top of that. On the even grid
+  (`1.5*2^24`) cos went from 0.2806 avg / max 2 to **0.4523 avg / max 205
+  on `[1e5,1.3e7)` -- inside the old domain** -- and 0.3530 / 11419 over
+  `|x| < 2^23*pi`. This is not a domain-edge effect: it is wrong wherever
+  `x*RPI_LO` is not negligible. Doing it properly (round `fc - 0.5` on the
+  fine grid, then `q = (n + k) + 0.5`) costs +3 float ops, and cos's half
+  caps it at `2^23*pi` anyway, since a half-odd-integer needs a spare
+  mantissa bit and so is exact only to 2^23. cos is left alone.
+- **The even grid (`1.5*2^24`, 2x) for `sin`**: identical cost to the
+  multiple-of-4 grid (64 instrs / 68 uOps / BlockRT 19), because the
+  second round is needed either way. Strictly dominated by 4x.
+- **Letting `tan` stay `sin(x) / cos(x)`.** sin and cos sharing one
+  `frac_x_over_pi!` is worth ~5 ops to `tan`; different coarse grids kill
+  the CSE. Measured: tan 105 -> 120 instrs, 107 -> 123 uOps, BlockRT
+  31 -> 36, latency 78 -> 89 -- for *byte-identical output*, since tan's
+  domain is its denominator's. Fixed by giving `tan` a private
+  `sin_over_cos_domain` built on cos's own grid; tan's asm is then
+  byte-identical to before. (With sin on the even grid and cos on it too
+  the CSE survives -- tan 105 instrs, BlockRT 31 -- but that is the broken
+  cos above.)
+- **`cvtps2dq` instead of the magic round** (`round_ties_even` +
+  `to_int_unchecked` fuse into one 1-uop instruction; parity from
+  `(qi as u32) << 31`). Reaches the same 2^24 and is *cheaper on
+  instruction count* -- 59 -> 60 instrs, uOps unchanged at 62 -- but
+  1.776 -> **1.906 cyc/elem (+7.3%)** and latency 64 -> 75, and
+  `to_int_unchecked` is UB out of range so a shippable version owes a
+  guard on top. The float-only scheme above is cheaper on both columns
+  that matter and has no UB.
+- Dead by construction, do not re-derive: a *single* larger magic (its
+  ulp-1 window is only 2^23 wide however it is placed, and the `1.5*2^k`
+  family's reach/grid ratio is fixed at 2^22); a pre-scale of `x` (it
+  destroys exactly the low bits the reduction needs); and coarse-then-fine
+  on the *residual* rather than on the *index* -- a coarse residual of
+  magnitude ~2^k has to fit one f32 whose ulp there is `2^(k-24)`, so
+  `k <= 0`, i.e. any two-stage residual scheme needs a two-word
+  intermediate and is `sin_checked` again.
+
+Accuracy, `accuracy quick` (4M scored samples per band), old -> new:
+
+```
+row                            avg ulp                    max ulp
+sin |x|<=1e6                0.0357 -> 0.0357              2 -> 2
+sin (in-domain)             0.0422 -> 0.0457*             2 -> 2
+sin [1e5,1.3e7)             0.2810 -> 0.2804              2 -> 2
+sin [1.3e7,1e8)              1.034e9 -> 1.903e8 (-81.6%)
+sin [1e8,1e10)               1.242e9 -> 1.151e9
+sin [1e10,1e13)              1.828e9 -> 1.827e9    non-finite 12.99% -> 12.99%
+sin [1e13,1e15)              2.134e9 -> 2.132e9    non-finite 95.89% -> 95.90%
+sin [1e15,3.4e38)            2.139e9 -> 2.140e9    non-finite  100% -> 100%
+```
+
+*`sin (in-domain)` is not the same input set on the two sides -- it is
+`sin_domain`, which moved from `2^22*pi` to `2^24*pi`. 0.0422 -> 0.0457
+is the average over four times as much domain, not a regression; the
+`|x|<=1e6` and `[1e5,1.3e7)` rows, which *are* the same set, are
+unchanged. Nothing past the new limit got worse, including the non-finite
+percentages, which are the same reduction failing the same way one binade
+of `q` later.
+
+`worst_corpus`: 5 of 9360 entries moved, all `sin`, none inside the old
+domain. Four are at `|x|` between 1e30 and 1e38, where both old and new
+are meaningless (`inf` flipping sign). The fifth is the informative one:
+`sin(2.6e7)` was `+1.2973863e-1` and is now `-1.2775949e-1`, against a
+true `-0.12775947990596045` -- the corpus had a wrong *sign* pinned at a
+point that is now in-domain. `cos` and `tan` entries did not move at all.
+edgecheck clean.
+
+**The in-domain max is exhaustive, not sampled.** Every one of the
+2,559,713,206 f32 bit patterns with `|x| < 2^24*pi` was scored: **max ulp
+2**, avg 0.0457, worst x 1.3414527e0. So the headline number is a true
+maximum over four times the old domain, not the lower bound quick mode
+gives.
+
+**Why a wider `sin` is still worth having next to a cheap `sin_checked`.**
+The f64-reduction `sin_checked` that landed the same day covers ~7e15 at
+2.495 cyc/elem, so the case for a *middle rung* is weak whenever the rung
+costs anything -- 4x of domain for +7.3% (the `cvtps2dq` scheme) does not
+beat 5e8x for +40%. This change is not a rung: it is the same tier, four
+times wider, at 1.776 -> 1.778 cyc/elem and identical latency. The pareto
+after it:
+
+```
+             cyc/elem   accurate to
+sin_fast       1.151    ~1e6
+sin            1.778    5.27e7
+sin_checked    2.495    ~7e15
+```

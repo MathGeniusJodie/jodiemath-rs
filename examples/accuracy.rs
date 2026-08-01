@@ -322,10 +322,12 @@ const BATCH: usize = 4096;
 /// Magnitude bands shared by every sin/cos comparison row, so `sin`,
 /// `sin_fast` and `sin_checked` (and the cos trio) can be read off against
 /// each other band for band instead of each family having its own rows on
-/// its own ranges. The bands deliberately straddle `sin`/`cos`'s own
-/// documented domain limit, 2^22*pi = 1.3176794e7: what the unchecked
-/// functions do on the far side of it is exactly what these rows exist to
-/// show.
+/// its own ranges. The bands deliberately straddle the unchecked
+/// family's domain limits -- 2^22*pi = 1.3176794e7 (`cos`, `sin_fast`,
+/// `cos_fast`) is a band edge, and `sin`'s own 2^24*pi = 5.2707178e7
+/// falls inside `[1.3e7,1e8)`, so that band mixes the two sides for sin
+/// on purpose. What the unchecked functions do past their limit is
+/// exactly what these rows exist to show.
 const TRIG_BANDS: [(&str, f32, f32); 7] = [
     ("[1e3,1e5)", 1e3, 1e5),
     ("[1e5,1.3e7)", 1e5, 1.3e7),
@@ -739,11 +741,12 @@ fn main() {
         report("exp10_checked", &s, t0);
     }
     if run("sin") {
-        // unchecked sin's documented exact-integer range: |x| < 2^22 * pi
-        // (the round-via-fma magic-constant trick's exact range). Filtering
+        // unchecked sin's documented exact-integer range: |x| < 2^24 * pi
+        // (the range over which its `q` is an exact f32 integer -- cos's
+        // half-odd `q` runs out two binades earlier). Filtering
         // both jodie's and std's inputs to the same set keeps the
         // comparison apples-to-apples, same as exp2/exp2_checked above.
-        let sin_domain = |x: f32| x.abs() < (1u32 << 22) as f32 * std::f32::consts::PI;
+        let sin_domain = |x: f32| x.abs() < (1u32 << 24) as f32 * std::f32::consts::PI;
         for (name, hi) in [
             ("sin |x|<=pi/4", std::f32::consts::FRAC_PI_4),
             ("sin |x|<=10", 10.0),
@@ -756,12 +759,15 @@ fn main() {
         }
         let s = measure!(sin_domain, sin, sin_ref);
         report("sin (in-domain)", &s, t0);
-        // sin_fast: same domain, single-word `q`. Its error grows with
-        // |x| (see its doc comment), so both the restricted and the
-        // full-domain rows matter for the pareto comparison.
+        // sin_fast: single-word `q`, so its magic round runs out two
+        // binades before sin's own does -- its domain is 2^22*pi, not
+        // sin_domain. Its error grows with |x| (see its doc comment), so
+        // both the restricted and the full-domain rows matter for the
+        // pareto comparison.
+        let sin_fast_domain = |x: f32| x.abs() < (1u32 << 22) as f32 * std::f32::consts::PI;
         let s = measure!(|x: f32| x.abs() <= 1e6, sin_fast, sin_ref);
         report("sin_fast |x|<=1e6", &s, t0);
-        let s = measure!(sin_domain, sin_fast, sin_ref);
+        let s = measure!(sin_fast_domain, sin_fast, sin_ref);
         report("sin_fast (in-domain)", &s, t0);
         let s = measure!(sin_domain, |x: f32| x.sin(), sin_ref);
         report("std sin (in-domain)", &s, t0);

@@ -20,12 +20,12 @@ cbrt_accurate_unchecked |    0.000   |     1     | (bit-identical to cbrt_accura
           exp10_checked |    0.008   |     1     | (no std exp10)
                    log2 |    0.003   |     1     |  0.000  |    1
    log2_unchecked (+)   |    0.006   |     1     | (bit-identical to log2 on its domain)
-         sin (in-domain) |    0.042   |     2     |  0.003  |    1
-         cos (in-domain) |    0.083   |     2     |  0.002  |    1
+  sin (|x|<2^24*pi) |    0.046   |     2     |  0.003  |    1
+  cos (|x|<2^22*pi) |    0.083   |     2     |  0.002  |    1
     sin_fast (|x|<=1e6) |    0.036   |     2     |  0.002  |    1
     cos_fast (|x|<=1e6) |    0.078   |     3     |  0.002  |    1
-    sin_fast (in-domain) |   0.059   |   219     |  0.003  |    1
-    cos_fast (in-domain) |   0.291   |  2780     |  0.002  |    1
+  sin_fast (|x|<2^22*pi)|   0.059   |   219     |  0.003  |    1
+  cos_fast (|x|<2^22*pi)|   0.291   |  2780     |  0.002  |    1
  sin_checked (|x|<=1e6) |    0.036   |     2     |  0.000  |    1
  cos_checked (|x|<=1e6) |    0.081   |     3     |  0.000  |    1
         sinpi (all f32) |    0.197   |     2     | (no std sinpi)
@@ -72,7 +72,7 @@ logaddexp (|a|,|b|<80)|    0.141   |  ~1e3-1e5, heavy-tailed (real, narrow cance
                    atan |    0.067   |     4     |  0.000  |    0
            atan_latency |    0.052   |     3     |  0.000  |    0
                  atanpi |    0.078   |     4     | (no std atanpi)
-        tan (in-domain) |    0.118   |     4     |  0.000  |    0
+  tan (|x|<2^22*pi) |    0.118   |     4     |  0.000  |    0
                    erf  |    0.027   |     3     | (no std erf)
          erfc (|x|<=10) |    0.195   |     6     | (no std erfc)
         erfcx (|x|<=20) |    0.208   |     6     | (no std erfcx)

@@ -315,7 +315,8 @@ fn real_main() {
     check("rcbrt(1)", rcbrt(1.0), 1.0);
     check("rcbrt(-1)", rcbrt(-1.0), -1.0);
     // sin/cos (unchecked): only accurate while q = round(x/pi) is an exact
-    // f32 integer, i.e. |x| < 2^22 * pi (~1.3e7) -- see sin's doc comment.
+    // f32 integer: |x| < 2^24 * pi (~5.27e7) for sin, and 2^22 * pi
+    // (~1.32e7) for cos, whose q is a half-odd -- see sin's doc comment.
     check("sin(0)", sin(0.0), 0.0);
     check("cos(0)", cos(0.0), 1.0);
     check("sin(nan)", sin(f32::NAN), f32::NAN);
