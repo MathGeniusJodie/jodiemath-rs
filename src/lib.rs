@@ -3964,9 +3964,15 @@ pub fn acos(x: f32) -> f32 {
 /// was tried for `asin` and measured *worse* (real max ulp 16 vs the
 /// naive composite's 11), so not attempted again here without new
 /// evidence it would fare differently.
+///
+/// The single-word multiply here is deliberate, and is the one member of
+/// this family where [`RAD_TO_DEG_HI`]'s two-word `fma` measures no
+/// benefit: `acos`'s own error dominates, and `acosd`'s bulk mass sits
+/// where the true answer is exactly `90` (representable, so no bias
+/// crosses a rounding boundary). See graveyard.md.
 #[inline(always)]
 pub fn acosd(x: f32) -> f32 {
-    acos(x) * (180.0 / std::f32::consts::PI)
+    acos(x) * RAD_TO_DEG_HI
 }
 
 // acos(x)/pi as its own degree-6 minimax poly (backlog idea #85 gives
@@ -4203,12 +4209,14 @@ pub fn atan(x: f32) -> f32 {
     mulsign(y, x)
 }
 
-/// atan(x) in degrees (backlog idea #123): plain composite -- see
-/// `asind`'s own doc comment for why a rescaled-coefficient fold isn't
-/// attempted here either.
+/// atan(x) in degrees (backlog idea #123): composite -- see `asind`'s own
+/// doc comment for why a rescaled-coefficient fold isn't attempted here
+/// either, and [`RAD_TO_DEG_HI`] for why the `180/pi` multiply is a
+/// two-word `fma` rather than the single constant it reads as.
 #[inline(always)]
 pub fn atand(x: f32) -> f32 {
-    atan(x) * (180.0 / std::f32::consts::PI)
+    let y = atan(x);
+    fma(y, RAD_TO_DEG_HI, y * RAD_TO_DEG_LO)
 }
 
 /// atan(x)/pi (backlog idea #85): plain composite. A rescaled-coefficient
@@ -4392,8 +4400,16 @@ pub fn atan2_latency(y: f32, x: f32) -> f32 {
 #[inline(always)]
 pub fn atan2d(y: f32, x: f32) -> f32 {
     let r = atan2(y, x);
-    let normal = r * (180.0 / std::f32::consts::PI);
-    let tiny = y * ((180.0 / std::f32::consts::PI) / x);
+    let normal = fma(r, RAD_TO_DEG_HI, r * RAD_TO_DEG_LO);
+    // Single-word, and specifically the HI word rather than the
+    // correctly-rounded `fl(180/pi)`: the two-word form would need a
+    // second division, and swapping in the correctly-rounded single
+    // constant -- which does measure better on this branch's average --
+    // costs a 1-ulp regression at a pinned denormal edge case that is
+    // currently correctly rounded. See graveyard.md; this branch exists
+    // to recover *binade* bits from an underflowed `y/x`, not the last
+    // ulp of a denormal.
+    let tiny = y * (RAD_TO_DEG_HI / x);
     if r.abs() < f32::MIN_POSITIVE && x != 0.0 { tiny } else { normal }
 }
 

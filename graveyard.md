@@ -5532,3 +5532,60 @@ normal octave and verified on 2.08M.
   latency or throughput for a 400-vs-550-ulp approximation buys nothing a
   caller of this tier can use. Adopt one only if `cbrt_fast` ever acquires
   a caller that cares about its error at all.
+
+### The same constant, in `atand`, `atan2d` and `acosd`
+
+`asind`'s `180.0 / std::f32::consts::PI` (one ulp low, see above) was
+spelled identically in all four degree wrappers. Taking the two-word
+`fma` to each of them, measured separately rather than assumed to
+transfer:
+
+| | before | after | verdict |
+|---|---|---|---|
+| `atand` | 0.3682 avg / 5 max | 0.0628 / 4 | ship |
+| `atan2d` | 0.1749 / 5 | 0.1072 / 4 | ship |
+| `acosd` | 0.0545 / 5 | 0.0546 / 5 | **reject** |
+
+(`atand` and `acosd` exhaustive, all 2^32 patterns, both sides; `atan2d`
+is two-argument so fuzz only, 3 repeats, avg stable to four digits and
+max swinging 4-5 run to run as it always does there.)
+
+**`acosd` is the interesting one, because it looks immune and is not.**
+Its average does not move because two things cancel. Most of the domain
+by bit-pattern measure is tiny `|x|`, where `acos(x)` is exactly
+`fl(pi/2)` and the true `acosd` is exactly **90** -- a representable
+value, so a bias of a third of an ulp cannot push the result off it.
+Restricting to `|x| > 0.01` and feeding a correctly-rounded `acos` so
+only the composite's own arithmetic is in view, the constant matters as
+much as anywhere else: avg **0.657** with the shipped constant, 0.261
+with the correctly-rounded one, 0.241 two-word. What flattens it back out
+over the full domain is that `acos`'s *own* error is ~0.055 and dominates
+whatever the multiply does.
+
+So `acosd`'s low average is partly luck, and the two-word form is
+*structurally* the better code -- but it measures identically on both
+axes for +3 instructions, so it does not ship. Worth knowing that if
+`acos` itself is ever tightened, `acosd` should be re-measured rather
+than assumed still fine.
+
+**`atan2d`'s denormal branch keeps the old constant on purpose.** Its
+`y * (K/x)` uses `K` as a *divisor*, so the two-word pair would need a
+second division. Swapping in just the correctly-rounded single constant
+does measure better there -- over 3.6M pairs that reach the branch, avg
+0.0258 -> 0.0110, exactly-rounded 97.53% -> 98.90% -- but it costs a
+1-ulp regression at `atan2d(1e-30, 1e10)`, a pinned edgecheck case whose
+current answer is the correctly-rounded one. That branch exists to
+recover *binade* bits from an underflowed `y/x`, not the last ulp of a
+denormal, so the pinned case wins.
+
+Cost of the two that shipped (Block RThroughput unchanged for both, so
+this is +3 instructions each and no new port bottleneck): `atand`
+55 -> 58 instrs, 57 -> 60 uOps, throughput 2487 -> 2651 cycles, latency
+429304 -> 454904; `atan2d` 72 -> 75 instrs, 74 -> 78 uOps, throughput
+3405 -> 3496 cycles, latency 499809 -> 493409.
+
+Still on the single-word multiply and *not* investigated here: `atanpi`
+(0.2782 avg), `atan2pi` (0.1382), `acospi` (0.0438). `fl(1/pi)` is the
+correctly-rounded constant, so there is no wrong-constant bug in that
+family -- but it still carries a -0.338 ulp relative bias that the same
+two-word `fma` would remove.
