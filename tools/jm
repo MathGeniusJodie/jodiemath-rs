@@ -321,9 +321,15 @@ cmd_land() {
         echo "${c_red}rebase hit conflicts${c_off} -- resolve, 'git rebase --continue', then jm land again" >&2
         exit 1
     fi
-    git -C "$REPO_MAIN" diff --quiet && git -C "$REPO_MAIN" diff --cached --quiet \
-        || die "the main checkout ($REPO_MAIN) has uncommitted changes; master cannot advance"
-    git -C "$REPO_MAIN" merge --ff-only "$br" || die "ff-merge failed"
+    # Let git decide whether the main checkout can take the fast-forward. A
+    # blanket "must be clean" check would block every instance whenever Jodie
+    # has an unrelated edit open on master; git only refuses when the merge
+    # would actually overwrite a modified file.
+    if ! git -C "$REPO_MAIN" merge --ff-only "$br"; then
+        die "master could not fast-forward. The main checkout ($REPO_MAIN) most
+  likely has uncommitted edits to a file this branch also changed. Commit or
+  stash them there, then re-run jm land."
+    fi
     echo "${c_grn}landed${c_off} $br -> master  ($(git -C "$REPO_MAIN" rev-parse --short master))"
     git -C "$TOPLEVEL" rebase master >/dev/null 2>&1 || true
     note "master is now $(git -C "$REPO_MAIN" log -1 --oneline master)"
@@ -342,7 +348,10 @@ cmd_wt() {
         echo "  cd $WT_BASE/$name && claude" ;;
     rm)
         local name=${2:?usage: jm wt rm <name>}
-        JM_AGENT=$name cmd_release || true
+        # AGENT was resolved at startup; releasing the departing worktree's
+        # claims means impersonating it, not just exporting JM_AGENT.
+        local saved=$AGENT
+        AGENT=$name; cmd_release || true; AGENT=$saved
         git -C "$REPO_MAIN" worktree remove "$WT_BASE/$name" --force
         git -C "$REPO_MAIN" branch -D "wt/$name" 2>/dev/null || true
         echo "${c_grn}removed${c_off} $name" ;;
