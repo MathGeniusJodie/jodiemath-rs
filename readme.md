@@ -418,6 +418,29 @@ fmod                |          29.11 |                 ? (*)
 fmod_unchecked      |          28.00 |             0.643
 ```
 
+**The latency column above is wrong for the branch-shaped rows, and mostly
+too high.** llvm-mca has no branch predictor: it simulates a region as one
+straight-line stream, so for `jcc L1 / <A> / jmp L2 / L1: <B> / L2:` it runs
+both arms back to back and reports neither. 39 of the 151 latency regions in
+`mca_target.rs` contain a real conditional branch, and for **24 of them the
+published figure lies above *both* of its own arms measured in isolation** --
+the arms fuse into one artificial chain whenever the second reads a register
+the first clobbered. Worst offenders: `exp2m1` 80.00 against arms of
+37.00/48.00, `exp10m1` 112.00 against 37.00/80.00, `expm1_checked` 78.00
+against 32.00/51.00, `tanh` 85.64 against 53.00/62.00, `erf` 87.00 against
+44.00/65.98, `asin` 56.74 against 26.99/40.99, `acosh` 89.08 against
+46.08/77.02. The opposite failure also happens: where both arms write the
+same register and the *cheap* one is laid out last, mca times the cheap one
+-- `asinh` publishes 69.41 where its real in-domain chain is **88.02**.
+
+Run `tools/mca_arms.py <mca_target-*.s> <region>_latency` before quoting or
+comparing any latency row; it prints each arm in isolation. The **throughput**
+column has no such problem (those regions are vectorized and if-converted to
+masked selects, so there is no branch to mis-simulate) and remains this
+crate's perf reference. Rows with no conditional branch -- `exp2`, `sin`,
+`atan`, `sigmoid`, `cosh`, `powf`, `hypot`, `cbrt` and most others -- are
+unaffected.
+
 The exp family's throughput rows moved without any of those functions
 changing: `exp2_field_split` (which every `_checked`-style exponent
 reconstruction shares) now builds both power-of-two words off
