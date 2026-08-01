@@ -4308,3 +4308,103 @@ worked, which is what makes the next one findable. The code itself is in
   - Stale fact corrected: `erfcx`'s doc claimed its mca latency number
     was untrustworthy because `mix()` masks the sign bit. `mix()` was
     fixed in idea #198 (`0x807f_ffff`); the note was removed.
+
+---
+
+## `tan_checked`'s 2.3e9 max ulp is `sin_checked`'s number, not a tan defect
+
+Investigated 2026-08-01 as "the worst function in the crate". It is not a
+`tan`-specific defect and it is not fixable inside `tan_checked`.
+
+- **The headline numbers are the same number.** `accuracy quick` reports
+  `sin_checked (all f32)` at **avg 3.1e8 / max 2.13e9** and `tan_checked`
+  at avg 3.3e8 / max 2.34e9. `tan_checked` is `sin_checked/cos_checked`,
+  so it simply inherits the shared `reduce_pi` double-float `q` running
+  out at `|x| ~ 2^48*pi`. Ranking `tan_checked` above everything else is
+  an artifact of which row got quoted, not of tan being worse.
+- **Where the reported max/avg actually live: `|x| > 1e19`.** Per-band
+  (200k log-spaced samples/band, both signs, f64 `tan` reference):
+  `<1e9` max 3.3; `[1e9,1e12)` 535; `[1e12,1e13)` 2.0e4;
+  `[1e13,1e14)` 3.6e4; `[1e14,8.9e14)` 1.0e11; `[8.9e14,1e16)` 6.6e12;
+  `[1e16,1e19)` 2.2e12; `[1e19,3.4e38)` 1.1e12. Exponents 63..128 are
+  ~25% of a bit-pattern-uniform fuzz, so **any change that leaves
+  `|x| > 1e19` alone cannot move the reported max or avg**, however much
+  it improves the bands below. That is the trap this entry exists to
+  document.
+- **The reduction is not "wrong", it is out of the poly's domain.** `q =
+  qh + ql` is a sum of two integer-valued f32s, so it is an *exact*
+  integer even when it is the *wrong* integer, and `reduce_pi` then
+  computes `x - q*pi` honestly. Verified against exact-rational pi at
+  `x = 8.2815029e14`: shipped `rs = -3.241658e-3` vs exact
+  `-3.241631e-3`. The sin side is fine there; what fails is that `|r|`
+  drifts past `pi/2`.
+
+### Genuinely new: `cos_checked` dies a full binade before `sin_checked`
+
+`round_x_over_pi::<true>` folds cos's `-0.5` into `lo`, then rounds
+`rem = (p0 - qh) + lo` to an integer, then `reduce_pi(x, kh, kl + 0.5)`.
+Once `|rem| >= 2^23` the ulp of `rem` is `>= 1`, so **all three of**
+`lo - 0.5`, `rem.round_ties_even()` and `kl + 0.5` silently drop the
+half-integer. That happens at `|x| ~ 2^47*pi = 4.4e14` -- *half* the
+`2^48*pi = 8.85e14` limit `sin_checked`'s doc comment quotes.
+
+Measured, same bands: `[1e14,8.9e14)` `sin_checked` max 2.3e8 / avg 9.1e3
+vs `cos_checked` max **2.7e11** / avg 1.6e7, ~1000x worse. The mechanism
+is visible directly: `reduce_pi_half_checked(x)` and
+`reduce_pi_checked(x)` return the *identical* residual there (dumped at
+`x = 6.2e14`, `2.43e15`, `3.36e15`), so `tan_checked` degenerates to
+exactly `+-1.0`. This is the concrete reason behind the already-recorded
+"sin_checked cliff earlier than documented" observation.
+
+No cheap fix: `q_cos = k + 0.5` needs `2*q_cos` (an *odd* integer) exact,
+which a two-f32 pair caps at the same place. Deriving the cos residual
+from the sin residual afterwards is exactly what idea 50b rejected.
+
+### Five rewrites measured; none dominates
+
+All keep `tan(x) = tan(r)` for `r = x - q*pi` with **any** integer `q`
+(period pi), so the second-stage fold costs *no* parity bookkeeping at
+all -- that part works and is cheap.
+
+1. **Re-reduce both `reduce_pi_checked`/`reduce_pi_half_checked`
+   residuals mod pi.** No effect (1.04e11 -> 6.9e10). Useless because the
+   cos residual has already collapsed onto the sin one; there is nothing
+   left to fold back.
+2. **Single f32 residual + derived cos** (`v = a - sgn*pi/2`, idea 50b's
+   shape). `[1e14,1e16)` 1.0e11 -> **1.3e5**, but `[1,1e3)` 3.3 -> 1.5e5
+   and `[1e19,)` 1.1e12 -> 2.5e19. Confirms 50b: a single-f32 `r` cannot
+   carry the near-pole information.
+3. **Single reduction, unnormalized double-float residual** (`reduce_pi`
+   returning `(s3, err)` instead of `s3 + err`). *Worse* than (2) in
+   places and `inf` for `|x| > 1e19`. Root cause worth remembering:
+   **`err` is not a low word.** At `x = 6.465661e12` the pair is
+   `rh = 1.59375, rl = -2.2952e-2` -- `rl` is ~200000x larger than
+   `ulp(rh)`. `(rh - pi/2) + rl` then cancels catastrophically.
+4. **Same + one `quick_two_sum(rh, rl)` renormalization.** The fix for
+   (3), and the best variant found. Bit-identical to shipped
+   `tan_checked` below 1e9 (max 3.3); `[1e14,8.9e14)` 1.0e11 ->
+   **9.5e4**; `[8.9e14,1e16)` 6.6e12 -> **4.9e5**; `[1e16,1e19)` 2.2e12
+   -> **7.6e8**. But `[1e9,1e12)` 535 -> 1.97e4 and `[1e13,1e14)` 3.6e4
+   -> 9.6e5, and `[1e19,)` is a wash. So it trades a 30x near-pole
+   regression over four decades for a 6-orders-of-magnitude win over four
+   *other* decades, and **moves neither reported number**.
+   - The residual 30x gap is `err`'s own accuracy: it is a plain 4-term
+     f32 sum (`e1b + e2b + e3b - e3t`) tuned so that `s3 + err` rounds
+     correctly, not to be a correct low word in its own right. A
+     genuinely normalized double-float `reduce_pi` would close it -- and
+     would also drop one whole `round_x_over_pi`+`reduce_pi` pair and
+     both `parity` calls, so it is the one direction here that could win
+     on accuracy *and* throughput. It needs the `sin_checked` domain.
+5. **Hybrid** (shipped path below `2^47*pi`, variant 4 above). Best
+   accuracy profile of the lot and the thresholds are principled rather
+   than fitted, but ~12 extra ops on the crate's 2nd most expensive
+   function to move a number nobody measures. Not built.
+
+**Verdict: closed.** The reported max/avg cannot be improved without a
+table-indexed Payne-Hanek (bits of `1/pi` selected by `x`'s exponent),
+because past `~2^73` even a perfect `q` leaves `q*pi` short: the shipped
+`PI_HI/PI_LO/PI_TINY` triple is only ~72 bits of pi, so the residual's
+absolute error is `~|x| * 2^-73.65` regardless of how `q` is stored.
+Three-word `q` alone buys nothing without four-word pi. And a table
+lookup is a gather, which is the one thing this crate's auto-vectorized
+scalar style cannot absorb.
