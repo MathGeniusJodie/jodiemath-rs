@@ -384,3 +384,14 @@ function's speed or accuracy directly; several unblock ideas above.
      mca-derived scheduling decision in this crate is Tiger-Lake-
      specific — the decided tradeoffs (division-vs-poly, Estrin
      groupings) need re-measuring before claiming portability.
+- **`probit`'s tail: form `w` from `p`, not from `2p-1`.** Measured
+  defect, up to 6e4 max ulp for `p < 1e-5`, ~100% attributable to
+  `fma(2.0, p, -1.0)` throwing away `log2(1/p)` bits before `erfinv`
+  amplifies what is left by `exp(erfinv^2)`. `erfinv`'s tail only wants
+  `w = -ln(1-x^2)`, and `1-x^2 = 4p(1-p)` exactly, so the whole
+  cancellation is avoidable. Needs the `erfinv` domain (for
+  `erfinv_tail_poly`) alongside `probit`'s, plus a real ulp row in
+  `accuracy.rs` -- the current round-trip metric structurally cannot see
+  this, and `erfinv`/`erfc_inv` are scored the same way and want the same
+  re-check. Full numbers and the validated f64 reference recipe are in
+  graveyard.md.

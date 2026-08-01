@@ -7247,3 +7247,77 @@ a `vsqrtps` (a real throughput item on the divider port, unlike
 `srgb_to_linear`'s two extra multiplies) and `exp2_checked`'s own 1 ulp,
 amplified 3x, is still a hard floor at ~3-4 max ulp, so the reachable prize
 is 8 -> ~5 for a sqrt. Worth doing only if someone measures this as hot.
+
+## `probit`: 6e4 max ulp in the tail, and the standing metric cannot see it
+
+2026-08-01. Found while sweeping for the last single-word irrational
+constant (`SQRT_2 * erfinv(fma(2,p,-1))`). The constant is not the
+problem. `fma(2.0, p, -1.0)` is, and it is worth up to **60046 ulp**.
+
+### The defect
+
+`probit(p) = sqrt(2)*erfinv(2p-1)`. For small `p` the argument sits just
+above `-1`, where `ulp` is `2^-24` -- but `p` itself carries information
+down to `2^-24 * p`. Forming `2p-1` therefore **discards `log2(1/p)` bits
+of the input**: at `p = 1e-4` that is ~13 bits, gone before `erfinv` is
+called. `erfinv` then amplifies what is left by its own condition number,
+`d(erfinv)/dx = sqrt(pi)/2 * exp(erfinv(x)^2)`, which is ~1052 there.
+
+Measured against a Newton-refined f64 reference (seeded from the f32
+answer, two steps on `x -= (Phi(x)-p)/phi(x)` with `Phi` from sleef's
+`erfc_u15`; validated at `probit(0.975) = 1.959963985`,
+`probit(0.025) = -1.959963985`, `probit(1e-5) = -4.264890794`, all to 9
+digits against published quantiles):
+
+| `p` band | shipped avg / max ulp | predicted by `fl(2p-1)`'s rounding alone |
+|---|---|---|
+| `[1e-7, 1e-5]` | 6772 / **60047** | 6767 / 55761 |
+| `[1e-5, 1e-3]` | 109 / 695 | 105 / 691 |
+| `[1e-3, 0.05]` | 6.22 / 36.4 | 2.64 / 18.7 |
+| `[0.05, 0.25]` | 2.70 / 9.24 | 0.358 / 1.67 |
+| `[0.25, 0.5]` | 0.329 / 2.62 | 0.00 / 0.00 |
+
+The right-hand column is the first-order prediction from
+`(fl(2p-1) - (2p-1)) * d(probit)/dx` and nothing else. Below `p = 1e-3` it
+accounts for **essentially the whole error**; above `p = 0.25` it is
+exactly zero, because `2p-1` is Sterbenz-exact there. This is the same
+shape as `gelu`/`norm_cdf`'s already-recorded "the composite's *argument*
+was the whole error", with a much larger amplifier.
+
+### Why nothing caught it
+
+`accuracy.rs` scores `probit` as a **round-trip residual**,
+`max |norm_cdf(probit(p)) - p|`, which reports 1.93e-7 -- clean. It cannot
+see this defect *even in principle*: `norm_cdf` is the inverse map, so it
+un-does the argument rounding. `Phi(probit(p))` returns to `p` whether or
+not `probit` used `p`'s low bits, because the information destroyed by
+`2p-1` is exactly the information `Phi` is insensitive to at that point.
+**A round-trip metric through an ill-conditioned inverse pair measures the
+pair, not the function.** `erfinv` and `erfc_inv` are scored the same way
+and want re-checking on the same suspicion.
+
+### The fix, which is cheap and exact
+
+`erfinv`'s tail branch needs `w = -ln(1 - x^2)`, and with `x = 2p-1`,
+
+    1 - x^2 = (1-x)(1+x) = (2-2p)(2p) = 4*p*(1-p)
+
+so `w = -ln(4*p*(1-p))` -- computable from `p` with **no cancellation at
+all**, since `1-p` is exact for `p <= 0.5` (Sterbenz) and the `4` is an
+exact scaling. The tail's own sign is `sign(p - 0.5)`, not `sign(2p-1)`,
+which needs no subtraction either. `probit` would then reuse
+`erfinv_tail_poly` on a `w` that never lost a bit, and keep the shipped
+`sqrt(2)*erfinv(2p-1)` only for the central band where `2p-1` is exact
+anyway. Not implemented here -- it needs the `erfinv` domain (for
+`erfinv_tail_poly`) as well as `probit`'s, and a `probit` ulp row in
+`accuracy.rs` to replace the round-trip that hid this.
+
+### `SQRT_2`, the thing actually being swept for
+
+`fl(sqrt 2)` is 0.287 ulp low, so `SQRT_2 * erfinv(...)` carries a
+0.14-0.29 ulp bias exactly like the six two-word constants already shipped.
+Deliberately **not** shipped: with the tail defect above unfixed, `probit`'s
+own error is 3-5 orders of magnitude larger wherever anyone actually uses
+it, so a two-word split here is `acosd`'s case -- structurally the better
+code, no measurable effect, +3 instructions. Revisit it *after* the `w`
+fix, when it would be the binding term.
