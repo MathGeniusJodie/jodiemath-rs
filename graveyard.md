@@ -5872,3 +5872,36 @@ deliberately unclamped `r`, so once the two-word `q` gives up (`|x|` past
 "pay to fix wrong output" spirit. Not done here: it is `wrap_pi`'s call
 to make, not the reduction's, and it is orthogonal to anything in this
 session.
+
+### The whole `< 1e13` accuracy claim, verified exhaustively rather than sampled
+
+`RPI_TINY`'s removal is the only change this session that is not
+bit-identical, so every band below 1e13 was swept **exhaustively** --
+every f32 bit pattern in the band, both signs -- with the pre-change code
+and the shipped code scored on the same inputs. Avg, max and worst-x come
+out **identical to every printed digit on all five bands**, for both
+functions:
+
+```
+band            n            sin avg    sin max   cos avg    cos max
+[1e3,1e5)       110,272,512   0.174304    2.1139   0.195165    3.4603
+[1e5,1.3e7)     117,840,512   0.174261    2.1230   0.194887    2.1005
+[1.3e7,1e8)      49,331,648   0.174225    6.2338   0.182969    6.2338
+[1e8,1e10)      111,971,762   0.174241   47.6119   0.174281   67.4972
+[1e10,1e13)     167,314,396   0.189633  154382.5   0.186941  154382.5
+```
+
+(worst-x identical too; the only movement anywhere is `[1e10,1e13)`'s
+average, 0.189633 -> 0.189612 and 0.186941 -> 0.186918, i.e. slightly
+*better*. Averages are in this harness's own ulp convention, so compare
+them to each other, not to `accuracy.rs`'s columns.)
+
+**The max column is the reusable finding.** `accuracy.rs`'s quick mode
+draws ~1.3M of the 112M patterns in `[1e8,1e10)` and reported max ulp 2,
+3 and 10 for `sin_checked` on three different runs of the *same* binary.
+The true value is 47. Three of the five bands have a true max well above
+anything sampling reports -- 6 where it says 2, 47 where it says 3, 67
+where it says 21. Per-band max from quick mode is a lower bound on a
+long tail, not an estimate of it: for a band this narrow the exhaustive
+sweep is only ~30 seconds, so just run it rather than repeating the
+fuzz. (The averages, by contrast, are stable to 4 digits.)
