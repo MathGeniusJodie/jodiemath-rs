@@ -1654,6 +1654,27 @@ open. Two rules that recur often enough to state up front:
   to more precisely satisfy `r²=1/h2` just makes it a better reciprocal of
   an already-wrong target, destroying incidental cancellation the naive
   form got for free.
+- **`erfcx_pos`'s `c0` as a single f32 word — *both* choices**: superseded,
+  and the reason is worth keeping because the old entry read like a closed
+  question. `c0 = P(0)` carries the `1/(x·sqrt(pi))` asymptote alone, so
+  past |x| ~ 10 the result is `c0*v` and nothing else and c0's own error
+  arrives as *bias*, not noise — a flat −0.63 ulp signed mean across every
+  band from [10,20) out to [1e10, f32::MAX). The catch is that 1/sqrt(pi)
+  is a near-tie in f32: 0.49 ulp above the nearer representable value,
+  0.51 below the other. So neither single word helps. The shipped
+  1-ulp-low choice gave `erfcx (x>=20)` 0.6478 avg / 4 max; pinning to
+  correctly-rounded only flips the bias's sign (0.6245) *and* costs `erfc`
+  a max ulp, which is what the earlier "pinning measured worse" note
+  recorded. Holding `c0` in two words and peeling the high word into the
+  final fma removes the bias rather than relocating it: tail 0.6478 →
+  0.2684 avg, max 4 → 2, signed mean −0.63 → +0.00, with `erf`, `erfc`
+  and `erfcx` all improving on their other rows too. **The recorded
+  rejection was about pinning and was never evidence against splitting** —
+  same shape as the "disproving the reason ≠ disproving the transform"
+  rule at the top of this file. The split does require re-polishing: with
+  an exact `c0` the unconstrained fit misses `erfcx_pos(0) == 1.0`, which
+  costs ~1 ulp of flat bias over the whole near-zero region until c1..c4
+  and c10 are each nudged an ulp to restore it.
 - **erfcx for |x|>10: asymptotic-tail fix**: the correctness gap is real
   and unbounded, not just imprecise — `erfc_rational`'s internal clamp
   freezes at `erfc_rational(10.0)` forever past x=10, and unlike `erfc`

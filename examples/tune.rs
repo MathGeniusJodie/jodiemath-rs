@@ -717,22 +717,29 @@ fn expm1_near0_deg5_c(x: f32, c: &[f32]) -> f32 {
 // -- descent against a different grouping tunes for roundings the shipped
 // code never makes.
 //
-// **All 11 coefficients are free, including `c0` -- deliberately, and
-// against the obvious argument.** `c0` is `P(0)`, and at large `xa` the
-// result *is* `c0*v` and nothing else, so `c0` alone carries the
-// `erfcx(xa) ~ 1/(xa*sqrt(pi))` asymptote and the tempting move is to
-// hardcode it to the correctly-rounded `1/sqrt(pi)` (0x3f106ebb) the way
-// `exp_r_c` hardcodes its own fixed 1.0s. That was tried and **measured
-// worse**: pinning it costs `erfc` a full max ulp (exhaustive 0.1993/7
-// free vs 0.2003/8 pinned), because the other ten coefficients cannot
-// re-absorb the constraint. The shipped `c0` is 1 ulp *below*
-// correctly-rounded and buys that ulp back; what it costs is 0.023 avg
-// ulp in the far tail (exhaustive `x >= 20`, 0.6245 -> 0.6478, max 4
-// either way). Do not "fix" it without re-running both sweeps.
+// **`c[0]` here is not `c0`.** `c0 = P(0)` carries the
+// `erfcx(xa) ~ 1/(xa*sqrt(pi))` asymptote by itself -- at large `xa` the
+// result *is* `c0*v` and nothing else -- so an error in it arrives out
+// there as one-signed bias rather than noise. `1/sqrt(pi)` is a near-tie
+// in f32 (0.49 ulp above the nearer representable value, 0.51 below the
+// other), so no single word carries it well enough. It is held in two:
+// the high word is hardcoded in the final fma below (`ERFCX_C0_HI`,
+// 0x3f106ebb) and `c[0]` is only the *low* word. Both single-word
+// variants were tried and both are worse -- see graveyard.md; the
+// shipped tail is 0.268 avg where the better single-word choice was
+// 0.625, and the correctly-rounded one also cost `erfc` a max ulp.
+//
+// The other ten are free, but a descent result is only usable if it also
+// reproduces `erfcx_pos(0.0) == 1.0` bit-exactly (see the `erfcx` target
+// below). With an exact `c0` the unconstrained optimum misses that pin,
+// so the shipped c1..c4 and c10 each sit an ulp off the LP's own values
+// to hold it -- treat the pin as a hard filter on candidates, not a
+// formality.
 //
 // This replaced a family of four targets (`erfc_c`/`erfc_c5`/
 // `erfc_lo_c`/`erfc_hi_c`) for the degree-4/4 rational in `xa` that
 // `erfcx_pos` retired; see graveyard.md for what they measured.
+const ERFCX_C0_HI: f32 = f32::from_bits(0x3f106ebb);
 #[inline(always)]
 fn erfcx_pos_c(xa: f32, c: &[f32]) -> f32 {
     let v = 1.0 / (2.0 + xa);
@@ -746,7 +753,7 @@ fn erfcx_pos_c(xa: f32, c: &[f32]) -> f32 {
     let t8 = fma(t9, v, c[8]);
     let lo = fma(p23, v2, p01);
     let hi = fma(p67, v2, p45);
-    v * fma(fma(t8, v4, hi), v4, lo)
+    fma(v, ERFCX_C0_HI, v * fma(fma(t8, v4, hi), v4, lo))
 }
 
 // exp's e^r poly (see src/lib.rs's exp) with c0 AND c1 both forced to
@@ -1669,9 +1676,11 @@ fn main() {
         // `erfcx_pos(0.0) == 1.0` bit-exactly (pinned in edgecheck.rs, and
         // the reason `erfc(0)` and `erfcx(0)` are exact). Re-check any
         // candidate this prints against that pin before shipping.
+        // `init[0]` is the two-word constant's *low* word, not `c0` -- see
+        // erfcx_pos_c above.
         let init = [
-            0.56418955, 1.1283774, 1.9749641, 2.807048, 2.975676, -3.7488432, 17.02367,
-            -117.490135, 255.59447, -243.95302, 90.238014,
+            f32::from_bits(0xb2fbd649), 1.1283773, 1.974964, 2.8070478, 2.9756768, -3.7488432,
+            17.02367, -117.490135, 255.59447, -243.95302, 90.238,
         ];
         tune("erfcx_pos", &erfcx_pos_c, &erfcx_ref, &grid, &init);
     }

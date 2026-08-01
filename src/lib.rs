@@ -4501,8 +4501,8 @@ pub fn tan(x: f32) -> f32 {
 // Estrin (3 fma's deep instead of Horner's 6, accuracy-neutral here --
 // fma reassociation has to be checked per poly, not assumed either way).
 // Coefficients are an ulp-weighted Chebyshev LP fit, weighted by the
-// linearized sensitivity of erf's final `1 - 2^poly` combine. Current:
-// erf max ulp 4, avg 0.63 (dense [-10,10] sweep).
+// linearized sensitivity of erf's final `1 - 2^poly` combine. This is
+// the `|x| >= 0.28` arm only; `erf`'s own overall numbers are on `erf`.
 #[inline(always)]
 fn erf_poly(x: f32, x2: f32) -> f32 {
     let a6 = 2.8388531e-4f32;
@@ -4552,7 +4552,17 @@ pub fn erf(x: f32) -> f32 {
     // instead of letting it run up toward overflow for huge |x|, a minor
     // side benefit, not the point of the change).
     let x2 = xa_bounded * xa_bounded;
-    let numer = x * fma(f32::from_bits(0x3f174f6e), x2, f32::from_bits(0x3f906ebb));
+    // The Pade numerator's constant term is `erf'(0) = 2/sqrt(pi)`, pinned
+    // by the approximant rather than fitted -- and it lands almost exactly
+    // on an f32 tie, 0.49 ulp above the nearer representable value. A
+    // single-word constant therefore carries that 0.49 ulp as *bias*, not
+    // noise, into every result small enough that `A*x2` has vanished
+    // beneath it: `x * fl(2/sqrt(pi))` is systematically one ulp high over
+    // roughly half the f32 domain by bit pattern. Splitting it two-word and
+    // folding LO into the same fma the rest of the numerator already needs
+    // rounds once, at the result's own magnitude (same construction as
+    // `atanpi`'s two-word `1/pi`).
+    let numer = fma(x, f32::from_bits(0x3f906ebb), x * fma(f32::from_bits(0x3f174f6e), x2, f32::from_bits(0xb37bd649)));
     let denom = fma(fma(f32::from_bits(0x3e3e2be3), x2, f32::from_bits(0x3f5b6db7)), x2, 1.0);
     let a = numer / denom;
     let b = mulsign(1.0 - exp2(erf_poly(xa_bounded, x2)), x);
@@ -4601,15 +4611,17 @@ const _: () = assert!((ERFCX_XS_CLAMP as f64) * (ERFCX_XS_CLAMP as f64) > 88.029
 // denominator from overflowing -- and that clamp *froze* `erfcx` at
 // `erfc_rational(10)` forever past x=10 (unbounded relative error).
 //
-// c0 is one ulp *below* the correctly-rounded 1/sqrt(pi) (0x3f106eba,
-// not 0x3f106ebb), and that is deliberate: hardcoding it to the
-// correctly-rounded value costs `erfc` a full max ulp (exhaustive
-// 0.1993/7 free vs 0.2003/8 pinned), because the other ten coefficients
-// cannot re-absorb the constraint. What the 1-ulp-low c0 costs is 0.023
-// avg ulp out in the tail, where the result is c0*v and nothing else
-// (exhaustive x >= 20: 0.6245 -> 0.6478, max 4 either way). Both sweeps
-// are in `tune.rs`'s own note; do not "correct" it without re-running
-// them.
+// c0 carries that asymptote by itself, and it is held in *two* f32
+// words: `c[0]` below is the low word, the high word (0x3f106ebb) is
+// peeled out of the polynomial and applied by the final fma. One word
+// cannot do it, because 1/sqrt(pi) lands almost exactly on an f32 tie --
+// 0.49 ulp above the nearer representable value, 0.51 ulp below the
+// other -- so *either* single-word choice leaves ~0.5 ulp of the
+// constant behind. Out in the tail that leftover is the whole error, and
+// it is bias rather than noise: the polynomial has collapsed to its
+// constant term, the result is `c0*v` and nothing else, so a fixed
+// relative offset in c0 arrives as a fixed, one-signed ~0.63 ulp offset
+// in every result past |x| ~ 10. Two words and one fma remove it.
 //
 // Fitted by a relative-error Chebyshev LP over v in (0, 1/2] (an even
 // sampling of v is a `1/x` sampling of the tail, so the fit is
@@ -4617,26 +4629,30 @@ const _: () = assert!((ERFCX_XS_CLAMP as f64) * (ERFCX_XS_CLAMP as f64) > 88.029
 // coordinate-descent polished on the f32 grid against the exact
 // evaluation order below (`tune.rs`'s `erfcx` target), under the side
 // constraint that `xa = 0` (where `2+xa` and `1/2` are both exact)
-// reproduces `erfcx(0) = 1.0` bit-exactly. Estrin-grouped, 4 fma deep
-// instead of Horner's 10: the division is already on the critical path
-// ahead of it, and Horner measured only ~0.5 ulp better on max.
+// reproduces `erfcx(0) = 1.0` bit-exactly. That constraint is load
+// bearing and is what the polished low-order coefficients are holding:
+// with an exact c0 the evaluation lands a hair the wrong side of the
+// boundary on its own, so c1..c4 and c10 each sit an ulp off the LP's
+// own values to pull it back. It is also the one property descent
+// cannot be handed as an objective -- re-check it against edgecheck's
+// pin after any refit. Estrin-grouped, 4 fma deep instead of Horner's
+// 10: the division is already on the critical path ahead of it, and
+// Horner measured only ~0.5 ulp better on max.
 //
-// Current: max ulp 5.9, avg 0.81 over a dense sweep of the whole
-// half-line (uniform in v, so uniform in the tail's own resolution).
-// The residual is dominated not by the fit (~0.5 ulp) but by forming
+// What is left is dominated not by the fit (~0.5 ulp) but by forming
 // `v` itself: rounding `2+xa` and then the reciprocal costs ~2.3 ulp
 // that no polynomial can recover, since `erfcx` has a nonzero slope at
 // 0 while `v` is stationary in relative terms there. Compensating that
 // needs the exact residual of `2+xa` (4-6 more ops, correct ordering
-// included) for ~1.5 ulp -- measured, rejected on cost. Note this
-// standalone number is *not* monotone with the shipped functions': the
-// pinned-c0 variant scores better here and worse through `erfc`.
+// included) for ~1.5 ulp -- measured, rejected on cost.
 #[inline(always)]
 fn erfcx_pos(xa: f32) -> f32 {
     let v = 1.0 / (2.0 + xa);
+    // c[0] is the *low* word of a two-word `1/sqrt(pi)`; the high word is
+    // peeled out of the polynomial and applied in the final fma below.
     let c: [f32; 11] = [
-        0.56418955, 1.1283774, 1.9749641, 2.807048, 2.975676, -3.7488432, 17.02367, -117.490135,
-        255.59447, -243.95302, 90.238014,
+        f32::from_bits(0xb2fbd649), 1.1283773, 1.974964, 2.8070478, 2.9756768, -3.7488432, 17.02367,
+        -117.490135, 255.59447, -243.95302, 90.238,
     ];
     let v2 = v * v;
     let v4 = v2 * v2;
@@ -4648,7 +4664,16 @@ fn erfcx_pos(xa: f32) -> f32 {
     let t8 = fma(t9, v, c[8]);
     let lo = fma(p23, v2, p01);
     let hi = fma(p67, v2, p45);
-    v * fma(fma(t8, v4, hi), v4, lo)
+    // `erfcx(x) -> 1/(x*sqrt(pi))` as x grows, so out in the tail this
+    // whole polynomial has collapsed to its constant term and the result
+    // is `v * 1/sqrt(pi)` and nothing else. 1/sqrt(pi) sits 0.49 ulp above
+    // the nearer f32 (a near-tie: the other side is 0.51 ulp below), so
+    // *either* single-word choice leaves ~0.5 ulp of the constant as pure
+    // bias -- ~0.63 ulp of it in the result, in one direction, for every x
+    // past ~10. Two words and one fma remove it outright, and the split is
+    // free of the usual fit-perturbation worry because this coefficient is
+    // the function's own asymptote, not a fitted parameter.
+    fma(v, f32::from_bits(0x3f106ebb), v * fma(fma(t8, v4, hi), v4, lo))
 }
 
 /// `erfc(x) = exp(-x^2)*erfcx(|x|)` for `x >= 0`, reflected through
@@ -4683,10 +4708,10 @@ fn erfcx_pos(xa: f32) -> f32 {
 /// the const assertions on it), which is why this calls `exp_reduce!`
 /// rather than [`exp_checked`].
 ///
-/// Current: max ulp 7, avg 0.1993 (exhaustive sweep over `|x| <= 10`,
-/// which is where the f64 reference stops being usable -- past ~10.05
-/// the true `erfc` rounds to exactly `0.0` (or `2.0` for `x < 0`) and
-/// this returns exactly that, pinned in edgecheck). Was 109 / 0.3055.
+/// Current: max ulp 6, avg 0.1949 (accuracy.rs's fuzz sweep restricted to
+/// `|x| <= 10`, which is where the f64 reference stops being usable --
+/// past ~10.05 the true `erfc` rounds to exactly `0.0` (or `2.0` for
+/// `x < 0`) and this returns exactly that, pinned in edgecheck).
 #[doc(alias = "erfcf")]
 #[inline(always)]
 pub fn erfc(x: f32) -> f32 {
