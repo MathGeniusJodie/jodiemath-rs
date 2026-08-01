@@ -6956,3 +6956,98 @@ without running anything.
 No code change: the function is already the faster of the pair and there
 is nothing to fix. `sigmoid_grad` and `tanh_grad` are not in readme's mca
 table, so no published number needed correcting either.
+## The mca *latency* column is wrong for 24 rows, and mostly too high
+
+**Measured 2026-08-01.** Follow-up to the `asinh` entry above, which found
+llvm-mca timing the wrong arm of one branch. The problem is not one
+function's: **39 of the 151 latency regions in `mca_target.rs` contain a
+real conditional branch, and for 24 of them the published figure lies above
+*both* of that region's own arms measured in isolation.** A number outside
+the interval its own two arms span is proof mca is simulating neither, and
+needs no calibration to establish.
+
+Shipped `tools/mca_arms.py` to make this checkable in one command: it
+deletes the arm an in-domain input never takes and re-runs llvm-mca.
+
+Two distinct failure modes, one measured example of each:
+
+- **Concatenation, which overstates.** If the second arm reads a register
+  the first clobbered, the two fuse into one artificial dependency chain.
+  This is the common case, and all 24 outliers are in this direction.
+
+  | fn | published | fall arm | target arm | overstated by |
+  |---|---|---|---|---|
+  | `exp2m1` | 80.00 | 37.00 | 48.00 | +67% |
+  | `exp10m1` | 112.00 | 37.00 | 80.00 | +40% |
+  | `expm1_checked` | 78.00 | 32.00 | 51.00 | +53% |
+  | `expm1` | 69.00 | 32.00 | 46.00 | +50% |
+  | `exp_m1_over_x` | 81.00 | 32.00 | 58.00 | +40% |
+  | `erf` | 87.00 | 44.00 | 65.98 | +32% |
+  | `tanh` | 85.64 | 53.00 | 62.00 | +38% |
+  | `asin` | 56.74 | 26.99 | 40.99 | +38% |
+  | `dawson` | 68.97 | 48.00 | 47.02 | +44% |
+  | `acosh` | 89.08 | 46.08 | 77.02 | +16% |
+  | `atanh` | 96.83 | 22.99 | 86.98 | +11% |
+
+  (plus `exp10m1`, `expm1_narrow`, `exp_m1_over_x_narrow`, `asinpi`,
+  `asind`, `tanpi`, `tan2pi`, `logit`, `erfc_inv`, `erfinv`, `div_euclid`,
+  `srgb_to_linear`, `xlogy`, `rcbrt`.)
+
+- **Last-writer-wins, which understates.** If both arms write the same
+  register and the *cheap* one is laid out last, mca times the cheap one.
+  `asinh` is the only measured case: published **69.41**, real in-domain
+  chain **88.02** (+26.8%). It needs a *mixed* arm selection -- its first
+  branch takes the fall-through in domain (`ax < 2048`, the sqrt arm) and
+  its second takes the target (`d.is_finite()`) -- which is why a
+  single-flag run brackets it (49.02/79.03) without containing it.
+
+**Cross-checked against wall clock**, since "outside its own arms" proves
+the published number wrong but not which arm is right. Calibrating
+cycles-per-ns on the 92 *branchless* rows (whose mca latency has no such
+problem) and applying it to the branchy ones picks the same arm the source
+guard does, in every case checked: `asinh` implied 90.4 vs arm-isolated
+88.02, `acosh` 74.6 vs 77.02, `tanh` 52.5 vs 53.00, `erf` 44.0 vs 44.00,
+`exp2m1` 47.1 vs 48.00, `rcbrt` 63.5 vs 60.47, `ln` 45.7 vs 42.94. The
+calibration is far too coarse to *set* a number (per-row ratios spread
+1.85-3.42 cyc/ns) but it is decisive about which arm.
+
+**Throughput is unaffected and remains the reference.** Those regions are
+vectorized and LLVM if-converts them to masked selects, so there is no
+branch to mis-simulate -- verified by the fact that all 39 branchy
+*latency* regions have branchless throughput twins.
+
+### Two corrections to entries above, both mine
+
+- The `asinh` entry claims "~124 is honest". **It is not** -- 123.88 was
+  the *modified* code's own concatenation artifact (that version still had
+  2 branches per step). The honest figures are shipped **88.02** and the
+  branch-deleted variant's own arm-isolated chain; the entry's conclusion
+  (buried, wall clock a wash) is unaffected, but do not quote 124.
+- The `srgb_to_linear` entry claims **latency -5.2%** (110.02 -> 104.30).
+  Both are concatenation artifacts. Arm-isolated in-domain: **69.02 before,
+  69.08 after -- flat.** The accuracy result (max 14 -> 7, avg 0.1046 ->
+  0.0823, exhaustive) is unaffected.
+
+## `srgb_to_linear_fast` was measured and is *not* worth shipping
+
+The `srgb_to_linear` entry above offered the pre-split form as a valid
+`_fast` variant, non-dominated on throughput (mca 3.831 vs 4.289, -10.7%).
+**Checked on real hardware, and that advantage does not exist.** 8
+alternating rounds of two prebuilt `quickbench` binaries under the bench
+lock, with `atan` as an in-binary control:
+
+```
+              srgb thr min   med    | atan control min
+shipped          0.898      1.020   |      0.319
+pre-split        0.915      1.012   |      0.319
+```
+
+The control is identical to three places, and the shipped (split) form is
+*faster* on the min. The mca +12.0% is the same 60-entry-scheduler window
+effect as the `asinh` entry: `Block RThroughput` was **flat at 41** across
+the change, so the resource limit never moved. Latency is flat too (24.17
+vs 24.16 ns wall; 69.08 vs 69.02 cyc arm-isolated).
+
+So the pre-split form is **dominated on every axis** -- worse avg, worse
+max, no measurable throughput or latency advantage -- and under the rule
+that deleted `cbrt_throughput` it does not get an API. No `_fast` shipped.
