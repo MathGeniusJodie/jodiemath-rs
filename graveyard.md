@@ -6881,3 +6881,78 @@ gone stale in one session: **a screen recorded as a conclusion needs the
 number it was decided on written next to it.** "Fails the screen" with no
 figure is indistinguishable from a guess, and the next instance cannot tell
 which it was.
+
+## `sigmoid_grad`: llvm-mca is wrong by 2.7x *in direction*, and IPC is the tell
+
+2026-08-01. A crate-wide `tools/mca_region.py` scan over all 144
+`*_throughput` regions ranked `sigmoid_grad` as the **7th most expensive
+function in the crate** at 4.386 cyc/elem -- ahead of `srgb_to_linear`,
+`asinh`, `acosh` and `compound`, for a three-line body. That is an
+artifact. It is worth a full entry because the next person to run that
+scan will see the same row and try to fix it.
+
+### The screen said "artifact" before any hardware ran
+
+`tanh_grad` is the same function with a different argument scale
+(`exp_checked(-2|x|)` vs `exp_checked(-|x|)`, then `q/(1+q)^2` either
+way), so it is an unusually clean control:
+
+| | instrs | uOps | BlockRT | mca cyc/elem | `vdivps` | fma |
+|---|---|---|---|---|---|---|
+| `sigmoid_grad` | **67** | **73** | **22.0** | **4.386** | 2 | 16 |
+| `tanh_grad` | 74 | 81 | 24.0 | 2.076 | 2 | 16 |
+
+`sigmoid_grad` is smaller on *every* rung of the documented escalation
+ladder -- fewer instructions, fewer uOps, lower Block RThroughput,
+identical counts of the expensive ops -- and mca says it costs 2.11x as
+much. That is precisely the "identical expensive ops plus fewer total
+means mca is wrong" case IDEAS.md already names.
+
+### Hardware, 4 runs, agrees with the ladder and not with mca
+
+`jm bench` (exclusive machine lock), quickbench min-of-7, both functions
+on the same `Band::Two` inputs in the same process:
+
+| run | `tanh_grad` | `sigmoid_grad` | ratio |
+|---|---|---|---|
+| 1 | 1.062 ns/op | 0.840 | 0.79 |
+| 2 | 1.010 | 0.903 | 0.89 |
+| 3 | 1.602 | 0.902 | 0.56 |
+| 4 | 0.970 | 0.861 | 0.89 |
+
+`sigmoid_grad` is **faster in 4 of 4**, by 11-15% in the three clean
+runs, against mca's claimed 2.11x slower -- and 0.85 is what the
+instruction and uOp counts (0.90, 0.90) predicted. mca is out by a factor
+of ~2.5 **in direction**, not just magnitude. This is the third recorded
+mca-vs-hardware disagreement in this repo and the second where the sign
+flips (`sincos_checked` was the first; `probit`'s was magnitude only).
+
+### The diagnostic worth keeping: IPC inside a throughput region
+
+`--bottleneck-analysis` names the failure outright:
+
+```
+sigmoid_grad  IPC 0.95   Data Dependencies [78.79%]  Resource Pressure [12.78%]
+tanh_grad     IPC 2.23   Data Dependencies [82.57%]  Resource Pressure [39.98%]
+```
+
+A `*_throughput` region evaluates 16 **independent** elements; nothing in
+it can legitimately be dependency-bound at IPC 0.95. mca has failed to
+overlap its iterations and is charging one full serial critical path per
+iteration -- `sigmoid_grad`'s 7017 cycles over 100 iterations is 70.2
+cyc/iteration against a `sigmoid_grad_latency` of 70.079, i.e. exactly
+one un-overlapped dependency chain, where `tanh_grad` gets 33 against its
+own 73.
+
+**So: compute `instrs/cycles` for any throughput region before quoting
+its cyc/elem.** Ranking all 144 regions by IPC puts `sigmoid_grad` alone
+among functions of its size -- every other region under 1.5 IPC is a 7-21
+instruction body dominated by one `vsqrtps`/`vdivps` (`rsqrt` 0.32,
+`pow_3_2` 0.66, `rhypot` 0.77, `sqrt1pm1` 0.92), where low IPC is
+honest. Every region above ~50 instructions sits at 1.4 or better except
+this one. That single ratio separates the honest rows from the lying one
+without running anything.
+
+No code change: the function is already the faster of the pair and there
+is nothing to fix. `sigmoid_grad` and `tanh_grad` are not in readme's mca
+table, so no published number needed correcting either.
