@@ -7205,3 +7205,45 @@ win against -- it needs a harness row first. `norm_cdf`'s
 the fix is not a two-word multiply: the constant feeds `erfcx_pos`, so it
 needs `gelu`'s `RSQRT2_HI`/`RSQRT2_LO` + `erfc(z+dz) = erfc(z)*(1-2z*dz)`
 treatment, which is several ops rather than one `fma`.
+
+## `linear_to_srgb`'s max 8: the outer `1.055` is not it, twice over
+
+**Rejected 2026-08-01.** After `srgb_to_linear` went 14 -> 7 by moving a
+constant's error out of an amplifying position, the obvious next target was
+`linear_to_srgb`'s own outer constant. `high = fma(1.055, p, -0.055)`
+cancels near the toe -- at `l = 0.0031308`, `1.055*p = 0.0817` and the
+result is `0.0267`, so anything wrong with `p` or with `1.055` is amplified
+**3.06x**. And `f32(1.055)` is 4.97e-8 *low*, which is 1.2 ulp of the
+result once amplified. That is a well-formed premise and it is wrong.
+
+Two independent ways of removing that error, both measured (quick fuzz,
+25M samples; shipped baseline avg 0.1209 max 8):
+
+- **Fold `1.055` into the exponent**: `p = exp2(fma(l2, 1/2.4,
+  log2(1.055)))`, `high = p - 0.055`. *Same op count* (an fma and a
+  subtract replace a multiply and an fma), and the constant's error drops
+  ~100x because inside the exponent it enters as `ln2 * ulp(0.0772)/2`.
+  Measured **avg 0.1207, max 9** -- max worse.
+- **Two-word `1.055`**: `fma(1.055, p, fma(SRGB_1055_LO, p, -0.055))`,
+  naming the constant to a relative 2.7e-16, +1 fma, and keeping the exact
+  `l = 1 -> 1.0` endpoint the fold puts at risk. Measured **avg 0.1228,
+  max 9** -- worse on both.
+
+**The same cancellation trap as `srgb_to_linear`'s own entry, now with two
+more instances: the low `f32(1.055)` was load-bearing.** That makes three
+measured cases in this crate where correcting a constant to its exact value
+made a composite worse. The rule is now firm enough to state as a screen:
+**in a composite whose constants have never been jointly fitted, a
+systematic constant error is as likely to be cancelling as to be costing.
+Measure before correcting, and correct them together or not at all.**
+
+What is actually binding: the toe's 3.06x amplification applied to
+`exp2_checked`'s *own* ~1 ulp plus the ~1.4 ulp its argument rounding
+contributes (`ulp(3.46)/2 * ln2`). That is ~7 ulp with a perfect constant,
+which is what is measured. Closing it needs a smaller argument, i.e. the
+`srgb_to_linear` lever transplanted: `l^(5/12) = sqrt(l) * l^(-1/12)`
+takes `|log2|` of the `exp2` part from 3.46 to 0.69. Not tried -- it costs
+a `vsqrtps` (a real throughput item on the divider port, unlike
+`srgb_to_linear`'s two extra multiplies) and `exp2_checked`'s own 1 ulp,
+amplified 3x, is still a hard floor at ~3-4 max ulp, so the reachable prize
+is 8 -> ~5 for a sqrt. Worth doing only if someone measures this as hot.
