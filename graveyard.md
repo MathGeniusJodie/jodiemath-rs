@@ -6830,3 +6830,54 @@ is free while a division is worth ~7 RThroughput. Look for two divisions
 whose arguments are powers of the same quantity -- `1/x^2` and `1/x`,
 `1/x` and `1/x^3` -- because one of them is a multiply away from the
 other and any constant left over lands in the coefficients.
+
+## Correcting my own f64 screen: one of the two sites was eyeballed, and wrong
+
+The first version of IDEAS.md's f64-lever entry closed *both* remaining EFT
+sites (`cbrt_accurate` and `clog`) as "~5 ops inside a ~60-op function, so
+2x on the other 55 swamps it". That ratio was never measured for either.
+Re-run properly:
+
+- **`cbrt_accurate`: the claim holds.** Its `Df32::from_mul(y,y)` / `y2*y`
+  / `(y3.0-x)+y3.1` block is **7 instructions of a 77-instruction**
+  `cbrt_accurate_unchecked_throughput` region -- 9%, so the screen's
+  verdict was right by luck rather than by measurement. It also has no
+  accuracy lever: `cbrt_accurate` already scores avg 0.000 / max 1.
+  (For the record, f64 *would* form its residual better -- one rounding of
+  `yd*yd*yd` is `2^-53|x|` against the Df32 pair's `2^-48|x|`, i.e. ~2^-31.6
+  vs ~2^-26.6 relative on `e` -- there is simply nothing left to spend it
+  on.)
+- **`clog`: the claim was wrong, and backwards.** `clog` has no mca region
+  at all (`mca_target.rs` deliberately omits it), so no op-count ratio was
+  ever available to eyeball. And on accuracy the shipped EFT is *not*
+  exact: its correction word `(e1+e2)+es` is summed **in f32**, and those
+  roundings sit at the `e`-terms' own scale (~`ulp(re^2)/2 ~ 6e-8`), not at
+  `v`'s. Probed against an exact `Fraction` reference on the `|z|=1`
+  manifold:
+
+  | band | f64 `(re*re+im*im)-1.0` | shipped 10-op EFT |
+  |---|---|---|
+  | `\|v\| ~ 1e-9` | 5.4e-7 | 8.7e-6 |
+  | `\|v\| ~ 1e-12` | 0 (exact) | 1.1e-3 |
+
+  So four f64 ops beat ten f32 ops on the exact axis the EFT exists to
+  serve. Moved to open.
+
+### The probe that produced this nearly got it backwards too
+
+First attempt reported the shipped EFT at **8.6e9 ulp** and f64 at 1 --
+i.e. exactly inverted. The reference was
+`math.log(float(R*R+I*I))/2`, and `float(R*R+I*I)` *is* the f64 method's
+own intermediate, so the f64 route was being scored against itself. This is
+the "harness reference can BE the bug" trap, from a file that already
+documents it twice. The fix that made the comparison meaningful was to stop
+scoring the end-to-end value at all and score **`v` directly against the
+exact rational**, since `ln|z| ~ v/2` passes `v`'s relative error straight
+through -- the same "score the thing whose error you are attributing"
+discipline as scoring a shipped function rather than a reduction residual.
+
+Transferable rule, since this is now the second time an IDEAS.md screen has
+gone stale in one session: **a screen recorded as a conclusion needs the
+number it was decided on written next to it.** "Fails the screen" with no
+figure is indistinguishable from a guess, and the next instance cannot tell
+which it was.

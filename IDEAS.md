@@ -309,26 +309,52 @@ the bar by construction if they find anything.
   Only viable inside a slice tier (scalar fusion attempts already failed,
   see rejected section).
 
-- **The f64 lever is exhausted for now, and here is the screen.** Four
-  functions have moved an f32 double-float/EFT chain into f64
-  (`sin_checked`/`cos_checked`, then `remainder_wide`, `powf`,
-  `compound_accurate` -- all in graveyard.md with numbers). What predicts
-  the size of the win is **how much of the f32 version is bookkeeping
-  rather than arithmetic**, because f64 costs exactly 2x per lane on this
-  machine: `vfmadd213pd %zmm` is Block RThroughput 1.0 against
-  `vfmadd213ps %ymm`'s 0.5, and both do 8 lanes. Halve the instruction
-  count and it is a rout (`remainder_wide` -70%); cut 10% and it is a wash
-  (`powf` -17% throughput but +0.5% latency, and its Block RThroughput
-  went *up*). The two EFT sites left in the crate both fail that screen
-  and should not be re-attempted without a new argument:
-  `cbrt_accurate`'s `Df32::from_mul(y,y)`/`y2*y` and `clog`'s
-  `two_prod`+`two_sum` for `re^2+im^2-1` are each ~5 ops inside a ~60-op
-  function, so 2x on the other 55 swamps anything the 5 can give back.
-  Also priced while doing this, so nobody re-derives it: `vdivpd %zmm` is
-  **16.0** Block RThroughput, so a division stays the wrong answer in f64
-  too; and f64 constants cause real register pressure -- one draft had 23
-  of them and llvm-mca showed 24 `vbroadcastsd` *inside* the unrolled loop
-  body.
+### The f64 lever: read this before writing any f64 kernel
+
+Five functions have now moved an f32 double-float/EFT chain into f64
+(`sin_checked`/`cos_checked`, `remainder_wide`, `powf`,
+`compound_accurate` -- all in graveyard.md with numbers). Three facts about
+the lever itself, none of them function-specific:
+
+1. **f64 buys no lane throughput on this machine. It costs exactly 2x per
+   lane.** `vfmadd213pd %zmm` is Block RThroughput **1.0**;
+   `vfmadd213ps %ymm` is **0.5**; both process 8 lanes. So an f64 port wins
+   *only* by shortening the algorithm, and the screen is **what fraction of
+   the f32 version is bookkeeping rather than arithmetic**. Halve the
+   instruction count and it is a rout (`remainder_wide` -70%); cut 10-18%
+   and it is a wash on throughput and a small loss on latency (`powf`, whose
+   Block RThroughput went *up* 17% even as its measured cycles went down).
+   Know which case you are in before writing code, not after.
+2. **`vdivpd %zmm` is 16.0 Block RThroughput.** A division stays the wrong
+   answer in f64 too -- a seed plus one Newton step is ~6 ops.
+3. **f64 constants cause real register pressure.** One `powf` draft had 23
+   of them and llvm-mca showed 24 `vbroadcastsd` *inside* the unrolled loop
+   body: LLVM ran out of ZMM registers and rematerialized. Trim every
+   polynomial to the accuracy actually required.
+
+**Remaining EFT sites, re-screened with measurements** (an earlier version
+of this entry asserted an op-count ratio for both from eyeballing, and was
+wrong about one of them -- see graveyard.md):
+
+- `cbrt_accurate`: **fails**, measured. Its `Df32::from_mul(y,y)` / `y2*y`
+  / residual block is 7 instructions of a 77-instruction region (9%), so
+  2x on the other 70 swamps it. And there is no accuracy lever either --
+  `cbrt_accurate` already scores avg 0.000 / max 1, i.e. correctly
+  rounded. Do not re-run this one.
+- `clog`: **open, and the opposite of what this entry used to say.** Its
+  near-1 branch builds `v = re^2+im^2-1` from two `fma` splits and a
+  `two_sum`, but the correction word `(e1+e2)+es` is itself summed *in
+  f32*, and those roundings sit at the `e`-terms' own ~`2^-24` scale
+  rather than at `v`'s. Probed against an exact rational reference over
+  the `|z|=1` manifold: forming `v` in plain f64 (`(re*re+im*im)-1.0`,
+  four ops, no EFT at all) is **16x more accurate** than the shipped
+  ten-op version at `|v| ~ 1e-9` (relative 5.4e-7 vs 8.7e-6) and exact
+  where the shipped one reads 1.1e-3. So this is a *simplification and an
+  accuracy win at once*, not a screen failure. What still has to be
+  checked is cost: `clog` has no mca region (its cost is its
+  constituents -- `cabs` 1.178, `ln` 1.611, `carg` 1.694 cyc/elem), so a
+  before/after needs one adding, and only the `v` block should move to
+  f64 -- porting `ln`/`atan2` too is a different and much larger project.
 
 ## Open: infrastructure, build and harness
 
