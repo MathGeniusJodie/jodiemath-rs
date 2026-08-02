@@ -479,13 +479,25 @@ function's speed or accuracy directly; several unblock ideas above.
 - **The `1 + r` peel is free for the core-locked `exp_r_poly!` too, and
   is screened but not taken.** `exp_reduce!` now evaluates `e^r - 1` and
   folds the `+ 1` into its reconstruction as `fma(s, t1, t1)`; the same
-  transform applies verbatim to `exp_r_poly!`, whose callers (`exp`,
-  `exp_narrow`, `exp_scaled`, `expm1`, `sigmoid`, ~20 in all) all end in
-  a `p * t1 * t2` or an `exp2int` multiply that can absorb the `+ 1` the
-  same way. Measured on the shipped f32 evaluation order over
+  transform applies verbatim to `exp_r_poly!`. There are **six** call
+  sites, not the ~20 first recorded here, and reading all six confirms
+  every one terminates in a multiply by an *exact power of two*, so the
+  `fma(s, t, t)` absorption applies at each without an awkward caller to
+  design around: `exp` and `exp_scaled` (`p * t1 * t2` off
+  `exp2_field_split`), `exp_narrow` and `sigmoid` (`p *
+  exp2int_field!(k)`), and `exp_neg_scaled64!` and `silu_checked` (`p *
+  exp2int_field!(k + 64.0)`). Measured on the shipped f32 evaluation
+  order over
   `|r| <= ln2/2`: max 2.392 -> 2.148, avg 0.7165 -> 0.6783, at **zero**
   instruction change (the `r + 1` add pays for the multiply-to-fma
-  swap). The mechanism is that `fl(1 + r)`'s rounding enters at
+  swap). **That "zero" may be conservative and should not be treated as
+  confirmation**: it was measured on the isolated poly, whereas at the
+  call sites the peel deletes the `l0 = r + 1.0` `vaddps` *and* turns one
+  `vmulps` into a `vfmadd` -- the same -1 arithmetic instruction the
+  `exp_reduce!` commit measured. Unverified (it needs the lock and an asm
+  diff), so expect a possible small win rather than a wash, and do not
+  read a flat instruction count as agreement. The mechanism is that
+  `fl(1 + r)`'s rounding enters at
   `(1 + r)/e^r ~ 0.92` of full weight while the peeled one is attenuated
   by `|e^r - 1|/e^r <= 0.415`. Not taken here because it is a *core*
   edit -- it needs `jm core claim` and a whole-crate sweep -- and on its
@@ -505,3 +517,15 @@ function's speed or accuracy directly; several unblock ideas above.
   budget: Horner measured ~0.5 ulp better on max back when the Gaussian
   half was co-dominant and was rejected on latency, and that tradeoff
   was priced against a max the exponential was half of. Re-price it.
+
+  **But only part of that rejection went stale, and the rest is still
+  binding.** Horner's +19-34% latency on four public functions does not
+  depend on how quiet the exponential half became, so the endpoint stays
+  rejected on its own terms. And a **refit is mandatory, not optional**:
+  the coefficients are coordinate-descent polished against the exact
+  Estrin order, so reordering without refitting breaks the `erfc(0)` /
+  `erfcx(0)` / `norm_cdf(0)` edgecheck pins immediately. What is
+  genuinely open is an *intermediate* evaluation order, not the Horner
+  endpoint. (Same shape as the two-word-constant rule: a polynomial
+  tuned against one arrangement has already absorbed it, so changing
+  the arrangement without refitting is not the same experiment.)
