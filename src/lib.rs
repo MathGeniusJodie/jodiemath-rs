@@ -6151,12 +6151,25 @@ pub fn erfc(x: f32) -> f32 {
 // than `x * .` -- the same one instruction and the same single
 // full-weight rounding, but every *intermediate* rounding inside the
 // Estrin tree lands at `|P-1| <= 0.114` instead of at `|P| ~ 1`, so each
-// reaches the result demoted ~9x. `c0` is in `[0.5, 1]`, so `c0 - 1` is
-// exact in f32: this is an evaluation restructure, not a refit, and the
-// approximation is unchanged. Same lever as `ln_normal`'s peeled `Q`,
+// reaches the result demoted ~9x. Same lever as `ln_normal`'s peeled `Q`,
 // and it transfers here for the reason it did not transfer to
 // `erfcx_pos` -- `x * P(x^2)` is the whole term, with nothing after the
 // poly but one multiply, so the poly's own roundings are the floor.
+//
+// **`c0` is fitted on the peeled grid, and that is where this function's
+// average lives.** Storing `c0 - 1 ~ -0.1138` rather than `c0 ~ 0.886`
+// puts the leading coefficient three binades down, where the f32 grid is
+// 8x finer (`ulp` 7.45e-9 against 5.96e-8). What small `|x|` actually
+// sees is the *effective* leading coefficient `1 + c0` in exact
+// arithmetic: the remaining terms vanish with `u = x^2`, and
+// `fma(x, c0, x)` is a single rounding of `x*(1 + c0)`. Over 96% of the
+// f32 patterns in `|x| < 0.7` sit below 0.0625, so the whole average ulp
+// of this branch *is* `|1 + c0 - sqrt(pi)/2|` measured against `ulp`, and
+// the finer grid is what lets that be placed within 0.06 of a `2^-24`
+// relative step instead of 0.5 of one. The stored value is neither the
+// grid point nearest `sqrt(pi)/2` nor `f32(sqrt(pi)/2) - 1`: it is chosen
+// by scoring the real chain, since the rest of the poly is fitted around
+// it.
 //
 // The peel is instruction-neutral where it acts (a `vmulps` becomes a
 // `vfmadd`); the vectorized `erfc_inv`/`probit` bodies pay a few extra
@@ -6167,7 +6180,7 @@ pub fn erfc(x: f32) -> f32 {
 #[inline(always)]
 fn erfinv_central_poly_m1(u: f32) -> f32 {
     let c: [f32; 9] = [
-        -1.1377305e-1,
+        -0.11377308,
         2.3201263e-1,
         1.2761366e-1,
         8.534858e-2,
@@ -6284,18 +6297,39 @@ fn erfinv_tail_poly_m1(t: f32) -> f32 {
 // past the `w <= 15.9424` that any 24-bit `x` can encode, which is all
 // `erfinv_tail_poly_m1` is fitted for.
 //
-// Minimax (LP) fit of `erfinv/sqrt(w)` against `sqrt(w)` over `w` in
-// `[15.92, 102.8]`. The variable is `sqrt(w)`, not `w`, because
-// `erfinv/sqrt(w)` approaches 1 with a `ln(w)/w` tail that no degree-7
-// poly in `w` can follow across a 6.4x range (1644 ulp idealized, against
-// 2.0 for the same degree in `sqrt(w)`). `sqrt(w) - 7` is *exact* for
-// every `sqrt(w)` this branch sees -- both binades in `[4, 10.13]` leave
-// enough significand for a result up to 3.15 -- so the recentring costs
-// no accuracy and buys the Estrin combine its conditioning back.
+// An ulp-weighted LP fit of `erfinv/sqrt(w)` against `sqrt(w)` over `w`
+// in `[16, 102.6]`, minimising the *average* subject to a cap on the
+// maximum rather than minimising the maximum alone. That objective is
+// chosen because of what this branch is: every `n` below ~5.6e-8 lands
+// here, which is ~81% of the f32 patterns in `erfc_inv`/`probit`'s
+// domains, and an oracle screen puts essentially all of its error in the
+// fit -- evaluating the same coefficients exactly instead of in f32
+// Estrin does not move the number at all. The `s`/`w`/`v` roundings
+// contribute ~0.28 ulp of average between them and are the floor the fit
+// is pushed down to.
+//
+// The f32 quantisation is sequential with the LP **re-solved** after each
+// coefficient is fixed, rather than rounding the real solution all at
+// once; on a fit this tight that is worth more than the last coefficient.
+//
+// The variable is `sqrt(w)`, not `w`, because `erfinv/sqrt(w)`
+// approaches 1 with a `ln(w)/w` tail that no degree-7 poly in `w` can
+// follow across a 6.4x range (1644 ulp idealized, against 2.0 for the
+// same degree in `sqrt(w)`). `sqrt(w) - 7` is *exact* for every `sqrt(w)`
+// this branch sees -- both binades in `[4, 10.13]` leave enough
+// significand for a result up to 3.15 -- so the recentring costs no
+// accuracy and buys the Estrin combine its conditioning back.
+//
+// The fit grid runs over `sqrt(w)` down to exactly 4 -- the seam -- and
+// is parametrised by `sqrt(w)` rather than by the *result*: the branch is
+// entered at `w > 16`, so a grid derived from `erfinv` values stops
+// short of `sqrt(w) = 4` and leaves the poly extrapolating over the first
+// sliver, which is exactly where its entire worst case then lands.
 //
 // A poly in `1/sqrt(w)` fits ~8x tighter still (0.37 ulp at one degree
 // lower), and is not used: the reciprocal is a `vdivps` on the divider
-// port for a fit that is already 5x under this chain's binding term.
+// port, and it is the average rather than the maximum that this fit
+// binds -- see IDEAS.md.
 //
 // **`Q - 1`, not `Q`**, combined by the caller as `fma(v, ., v)` -- see
 // `erfinv_central_poly_m1`. `|Q-1| <= 0.041` over this branch, the
@@ -6303,14 +6337,14 @@ fn erfinv_tail_poly_m1(t: f32) -> f32 {
 #[inline(always)]
 fn erfinv_far_poly_m1(t: f32) -> f32 {
     let c: [f32; 8] = [
-        -0.018711507,
-        0.0039011878,
-        -0.0006304676,
-        9.076141e-5,
-        -1.21382e-5,
-        1.563816e-6,
-        -1.7515987e-7,
-        1.0700608e-8,
+        -0.018711485,
+        0.0039010558,
+        -0.00063050824,
+        9.089283e-5,
+        -1.2126031e-5,
+        1.5352017e-6,
+        -1.7609956e-7,
+        1.2450847e-8,
     ];
     let t2 = t * t;
     let t4 = t2 * t2;

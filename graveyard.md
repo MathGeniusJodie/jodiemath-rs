@@ -2674,7 +2674,7 @@ worked, which is what makes the next one findable. The code itself is in
   | `exp2_q_poly_centered` | exp10_checked | 0.140 | 0.133 | 1.05x | **exhausted** |
   | `erf_poly` | erf | 0.831 | 0.819 | 1.01x | **exhausted** |
   | `exp_r_poly` | exp, expm1, tanh, sigmoid, sinh, cosh... | 1.354 | 1.353 | 1.00x | **exhausted** (c0/c1 pinned to 1) |
-  | `erfinv_central_poly` | erfinv, erfc_inv, probit | 0.503 | 0.503 | 1.00x | **exhausted** (floor is f32(sqrt(pi)/2)) |
+  | `erfinv_central_poly` | erfinv, erfc_inv, probit | 0.503 | 0.503 | 1.00x | ~~exhausted (floor is f32(sqrt(pi)/2))~~ **STALE, do not cite** -- that floor was a property of the *pre-peel* coefficient grid, and the peel made it 8x finer. Re-opened and re-fitted; see "the peel re-opened the coefficient grid" at the end of this file |
   | `erf_pade` | erf | 0.871 | 0.891 | 0.98x | **exhausted** |
   | `log1pmx_Q` | log1pmx | 0.337 | 0.351 | 0.96x | **exhausted** |
   | `LOG2_COEFFS` | log_2, log2_df, log2p1 | 0.287 | 0.307 | 0.93x | **exhausted** |
@@ -12215,3 +12215,115 @@ Estrin keeps its 4-deep-vs-10-deep latency advantage for free.
   argument `v` (an exactly-rounded `v` does not lower the max either).
   Anything that moves it has to change the *number* of full-weight
   roundings, not their arrangement.
+
+## `erfinv`/`erfc_inv`/`probit`: the peel re-opened the coefficient grid
+
+The `fma(x, P-1, x)` peel stores `c0 - 1` instead of `c0`. That is not
+only an evaluation restructure: it moves the leading coefficient three
+binades down (central/tail) or six (far), where the f32 grid is **8x**
+respectively **64x** finer. Every fit verdict recorded against the
+pre-peel grid is therefore stale, including this file's own
+"`erfinv_central_poly` -- **exhausted** (floor is `f32(sqrt(pi)/2)`)"
+row in the poly-headroom table. That floor was a property of the grid,
+not of the polynomial, and it no longer binds.
+
+### Shipped: `erfinv`'s average was one number, and it was the wrong grid point
+
+For small `|x|` the central poly's remaining terms vanish with `u = x^2`
+and `fma(x, c0, x)` is a *single* rounding of `x*(1 + c0)` -- so what the
+function computes there is the **effective leading coefficient** `1 + c0`
+in exact arithmetic, and nothing else. Over 96% of the f32 patterns in
+`|x| < 0.7` sit below 0.0625, so `|1 + c0 - sqrt(pi)/2|` *is* `erfinv`'s
+average ulp.
+
+| `c0 - 1` grid offset | `(1+c0-sqrt(pi)/2)/sqrt(pi)/2`, in `2^-24` | exponent-uniform avg |
+|---|---|---|
+| 0 (pre-peel value, `c0-1` exact) | +0.504 | 0.3589 |
+| -3 | +0.081 | 0.0575 |
+| **-4 (shipped)** | **-0.060** | **0.0478** |
+| -5 | -0.201 | 0.1500 |
+
+The pre-peel grid could only place that coefficient to within half of a
+`5.96e-8` step, i.e. ~0.5 of a `2^-24` relative step -- which is exactly
+the +0.504 above. The peel's finer grid places it at 0.060.
+
+**Exhaustive, all 2130706432 patterns: avg 0.3615 -> 0.0472, max 3 both
+ways** (predicted 0.0478 by an exponent-uniform model before the run).
+The mca regions for `erfinv`/`erfc_inv`/`probit` are **byte-identical** --
+only the `.rodata` pool moves (76 lines), so this is free at runtime in
+the strict sense, not merely cheap.
+
+Note `-4` is neither the grid point nearest `sqrt(pi)/2` nor
+`f32(sqrt(pi)/2) - 1`; the rest of the poly is fitted around `c0`, so the
+value has to be chosen by scoring the chain. See also the standing rule
+that pinning a coefficient to its exact mathematical value is a fit
+constraint, not a free correctness win.
+
+### Shipped: `erfinv_far_poly_m1` was fit-limited, and the fit was mis-ranged
+
+`erfc_inv`/`probit` reach the far branch for every `n` below ~5.6e-8 --
+**81% of the f32 patterns in their domains**, a fact that was not
+recorded anywhere and is what makes this poly worth touching at all. An
+oracle screen on a model of the chain (validated: it reproduces the
+measured `erfc_inv` 0.6224 as 0.6250 and `probit` 0.7050 as 0.7027)
+splits the far branch's 0.63 avg as:
+
+| stage | avg ulp |
+|---|---|
+| polynomial (fit; f32 Estrin evaluation adds **exactly 0**) | ~0.35 |
+| `v = fl32(sqrt(w))` rounding | 0.262 |
+| `w` rounded to f32 | 0.130 |
+| `s = fma(-n, n, 2n)` | ~0 |
+
+So the far poly is **fit-limited, not rounding-chain-dominated** -- the
+one diagnosis under which a refit converts. This directly contradicts the
+comment the poly shipped with, which declined a tighter `1/sqrt(w)`
+variable "for a fit that is already 5x under this chain's binding term".
+It is not under the binding term; for the average it *is* the binding
+term.
+
+Two things were wrong with the old fit and both matter:
+
+1. **Objective.** A pure minimax equioscillates, which is the worst
+   possible shape for an average. Minimising the ulp-weighted L1 *subject
+   to a cap* on the L-infinity (an LP, HiGHS) buys the average back at a
+   chosen max.
+2. **Range.** Parametrising the fit grid by the *result* rather than by
+   `sqrt(w)` stops the grid short of `sqrt(w) = 4`, the seam the branch is
+   actually entered at, leaving the poly extrapolating over `[4.0, 4.06]`.
+   Every one of the candidate's worst points landed in that sliver until
+   the grid was reparametrised -- an 8-ulp max from a poly whose idealized
+   max was 0.43. (The same failure, at the other end of the same poly, is
+   what the existing `w = 16` vs `15.9424` note is about.)
+
+Quantisation is sequential with the **LP re-solved** after each
+coefficient is fixed. Rounding the real solution all at once instead
+collapses it back to the least-squares answer -- measured: it gave
+idealized max/avg identical to a plain LS fit.
+
+Scored exhaustively over **all 10620503 f32 values of `v` in
+`[4, 10.1285]`** (not sampled), poly + combine, perfect `w`:
+
+| far poly | max | avg |
+|---|---|---|
+| previous | 2 | 0.5974 |
+| **shipped (LP, cap 2.0x minimax)** | **2** | **0.2586** |
+
+Same max, **2.31x** better average, same 8 coefficients, same
+instructions. Whole-chain end-to-end numbers are in the readme.
+
+### Rejected: the same treatment on `erfinv_tail_poly_m1`
+
+Every point on the LP front raises the sampled chain max from 3 to 5-7
+for an average gain of only 0.475 -> 0.41-0.43. Not Pareto, not taken.
+
+Two reasons it was never going to pay, worth recording so nobody repeats
+it. The tail poly is the one that was *already* coordinate-descended to a
+number (the twelfth-coefficient sweep), so it is in the "shipped
+coefficients beat a freshly quantised LP optimum" class. And the screen
+itself is invalid in this basis: degree 11 in `t = sqrt(w) - 1` with `t`
+reaching 3 spans `3^11`, and HiGHS calls the LP infeasible far above the
+true minimax -- it converged to 5.11 result-ulp when the shipped
+coefficients already measure 0.875. **A "minimax optimum" worse than the
+poly you are trying to beat is a conditioning failure, not a result.**
+Re-screening this one needs a Chebyshev basis.

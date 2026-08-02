@@ -499,8 +499,49 @@ function's speed or accuracy directly; several unblock ideas above.
      4.98 -> ~4.3. Note the central arm's *other* ulp while you are in
      there, and it is the bigger one: `x = fl(1 - n)` costs 2.66 -> 3.60
      because `n < 0.5` puts `x` on a coarser grid than `n`, and undoing
-     that needs a compensated `x` (~3 ops). `erfinv_central_poly` itself
-     has no headroom -- screened, see graveyard.md.
+     that needs a compensated `x` (~3 ops). The old "`erfinv_central_poly`
+     itself has no headroom" note is **dead** -- that verdict belonged to
+     the pre-peel coefficient grid; see graveyard.md.
+
+182. **`erfc_inv`/`probit`'s remaining average is the argument path, and
+     it is now the larger half.** With `erfinv_far_poly_m1` refitted, the
+     far branch's own fit is ~0.26 avg ulp against ~0.28 for the `s`/`w`/`v`
+     roundings that feed it, measured by oracle rows on a model of the
+     chain that reproduces both exhaustive baselines to three decimals.
+     Split of that 0.28: `v = fl32(sqrt(w))` costs **0.262**, `w`'s own
+     rounding to f32 **0.130**, and `s = fma(-n, n, 2n)` essentially
+     nothing. Two priced-but-unmeasured levers:
+     - *Make the sqrt last.* `z = sqrt(w * S(v))` with `S = (1+Q)^2`
+       fitted directly puts the final rounding on the answer itself, where
+       it costs 0 instead of being carried in and rounded twice. The poly
+       argument `v` can stay sloppy (only `dQ/dv` sees it). Cost is +1
+       `vsqrtps` +1 `vmulps`, and the two sqrts serialise -- so this is a
+       throughput/latency question mca has to answer, not an accuracy one.
+       Ceiling is ~0.26 of the ~0.35 avg, minus the new `w*S` rounding
+       (~0.12), so realistically ~0.35 -> ~0.22.
+     - *A poly in `1/sqrt(w)`* fits ~8x tighter (deg 6: 0.257 idealized
+       max against 1.64 for the shipped deg 7 in `sqrt(w)`), so it could
+       take the fit's 0.26 to ~0.03 -- but it needs a `vdivps`, and it
+       only reaches the *fit* half of the budget, i.e. ~0.35 -> ~0.29.
+       The sqrt-last lever is strictly the better-value one.
+
+183. **`erfinv_tail_poly_m1` cannot be screened by LP in the monomial
+     basis.** It is degree 11 in `t = sqrt(w) - 1` with `t` up to 3, so
+     `vander` spans `3^11` and HiGHS reports infeasible well above the
+     true minimax value -- the "optimum" it converges to (5.11 result-ulp)
+     is *worse* than the shipped coefficients already achieve (0.875), which
+     is the tell. Anyone re-screening this poly needs a Chebyshev basis
+     (or a rescaled `t`) before the LP means anything. The naive-basis
+     front was measured anyway and is a reject; see graveyard.md.
+
+- **`worst_corpus` covers `erfinv` but not `erfc_inv` or `probit`.** Both
+  are public, both have exhaustive rows in `accuracy.rs`, and both just
+  moved by a change that the corpus gate could not see (0 entries; the
+  `erfinv` change moved 12 of its 90). They reach a whole branch
+  `erfinv` cannot -- `erfinv_far_poly_m1` is unreachable from `erfinv`,
+  so that poly currently has **no bit-exactness gate at all**. Same
+  "gate whose coverage is a hand-written list" smell as the
+  `denormal_audit` item below.
 
 - **`denormal_audit`'s 2-arg coverage is still one function wide.** Both
   of its hand-maintained lists take `fn(f32) -> f32`. `logaddexp` is now

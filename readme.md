@@ -105,9 +105,9 @@ logaddexp_accurate (all f32)| 0.000 |     0     | (no std logaddexp; the cancell
      norm_cdf (all f32) |    0.062   |     6     | (no std norm_cdf; exhaustive. Same two terms as `erfc`, and now in the same proportion -- mostly the erfcx polynomial)
      norm_pdf (all f32) |    0.018   |     2     | (no std norm_pdf; exhaustive. The most exponential-bound function in the family: the rest of the chain is an exactly-split square and a two-word `1/sqrt(2*pi)`)
        dawson (all f32) |    0.048   |     6     | (no std dawson; exhaustive. The 6 is the central branch at x=1.421, where the rational's own fit is already 3; the `|x|>4` tail is peeled and sits exactly on its own fit-only floor, max 3)
-       erfinv (|x|<1)   |    0.362   |     3     | (no std erfinv; exhaustive)
-      erfc_inv (0<y<2)  |    0.622   |     4     | (no std erfc_inv; exhaustive)
-        probit (0<p<1)  |    0.705   |     4     | (no std probit; exhaustive)
+       erfinv (|x|<1)   |    0.047   |     3     | (no std erfinv; exhaustive. Almost all of the average is one number: the effective leading coefficient `1+c0` of the central poly, which is what every `|x|` under ~0.06 computes)
+      erfc_inv (0<y<2)  |    0.380   |     4     | (no std erfc_inv; exhaustive. 81% of the domain's bit patterns take the far-tail branch, so its poly sets this)
+        probit (0<p<1)  |    0.494   |     4     | (no std probit; exhaustive)
                   atan2 |    0.066   |     4     |  0.000  |    0
     atan2_unchecked (+) |    0.066   |     4     | (bit-identical to atan2 on its domain)
               atan2_pos |    0.062   |     3     | (no std atan2_pos)
