@@ -476,3 +476,32 @@ function's speed or accuracy directly; several unblock ideas above.
   with the full pre/post asm-region diff, which is what showed the first
   two conversions were byte-identical.
 
+- **The `1 + r` peel is free for the core-locked `exp_r_poly!` too, and
+  is screened but not taken.** `exp_reduce!` now evaluates `e^r - 1` and
+  folds the `+ 1` into its reconstruction as `fma(s, t1, t1)`; the same
+  transform applies verbatim to `exp_r_poly!`, whose callers (`exp`,
+  `exp_narrow`, `exp_scaled`, `expm1`, `sigmoid`, ~20 in all) all end in
+  a `p * t1 * t2` or an `exp2int` multiply that can absorb the `+ 1` the
+  same way. Measured on the shipped f32 evaluation order over
+  `|r| <= ln2/2`: max 2.392 -> 2.148, avg 0.7165 -> 0.6783, at **zero**
+  instruction change (the `r + 1` add pays for the multiply-to-fma
+  swap). The mechanism is that `fl(1 + r)`'s rounding enters at
+  `(1 + r)/e^r ~ 0.92` of full weight while the peeled one is attenuated
+  by `|e^r - 1|/e^r <= 0.415`. Not taken here because it is a *core*
+  edit -- it needs `jm core claim` and a whole-crate sweep -- and on its
+  own ~0.25 ulp it probably does not move `exp`'s integer max off 3. It
+  is worth doing opportunistically the next time somebody holds the core
+  lock for another reason. Do **not** pair it with a degree-6 bump for
+  those callers: that was measured and correctly rejected at +5-23%
+  throughput, and unlike the erfc family they have nothing downstream
+  amplifying them.
+- **`erfc` and `norm_cdf` are now `erfcx_pos`-bound, not exponential-
+  bound.** Both sit at max 6 with the Gaussian half no longer the larger
+  term. `erfcx_pos`'s remaining error is its own f32 *evaluation*, not
+  its fit (handing it an exactly-rounded `v` does not lower the max --
+  see its comment), so the levers already closed are the ones aimed at
+  `v`. What has not been tried is a different evaluation order for the
+  degree-10 polynomial itself under the current, now-quieter, error
+  budget: Horner measured ~0.5 ulp better on max back when the Gaussian
+  half was co-dominant and was rejected on latency, and that tradeoff
+  was priced against a max the exponential was half of. Re-price it.
