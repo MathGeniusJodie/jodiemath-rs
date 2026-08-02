@@ -496,6 +496,9 @@ throughput_fn!(thr_tan, "tan_throughput", tan);
 latency_fn!(lat_tan_checked, "tan_checked_latency", tan_checked);
 throughput_fn!(thr_tan_checked, "tan_checked_throughput", tan_checked);
 
+latency_fn!(lat_tan_wide, "tan_wide_latency", tan_wide);
+throughput_fn!(thr_tan_wide, "tan_wide_throughput", tan_wide);
+
 latency_fn!(lat_erf, "erf_latency", erf);
 throughput_fn!(thr_erf, "erf_throughput", erf);
 
@@ -929,6 +932,7 @@ fn main() {
         lat_atan2pi, thr_atan2pi;
         lat_tan, thr_tan;
         lat_tan_checked, thr_tan_checked;
+        lat_tan_wide, thr_tan_wide;
         lat_erf, thr_erf;
         lat_erfc, thr_erfc;
         lat_norm_cdf, thr_norm_cdf;

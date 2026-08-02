@@ -1990,6 +1990,39 @@ pub fn tan_checked(x: f32) -> f32 {
     f32::from_bits((num / den).to_bits() ^ (flip_s ^ flip_c))
 }
 
+/// `tan(x)` with **no magnitude limit**: avg 0.2495 / max 4 ulp
+/// exhaustively over all 2^32 patterns, where [`tan_checked`] -- the
+/// largest error left in the crate -- measures avg 406004054 / max
+/// 2324484283, for the same reason `sin_checked` does. Same body, on
+/// [`sin_wide`]'s reduction.
+///
+/// The two `reduce_pi_wide` calls do **not** cost two reductions: they
+/// differ only in their last few operations, so the table lookups, the
+/// three products, the integer peel and the two-word residual are common
+/// subexpressions and LLVM's GVN evaluates the **gathers once** -- the
+/// emitted throughput region contains three `vgatherdpd`, not six. That
+/// does not make this tier cheaper *relative to* `tan_checked` than
+/// `sin_wide` is to `sin_checked` (both land at ~3.2x), because
+/// `tan_checked`'s two `reduce_pi64` calls share in exactly the same way;
+/// it is why the ratio is not worse.
+///
+/// `tan_checked`'s doc comment argues that unbounded ulp near a pole is
+/// intrinsic to any full-range `tan`, since the poles eventually sit
+/// closer together than the local float spacing. Measured here, that
+/// **does not happen**: max 4, with the worst input at `1.31`, nowhere
+/// near a pole. The effect it describes was the broken reduction landing
+/// on the wrong side of a pole; once the pole locations are right, this
+/// function and the reference are near-pole together and the relative
+/// error stays bounded.
+#[inline(always)]
+pub fn tan_wide(x: f32) -> f32 {
+    let (rs, flip_s) = reduce_pi_wide::<false>(x);
+    let (rc, flip_c) = reduce_pi_wide::<true>(x);
+    let num = sinf_poly(rs).clamp(-1.0, 1.0);
+    let den = sinf_poly(rc).clamp(-1.0, 1.0);
+    f32::from_bits((num / den).to_bits() ^ (flip_s ^ flip_c))
+}
+
 /// Core of cbrt for normal finite x: bit-trick seed (~3% error), then a
 /// single degree-3 correction. d = s^3 - x is exact-ish via fma at any
 /// scale, and x/s^3 == 1/(1+r) exactly for r = d/x, so

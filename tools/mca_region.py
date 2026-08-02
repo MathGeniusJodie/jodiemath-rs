@@ -48,6 +48,39 @@ if missing:
     print("regions not found:", missing, file=sys.stderr)
     sys.exit(1)
 
+
+def loop_step(body, default):
+    """Elements one pass through a *throughput* region actually covers.
+
+    A throughput region is meant to be the fully-unrolled body of a
+    16-element loop, so dividing TotalCycles by ARR_LEN gives cycles per
+    element. When the region is big enough that LLVM keeps the loop
+    instead of unrolling it, llvm-mca simulates *one iteration* -- and the
+    /16 is then wrong by exactly the unroll factor. Detect it: a backward
+    branch to a label defined in the region, plus the induction step of
+    the `addq $N, %r..` / `cmpq $16, %r..` pair that drives it.
+
+    Real cases at the time of writing: tan_wide (N=4, 4x low) and clog_re
+    (N=8, 2x low). Silent, and in the flattering direction.
+    """
+    pos = {}
+    for i, l in enumerate(body):
+        m = re.match(r"^(\.LBB\d+_\d+):", l.strip())
+        if m:
+            pos[m.group(1)] = i
+    back = False
+    for i, l in enumerate(body):
+        m = re.match(r"^\s+j[a-z]+\s+(\.LBB\d+_\d+)", l)
+        if m and m.group(1) in pos and pos[m.group(1)] < i:
+            back = True
+    if not back:
+        return default, False
+    for l in body:
+        m = re.match(r"^\s+addq\s+\$(\d+), %r", l)
+        if m and 0 < int(m.group(1)) <= default:
+            return int(m.group(1)), True
+    return default, True
+
 print(f"{'region':<28} {'instrs':>7} {'uOps':>7} {'BlockRT':>8} {'cycles':>8} {'cyc/unit':>9}")
 for w in wanted:
     with tempfile.NamedTemporaryFile("w", suffix=".s", delete=False) as f:
@@ -61,7 +94,11 @@ for w in wanted:
         print(w, "FAILED:", r.stderr.strip()[:300], file=sys.stderr)
         continue
     s = json.loads(r.stdout)["CodeRegions"][0]["SummaryView"]
-    div = CHAIN_LEN if w.endswith("_latency") else ARR_LEN
+    if w.endswith("_latency"):
+        div, looped = CHAIN_LEN, False
+    else:
+        div, looped = loop_step(regions[w], ARR_LEN)
     per = s["TotalCycles"] / (s["Iterations"] * div)
+    mark = f"  (loop kept, /{div} not /{ARR_LEN})" if looped else ""
     print(f"{w:<28} {s['Instructions']//ITERS:>7} {s['TotaluOps']//ITERS:>7} "
-          f"{s['BlockRThroughput']:>8.2f} {s['TotalCycles']:>8} {per:>9.3f}")
+          f"{s['BlockRThroughput']:>8.2f} {s['TotalCycles']:>8} {per:>9.3f}{mark}")

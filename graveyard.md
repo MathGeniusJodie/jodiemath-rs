@@ -9824,3 +9824,98 @@ The `.cargo/config.toml` is not optional: without `-C target-cpu=native`
 the crate's own `compile_error!` on missing FMA fires, and per the
 RUSTFLAGS entry elsewhere in this file a failed build leaves the previous
 artefact in place, so the probe would silently measure stale code.
+## `tan_wide`, and the throughput column's own branch artifact
+
+2026-08-02, immediately after `sin_wide`/`cos_wide`. With those landed,
+the worst row in the crate was `tan_checked`, for exactly the same reason
+(it calls `reduce_pi64` twice) -- `accuracy quick` reads **avg 406062669 /
+max 2310525355** over all f32.
+
+`tan_wide` is `tan_checked`'s body verbatim on `reduce_pi_wide`.
+`accuracy thorough`, exhaustive over every f32 bit pattern (102s):
+
+```
+tan_wide      avg ulp 0.2495   max ulp 4   worst x 1.3138148
+```
+
+against `tan_checked`'s quick-fuzz **avg 406004054 / max 2324484283**.
+A separate dense stride-4093 scan confirms the change is *only* the
+reduction: on the bands where `tan_checked` is still accurate the two
+agree to four digits (3.3356 / 3.3356 on `[1e-3, 1e3]`, 3.3136 / 3.3136
+on `[1e3, 1e6]`), and diverge only above `1e15` (3.3259 vs 2.199e12).
+
+Worth noting because the existing `tan_checked` row carries the opposite
+expectation: its comment warns the number "will look alarming" because
+`tan` has a pole every `pi` and at large `|x|` the poles sit closer than
+the local float spacing, so any correct implementation shows unbounded
+relative error near them. **With an exact reduction that does not
+happen** -- max 4, and the worst input is `1.31`, nowhere near a pole.
+The unbounded-ulp-near-a-pole argument was describing a real effect of
+the *broken* reduction landing on the wrong side of a pole, not an
+intrinsic property of `tan`; once the pole locations are right, the
+reference and the function are near-pole together and the relative error
+stays bounded. This is the same shape as this file's own "near-zero
+excuse needs an exact reduction" rule, at infinity instead of zero.
+
+**GVN does share the two reductions.** `tan_wide` calls
+`reduce_pi_wide` twice, `HALF = false` and `HALF = true`, and the emitted
+region contains **three** `vgatherdpd`, not six: the table lookups, the
+three products, the integer peel and the two-word residual are common
+subexpressions and only the half-turn shift and the final `* pi` are
+duplicated. Same phenomenon as the already-recorded "inline CSE defeats
+pair-fn ideas", used deliberately this time. It does *not* make the wide
+tier relatively cheaper here than for `sin` -- `tan_checked`'s two
+`reduce_pi64` calls share the same way, so both land at ~3.2x. Sharing is
+why the ratio is not *worse*, which is a different claim, and the draft of
+this entry got it wrong until the corrected numbers below arrived.
+
+### The measurement trap this turned up, which is the more transferable half
+
+`tan_wide_throughput` first measured **3.479 cyc/elem against
+`tan_checked`'s 4.289** -- i.e. the wide tier appearing *cheaper* than the
+one it fixes. That is this file's own documented tell ("a composite
+cheaper than its parts means something got hoisted"), and the cause is
+new:
+
+`throughput_fn!` wraps a 16-element loop, and both `mca.rs` and
+`tools/mca_region.py` divide `TotalCycles` by `ARR_LEN = 16` to get
+cycles per element. That is only right when LLVM **fully unrolls** the
+loop. When the body gets big enough that it keeps the loop, llvm-mca
+simulates one *iteration*, and the `/16` is wrong by exactly the unroll
+factor -- silently, and always in the flattering direction. `tan_wide`'s
+region ends `addq $4, %rax / cmpq $16, %rax / jne`, so it covers 4
+elements: **the true figure is 13.915, not 3.479.**
+
+readme.md said of this column: "The **throughput** column has no such
+problem (those regions are vectorized and if-converted to masked selects,
+so there is no branch to mis-simulate)." That is true of *data-dependent*
+branches and false of a retained loop, which is a different mechanism.
+
+Audited all 153 throughput regions for a backward branch to one of their
+own labels. Exactly two pre-existing cases, and one is a relief:
+
+| region | real step | published | true |
+|---|---|---|---|
+| `clog_re_throughput` | 8 | 7.744 | **15.489** |
+| `powf_throughput` | -- (forward `jne`/`jp` only, no loop) | 6.996 | 6.996 |
+
+`clog_re` is in neither `mca.rs`'s `order` array nor the readme, so
+nothing published was ever wrong. `powf` looked like a hit on a first,
+sloppier audit that matched any jump to an in-region label without
+checking direction -- **check the direction**, its `jne`/`jp` are forward
+branches into a shared tail.
+
+Both tools now read the loop's own induction step (`addq $N, %r..`, LLVM's
+own unroll factor, not a guess) and divide by that, printing
+`(loop kept, /4 not /16)` so the row cannot go quietly wrong again.
+
+### Cost, corrected
+
+| region | `tan_checked` | `tan_wide` | delta |
+|---|---|---|---|
+| throughput | 4.289 | **13.915** | +224% |
+| latency | 101.00 | **116.06** | +14.9% |
+
+Same shape as `sin_wide`'s 3.2x and for the same reason -- the f64 gather
+drops the vectorization factor from 8 to 4. `tan_wide`'s region is `xmm`
+/`ymm` where `tan_checked`'s is `ymm`/`zmm`.

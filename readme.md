@@ -39,17 +39,20 @@ cbrt_accurate_unchecked |    0.000   |     1     | (bit-identical to cbrt_accura
           sinc (|x|<1e6)|    0.094   |     4     | (no std sinc)
 ```
 
-`sin_wide`/`cos_wide`'s rows are the only trig rows in this table measured
-over the **entire** f32 range, and that is the whole point of the tier.
+`sin_wide`/`cos_wide`/`tan_wide`'s rows are the only trig rows in this
+table measured over the **entire** f32 range, and that is the whole point
+of the tier.
 `sin_checked`/`cos_checked` are accurate to ~1e13 and then degrade, and
 past `2^51*pi` they return a value in `[-1,1]` with no relationship to the
 answer -- `accuracy`'s own `sin_checked (all f32)` row reads **avg
 314265980 / max 2130706432** on a quick fuzz (that max is `2*0x3f800000`,
 the ulp distance from `+1` to `-1`, i.e. the worst a clamped output can
-be). `sin_wide` reduces against a window of `1/pi` selected by `x`'s
-exponent instead of a fixed two-word constant, which costs three gathers
-and ~3.2x throughput; see its doc comment and graveyard.md. The two rows
-above are exhaustive over all 2^32 patterns, not sampled.
+be). `tan_checked` is worse still, avg 406004054 / max 2324484283, and has no
+row in this table at all. The `_wide` tier reduces against a window of
+`1/pi` selected by `x`'s exponent instead of a fixed two-word constant,
+which costs three gathers and ~3.2x throughput; see `sin_wide`'s doc
+comment and graveyard.md. All three `_wide` rows are exhaustive over all
+2^32 patterns, not sampled.
 
 ```
                          | jodie avg  | jodie max | std avg | std max
@@ -93,6 +96,7 @@ logaddexp_accurate (all f32)| 0.000 |     0     | (no std logaddexp; the cancell
            atan_latency |    0.052   |     3     |  0.000  |    0
                  atanpi |    0.078   |     4     | (no std atanpi)
   tan (|x|<2^22*pi) |    0.118   |     4     |  0.000  |    0
+      tan_wide (all f32)|    0.250   |     4     |  0.000  |    0
                    erf  |    0.027   |     3     | (no std erf)
          erfc (|x|<=10) |    0.129   |     7     | (no std erfc; the 7 splits about evenly between `exp`'s own error and the erfcx polynomial's evaluation -- neither dominates, see erfc's doc comment)
         erfcx (|x|<=20) |    0.144   |     6     | (no std erfcx; the 6 is on the *negative* arm, where it is `exp`'s error amplified by the reflection -- see erfcx's doc comment)
@@ -372,6 +376,7 @@ pre-rewrite numbers: `erf` latency 83.98, `remainder`/`remainder_ieee`/
 
 ```
 theoretical cost from llvm-mca (-mcpu=native, 100 iterations)
+(*L) region kept its loop; divided by the real step, not ARR_LEN -- see above
                     | latency (cyc)  | throughput (cyc)
 --------------------|----------------|------------------
 cbrt                |          35.06 |             1.629
@@ -394,6 +399,7 @@ cos_fast            |          56.00 |             1.406
 cos_checked         |          87.00 |             3.157
 cos_wide            |          99.06 |             9.299
 tan_checked         |         101.00 |             4.289
+tan_wide            |         116.06 |            13.915 (*L)
 sinpi               |          42.02 |             1.133
 cospi               |          47.00 |             1.226
 tanpi               |          76.00 |             2.223
@@ -459,6 +465,25 @@ fmod                |          35.13 |                 ? (*)
 fmod_unchecked      |          28.00 |             0.643
 ```
 
+**Two of the columns have their own artifacts; both are now detected
+rather than described.**
+
+`throughput` assumes each `*_throughput` region is the *fully unrolled*
+body of `throughput_fn!`'s 16-element loop, which is what makes
+`TotalCycles / (iterations * 16)` cycles-per-element. A region big enough
+that LLVM keeps the loop instead is simulated one *iteration* at a time,
+and the `/16` is then wrong by exactly the unroll factor -- silently, and
+always in the flattering direction. `tan_wide` first read **3.479**
+against `tan_checked`'s 4.289, i.e. the tier that fixes a 2.3e9-ulp row
+appearing *cheaper* than the row it fixes; its region ends `addq $4, %rax
+/ cmpq $16, %rax / jne`, so the real figure is **13.915**. `mca.rs` and
+`tools/mca_region.py` now read that induction step out of the asm and
+divide by it, printing `(loop kept, /4 not /16)`. Auditing all 153
+throughput regions found exactly one other, `clog_re` (step 8, so 2x low),
+which is published nowhere. This is a *different* mechanism from the
+branch artifact below -- there is no data-dependent branch involved, the
+region is a loop.
+
 **The latency column above is wrong for the branch-shaped rows, and mostly
 too high.** llvm-mca has no branch predictor: it simulates a region as one
 straight-line stream, so for `jcc L1 / <A> / jmp L2 / L1: <B> / L2:` it runs
@@ -478,7 +503,9 @@ Run `tools/mca_arms.py <mca_target-*.s> <region>_latency` before quoting or
 comparing any latency row; it prints each arm in isolation. The **throughput**
 column has no such problem (those regions are vectorized and if-converted to
 masked selects, so there is no branch to mis-simulate) and remains this
-crate's perf reference. Rows with no conditional branch -- `exp2`, `sin`,
+crate's perf reference -- with the *separate* retained-loop caveat above,
+which is not a branch-prediction artifact at all. Rows with no conditional
+branch -- `exp2`, `sin`,
 `atan`, `sigmoid`, `cosh`, `powf`, `hypot`, `cbrt` and most others -- are
 unaffected.
 

@@ -17,6 +17,77 @@ use std::process::Command;
 include!("support/mca_common.rs");
 const MCA_ITERATIONS: u32 = 100;
 
+
+/// Elements one simulated pass through each `*_throughput` region really
+/// covers, keyed by region name; absent means the region is straight-line
+/// and `ARR_LEN` is right.
+///
+/// A region counts as "loop kept" when it contains a backward branch to
+/// one of its own labels. The element step is then the `addq $N, %r..`
+/// that drives the `cmpq $ARR_LEN` beside it -- LLVM's own induction
+/// variable, so it is the unroll factor by construction rather than a
+/// guess. Text-scanning the asm rather than asking llvm-mca, which
+/// reports cycles for the block it was given and has no idea the block
+/// was supposed to be 16 elements wide.
+fn loop_steps(asm: &str) -> BTreeMap<String, usize> {
+    let mut out = BTreeMap::new();
+    let mut name: Option<String> = None;
+    let mut body: Vec<&str> = Vec::new();
+    for line in asm.lines() {
+        if let Some(rest) = line.split("# LLVM-MCA-BEGIN ").nth(1) {
+            name = Some(rest.split_whitespace().next().unwrap_or("").to_string());
+            body.clear();
+            continue;
+        }
+        let Some(n) = name.clone() else { continue };
+        if line.contains("# LLVM-MCA-END") {
+            if n.ends_with("_throughput") {
+                let labels: Vec<&str> = body
+                    .iter()
+                    .filter_map(|l| l.trim().strip_suffix(':'))
+                    .filter(|l| l.starts_with(".LBB"))
+                    .collect();
+                let mut seen: Vec<&str> = Vec::new();
+                let mut backward = false;
+                for l in &body {
+                    let t = l.trim();
+                    if let Some(lab) = t.strip_suffix(':') {
+                        seen.push(lab);
+                    }
+                    if t.starts_with('j') {
+                        if let Some(tgt) = t.split_whitespace().nth(1) {
+                            if labels.contains(&tgt) && seen.contains(&tgt) {
+                                backward = true;
+                            }
+                        }
+                    }
+                }
+                if backward {
+                    for l in &body {
+                        let t = l.trim();
+                        if let Some(rest) = t.strip_prefix("addq\t$") {
+                            if let Some((num, reg)) = rest.split_once(", %r") {
+                                if !reg.is_empty() {
+                                    if let Ok(v) = num.parse::<usize>() {
+                                        if v > 0 && v <= ARR_LEN {
+                                            out.insert(n.clone(), v);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            name = None;
+            continue;
+        }
+        body.push(line);
+    }
+    out
+}
+
 fn main() {
     // Both this process and the `cargo rustc`/`llvm-mca` children it spawns
     // below inherit this niceness (nice values survive fork/exec) -- llvm-mca
@@ -77,6 +148,8 @@ fn main() {
         .map(|(_, p)| p)
         .expect("no mca_target-*.s found after `cargo rustc --emit=asm` -- did the example build?");
 
+    let asm_text = std::fs::read_to_string(&asm_path).expect("couldn't read the emitted asm");
+
     eprintln!("running llvm-mca on {}...", asm_path.display());
     let output = Command::new("llvm-mca")
         .arg("-mcpu=native")
@@ -96,8 +169,18 @@ fn main() {
         .as_array()
         .expect("no CodeRegions in llvm-mca output");
 
+    // A throughput region is *meant* to be the fully-unrolled body of the
+    // 16-element loop in `throughput_fn!`, which is what makes
+    // `TotalCycles / (iterations * ARR_LEN)` cycles-per-element. When the
+    // region gets big enough that LLVM keeps the loop instead of unrolling
+    // it, llvm-mca simulates one *iteration*, and dividing by 16 is then
+    // wrong by exactly the unroll factor -- silently, and in the
+    // flattering direction. `loop_steps` reads the real step out of the
+    // asm; see its own comment.
+    let steps = loop_steps(&asm_text);
     let mut latency: BTreeMap<String, f64> = BTreeMap::new();
     let mut throughput: BTreeMap<String, f64> = BTreeMap::new();
+    let mut looped: Vec<String> = Vec::new();
     for region in regions {
         let name = region["Name"].as_str().unwrap_or("");
         let summary = &region["SummaryView"];
@@ -106,8 +189,15 @@ fn main() {
         if let Some(key) = name.strip_suffix("_latency") {
             latency.insert(key.to_string(), total_cycles / (iterations * CHAIN_LEN as f64));
         } else if let Some(key) = name.strip_suffix("_throughput") {
-            throughput.insert(key.to_string(), total_cycles / (iterations * ARR_LEN as f64));
+            let n = steps.get(name).copied().unwrap_or(ARR_LEN);
+            if n != ARR_LEN {
+                looped.push(format!("{key} (/{n})"));
+            }
+            throughput.insert(key.to_string(), total_cycles / (iterations * n as f64));
         }
+    }
+    if !looped.is_empty() {
+        eprintln!("note: loop kept (divided by the real step, not {ARR_LEN}): {}", looped.join(", "));
     }
 
     let order = [
@@ -224,6 +314,7 @@ fn main() {
         "atan2pi",
         "tan",
         "tan_checked",
+        "tan_wide",
         "erf",
         "erfc",
         "norm_cdf",

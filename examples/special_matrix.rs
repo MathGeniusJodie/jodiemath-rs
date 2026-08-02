@@ -147,6 +147,7 @@ fn main() {
         ("tan", tan as fn(f32) -> f32),
         ("tan2pi", tan2pi as fn(f32) -> f32),
         ("tan_checked", tan_checked as fn(f32) -> f32),
+        ("tan_wide", tan_wide as fn(f32) -> f32),
         ("tand", tand as fn(f32) -> f32),
         ("tand_unchecked", tand_unchecked as fn(f32) -> f32),
         ("tanh", tanh as fn(f32) -> f32),

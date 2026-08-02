@@ -1531,6 +1531,14 @@ fn main() {
         let s = measure!(everywhere, tan_checked, tan_ref);
         report("tan_checked", &s, t0);
     }
+    // `tan_wide` keeps the pole artifact the comment above describes --
+    // that one is real -- but not the excuse attached to it: its reduction
+    // does *not* run out of bits at any magnitude, so what is left is only
+    // the genuine `1/cos` amplification near a true pole.
+    if run("tan_wide") {
+        let s = measure!(everywhere, tan_wide, tan_ref);
+        report("tan_wide", &s, t0);
+    }
     if run("erf") {
         // erf_poly used to be evaluated unbounded on |x|, which was wrong
         // (not just imprecise) well before this bound -- see erf's doc
