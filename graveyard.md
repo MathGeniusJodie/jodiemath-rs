@@ -8211,3 +8211,37 @@ quotient, check whether the two masks share a term. If they do
 If they do not (`sind`/`cosd`, whose grids are offset by half a step
 *before* the magic round), it only relocates three integer ops and is not
 worth the copies.
+
+## `reduce_pi_checked`'s `fc` sign extraction: `as f32` is 2 instructions cheaper and 3 cycles slower
+
+`reduce_pi64::<true>` turns `fc`'s f64 sign into an f32-lane mask with
+`(!(fc.to_bits() >> 32)) as u32 & SIGN_MASK`, which lowers to a `vpsrlq`
+plus a `vpmovqd`. `!(fc as f32).to_bits() & SIGN_MASK` is the same mask
+(an f64->f32 convert preserves the sign bit for every input, underflow
+to `+-0.0` included) in one `vcvtpd2ps`.
+
+```
+region                     instrs      uOps    BlockRT   cyc/elem   latency
+cos_checked_throughput    83->81    101->101   24->24   3.157->3.099  87.00->90.00
+                                                          (-1.8%)      (+3.4%)
+tan_checked_throughput   108->106   126->126   30->30   4.289->4.162  101.00->101.00
+                                                          (-3.0%)
+  control: sin_checked 65 / 80 / 18 / 2.495 / 82.00 unchanged (HALF=false
+  never evaluates this arm)
+```
+
+Two instructions out, **uOps and Block RThroughput both flat**, so the
+throughput column is the only thing claiming a win -- and it is paid for
+on the latency side. The reason is that this mask is *not* off the
+critical path: `sin_checked`/`cos_checked` xor it into the residual
+*before* `sinf_poly`, and `fc` is only two or three ops upstream of `r`
+itself, so a `vcvtpd2ps` (~4-6 cyc) where a `movq`/`shr` pair (~2-3) used
+to be lands directly on the chain. `tan_checked` shows the throughput
+side without the latency side precisely because the fold landed there
+already moved its mask off the residual and onto the quotient.
+
+Not taken. Recorded because the substitution looks unambiguously free on
+instruction count and is not, and because it is the counterexample to
+"the sign mask is bookkeeping, it cannot be on the critical path" -- in
+this family it is, by construction, since the sign is applied to the
+poly's *argument* rather than to its result.
