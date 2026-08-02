@@ -10944,3 +10944,138 @@ the axis this crate optimizes.
 `expm1_r_poly!` split into `expm1_p_poly!` (returns `P`) plus a one-line
 wrapper to make `P` reachable; all three `expm1` mca regions verified
 **byte-identical** across that refactor, so it is purely structural.
+
+## `log10_normal`: the two-word `LOG10_E`, which works and still does not pay
+
+IDEAS.md filed this under *"would improve an existing function at zero perf
+cost, so they clear the bar by construction"*. It does improve it. It is not
+zero perf cost, and that is the whole result.
+
+`log10_normal`'s own comment prices its floor: `LOG10_E` is 2.33e-8 high,
+`Q` cannot absorb `(log10(e) - LOG10_E)/s` because that is a `1/s` term, and
+it costs a fixed **0.39 ulp-equivalent**. `LOG10_E_LO` (already in `lib.rs`,
+added for `log2p1`/`log10p1`) removes it: the closing
+`fma(s, LOG10_E, sq)` becomes two-word and the singularity drops to
+~2.6e-16/s.
+
+### The low word alone is *worse than shipping neither*
+
+This is the part worth remembering. Dropping `LOG10_E_LO` into the existing
+chain without touching `Q` measures **worse** than the shipped code:
+0.006941 -> 0.007195 avg over all positive normals at stride 251.
+
+`Q` is fitted against `(log10(1+s) - s*A)/s^2` for whichever leading constant
+`A` the code actually uses. A `Q` fitted for the one-word `A` therefore
+already carries whatever compensation for that constant's error a polynomial
+*can* express -- only the `1/s` part is beyond it. Adding the low word on top
+double-counts everything the fit already absorbed. **A two-word constant
+split is not a drop-in anywhere the polynomial beside it was fitted against
+the one-word value.** (`log2p1`/`log10p1`'s split *was* a drop-in, because
+there the constant scales a correction term with no co-fitted polynomial.)
+
+### Refit, and only then does a degree bump pay
+
+Same ulp-weighted LP as the shipped fit (weight `s^2/log10(1+s)`, scaled by
+`2^24`, sequential f32 quantisation) reproduces the shipped degree-7
+coefficients to 8 digits and its 0.5968 objective exactly, so the setup is
+verified. Against the two-word constant:
+
+| leading constant | deg | LP objective | note |
+|---|---|---|---|
+| one-word | 7 | 0.59679 | shipped |
+| one-word | 8 | 0.39189 | stalls on the 0.39 floor -- the constant, not the fit |
+| two-word | 7 | 0.50683 | singularity gone, degree still binding |
+| two-word | 8 | **0.07434** | 5.3x past the one-word floor |
+
+The floor is genuinely irreducible with one word, and the reason is worth
+stating: the weighted singularity error is `|(log10(e)-A)/s| * s/log10(e)`,
+i.e. **scale-invariant** -- it collapses to `A`'s own relative offset no
+matter what `s` does. `A = fl(log10(e))` already minimises that. There is no
+better single f32.
+
+### Measured through the real chain
+
+Standalone probe reproducing `log10_normal` exactly (it matches the
+graveyard's own prior rows: shipped `k==0` 0.290768, stride-251 oracle
+0.005622, both to 4 digits):
+
+| chain | `k==0` octave, exhaustive | all normals, stride 37 |
+|---|---|---|
+| shipped (one-word, deg 7) | 0.290768 | 0.006899 |
+| one-word, deg 8 refit | 0.184718 | 0.006389 |
+| two-word, deg 7 refit | 0.213922 | 0.006546 |
+| **two-word, deg 8 refit** | **0.057549** | **0.005843** |
+| oracle (correctly-rounded mantissa term) | 0.000000 | 0.005601 |
+
+Two-word deg 8 takes 80% of the `k==0` octave's error and **81% of the
+entire oracle headroom** on the aggregate. Note in passing that the
+comment's "degree 8 buys nothing" was a statement about the *fit objective*
+and is not true of the measured chain -- one-word degree 8 is a real -36%
+on the octave. It is just dominated.
+
+Harness, `thorough` (exhaustive over all 2^32), two-word deg 8:
+
+| | before | after |
+|---|---|---|
+| `log10` | 0.0034 / 1 | 0.0029 / 1 |
+| `log10_unchecked` | 0.0069 / 1 | 0.0058 / 1 |
+| `log10p1` | 0.0387 / **2** | 0.0304 / **1** |
+
+`log10p1` becoming faithfully rounded is the only max that moves anywhere,
+and it is real -- its worst points sit at `x ~ 0.06-0.07`, i.e. `u = 1+x` in
+`log10_normal`'s `k == 0` octave at small `s`, exactly where this fit wins.
+
+### Why it was not taken
+
++2 fma per call, and llvm-mca agrees on every rung (the two extra
+`vbroadcastss` are the new `c[8]` and `LOG10_E_LO`):
+
+| region | instrs | uOps | BlockRT | cyc/unit |
+|---|---|---|---|---|
+| log10_latency | 2885 -> 3013 | 3275 -> 3531 | 545.83 -> 588.50 | 48.157 -> 53.126 (+10.3%) |
+| log10_throughput | 95 -> 101 | 103 -> 111 | 19 -> 21 | 1.617 -> 1.806 (+11.7%) |
+| log10_unchecked_latency | 1802 -> 1932 | 1866 -> 1996 | 480 -> 544 | 38.063 -> 42.407 (+11.4%) |
+| log10_unchecked_throughput | 60 -> 66 | 65 -> 72 | 16 -> 18 | 1.022 -> 1.149 (+12.4%) |
+| log10p1_latency | 3279 -> 3408 | 3346 -> 3476 | 704 -> 768 | 52.017 -> 55.673 (+7.0%) |
+| log10p1_throughput | 106 -> 111 | 115 -> 122 | 23 -> 25 | 1.977 -> 2.149 (+8.7%) |
+
+So the whole win is one max ulp on `log10p1`, and `log10`/`log10_unchecked`
+-- already max 1, i.e. already faithful, against a `std log10` that is also
+max 1 -- pay 11-12% for an average they cannot spend. Set against the
+precedent that filed this idea: `log2p1`/`log10p1`'s own two-word split
+bought avg -65%/-73% for +2-3%, a ratio ~20x better than this one's -15%
+for +11%.
+
+**The intermediate is dominated, not a tier.** Two-word degree 7 (+1 op)
+was measured end-to-end specifically to see whether the cheaper half reaches
+the same max: `log10p1` 0.0387/2 -> 0.0317/**2**, throughput 1.977 -> 2.067.
+It buys no max anywhere and costs 4.6-6.2%, so it is strictly worse than
+both neighbours. No `log10_accurate` tier is warranted either: a second
+public entry point whose only distinguishable property is one ulp on a
+*third* function's max, both tiers being faithfully rounded, is API debt.
+
+Ready to paste if `log10p1`'s faithfulness ever becomes the priority --
+`Q` degree 8, refitted for the two-word constant:
+
+    -0.21714719, 0.14476478, -0.108580895, 0.08686869, -0.07212288,
+    0.06155919, -0.0575642, 0.056282505, -0.033275615
+
+with `a = fma(s2, l0, fma(s, LOG10_E_LO, k * LOG10_2_LO))` and
+`hi = fma(c[8], s2, l3)` feeding `u = fma(hi, s2, l2)`. Both low-word terms
+ride the poly's low group, off the critical path, so the tail stays at two
+fma and the poly depth stays at 4 -- the +2 is instruction count, not
+dependency depth.
+
+### Transferable
+
+- **A two-word constant split is a drop-in only where no polynomial was
+  co-fitted against the one-word value.** Otherwise the fit has already
+  absorbed what it can and the split double-counts. Check for a co-fitted
+  neighbour before assuming the `log2p1` result transfers.
+- **A "fixed floor" in a fit objective is not a floor on the measured
+  function.** Degree 8 against the one-word constant "reaches exactly the
+  floor and buys nothing" in objective terms, and is still -36% on the
+  octave that matters.
+- **Price the cheaper half explicitly.** Here it was not a Pareto point but
+  a dominated one, and only an end-to-end run showed that -- the fit
+  objective ordering (0.507 vs 0.597) suggested it should have helped.
