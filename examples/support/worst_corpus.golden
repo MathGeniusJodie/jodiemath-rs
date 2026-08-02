@@ -641,12 +641,12 @@ asinpi 80000001 80000000
 asinpi 007fffff 0028be60
 asinpi 7f7fffff ffc00000
 asinpi ff7fffff 7fc00000
-asinpi 3e800000 3da4b8d0
-asinpi be800000 bda4b8d0
+asinpi 3e800000 3da4b8cf
+asinpi be800000 bda4b8cf
 asinpi 3e8a3d71 3db2397c
 asinpi be8a3d71 bdb2397c
-asinpi 3e8f5c29 3db90148
-asinpi be8f5c29 bdb90148
+asinpi 3e8f5c29 3db90147
+asinpi be8f5c29 bdb90147
 asinpi 3f000000 3e2aaaab
 asinpi bf000000 be2aaaab
 asinpi 3f266666 3e66a2fd
@@ -680,7 +680,7 @@ asinpi bd6d4a21 bc9725da
 asinpi 34ddb3d9 340d23e5
 asinpi 460be628 ffc00000
 asinpi 3e81a89e 3da6e76c
-asinpi 3e1a1cac 3d44f84c
+asinpi 3e1a1cac 3d44f84b
 asinpi 3e7e062b 3da36c50
 asinpi 49603a33 ffc00000
 asinpi cb48f18d 7fc00000

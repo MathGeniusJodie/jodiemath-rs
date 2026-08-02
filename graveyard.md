@@ -8946,3 +8946,62 @@ weak Pareto pair:
 Check for an existing speed tier before pricing a shared-poly degree
 bump: if the fast path does not route through the poly, the blast radius
 is exactly the functions that wanted the accuracy.
+
+## `asinpi`: the same crossover fix as `asin`, and the transfer was exact
+
+Flagged in IDEAS.md the moment `asin` landed: same two-branch shape, same
+`0.27` crossover, exhaustive worst case at `x = 0.27000788`. The screen
+asked for there (is the `>= 3` ulp population confined to `[0.27, 0.5)`?)
+came back yes, with the same profile:
+
+```
+big [0.27,0.3) max 5 avg 1.373      big [0.5,0.7) max 2 avg 0.541
+big [0.3,0.4)  max 5 avg 1.243      big [0.7,0.9) max 2 avg 0.189
+big [0.4,0.5)  max 3 avg 0.676      big [0.9,1.0) max 1 avg 0.102
+```
+
+Shipped identically: crossover `0.27 -> 0.5`, `asinpi_small` degree 3 ->
+5 in `x^2` (the `FRAC_1_PI_HI/LO` peel is untouched, the two new
+coefficients just extend the tail Horner chain), `asinpi_poly` degree 6 ->
+5 on the narrowed `[0.5, 1)`. Exhaustive over all 2^32 patterns:
+
+```
+             avg ulp             max ulp
+asinpi   0.0159 -> 0.0057        5 -> 2
+asin     0.0158    unchanged     2    unchanged   (control)
+asind    0.0195    unchanged     4    unchanged   (control)
+```
+
+The avg is a 2.8x improvement, larger than `asin`'s own 1.19x, because
+`asinpi`'s small branch already carried the two-word `1/pi` peel: this
+hands that branch another 46% of the domain by measure.
+
+mca: instrs 61 -> 63, uOps 68 -> 70, Block RThroughput 14 -> 15,
+throughput 0.981 -> 1.059 cyc/elem (+8.0%). Per-arm latency, which is the
+one difference from `asin`: 31.99 -> 39.99 small, 40.99 -> **36.99** big,
+so the binding arm improves only 40.99 -> 39.99 and *swaps sides*. The
+peel's trailing `fma(x, FRAC_1_PI, x*t)` is what makes the small arm two
+fma deeper than `asin_small`'s at the same degree, and it is now the long
+one. Anything further added to that branch will cost latency at full
+price; `asin`'s will not until it too passes 36.99.
+
+`asinpi_poly` at degree 5 over `[0.5, 1)`, ulp-weighted LP then
+coordinate-descended over the f32 grid: max 2 / avg 0.308 through the real
+chain over every f32 there, against the degree-6 predecessor's max 2 / avg
+0.312. Same "the removed term was paying for `[0.25, 0.5)`" result as
+`asin_poly`'s, and worth noting it reproduced without retuning anything by
+hand -- the LP + descent recipe transferred as written.
+
+`worst_corpus` moved 5 entries, all `asinpi`, each checked against f64:
+two go 1 ulp -> correctly rounded, one goes correctly rounded -> 1 ulp,
+and the pair-mirrored negatives. A refit moving individual corpus points
+both ways while the exhaustive aggregate improves 2.8x is the expected
+shape, not a warning sign.
+
+### Where this stops
+
+`acospi` is *not* the third instance. It is a single expression with no
+crossover at all (`0.5 - sqrt(1-a)*P(a)` over the whole domain, trailing
+constant exactly `0.5`), max 3 / avg 0.0438, and there is no small branch
+to hand a window to. `acos` likewise. The family's remaining crossover is
+`asind`'s, and that one is `asin`'s -- already moved.

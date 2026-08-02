@@ -414,13 +414,3 @@ function's speed or accuracy directly; several unblock ideas above.
   with the full pre/post asm-region diff, which is what showed the first
   two conversions were byte-identical.
 
-- **`asinpi` has `asin`'s crossover defect, untouched.** Same two-branch
-  construction, same `0.27` crossover, and its exhaustive worst case sits
-  at `x = 0.27000788` (max 5, avg 0.0159). `asin` just went 5 -> 2 by
-  moving that crossover to `0.5` and paying for it by narrowing the big
-  branch's domain (graveyard.md §asin) -- the recipe transfers directly,
-  but `asinpi_small`/`asinpi_poly` are their own coefficient pairs and
-  live in another domain, so it is a separate claim and a separate fit.
-  Check first whether the `>= 3 ulp` population is confined to
-  `[0.27, 0.5)` the way `asin`'s was; that scan is what makes the whole
-  thing a five-line change instead of a search.

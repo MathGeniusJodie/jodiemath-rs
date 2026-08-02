@@ -4542,9 +4542,16 @@ pub fn asind(x: f32) -> f32 {
 #[inline(always)]
 fn asinpi_small(x: f32) -> f32 {
     let x2 = x * x;
-    let c1 = 0.053056117f32;
-    let c2 = 0.023659006f32;
-    let c3 = 0.017134449f32;
+    let c1 = 0.053051922f32;
+    let c2 = 0.023858273f32;
+    let c3 = 0.014473671f32;
+    let c4 = 0.0076965746f32;
+    let c5 = 0.013421959f32;
+    // Degree 5 in `x^2`, covering `[0, 0.5]` -- see [`asinpi`] for why
+    // the crossover sits there and `asin_small` for the same sizing
+    // argument (a minimax needs degree 5 to reach 0.5, not the ~12 terms
+    // the Taylor series would).
+    //
     // The leading coefficient is 1/pi, and unlike `asin_small`'s exact
     // 1.0 it is irrational: carrying it as the single word `FRAC_1_PI`
     // hands every result in this branch that constant's own 0.43-ulp low
@@ -4560,25 +4567,29 @@ fn asinpi_small(x: f32) -> f32 {
     // `FRAC_1_PI_LO > 0` is also what keeps `asinpi(-0.0)` at `-0.0`:
     // `x*t` stays `-0.0` rather than becoming `+0.0`, so the fma adds two
     // negative zeros. See RAD_TO_DEG_LO's comment for the same argument.
-    let t = fma(fma(fma(c3, x2, c2), x2, c1), x2, FRAC_1_PI_LO);
+    let t = fma(fma(fma(fma(fma(c5, x2, c4), x2, c3), x2, c2), x2, c1), x2, FRAC_1_PI_LO);
     fma(x, FRAC_1_PI, x * t)
 }
 
-// asin's `0.5 - sqrt(1-a)*P(a)` branch in half-turns, degree 6 over
-// a in [0.27, 1). Seeded from `asin_poly`'s coefficients rescaled by
-// 1/pi, then refit as an ulp-weighted minimax (LP) of
+// asin's `0.5 - sqrt(1-a)*P(a)` branch in half-turns, degree 5 over
+// a in [0.5, 1). Fitted as an ulp-weighted minimax (LP) of
 // `acos(a)/(pi*sqrt(1-a))` -- weight `sqrt(1-a)/ulp(asinpi)`, the
 // combine's own sensitivity -- and coordinate-descended over the f32
 // quantisation.
+//
+// One coefficient fewer than `acospi_poly`, because `asinpi`'s crossover
+// move handed this poly the narrower `[0.5, 1)` domain: scored through
+// the real chain over every f32 there, degree 5 measures max 2 / avg
+// 0.308 against the degree-6 predecessor's max 2 / avg 0.312 -- better
+// on both axes with a term removed.
 #[inline(always)]
 fn asinpi_poly(x: f32) -> f32 {
-    let u = 0.00047981358f32;
-    let u = fma(u, x, -0.0026602724);
-    let u = fma(u, x, 0.0073212385);
-    let u = fma(u, x, -0.014663323);
-    let u = fma(u, x, 0.027931212);
-    let u = fma(u, x, -0.068246327);
-    fma(u, x, 0.49999586)
+    let u = -0.0006497958f32;
+    let u = fma(u, x, 0.0038506954);
+    let u = fma(u, x, -0.011503078);
+    let u = fma(u, x, 0.026329458);
+    let u = fma(u, x, -0.06781764);
+    fma(u, x, 0.4999485)
 }
 
 /// asin(x)/pi (backlog idea #85), the C23 half-turn convenience family.
@@ -4589,18 +4600,31 @@ fn asinpi_poly(x: f32) -> f32 {
 ///
 /// The big branch is one `fma`, not a multiply and a subtract, for the
 /// same reason as [`asin`]'s -- and the cancellation here is sharper
-/// (`0.5 - 0.412 = 0.088` just above the crossover, ~5.7x, against
+/// (`0.5 - 0.412 = 0.088` just above a `0.27` crossover, ~5.7x, against
 /// asin's 4.7x), so the product's own rounding was worth even more.
-/// Current: max ulp 5, avg 0.016 (exhaustive). The remaining max is the
-/// big branch's, at `|x|` just above the crossover; the average is the
-/// small branch's, and see `asinpi_small` for why it needs the two-word
+///
+/// **The crossover is `0.5`, for [`asin`]'s reasons exactly** -- read
+/// that function's doc comment for the argument; this one has the same
+/// two defects ending at the same point, the amplified subtraction and
+/// an inexact `1.0 - a` below Sterbenz's range, and the same measured
+/// shape: with a `0.27` crossover the big branch scored max 5 across
+/// `[0.27, 0.4)` and max 2 over the whole of `[0.5, 1)`. `asinpi_small`
+/// carries the window instead, at degree 5, and `asinpi_poly` drops to
+/// degree 5 because its own domain narrowed with the move.
+///
+/// Exhaustive over all 2^32 patterns: max ulp **5 -> 2**, avg
+/// **0.0159 -> 0.0057**. mca: instrs 61 -> 63, uOps 68 -> 70, Block
+/// RThroughput 14 -> 15, throughput 0.981 -> 1.059 cyc/elem (+8.0%);
+/// per-arm latency (`tools/mca_arms.py`) 31.99 -> 39.99 small and
+/// 40.99 -> 36.99 big, so the binding arm goes 40.99 -> 39.99 and swaps
+/// sides. See `asinpi_small` for why this branch needs the two-word
 /// `1/pi` that `acospi` (trailing constant exactly `0.5`) does not.
 #[inline(always)]
 pub fn asinpi(x: f32) -> f32 {
     let a = x.abs();
     let small = asinpi_small(x);
     let big = mulsign(fma(-(1.0 - a).sqrt(), asinpi_poly(a), 0.5), x);
-    if a < 0.27 { small } else { big }
+    if a < 0.5 { small } else { big }
 }
 
 // 3/3 Pade-style rational approximation of atan on [0,1], seeded from a
