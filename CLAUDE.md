@@ -38,10 +38,13 @@ anyway.
 
 `fma`, `sinf_poly`, `sinf_poly_raw`, `parity`, `exp2_field_split`,
 `exp2int_field`, `exp2_q_poly`, `exp_r_poly`, `log_family_edges`,
-`denormal_rescale`, `pade_expm1_ratio` are used by 6-94 public functions each.
-Nobody owns them. To edit one: `./tools/jm core claim`, which locks out
-everyone. A core edit moves every function downstream of it, so re-run the
-accuracy sweep for the **whole crate** before landing, not just your domain.
+`denormal_rescale` are used by 6-94 public functions each. Nobody owns them.
+To edit one: `./tools/jm core claim`, which locks out everyone. A core edit
+moves every function downstream of it, so re-run the accuracy sweep for the
+**whole crate** before landing, not just your domain.
+
+This prose list goes stale; `./tools/jm core` computes the real one from the
+source. Trust the tool over this paragraph.
 
 ### Measurement
 
