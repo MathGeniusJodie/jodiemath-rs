@@ -228,17 +228,34 @@ macro_rules! exp_pos_neg_core {
         // own comment). Written as `* 0.5` rather than as pre-divided
         // decimal literals so the fit's own values stay legible and the
         // halving cannot be mistranscribed.
-        let c: [f32; 4] = [
-            4.99993e-1 * 0.5,
-            1.6667245e-1 * 0.5,
-            4.188372e-2 * 0.5,
-            8.300987e-3 * 0.5,
+        //
+        // Degree 6, not 5, and the extra term is the *even* half's `r^6`.
+        // The pair `(e + r*o, e - r*o)` is one degree-6 minimax fit of
+        // `e^r/2` over `|r| <= ln2/2` read two ways -- `e` is its even
+        // part, `o*r` its odd -- so degree 6 means one more coefficient in
+        // `e` alone, one fma. Idealized relative error, f32-quantised and
+        // coordinate-descended: degree 5 = 1.76 ulp, degree 6 = **0.053**,
+        // degree 7 = 0.004. Degree 6 is where the fit stops being the
+        // binding term: an oracle screen (a correctly-rounded `e^(+-r)` in
+        // place of the poly, everything else unchanged) floors `cosh` at
+        // max 1.16, degree 5 measures 3.63 and degree 6 measures 2.37, so
+        // degree 7 has nothing left to buy. It is not free -- one fma is
+        // +1 Block RThroughput on all seven callers; `sinh_throughput` and
+        // `cosh_throughput` are the tier that does not pay it, and this is
+        // what finally separates the two tiers on accuracy as well as on
+        // latency (see the commit's table).
+        let c: [f32; 5] = [
+            0.49999994 * 0.5,
+            0.16666521 * 0.5,
+            0.041668329 * 0.5,
+            8.3687045e-3 * 0.5,
+            1.3814511e-3 * 0.5,
         ];
         // Each half is Horner in `r^2`, not a leading `c*r^4` term: `r^4`
         // is never formed, one plain multiply cheaper across both halves
         // at the same fma critical-path depth. Same fold as exp_r_poly!.
         let r2 = r * r;
-        let e = fma(fma(c[2], r2, c[0]), r2, 0.5);
+        let e = fma(fma(fma(c[4], r2, c[2]), r2, c[0]), r2, 0.5);
         let o = fma(fma(c[3], r2, c[1]), r2, 0.5);
         let p_pos = fma(r, o, e);
         let p_neg = fma(-r, o, e);
@@ -2971,14 +2988,15 @@ fn exp_pos_neg_narrow_half(x: f32) -> (f32, f32) {
     // Pre-halved, exactly as in `exp_pos_neg_core!` -- see its comment for
     // why this is free and exact, and `sinh`'s for the premature-overflow
     // gap it closes.
-    let c: [f32; 4] = [
-        4.99993e-1 * 0.5,
-        1.6667245e-1 * 0.5,
-        4.188372e-2 * 0.5,
-        8.300987e-3 * 0.5,
+    let c: [f32; 5] = [
+        0.49999994 * 0.5,
+        0.16666521 * 0.5,
+        0.041668329 * 0.5,
+        8.3687045e-3 * 0.5,
+        1.3814511e-3 * 0.5,
     ];
     let r2 = r * r;
-    let e = fma(fma(c[2], r2, c[0]), r2, 0.5);
+    let e = fma(fma(fma(c[4], r2, c[2]), r2, c[0]), r2, 0.5);
     let o = fma(fma(c[3], r2, c[1]), r2, 0.5);
     let p_pos = fma(r, o, e);
     let p_neg = fma(-r, o, e);

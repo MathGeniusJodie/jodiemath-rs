@@ -55,12 +55,12 @@ cbrt_accurate_unchecked |    0.000   |     1     | (bit-identical to cbrt_accura
            expm1_checked |    0.067   |     5     |  0.000  |    0
 exp_m1_over_x (in-domain)|    0.071   |     5     | (no std exp_m1_over_x)
                  exp2m1  |    0.077   |     4     | (no std exp2m1)
-        sinh (in-domain) |    0.078   |     4     |  0.000  |    1
-        cosh (in-domain) |    0.052   |     4     |  0.000  |    0
+        sinh (in-domain) |    0.061   |     3     |  0.000  |    1
+        cosh (in-domain) |    0.024   |     2     |  0.000  |    0
 sinh_throughput (in-domain)| 0.080    |     4     |  0.000  |    1
 cosh_throughput (in-domain)| 0.049    |     3     |  0.000  |    0
-       sinh_checked (all f32) | 0.041 |     4     |  0.000  |    1
-       cosh_checked (all f32) | 0.027 |     4     |  0.000  |    0
+       sinh_checked (all f32) | 0.032 |     3     |  0.000  |    1
+       cosh_checked (all f32) | 0.013 |     2     |  0.000  |    0
         tanh (in-domain) |    0.044   |     2     |  0.000  |    0
                  sigmoid |    0.091   |     3     | (no std sigmoid)
         softplus (|x|<80)|    0.075   |     3     | (no std softplus)
@@ -398,12 +398,12 @@ expm1               |          69.00 |             1.604
 expm1_checked       |          78.00 |             1.556
 exp_m1_over_x       |          81.00 |             1.639
 exp2m1              |          80.00 |             1.843
-sinh                |          51.00 |             1.720
-cosh                |          50.00 |             1.606
+sinh                |          54.00 |             1.824
+cosh                |          53.00 |             1.695
 sinh_throughput     |          62.00 |             1.689
 cosh_throughput     |          61.00 |             1.498
-sinh_checked        |          59.00 |             1.974
-cosh_checked        |          58.00 |             1.938
+sinh_checked        |          62.00 |             2.094
+cosh_checked        |          61.00 |             2.086
 tanh                |          63.00 |             1.759
 sigmoid             |          61.00 |             1.222
 softplus            |          74.11 |             2.449

@@ -8857,3 +8857,92 @@ itself, and it is why degree 6 buys nothing over degree 5 on `[0.5, 1)`.
 crossover, and its exhaustive worst case is at `x = 0.27000788` -- max 5,
 unchanged by this work because it has its own `asinpi_small`/`asinpi_poly`
 pair. It is a different domain; nobody held it at the time.
+## `exp_pos_neg_core`: cosh's max was the joint poly, and one fma separates the two sinh/cosh tiers
+
+2026-08-02. `sinh` and `cosh` sat at max 4 while `exp` itself is 3, which
+is backwards: `cosh = ep + en` **adds** two same-signed halves, so it
+cannot amplify their relative error at all, and `sinh`'s own worst case
+was recorded at `x = 4.67`, where `coth(x) = 1.0002` -- no cancellation
+either. Neither headline max was the reconstruction. Both were the shared
+poly.
+
+### Oracle screen, and it is the unusual verdict
+
+Replacing `exp_pos_neg_core!`'s `(p_pos, p_neg)` with a correctly-rounded
+`f32(e^(+-r)/2)` from f64 and changing nothing else, over `[0.5, 80)` at
+stride 8 (2.9M points, against `f64::cosh`/`sinh`):
+
+| | cosh avg / max | sinh avg / max |
+|---|---|---|
+| shipped (degree 5) | 0.6649 / 3.629 | 0.6821 / 3.581 |
+| the same poly *shape* evaluated in f64 | 0.5810 / 2.576 | 0.5989 / 2.505 |
+| oracle, correctly-rounded `e^(+-r)` | 0.1031 / 1.164 | 0.1302 / 1.665 |
+
+So the fit is 0.58 avg / 2.6 max of it and the f32 evaluation only 0.08 /
+1.05. Headroom, and real.
+
+### The fit is one degree-6 minimax of `e^r/2` read two ways
+
+`p_pos = e + r*o` and `p_neg = e - r*o` is not two fits: `e` is the even
+part of a single polynomial approximation of `e^r` and `r*o` its odd part,
+so the pair's *joint* relative error against `e^(+-r)` is exactly the
+relative error of one polynomial `P(r) ~ e^r/2` over `|r| <= ln2/2`, read
+at `+r` and `-r`. Written that way it is an ordinary 1-D minimax problem
+with the `r^0`/`r^1` coefficients pinned to 0.5, and "degree 6" means one
+more coefficient in `e` **alone** -- one fma, no new multiply, no term in
+`o`.
+
+Idealized relative error, ulp-scaled LP (HiGHS returns exact-zero
+residuals without the ulp scaling here -- the same trap `ln_normal` and
+`tanh` both hit), then f32-quantised and coordinate-descended:
+
+| | degree 5 | degree 6 | degree 7 |
+|---|---|---|---|
+| idealized ulp | 1.76 | **0.053** | 0.004 |
+
+The shipped degree-5 coefficients idealize to 2.03, so a *same-degree*
+refit is worth only 1.14x and measures worse on cosh's max (3.63 ->
+3.730) -- the usual avg-for-max shuffle. Degree 6 is where the fit stops
+being the binding term: it measures 2.373 / 2.393 against the oracle's
+1.164 / 1.665 floor, so degree 7 has nothing left to buy and is not
+taken.
+
+### Shipped, and what it costs
+
+Every caller of `exp_pos_neg_core!` and its standalone copy in
+`exp_pos_neg_narrow_half` pays exactly +1 fma:
+
+| region | instrs | uOps | BlockRT | cyc/unit |
+|---|---|---|---|---|
+| `sinh_throughput` | 88 -> 91 | 96 -> 100 | 26 -> 27 | 1.720 -> 1.824 |
+| `sinh_latency` | 3210 -> 3275 | 3211 -> 3277 | 768 -> 800 | 51.00 -> 54.00 |
+| `cosh_throughput` | 70 -> 73 | 72 -> 76 | 22 -> 23 | 1.606 -> 1.695 |
+| `cosh_latency` | 2631 -> 2696 | 2631 -> 2696 | 640 -> 672 | 50.00 -> 53.00 |
+| `sinh_checked_throughput` | 93 -> 96 | 103 -> 107 | 28 -> 29 | 1.974 -> 2.094 |
+| `cosh_checked_throughput` | 74 -> 77 | 80 -> 83 | 24 -> 25 | 1.938 -> 2.086 |
+| `sinh_narrow_throughput` | 72 -> 75 | 76 -> 80 | 20 -> 21 | 1.383 -> 1.524 |
+| `cosh_narrow_throughput` | 54 -> 57 | 56 -> 59 | 16 -> 17 | 1.150 -> 1.272 |
+| `coshm1_throughput` | 108 -> 111 | 116 -> 120 | 33 -> 34 | 2.529 -> 2.591 |
+
+Uniform: +3 instructions, +1 Block RThroughput, +3-6%. All three ladder
+rungs agree, so this one is real and there is nothing to arbitrate.
+
+### Why the trade is worth taking here: the speed tier already exists and does not pay it
+
+`sinh_throughput`/`cosh_throughput` route through two independent `exp`
+calls, not `exp_pos_neg_core!`, and their mca regions are **byte-identical
+before and after** (79/84/24.00/1.689 and 62/64/20.00/1.498 on both
+sides). So the +1 fma lands only on the accuracy tier, and it is what
+finally separates the two -- before this, `sinh` was better than
+`sinh_throughput` on latency alone and *tied* on accuracy, which is a
+weak Pareto pair:
+
+| | throughput | latency | avg ulp | max |
+|---|---|---|---|---|
+| `sinh_throughput` (unchanged) | **1.689** | 62.00 | 0.0795 | 4 |
+| `sinh` before | 1.720 | 51.00 | 0.078 | 4 |
+| `sinh` after | 1.824 | **54.00** | **0.061** | **3** |
+
+Check for an existing speed tier before pricing a shared-poly degree
+bump: if the fast path does not route through the poly, the blast radius
+is exactly the functions that wanted the accuracy.
