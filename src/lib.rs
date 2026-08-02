@@ -5153,17 +5153,21 @@ fn erfc_inv_half(n: f32) -> f32 {
 /// branches, same shape as this crate's other `erf`/`erfc` splits:
 /// `x*P(x^2)` for `|x| <= 0.7`, `sign(x)*sqrt(w)*Q(w)` (`w = -ln(1-x^2)`)
 /// past it, where `erfinv` itself grows without bound as `|x| -> 1`.
-/// `w` is computed as `-log1p(-x*x)`, reusing this crate's own
-/// cancellation-safe `log1p` rather than `-(1.0-x*x).ln()`, which would
-/// reintroduce exactly the precision loss `log1p` exists to avoid right
-/// where it matters most (`x` close to `+-1`, `1-x*x` close to `0`).
-/// `|x| > 1` needs no explicit domain-error handling: `-x*x < -1` there,
-/// so `log1p`'s own existing domain guard already gives `NaN`, which
-/// propagates through `sqrt`/the poly/`mulsign` unchanged.
+/// `1 - x^2` is never formed by subtraction, in either of the two ways
+/// that would lose it: not as `1 - fl(x*x)` (the *product*'s rounding is
+/// what dominates, and no `log1p` compensation can recover it) and not as
+/// `log1p(-x*x)` (which recovers only the subtraction). It is factored,
+/// `(1-|x|)(1+|x|) = n*(2-n)` on `n = 1-|x|` -- the same reduction
+/// `erfc_inv` and `probit` use, and the reason all three now carry a
+/// single relative rounding into `w` instead of an amplified absolute
+/// one. See the body. `|x| > 1` needs no explicit domain-error handling:
+/// `n < 0` makes the factored product negative, and the `s > 0.0` select
+/// gives `NaN`, which propagates through `sqrt`/the poly/`mulsign`
+/// unchanged.
 ///
 /// `|x| == 1.0` exactly *does* need an explicit override, found by
-/// fuzzing, not assumed: `w` correctly reaches `+inf` there
-/// (`log1p(-1.0) == -inf`), but `erfinv_tail_poly`'s Estrin grouping
+/// fuzzing, not assumed: `w` correctly reaches `+inf` there, but
+/// `erfinv_tail_poly`'s Estrin grouping
 /// evaluates several partial sums independently before combining them,
 /// and at `w=inf` different groups overflow to *opposite-signed*
 /// infinities depending on their own local coefficient signs (unlike a
@@ -5172,33 +5176,39 @@ fn erfc_inv_half(n: f32) -> f32 {
 /// instead of the correctly-signed `+-inf` erfinv actually has there.
 #[inline(always)]
 pub fn erfinv(x: f32) -> f32 {
-    let u = x * x;
-    // `-log1p(-u)`, with everything this call site can't reach removed
-    // (the "guard is the licence" lever, see `atanh`/`log1p`). `t = 1-u`
-    // is never denormal (`1 - fl(x*x)` is either `0` or `>= 2^-24`), and
-    // `-u == 0` only at `x == 0`, where the central arm is selected -- so
-    // both `ln`'s rescale and `log1p`'s signed-zero select are dead. The
-    // `-inf` arm goes too: `t == 0` happens *exactly* when `|x| == 1`
-    // (verified exhaustively, not argued), which the trailing override
-    // below already owns. What is left collapses to a single select:
-    // `t > 0.0` is false for `t <= 0` (`|x| > 1`, a real domain error)
-    // and for NaN alike, and both want `NaN`. That does canonicalise the
-    // NaN it returns rather than forwarding the input's payload, which is
-    // fine by this crate's convention -- a NaN is a NaN, the same rule
-    // `ulp_diff` and `worst_corpus` follow.
-    let nu = -u;
-    let t = 1.0 + nu;
-    let c = nu - (t - 1.0);
-    // No `corr.is_finite()` guard: `c` is the exact rounding error of
-    // `1 + nu` whenever `|nu| <= 1`, so `corr` is finite for every `t`
-    // this arm is selected for -- the only inputs that make it `NaN`
-    // (`t <= 0`, i.e. `|x| >= 1`) already take the `NaN` arm below.
-    let corr = c / t;
-    let w = -if t > 0.0 { ln_normal(t, 0.0) + corr } else { f32::NAN };
-    let central = x * erfinv_central_poly(u);
+    let ax = x.abs();
+    // `1 - x^2` factored, never subtracted: `(1-|x|)(1+|x|) = n*(2-n)`,
+    // the same reduction `erfc_inv_half` uses and for the same reason.
+    // `n = 1-|x|` is Sterbenz-exact for every `|x|` the tail is selected
+    // for (`|x| > 0.7`), `n+n` is an exact scaling, and `fma` makes
+    // `2n - n^2` a single rounding of the whole product -- so `s` carries
+    // one `2^-25` *relative* error at any `n`.
+    //
+    // The `1 - fl(x*x)` this replaces could not: `fl(x*x)`'s rounding is
+    // `2^-25` *absolute*, which at `x = 0.99983` is `1.7e-4` relative to
+    // `1 - x^2 = 3.4e-4`. A compensated `log1p` recovers the rounding of
+    // the *subtraction* but not the rounding of `x*x` that went in, and
+    // the tail then amplifies what is left by `d(erfinv)/dw`.
+    //
+    // `s` is never denormal here, unlike in `erfc_inv_half`: the largest
+    // `|x| < 1` is `1 - 2^-24`, so `n >= 2^-24` and `s >= 2^-23`. No
+    // `denormal_rescale!`, and the division the `log1p` correction needed
+    // goes with it.
+    //
+    // What is left of `log1p`'s edge handling collapses to a single
+    // select, exactly as before: `s > 0.0` is false for `|x| >= 1` and
+    // for NaN alike, and both want `NaN` -- `|x| == 1` is then overridden
+    // below with the correctly-signed infinity. That does canonicalise
+    // the NaN it returns rather than forwarding the input's payload,
+    // which is fine by this crate's convention -- a NaN is a NaN, the
+    // same rule `ulp_diff` and `worst_corpus` follow.
+    let n = 1.0 - ax;
+    let s = fma(-n, n, n + n);
+    let w = -if s > 0.0 { ln_normal(s, 0.0) } else { f32::NAN };
+    let central = x * erfinv_central_poly(x * x);
     let tail = mulsign(w.sqrt() * erfinv_tail_poly(w), x);
-    let normal = if x.abs() <= 0.7 { central } else { tail };
-    if x.abs() == 1.0 { f32::INFINITY.copysign(x) } else { normal }
+    let normal = if ax <= 0.7 { central } else { tail };
+    if ax == 1.0 { f32::INFINITY.copysign(x) } else { normal }
 }
 
 // `norm_cdf`'s counterpart to `ERFC_XS_CLAMP`, in `x`'s units rather than
