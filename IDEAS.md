@@ -557,9 +557,9 @@ function's speed or accuracy directly; several unblock ideas above.
   see its comment), so the levers already closed are the ones aimed at
   `v`. What has not been tried is a different evaluation order for the
   degree-10 polynomial itself under the current, now-quieter, error
-  budget: Horner measured ~0.5 ulp better on max back when the Gaussian
-  half was co-dominant and was rejected on latency, and that tradeoff
-  was priced against a max the exponential was half of. Re-price it.
+  budget. The Horner endpoint is now closed on accuracy as well:
+  re-priced against the current coefficients it is worth ~0.001 ulp
+  on max, not the ~0.5 the old note records -- see graveyard.md.
 
   **But only part of that rejection went stale, and the rest is still
   binding.** Horner's +19-34% latency on four public functions does not

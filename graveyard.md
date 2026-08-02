@@ -12166,3 +12166,52 @@ the flattering direction is worse than no number.
   breaking the shape dropped it to scalar code plus a branchy region
   there. That is a documented reason to prefer the symmetric form, not a
   measurement of this variant's codegen, which was not made.
+## `erfcx_pos` Horner vs Estrin, re-priced: the old "~0.5 ulp better on max" no longer reproduces
+
+`erfcx_pos`'s comment records that Horner measured only ~0.5 ulp better
+on max and was rejected because the division already sits on the
+critical path ahead of the polynomial. Once `exp_reduce!` stopped being
+the co-dominant term in `erfc`/`norm_cdf`, that verdict looked stale --
+a 0.5 ulp gain against a now-quieter budget could plausibly have moved
+an integer max. Re-measured, it does not, because the gain itself is
+gone.
+
+Scored on the exact shipped f32 evaluation order (degree 10 in
+`v = 1/(2+|x|)`, `c[0]` the low word of a two-word `1/sqrt(pi)`, high
+word applied in the closing fma), against `scipy.special.erfcx`:
+
+| | max | avg |
+|---|---|---|
+| `erfcx_pos` alone, Estrin (ships) | 3.740 | 0.6247 |
+| `erfcx_pos` alone, Horner | 3.739 | 0.6209 |
+| `erfc` end-to-end, Estrin | 5.252 | 0.4478 |
+| `erfc` end-to-end, Horner | 5.252 | 0.4461 |
+
+Horner is worth **0.001 ulp** on max and ~0.6% on avg -- not the ~0.5
+ulp the old note records.
+
+**This is un-refitted Horner**, i.e. the shipped coefficients evaluated
+in a different order, which is the cheap screen and not the whole
+question: those coefficients are coordinate-descent polished against
+the exact Estrin arrangement, so they have already absorbed it, and a
+Horner ordering deserving of the name would be refitted against itself.
+What the number above does establish is that the *reordering alone*
+buys nothing, so any future attempt has to carry a refit to be a
+different experiment at all -- and it still has to answer Horner's
++19-34% latency, which no amount of refitting changes. The likely reason is that the old number
+predates both the current degree-10 fit and the two-word `1/sqrt(pi)`
+split: with the constant's bias removed and the fit at ~0.5 ulp, what
+is left is evaluation rounding that both orderings incur about equally.
+Estrin keeps its 4-deep-vs-10-deep latency advantage for free.
+
+### Transferable
+
+- **A stale accuracy delta can evaporate rather than grow.** The lever
+  was re-examined because the *budget around it* got quieter, which is
+  the right trigger -- but the re-measurement has to include the lever's
+  own magnitude under today's coefficients, not just the new budget. Two
+  changes had landed on this polynomial since the ~0.5 was recorded.
+- `erfcx_pos`'s remaining error is not its association order and not its
+  argument `v` (an exactly-rounded `v` does not lower the max either).
+  Anything that moves it has to change the *number* of full-weight
+  roundings, not their arrangement.
