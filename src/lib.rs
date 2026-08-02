@@ -5628,16 +5628,53 @@ pub fn atan2d(y: f32, x: f32) -> f32 {
     if r.abs() < f32::MIN_POSITIVE && x != 0.0 { tiny } else { normal }
 }
 
-/// atan2(y,x)/pi (backlog idea #85, C23 half-turn family): a composite
-/// over `atan2`, with the same two-word `1/pi` multiply `atanpi` uses and
-/// for the same reason (see [`FRAC_1_PI_LO`]). A rescaled-coefficient
-/// fold is not used here either -- `atan2` composes the very `atan_poly`
-/// Pade rational whose shared trailing constant makes that fold a loss in
-/// `atanpi`, and `atan2` is the larger, more branch-heavy caller of it.
+/// atan2(y,x)/pi (backlog idea #85, C23 half-turn family). Not a
+/// composite over [`atan2`]: it repeats `atan2`'s skeleton with **every
+/// quadrant constant written in half-turns**, where all of them are
+/// exactly representable -- `0.5 - mulsign(0.5, x)` is `0`, `1` or `0.5`
+/// exactly, and the both-infinite convention is `0.25`/`0.75` rather than
+/// `fl(pi/4)`/`3*fl(pi/4)`.
+///
+/// Those constants are the whole reason. `fl(pi)` sits 0.367 ulp above
+/// `pi`, and the `x < 0` fold adds it as an *absolute* offset, so it
+/// survives a later `1/pi` scaling as a fixed relative bias over the
+/// entire `x < 0` half-plane -- ground that no work on `atan_poly`, or on
+/// `atan2` itself, can reach. The `|y/x| >= 1` fold inside `atan` carries
+/// `fl(pi/2)`'s copy of the same offset, which is why the core here is
+/// [`atanpi`] rather than [`atan`]: `atanpi` already performs its own
+/// reflection in half-turns.
+///
+/// What remains on the `x > 0` arm is mostly the `y/x` division's own
+/// rounding, which no rearrangement of the fold can reach; `atanpi`
+/// applied to the already-rounded quotient is the smaller share.
+///
+/// Both of `atan2`'s documented edge-case fixes are structural and are
+/// carried over verbatim -- the `nonzerox` select that keeps
+/// `atan2pi(-0.0, +0.0)` at `-0.0` instead of letting IEEE754's
+/// opposite-signed-zero addition rule erase the sign, and the trailing
+/// `y.is_nan()` override that stops a NaN `y` degrading to `+-0.5` on the
+/// `x == 0` path, where `mulsign` reads only its sign bit. See [`atan2`]
+/// for why each is needed; both are pinned in `edgecheck`.
+///
+/// A rescaled-coefficient fold is not used here either -- `atan_poly` is
+/// a Pade rational whose numerator and denominator share one unscaled
+/// trailing `+1.0`, so folding `1/pi` into the numerator's copy alone
+/// costs a second broadcast and measures worse on both axes.
 #[inline(always)]
 pub fn atan2pi(y: f32, x: f32) -> f32 {
-    let r = atan2(y, x);
-    fma(r, FRAC_1_PI, r * FRAC_1_PI_LO)
+    let nonzerox = x != 0.0;
+    let nonzeroy = y != 0.0;
+    let bothzero = !nonzerox && !nonzeroy;
+    // Exactly `atan2`'s shape with `FRAC_PI_2` replaced by `0.5`. Every
+    // value this can take -- `0.5 - 0.5`, `0.5 - -0.5`, `0.5 - 0.0` -- is
+    // exact, so the quadrant fold contributes no rounding of its own.
+    let hsignx = if nonzerox || bothzero { mulsign(0.5, x) } else { 0.0 };
+    let correction = mulsign(0.5 - hsignx, y);
+    let r = if nonzerox { atanpi(y / x) + correction } else { correction };
+    let r = if y.is_nan() { f32::NAN } else { r };
+    let bothinf = x.is_infinite() && y.is_infinite();
+    let inf_result = mulsign(if x.is_sign_negative() { 0.75 } else { 0.25 }, y);
+    if bothinf { inf_result } else { r }
 }
 
 /// atan2 without the x==0/both-zero/both-infinite special cases: contract

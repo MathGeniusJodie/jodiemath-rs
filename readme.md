@@ -112,7 +112,7 @@ logaddexp_accurate (all f32)| 0.000 |     0     | (no std logaddexp; the cancell
     atan2_unchecked (+) |    0.066   |     4     | (bit-identical to atan2 on its domain)
               atan2_pos |    0.062   |     3     | (no std atan2_pos)
                  atan2d |    0.105   |     4     | (no std atan2d)
-                atan2pi |    0.112   |     3     | (no std atan2pi)
+                atan2pi |    0.070   |     3     | (no std atan2pi)
         hypot (bounded) |    0.034   |     1     |  0.000  |    0
 hypot_unchecked (bounded, +) | 0.034 |     1     | (bit-identical to hypot on its domain)
        hypot_checked |    0.015   |     1     | (no std comparison needed, no domain restriction)

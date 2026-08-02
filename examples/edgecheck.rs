@@ -1587,12 +1587,36 @@ fn real_main() {
     check("atan2d(1e-40,1)", atan2d(1.0e-40, 1.0), 5.7295465e-39);
     check("atan2d(1e-30,1e10)", atan2d(1.0e-30, 1.0e10), 5.7295776e-39);
 
-    // atan2pi (backlog idea #85): plain composite -- see its own doc
-    // comment for why a rescaled-coefficient fold isn't attempted.
+    // atan2pi (backlog idea #85): not a composite over atan2 -- it repeats
+    // atan2's skeleton with the quadrant constants in half-turns, where
+    // they are exact. That means it owns its own copy of both of atan2's
+    // documented edge-case fixes, so both are pinned here as well as on
+    // atan2: an edit to atan2pi alone would not be caught by atan2's pins.
     check("atan2pi(1,0)", atan2pi(1.0, 0.0), 0.5);
     check("atan2pi(0,1)", atan2pi(0.0, 1.0), 0.0);
     check("atan2pi(-1,0)", atan2pi(-1.0, 0.0), -0.5);
     check("atan2pi(nan,1)", atan2pi(f32::NAN, 1.0), f32::NAN);
+    // the -0.0 opposite-signed-zero fix: `+0.0 + -0.0` is `+0.0` in
+    // IEEE754 regardless of operand order, so the correction's sign has to
+    // skip the addition entirely rather than be added to a degenerate zero.
+    check("atan2pi(-0,0)", atan2pi(-0.0, 0.0), -0.0);
+    check("atan2pi(0,0)", atan2pi(0.0, 0.0), 0.0);
+    check("atan2pi(-0,-0)", atan2pi(-0.0, -0.0), -1.0);
+    check("atan2pi(0,-0)", atan2pi(0.0, -0.0), 1.0);
+    check("atan2pi(-0,1)", atan2pi(-0.0, 1.0), -0.0);
+    check("atan2pi(-0,-1)", atan2pi(-0.0, -1.0), -1.0);
+    // the NaN-through-mulsign fix: the x==0 path never divides, and
+    // mulsign reads only y's sign bit, so a NaN y needs the explicit
+    // trailing override or it degrades to a finite +-0.5.
+    check("atan2pi(nan,0)", atan2pi(f32::NAN, 0.0), f32::NAN);
+    check("atan2pi(nan,-0)", atan2pi(f32::NAN, -0.0), f32::NAN);
+    check("atan2pi(nan,nan)", atan2pi(f32::NAN, f32::NAN), f32::NAN);
+    check("atan2pi(1,nan)", atan2pi(1.0, f32::NAN), f32::NAN);
+    // the both-infinite quadrant convention, exact in half-turns.
+    check("atan2pi(inf,inf)", atan2pi(f32::INFINITY, f32::INFINITY), 0.25);
+    check("atan2pi(-inf,inf)", atan2pi(f32::NEG_INFINITY, f32::INFINITY), -0.25);
+    check("atan2pi(inf,-inf)", atan2pi(f32::INFINITY, f32::NEG_INFINITY), 0.75);
+    check("atan2pi(-inf,-inf)", atan2pi(f32::NEG_INFINITY, f32::NEG_INFINITY), -0.75);
     // atan2(NaN, 0.0)/atan2(NaN, -0.0) used to come out +-FRAC_PI_2 instead
     // of NaN (backlog idea #85, found building a systematic C99
     // special-case matrix against std): the x==0 branch bypasses

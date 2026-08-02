@@ -11648,3 +11648,119 @@ other identity" -- so the public route is also the designed one.
 - **"Essentially just the callee's error" is a claim about one branch
   until it is measured per branch.** Splitting the sweep by the callee's
   own branch condition was the entire diagnosis here and cost one probe.
+
+## `atan2pi`: the same fold, and the "~2x floor" this file recorded was wrong
+
+Immediately after `atanpi`. That entry moved `atan`'s `|x| >= 1` quadrant
+fold into half-turns, where its constant is an exact `0.5` instead of
+`fl(pi/2)`. `atan2pi` had the identical defect twice over and was closed
+in this file on a floor estimate that turns out not to be a floor.
+
+**The recorded claim, quoted:** "`atan2`'s result spans `[-pi, pi]`, and
+dividing by pi shifts `~pi -> ~1` and `~pi/2 -> ~0.5`, each a binade step
+that *doubles* the error measured in ulp. So `atan2pi`'s floor is about
+2x `atan2`'s 0.0681, i.e. ~0.136, and it now measures 0.1137. Nothing
+further to take here without changing `atan2` itself."
+
+Two things are wrong with it. The arithmetic first: dividing by pi is not
+a flat 2x in ulp terms, it is **0.64x-1.27x depending on where in its
+binade the result lands** -- `pi -> 1` crosses a binade boundary and
+*halves* the relative ulp, `3.0 -> 0.9549` does not and tightens it by
+1.27x. So the estimate was high. The larger error is the second one: it
+priced only the *rescaling*, and never asked whether the constants being
+rescaled had to be inexact at all. They did not.
+
+`atan2` folds quadrants with `FRAC_PI_2 - mulsign(FRAC_PI_2, x)`, giving
+`0`, `fl(pi)` or `fl(pi/2)`, and its both-infinite convention is
+`fl(pi/4)`/`3*fl(pi/4)`. In half-turns every one of those is exactly
+representable -- `0`, `1`, `0.5`, `0.25`, `0.75` -- and
+`0.5 - mulsign(0.5, x)` is exact for both signs of `x`. `fl(pi)` sits
+0.367 ulp above `pi` and the `x < 0` fold adds it as an **absolute**
+offset, so it survives the later `1/pi` scaling as a fixed relative bias
+across the whole `x < 0` half-plane. Rescaling afterwards cannot remove
+it; folding first means it is never introduced.
+
+Measured with an out-of-tree probe, both formulas compiled into one
+binary against one reference, so neither side depends on what `src/lib.rs`
+held at the time. 40M pairs, uniform random bit patterns for both args:
+
+```
+branch      old avg  old max    new avg  new max    share
+x > 0        0.1583        3     0.1177        3   49.61%
+x < 0        0.0673        2     0.0237        1   49.61%
+x == 0       0.0000        0     0.0000        0    0.00%
+nonfinite    0.0000        0     0.0000        0    0.78%
+WHOLE        0.1119        3     0.0702        3
+```
+
+The old side reproduces this file's published 0.1119 in that same run,
+which is what makes the new column readable. `accuracy.rs` then confirms
+it end to end: **0.112 -> 0.0702 avg**, three consecutive runs giving
+0.0702 / 0.0701 / 0.0702, max 3 both sides. The whole-plane figure agrees
+with the probe to four digits across two different references (sleef
+`atan2_u35` vs std's f64 `atan2`) and two different sample sets. Sibling
+rows in the same runs are controls and do not move: `atan2` 0.066,
+`atan2_pos` 0.062, `atan2d` 0.105, each matching its published value.
+
+**Both arms improve, for two different reasons.** `x < 0` is the `fl(pi)`
+bias, and it is the bigger relative win (2.8x, and the only max that
+moves, 2 -> 1). `x > 0` never touches `fl(pi)` at all -- it improves
+because the core is now `atanpi` rather than `atan`, so the `|y/x| >= 1`
+reflection inside it carries an exact `0.5` instead of `fl(pi/2)`. That
+is `atanpi`'s own win arriving through the call.
+
+**The max does not move and this does not claim it**: 3 on both sides.
+
+**What the `x > 0` arm is now limited by**, decomposed on 20M samples of
+that arm, scoring `atanpi` against `atan` of the *already-rounded*
+quotient to separate the two:
+
+```
+new atan2pi total          avg 0.1177  max 3
+y/x rounding alone         avg 0.1011  max 1
+atanpi(q), q as given      avg 0.0289  max 3
+old atan2pi total          avg 0.1582  max 3
+```
+
+86% of what remains on that arm is the single `y/x` division's own
+rounding, which no rearrangement of the quadrant fold can reach. The
+`x < 0` arm is far cleaner (0.0237) because adding an exact `+-1.0`
+puts the result in `[0.5, 1]` while `atanpi(q)` may be tiny, so the
+quotient's relative error is damped rather than exposed. A two-word
+division is the only lever left and is not obviously worth it.
+
+Cost, from `tools/mca_region.py`, all counting rungs agreeing so mca's
+cycle column needs no arbitration: **68 -> 70 instrs, 70 -> 72 uOps,
+Block RThroughput unchanged at 20.00**, throughput 1.867 -> 1.907
+cyc/unit (+2.1%), latency 72.188 -> 72.111 (flat). Two instructions, the
+same price `atanpi` and `atand` each paid for this class of fix. Blast
+radius 2 of 313 asm regions, exactly `atan2pi`'s own.
+
+**`atan2pi` now sits at 0.0702 against `atan2`'s own 0.0659** -- so the
+real floor was near `atan2`'s number all along, not 2x it. The gap that
+is left is the binade attenuation the old entry was reasoning about,
+which is real but is a factor under 1.3, not 2.
+
+`atan2pi` is now the third function carrying `atan2`'s full
+`nonzerox || bothzero` skeleton -- `atan2` and `atan2_latency` are the
+others, `atan2_unchecked` carries a deliberately reduced one and
+`atan2_pos` is a plain composite. So it owns its own copy of `atan2`'s
+two documented edge-case fixes: the
+`nonzerox` select that keeps `atan2pi(-0.0, +0.0)` at `-0.0`, and the
+trailing `y.is_nan()` override. Neither is reachable by the ulp sweep --
+the two zeros compare equal, and a NaN degrading to a finite `+-0.5` is
+just one sample. `edgecheck` gains 14 `atan2pi` pins covering both, on
+top of the 4 it had; an edit to `atan2pi` alone would otherwise not be
+caught by `atan2`'s pins at all. All 18 pass.
+
+Reusable, and it is the third time today the same shape has paid:
+
+- **A floor estimate is not a measurement.** This one was arrived at by
+  multiplying another function's number by a factor that was itself
+  wrong, and it closed the idea for a whole session.
+- **Price the *rescaling*, then ask whether the thing being rescaled had
+  to be inexact.** The old entry did the first and stopped. Every
+  quadrant constant here was exact in the target units.
+- **Splitting by branch is what makes it visible.** `x > 0` and `x < 0`
+  are half the plane each, improve for unrelated reasons, and the
+  whole-plane average alone would have read as one undifferentiated 37%.
