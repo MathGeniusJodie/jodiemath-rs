@@ -3366,41 +3366,97 @@ pub fn exp2m1(x: f32) -> f32 {
     if x.abs() < EXP2M1_LINEAR { fl } else { b }
 }
 
-/// 10^x - 1 (C23 `exp10m1`), completing the C23 set next to `exp2m1`
-/// above: same small-|x| Pade branch (`y = x*LN_10`, `10^x - 1 = e^{x
-/// ln10} - 1`) plus [`exp10_checked`]'s own extreme-range reduction
-/// (clamp, `exp10_reduction!`, `exp2_field_split`) for the direct branch,
-/// with the trailing `-1` fused into the last multiply exactly like
-/// `exp2m1`'s own `fma(p, t2, -1.0)`. Total over exp10_checked's full
-/// domain: `exp10m1(-inf) = -1`, `exp10m1(inf) = inf`. Same clamp
-/// consolidation as `exp10_checked` (idea #113, see its own doc comment):
-/// the `[-45.154503, 38.53184]` bound makes a separate trailing `k`
-/// clamp redundant here too (same `exp10_reduction!`, same boundary
-/// math) -- verified bit-identical over the full exhaustive sweep.
-///
-/// Branch threshold is `|x| < 0.2`, not `exp2m1`'s `0.5`: the Pade
-/// approximant (shared with `expm1`/`exp2m1` via `pade_expm1_ratio!`) is
-/// only fitted/accurate for its argument `v` in `[-0.5, 0.5]` -- `expm1`
-/// feeds it `v = x` directly (so its own `|x| < 0.5` threshold matches
-/// exactly), and `exp2m1` feeds it `v = x*LN_2` (`|x| < 0.5` keeps `|v| <
-/// 0.35`, still inside). `LN_10 ≈ 2.303` is more than 6x `LN_2`, so
-/// reusing the same `0.5` threshold here would let `|v| = |x*LN_10|`
-/// reach past 1.1 -- measured hundreds of ulp off near that seam. `0.2`
-/// keeps `|v| < 0.47`, safely inside the fitted range.
-#[inline(always)]
-#[allow(clippy::approx_constant)] // g0's constant term is a fitted minimax
-// coefficient near ln(2), not ln(2) itself (bit pattern deliberately differs)
-pub fn exp10m1(x: f32) -> f32 {
-    let y = x * std::f32::consts::LN_10;
-    let a = pade_expm1_ratio!(y, mul);
+// `(10^d - 1 - d*LN_10) / d^2` over `|d| <= 0.5*log10(2)`, degree 4,
+// ulp-weighted minimax LP. Same Estrin fold and same degree as
+// `expm1_p_poly!`, and for the same reason: the reduction lands `d` where
+// `|d*ln10| <= ln2/2`, exactly `expm1`'s own `|r|` bound, so the two
+// approximants are the same object in rescaled coordinates.
+//
+// Degree 4 is where this stops, but not for `expm1_p_poly!`'s reason (a
+// degree-5 coefficient converging to 0). Here degree 5 reaches the *same*
+// LP margin, 0.2316 ulp, because that margin is not the fit: it is the
+// floor set by `fl(LN_10)` sitting 0.134 ulp off `ln(10)`. The peeled
+// `d*LN_10` is linear in `d` and `d^2*P(d)` cannot represent a linear
+// term, so no amount of degree buys any of it back -- only a two-word
+// `LN_10` could, at one extra fma. Macro, not a fn -- see `exp_r_poly!`.
+macro_rules! exp10m1_d_poly {
+    ($d:expr, $d2:expr) => {{
+        let c: [f32; 5] = [2.650949, 2.0346525, 1.1712452, 0.5420898, 0.20779254];
+        let l1 = fma(c[1], $d, c[0]);
+        let l2 = fma(c[3], $d, c[2]);
+        let m = fma(c[4], $d2, l2);
+        fma(m, $d2, l1)
+    }};
+}
 
-    let xc = x.clamp(-45.154503, 38.53184);
-    let (k, f) = exp10_reduction!(xc);
-    let (t1, t2) = exp2_field_split(k);
-    let q = exp2_q_poly!(f);
-    let p = fma(q, t1 * f, t1);
-    let b = fma(p, t2, -1.0);
-    if x.abs() < 0.2 { a } else { b }
+// 2^-125. Below this the `k-1` field's halved intermediate `b` is
+// denormal (`b ~ x*ln10/2`, so this is only reachable for denormal `x`)
+// and the doubling cannot put back the bit rounding took. The arm returns
+// the peeled `d*LN_10` term, already an operand of the combine's fma and
+// so free, which is also what carries `exp10m1(-0.0) = -0.0`: `d` is
+// `-0.0` there but `d2` is `+0.0` and the poly's constant term is
+// positive, so `fma(+0.0, P, -0.0)` rounds to `+0.0` and the sign is lost.
+const EXP10M1_LINEAR: f32 = 2.0 * f32::MIN_POSITIVE;
+
+/// 10^x - 1 (C23 `exp10m1`), completing the C23 set next to [`exp2m1`].
+/// Same cancellation problem as [`expm1`] and the same fix: carry
+/// `D = 10^d - 1` through the combine rather than forming `10^d` and
+/// subtracting. `10^x - 1 = 2^k*(1 + D) - 1 = 2^k*D + (2^k - 1)`, whose
+/// sensitivity to `D` stays under 1.414 everywhere instead of blowing up
+/// at the origin, so there is one arm: no near-zero Pade, no division,
+/// and no seam.
+///
+/// **The approximant is fitted in `d`, the reduction's own residue, not
+/// in log2 units.** [`exp10_checked`]'s reduction already produces
+/// `x = k*log10(2) + d`, i.e. `10^x = 2^k * 10^d`, so `10^d - 1` can be
+/// fitted against `d` directly. Converting to `f = d*LOG2_10` first (what
+/// the `2^f` form needs) would cost that multiply's rounding at full
+/// weight *plus* `fl(LOG2_10)`'s own 0.296 ulp error -- against
+/// `fl(LN_10)`'s 0.134. `exp10_reduction!`'s floor-adjust goes with it:
+/// a centred `d` is what removes the near-zero branch, so the compare,
+/// select and two adds that move `f` into `exp2_q_poly!`'s `[0,1)`
+/// convention are not needed.
+///
+/// Clamp is `[-37.0, 38.53184]`. The top is [`exp10_checked`]'s own
+/// boundary literal, the exact float where `k` first reaches 128, so
+/// overflow still saturates to `inf` through the `k-1` field. The bottom
+/// is tightened from `exp10_checked`'s `-45.154503` so a single field at
+/// `k-1` covers the range (`k >= -125`); `10^x - 1` is exactly `-1` for
+/// every `x < -7.53`, so there was nothing to lose. Still total:
+/// `exp10m1(-inf) = -1`, `exp10m1(inf) = inf`, `exp10m1(NaN) = NaN`.
+///
+/// Exhaustive avg 0.095 / max 3, the max at the top of the residue range.
+/// The 1 ulp against [`exp2m1`]'s otherwise-identical shape is the peel
+/// constant and nothing else: `fl(LN_10)` sits 0.134 ulp off `ln(10)`
+/// where `fl(LN_2)` sits 0.032 off `ln(2)`. It is not fit headroom -- see
+/// `exp10m1_d_poly!` for why more degree cannot reach it, and the rest of
+/// the budget is the evaluation chain (`dl`'s rounding and the closing
+/// fma, ~0.5 ulp each) rather than the approximant.
+///
+/// Throughput **-48.9%** (mca 2.629 -> 1.342 cyc/elem; 106 -> 64
+/// instructions, 116 -> 69 uOps, Block RThroughput 31 -> 18); the
+/// division alone was most of it, and the old two-arm form paid for it on
+/// every lane because the vectorized loop is if-converted. Latency's old
+/// 112.00 was the documented branch artifact (arms 37.00/80.00, jmp/jcc
+/// 128 against this form's 64, all of them the harness loop's own back
+/// edge); this form is 55.00, so `|x| >= 0.2` gains 25 cycles and the old
+/// Pade arm's 37.00 becomes 55.00 in a latency-bound scalar chain.
+/// Throughput is the axis this crate optimizes and accuracy improves in
+/// both regions, so the trade is taken rather than split into a tier.
+#[inline(always)]
+pub fn exp10m1(x: f32) -> f32 {
+    let xs = x.clamp(-37.0, 38.53184);
+    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+    let k = fma(xs, std::f32::consts::LOG2_10, ROUND_MAGIC) - ROUND_MAGIC;
+    let d = fma(-k, LOG10_2_HI, xs);
+    let d = fma(-k, LOG10_2_LO, d);
+    let d2 = d * d;
+    let dl = d * std::f32::consts::LN_10;
+    let big = fma(d2, exp10m1_d_poly!(d, d2), dl);
+    let t = f32::from_bits((k + EXPM1_HALF_MAGIC).to_bits() << 23);
+    let b = fma(big, t, t - 0.5);
+    let b = b + b;
+    if x.abs() < EXP10M1_LINEAR { dl } else { b }
 }
 
 // exp2_checked's k1/k2 exponent-field split, factored out for

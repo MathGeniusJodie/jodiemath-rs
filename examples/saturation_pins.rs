@@ -114,7 +114,7 @@ fn main() {
             name: "exp10m1",
             f: exp10m1,
             r: |x| (x * std::f64::consts::LN_10).exp_m1(),
-            bounds: &[-45.154503, 38.53184],
+            bounds: &[-37.0, 38.53184],
             tol: 4.0,
             skip_denormal_out: false,
         },

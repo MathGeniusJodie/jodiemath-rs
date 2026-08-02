@@ -11341,3 +11341,103 @@ Two notes for whoever reads this next:
   single 4 on the *base* side across three runs while the peel side threw
   none -- suggestive, not established, so their readme maxima are left
   alone. Only the avg columns are published for the 2-arg rows.
+## `exp10m1`: fit `10^d - 1` against the reduction's own residue, and the last Padé caller goes away
+
+The fourth and last application of the `m1` treatment (`expm1`,
+`exp_m1_over_x`, `exp2m1` preceded it), and the one that retires
+`pade_expm1_ratio!` entirely.
+
+The old form was two arms: a near-zero Padé fed `y = x*LN_10`, and a
+direct arm that ran `exp10_checked`'s full reduction, built `2^k` through
+`exp2_field_split`, evaluated `exp2_q_poly!` and *then* subtracted one.
+The seam sat at `|x| < 0.2` rather than `exp2m1`'s `0.5` purely because
+`LN_10` is 6x `LN_2` and the shared Padé is only fitted on `|v| <= 0.5`.
+
+Carrying `D = 10^d - 1` through the combine instead removes the arm, the
+division and the seam together: `10^x - 1 = 2^k*D + (2^k - 1)`, whose
+sensitivity to `D` stays under 1.414 everywhere.
+
+### Fit in `d`, not in `f` -- and this is where it differs from `exp2m1`
+
+`exp10_checked`'s reduction already produces `x = k*log10(2) + d`, i.e.
+`10^x = 2^k * 10^d`. So `10^d - 1` can be fitted against `d` **directly**,
+and the `f = d*LOG2_10` multiply that the `2^f` form needs never happens.
+That deletes a full-weight rounding *and* `fl(LOG2_10)`'s own **0.296 ulp**
+representation error, against `fl(LN_10)`'s 0.134. `exp10_reduction!`'s
+floor-adjust goes with it (a compare, a select and two adds): a centred
+residue is what removes the near-zero branch, so nothing needs `[0,1)`.
+
+Because `|d*ln10| <= ln2/2` is exactly `expm1`'s own `|r|` bound, the
+approximant is `expm1_p_poly!` in rescaled coordinates -- same degree 4,
+same Estrin fold.
+
+### Degree 4 stops for a *different* reason than `expm1_p_poly!` does
+
+`expm1_p_poly!` stops at degree 4 because the ulp-weighted LP's degree-5
+coefficient converges to 0. Here degree 5 reaches the **same** LP margin,
+0.2316 ulp. An oracle screen with an *exact* `ln10` peel separates the two
+causes:
+
+| peel constant | deg 3 | deg 4 | deg 5 |
+|---|---|---|---|
+| `fl(LN_10)` (shipped) | 6.301 | **0.2316** | 0.2316 |
+| exact `ln10` (oracle) | 6.238 | 0.1830 | 0.0032 |
+
+So at degree 5 the *entire* margin is the constant, and at degree 4 the
+constant is worth only 0.049 of it. A two-word `LN_10` therefore buys
+nothing without also going to degree 5 -- together ~0.23 ulp for +2 ops,
+against an error budget whose dominant terms are the `dl` rounding and the
+closing fma at ~0.5 ulp each. **Rounding-chain-dominated, not fit-limited**,
+so it was not taken. Recorded because "two-word constant" pattern-matching
+is exactly what `log10_normal` was rejected for the same week.
+
+### Numbers (exhaustive, all 2^32)
+
+| | avg ulp | max ulp |
+|---|---|---|
+| old (Padé + `exp2_q_poly`) | 0.1279 | 4 |
+| new | **0.0946** | **3** |
+
+| region | instrs | uOps | BlockRT | cyc/elem |
+|---|---|---|---|---|
+| `exp10m1_throughput` | 106 -> 64 | 116 -> 69 | 31 -> 18 | 2.629 -> **1.342** |
+
+Better on max, avg and throughput at once, so no Pareto tier is warranted.
+The residual 1 ulp against `exp2m1`'s max 2 is the peel constant and
+nothing else: `fl(LN_10)` is 0.134 ulp off `ln(10)` where `fl(LN_2)` is
+0.032 off `ln(2)`, and the two functions are otherwise the same object.
+
+### The latency row is branch-shaped and *not* an artifact
+
+`tools/mca_arms.py` reports 55.00 as-published against arms of 55.00 and
+55.00. The near-zero arm returns the peeled `d*LN_10`, which is already an
+operand of the other arm's closing fma, so both arms are the same
+dependency chain and there is nothing for mca to mis-fuse. The old 112.00
+*was* the artifact (arms 37.00/80.00), so readme's worst-offender list
+loses an entry. Worth stating as a positive rule: a branch in a latency
+region is a reason to *run the tool*, not a reason to assume the number is
+wrong.
+
+Against the arms it replaces: `|x| >= 0.2` gains 25 cycles, and the old
+Padé arm's 37.00 becomes 55.00 -- the same near-zero latency cost the
+other three `m1` rewrites paid, documented rather than split into a tier,
+since throughput is the crate's stated axis and accuracy improves in both
+regions.
+
+### Clamp
+
+`[-45.154503, 38.53184]` -> `[-37.0, 38.53184]`. The top is unchanged --
+it is the exact float where `k` first reaches 128, so overflow still
+saturates through the `k-1` field. The bottom tightens so one field at
+`k-1` covers the range (`k >= -125`); `10^x - 1` is exactly `-1` for every
+`x < -7.53`, so there was nothing to lose. "The guard is the licence",
+again, and the same move `exp2m1` made.
+
+### Signed zero, again
+
+Same trap as `exp2m1` and it would have shipped the same bug: at `x = -0.0`
+the residue `d` is `-0.0`, `d2` is `+0.0`, the poly's constant term is
+positive, so `fma(+0.0, P, -0.0)` rounds to `+0.0`. The ulp sweep scores
+zero-vs-zero as 0 and cannot see it. The denormal arm this function needs
+anyway returns the peeled `d*LN_10`, which carries the sign for free --
+one select, three jobs. `edgecheck`'s `exp10m1(-0)` pin is what proves it.

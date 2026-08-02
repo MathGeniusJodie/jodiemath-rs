@@ -72,6 +72,7 @@ comment and graveyard.md. All three `_wide` rows are exhaustive over all
            expm1_checked |    0.004   |     2     |  0.000  |    0
 exp_m1_over_x (in-domain)|    0.017   |     2     | (no std exp_m1_over_x)
                  exp2m1  |    0.040   |     2     | (no std exp2m1)
+                exp10m1  |    0.095   |     3     | (no std exp10m1; the 1 ulp over exp2m1's otherwise-identical shape is fl(LN_10) sitting 0.134 ulp off ln(10), against fl(LN_2)'s 0.032)
         sinh (in-domain) |    0.061   |     3     |  0.000  |    1
         cosh (in-domain) |    0.024   |     2     |  0.000  |    0
 sinh_throughput (in-domain)| 0.080    |     4     |  0.000  |    1
@@ -426,6 +427,7 @@ expm1               |          47.00 |             1.087
 expm1_checked       |          55.00 |             1.320
 exp_m1_over_x       |          65.03 |             1.279
 exp2m1              |          52.00 |             1.278
+exp10m1             |          55.00 |             1.342
 sinh                |          54.00 |             1.824
 cosh                |          53.00 |             1.695
 sinh_throughput     |          62.00 |             1.689
@@ -493,13 +495,17 @@ region is a loop.
 too high.** llvm-mca has no branch predictor: it simulates a region as one
 straight-line stream, so for `jcc L1 / <A> / jmp L2 / L1: <B> / L2:` it runs
 both arms back to back and reports neither. 38 of the 160 latency regions in
-`mca_target.rs` contain a real conditional branch, and for **27 of them the
+`mca_target.rs` contain a real conditional branch, and for **26 of them the
 published figure lies above *both* of its own arms measured in isolation** --
 the arms fuse into one artificial chain whenever the second reads a register
 the first clobbered. Worst offenders, by how far the published figure sits
 above its own worse arm: `clog_re` 295.41 against arms of 181.28/201.84,
-`exp10m1` 112.00 against 37.00/80.00, `asind` 72.61 against 43.99/48.99, `asinpi` 64.84 against 39.99/36.99,
-`asin` 60.91 against 34.99/36.99. The opposite failure also happens: where both arms write the
+`asind` 72.61 against 43.99/48.99, `asinpi` 64.84 against 39.99/36.99,
+`asin` 60.91 against 34.99/36.99. A branch is not *automatically* an
+artifact: `exp10m1` is branch-shaped and publishes 55.00 against arms of
+55.00/55.00, because its near-zero arm returns a value already on the other
+arm's own dependency chain, so there is only one chain to fuse. The
+opposite failure also happens: where both arms write the
 same register and the *cheap* one is laid out last, mca times the cheap one
 -- `asinh` publishes 74.49 where its real in-domain chain is **84.02**.
 
