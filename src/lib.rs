@@ -5080,37 +5080,68 @@ fn erfinv_central_poly(u: f32) -> f32 {
     fma(c[8], u4 * u4, fma(r1, u4, r0))
 }
 
-// erfinv's tail branch: `erfinv(x) = sign(x)*sqrt(w)*Q(w)`,
+// erfinv's tail branch: `erfinv(x) = sign(x)*sqrt(w)*Q`,
 // `w = -ln(1-x^2)`, for `|x| > 0.7`. An ulp-weighted minimax (LP) fit of
-// `erfinv(x)/sqrt(w)` against `w` over `w` in
-// `[-ln(1-0.7^2), -ln(1-x_max^2)]` (`x_max` = the largest f32 below 1.0,
-// so the fit's own domain exactly matches what an f32 caller can ever
-// actually reach), weighted by the `sqrt(w)*Q` combine's own sensitivity
-// `sqrt(w)/ulp(erfinv)` and then coordinate-descended over the f32
-// quantisation -- a plain least-squares fit left ~3.4x more idealized
+// `erfinv(x)/sqrt(w)`, weighted by the `sqrt(w)*Q` combine's own
+// sensitivity `sqrt(w)/ulp(erfinv)` and then coordinate-descended over the
+// f32 quantisation -- a plain least-squares fit left ~3.4x more idealized
 // error than the same degree can reach.
+//
+// The variable is `t = sqrt(w) - 1`, not `w`, and the variable is worth
+// more here than the degree is. `w` spans `[0.673, 16]`, a 24x range, and a
+// monomial poly over it has terms reaching `sum|c_k w^k| / |Q| = 5.7x` the
+// value it is computing at degree 8, 15.6x at degree 10 -- so each
+// coefficient's f32 quantisation lands on the answer amplified by that
+// much, and raising the degree makes it worse faster than it makes the fit
+// better. `t` spans `[-0.179, 2.993]`, where the same ratio is 1.6-3.4x at
+// every degree. Idealized ulp, f32-quantised, over the range below:
+//
+//     degree  |    8     9    10
+//     in w    |  9.2   5.8   3.7
+//     in t    | 17.3   3.0   2.8
+//
+// Same lever, and the same exactness argument, as `erfinv_far_poly`'s
+// `sqrt(w) - 7`: `v - 1` is exact for every `v` in `[0.5, 4]` (`v` there is
+// a multiple of `2^-24`..`2^-22` and `v-1` lands in `[-0.5, 3]`, which
+// holds them all), so the recentring costs no accuracy at all.
+//
+// `sqrt(w)` is not an extra operation -- the `sqrt(w)*Q` combine needs it
+// anyway, and `erfc_inv_half` was already forming `v - 7.0` next to it.
+// What it does cost is dependency order: the poly now sits *behind* the
+// sqrt instead of beside it. Net +2 instructions per call and +1 Block
+// RThroughput on each of the three callers; see the commit's mca table,
+// and note mca's simulated-cycles columns disagree with each other on the
+// sign for an identical instruction delta.
+//
+// Upper end of the fit is `w = 16`, i.e. `ERFC_INV_W_FAR`, not the
+// `-ln(1-x_max^2) = 15.9424` that `erfinv`'s own largest argument can
+// produce. `erfc_inv`/`probit` reach the seam exactly, so a fit stopping at
+// 15.9424 is extrapolating over the last sliver -- which is where the old
+// poly's worst case was, and worth 4.0 of its 13.7 idealized ulp.
 #[inline(always)]
-fn erfinv_tail_poly(w: f32) -> f32 {
-    let c: [f32; 9] = [
-        8.862468e-1,
-        1.0395482e-2,
-        -2.2551943e-4,
-        -1.02430866e-4,
-        1.6865362e-5,
-        -1.3347174e-6,
-        6.0056976e-8,
-        -1.4636747e-9,
-        1.4956567e-11,
+fn erfinv_tail_poly(t: f32) -> f32 {
+    let c: [f32; 10] = [
+        0.8963304,
+        0.019399296,
+        7.886844e-3,
+        -2.1719823e-3,
+        -4.3599683e-4,
+        -7.977164e-4,
+        9.2836854e-4,
+        -3.5990187e-4,
+        6.410802e-5,
+        -4.4732756e-6,
     ];
-    let w2 = w * w;
-    let w4 = w2 * w2;
-    let l0 = fma(c[1], w, c[0]);
-    let l1 = fma(c[3], w, c[2]);
-    let l2 = fma(c[5], w, c[4]);
-    let l3 = fma(c[7], w, c[6]);
-    let r0 = fma(l1, w2, l0);
-    let r1 = fma(l3, w2, l2);
-    fma(c[8], w4 * w4, fma(r1, w4, r0))
+    let t2 = t * t;
+    let t4 = t2 * t2;
+    let l0 = fma(c[1], t, c[0]);
+    let l1 = fma(c[3], t, c[2]);
+    let l2 = fma(c[5], t, c[4]);
+    let l3 = fma(c[7], t, c[6]);
+    let l4 = fma(c[9], t, c[8]);
+    let r0 = fma(l1, t2, l0);
+    let r1 = fma(l3, t2, l2);
+    fma(fma(l4, t4, r1), t4, r0)
 }
 
 // erfinv's *far*-tail branch, a poly in `t = sqrt(w) - 7`. Reachable only
@@ -5196,7 +5227,7 @@ fn erfc_inv_half(n: f32) -> f32 {
     let q = if w > ERFC_INV_W_FAR {
         erfinv_far_poly(v - 7.0)
     } else {
-        erfinv_tail_poly(w)
+        erfinv_tail_poly(v - 1.0)
     };
     let mag = if x <= 0.7 { central } else { v * q };
     // `n == 0` is the pole and `n < 0` (with NaN) is a domain error. Both
@@ -5265,7 +5296,8 @@ pub fn erfinv(x: f32) -> f32 {
     let s = fma(-n, n, n + n);
     let w = -if s > 0.0 { ln_normal(s, 0.0) } else { f32::NAN };
     let central = x * erfinv_central_poly(x * x);
-    let tail = mulsign(w.sqrt() * erfinv_tail_poly(w), x);
+    let v = w.sqrt();
+    let tail = mulsign(v * erfinv_tail_poly(v - 1.0), x);
     let normal = if ax <= 0.7 { central } else { tail };
     if ax == 1.0 { f32::INFINITY.copysign(x) } else { normal }
 }
