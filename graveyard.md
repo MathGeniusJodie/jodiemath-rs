@@ -8657,13 +8657,21 @@ Coefficients (degree 7, `c[0]` is the `s^0` term of `Q`):
 
 ### Transferable
 
-- **A peel's extra dependency level is not intrinsic.** `ln`'s +11.7%
-  latency was read as the peel's price; it is the price of *that*
-  placement of the Cody-Waite LO word. Any term that depends only on `k`
-  (or only on the argument's exponent) can be hoisted into the
-  polynomial's low group, where it is off the critical path and costs a
-  mul-to-fma upgrade instead of an add. Worth re-checking on `ln_normal`
-  and `log_2_normal`, whose peels both still pay the level.
+- **A peel's extra dependency level is not always intrinsic.** `ln`'s
+  +11.7% latency was read as the peel's price; here it was the price of a
+  particular placement of the Cody-Waite LO word. Any term that depends
+  only on `k` (or only on the argument's exponent) *and is small* can be
+  hoisted into the polynomial's low group, where it is off the critical
+  path and costs a mul-to-fma upgrade instead of an add.
+  **Checked on the two siblings, and it transfers to neither** -- do not
+  re-run these. `log_2_normal` has no LO word at all (`log2(2^k) = k` is
+  exact, it joins with a bare `+ k`), so there is nothing to hoist.
+  `ln_normal` has one, but hoisting `k*LN2_LO` alone buys nothing: `s`
+  still has to occupy the tail, leaving depth 6 and 11 ops either way,
+  and `s` itself is *not* small -- folding it in is `a = fma(s2, l0, s)`,
+  already measured at max 1 -> 2 in the `ln_normal` entry above. The
+  lever needs a leading coefficient that is not 1.0, which is exactly
+  what made `log10`'s peel look like the harder of the two.
 - **A non-exact leading coefficient puts a hard floor under a peel**, and
   the floor is computable in one line before any fitting: `(f32(c) - c)/c`
   in the LP's own units. If a degree bump lands *on* that number, the
