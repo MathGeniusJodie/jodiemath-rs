@@ -2347,7 +2347,7 @@ fn real_main() {
     check_seam("expm1 seam", expm1, 0.5);
     check_seam("exp2m1 seam", exp2m1, 0.65);
     check_seam("sinh seam", sinh, 0.5);
-    check_seam("tanh seam", tanh, 0.25);
+    check_seam("tanh seam", tanh, 0.8);
     check_seam("asin seam", asin, 0.27);
     check_seam("erf seam", erf, 0.28);
     check_seam("atanh seam", atanh, 0.25);

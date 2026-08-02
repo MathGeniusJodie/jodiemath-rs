@@ -8029,3 +8029,150 @@ Also corrected on the way past: the readme's llvm-mca rows for
 carried their pre-f64-reduction numbers. Re-measured on current master:
 82.00 / 2.495 and 87.00 / 3.157. `tan_checked` had no row at all and now
 has one.
+## `tanh`: fit the reciprocal, not the function, and the seam is free to move
+
+`tanh` was the crate's worst-average hyperbolic: exhaustive avg 0.1452,
+max 5, worst x **2.5000983e-1** -- its own seam, to four digits, exactly
+where idea #169's error profile said it would be. #169 studied that band
+at length, closed three levers on it, and concluded the concentration was
+"structural at the current op budget". It was not. The premise none of
+the three levers questioned is that the small arm has to be `expm1`'s
+Pade.
+
+**Shipped**: exhaustive avg **0.1452 -> 0.0440**, max **5 -> 2**, same
+instruction count, one division instead of two.
+
+### The mechanism as one number
+
+The direct arm forms `e = expm1(2x)` and returns `e/(e+2)`. Compose the
+`-1` cancellation gain `e^2x/(e^2x - 1)` with the divide's attenuation
+`2/(e^2x + 1)` and the arm's end-to-end sensitivity to the exp chain's
+*relative* error is exactly **`1/sinh(2x)`**:
+
+| seam | 0.25 | 0.5 | 0.6 | 0.7 | 0.8 | 0.9 |
+|---|---|---|---|---|---|---|
+| `1/sinh(2*seam)` | **1.919** | 0.851 | 0.663 | 0.525 | **0.421** | 0.340 |
+
+So the seam wants to sit as far out as the small arm can reach. Routing
+the small arm through `expm1`'s shared Pade makes that impossible: that
+Pade's argument is `2x`, so its fitted `|v| < 0.5` domain pins the seam
+at **0.25** -- the single worst entry in the table. #169's lever (a)
+tried to widen the Pade's own fit and correctly found it cannot be had at
+that degree (42 ulp idealized at `|v| < 1`); lever (b) added a *second*
+Pade and a *second* division, +39.6% throughput. Neither is needed. **A
+fit in `x` has no such constraint**, and the 5-function crossover audit
+that found `0.25` optimal was measuring a pair of arms that no longer
+exists.
+
+### Four small-arm forms, and why the reciprocal wins
+
+All four are five instructions and one division; the difference is where
+the roundings land. Simulated in numpy at f32 with exact fma semantics,
+on a strided grid of real f32 values over `[2^-12, seam]` (7.4M points),
+scored against f64 `tanh`, seam 0.7 for all four so they are comparable:
+
+| small arm | max ulp | avg ulp |
+|---|---|---|
+| A `x*fma(N2,x2,1) / D` -- [5/4] rational fitted to `tanh` | 3.32 | 0.610 |
+| A2 `fma(x*x2, N2, x) / D` -- peel the leading `x` | 2.46 | 0.499 |
+| **A3 `x / D(x^2)`, `D ~ x*coth(x)`** (shipped) | **1.51** | **0.439** |
+| C `x + x^3*c/D` -- full peel, needs its own division (7 instrs) | 1.03 | 0.252 |
+
+A spends a full-weight rounding forming `1 + N2*x^2` and another on the
+multiply by `x`. A2 folds both into one fma at the *result's* scale. A3
+deletes the numerator entirely: fit `x/tanh(x) = x*coth(x) = 1 + x^2/3 -
+x^4/45 + 2x^6/945 - ...` instead -- an even series, so the numerator *is*
+`x`, carried exactly, and the only two roundings at result scale are
+`D`'s outer fma and the division. Same lever as `ln_normal`'s peel,
+pointed at a denominator. It costs nothing: `D` is degree 4 in `x^2`,
+the same five instructions the [5/4] rational needed.
+
+C is better still but cannot share the division, and **the obstruction is
+general enough to write down**: the merged form
+`select(small, x, 0) + select(small, n, e)/select(small, D, e+2)` returns
+`+0.0` for `tanh(-0.0)`. The correction `x^3*c/D` always carries the
+*opposite* sign to `x` (because `|tanh x| < |x|`), and `(-0) + (+0)` is
+`+0` in IEEE round-to-nearest. All four sign conventions were enumerated
+(`c`,`D` each positive/negative); the two that fix the zero invert the
+sign of the correction itself. So **a peel whose final op is an addition
+forces its own division.** A3 gets the same benefit for free because its
+peel *is* the numerator and its final op is the divide. C was not
+implemented -- +2 instructions and +1 division for one more ulp of
+headroom under a max that A3 already got to 2.
+
+### `D`'s degree is 4, and that is the whole search
+
+Remez-LP minimax for `D`, idealized (exact arithmetic), in
+ulp-equivalents of the result:
+
+| domain | deg 3 | deg 4 | deg 5 |
+|---|---|---|---|
+| `[0,0.6]` | 0.470 | **0.0045** | 0.00003 |
+| `[0,0.7]` | 1.536 | **0.018** | 0.0002 |
+| `[0,0.8]` | 4.224 | **0.065** | 0.001 |
+| `[0,0.9]` | 10.18 | **0.194** | 0.004 |
+
+Degree 4 is an order under the evaluation rounding everywhere out to 0.9
+and degree 5 buys nothing. Seam **0.8** was taken: the arm's own
+simulated max is flat in the seam (1.50/1.51/1.52 at 0.6/0.7/0.8, 1.71 at
+0.9), so the seam is decided entirely by the `1/sinh(2x)` column, and
+past 0.9 the fit starts to move. Shipped coefficients (`x^2` ascending):
+`0.33333313, -0.02221908, 0.0021010686, -0.00018176674`.
+
+`ln_normal`'s LP trap recurred verbatim: at the raw relative scale HiGHS
+returned *exact zero* residuals for degree 4 and 5 -- the answer was under
+its feasibility tolerance. Rescaling the constraint rows into ulp units
+(`1/5.96e-8`) made it real. Verify every LP fit on an independent dense
+grid; the table above is verified at 400k points, not read off the LP.
+
+### Measured, exhaustively (every f32 bit pattern in `tanh`'s domain, 2220710048 scored)
+
+| | avg ulp | max | worst x |
+|---|---|---|---|
+| shipped before | 0.1452 | 5 | 2.5000983e-1 |
+| A, seam 0.5 | 0.0588 | 4 | -5.1969117e-1 |
+| A, seam 0.7 | 0.0586 | 3 | 1.4239925e-2 |
+| A2, seam 0.7 | 0.0481 | 3 | 5.346194e-1 |
+| **A3, seam 0.8 (shipped)** | **0.0440** | **2** | 6.2427483e-2 |
+
+The worst-x column is the story: it walks off the old seam, then out of
+the direct arm entirely. Two `worst_corpus` entries also went from 1 ulp
+to *exact* -- `tanh(1e-20)` and `tanh(1e-5)` -- because below `|x| ~ 3e-4`
+the whole polynomial vanishes into `D == 1.0` and the result is `x / 1.0`.
+
+### And it is cheaper, because the select moved one step earlier
+
+`tanh` used to divide **twice**: once inside the Pade, once in
+`e/(e+2)`. Both arms are already a ratio, so the select can be taken on
+the numerator and the denominator separately and the function divides
+once.
+
+| | instrs | uOps | BlockRT | cyc/elem | latency published / arms | `vdivps` |
+|---|---|---|---|---|---|---|
+| before | 77 | 89 | 22.00 | 1.731 | 85.64 / 53.00 / 62.00 | 4 |
+| after | 77 | 88 | 21.00 | 1.759 | 63.00 / 45.00 / 62.00 | **2** |
+
+**The cyc/elem column disagrees with every other rung and is not
+believed**, per this file's own escalation ladder: instruction count is
+identical, two `vdivps` (the most expensive op in the region) became two
+fmas, uOps fell, and Block RThroughput fell. `mca_arms.py` on the latency
+region: the small arm pays 36.02 -> 45.00 relative to form A for its two
+extra dependent fmas, but is still well under the 53.00 it replaced, and
+the direct arm is untouched at 62.00.
+
+### Transferable
+
+1. **A seam-position audit is only valid for the arms it measured.** This
+   file's 5-function crossover retune found `tanh`'s `0.25` optimal, and
+   it was -- for the arms that existed. Changing an arm's *shape*
+   re-opens it. Same class as the `asin` 0.25 -> 0.27 entry, one level up:
+   there a coefficient refit moved the crossover, here a whole arm did.
+2. **The sensitivity of a composed reduction is often a closed form.**
+   Here two amplification factors multiplied to `1/sinh(2x)`, which turned
+   "where should the seam be" from a sweep into reading a table. Worth
+   deriving before sweeping anything.
+3. **Fit the reciprocal when the leading term is the argument itself.**
+   `f(x) = x/D(x^2)` carries `x` exactly; `f(x) = x*N(x^2)/D(x^2)` pays
+   two roundings for an `N` that a good `D` did not need. Candidates:
+   any odd function whose series starts `x + O(x^3)` and that already
+   divides.

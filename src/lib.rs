@@ -3200,13 +3200,40 @@ pub fn cosh_throughput(x: f32) -> f32 {
     0.5 * (e + 1.0 / e)
 }
 
-/// tanh(x) = (e^2x - 1) / (e^2x + 1) = expm1(2x) / (expm1(2x) + 2), same
-/// formula as before, reusing expm1's already-correct small-x handling
-/// (its own Pade branch below |x|<0.5) instead of computing exp2(2x) and
-/// cancelling `1.0 - (~1.0)` directly, which lost essentially all
-/// precision for small x (a fuzz sweep found this the same
-/// 300-million-ulp-average class of bug as log1p's, before that fix --
-/// see IDEAS.md).
+/// Two arms sharing one division: `x / D(x^2)` below `|x| < 0.8`, and
+/// `expm1(2x) / (expm1(2x) + 2)` above it. The select picks the
+/// *numerator* and the *denominator* separately rather than the
+/// quotient, so the whole function divides once. Computing `exp2(2x)`
+/// and cancelling `1.0 - (~1.0)` directly instead is the same
+/// 300-million-ulp-average class of bug as log1p's (see IDEAS.md); both
+/// arms here avoid it.
+///
+/// `D` approximates `x/tanh(x) = x*coth(x) = 1 + x^2/3 - x^4/45 +
+/// 2x^6/945 - ...`, an even series, so `D` is degree 4 in `x^2` and the
+/// leading `1` is exact. **The reciprocal orientation is the point**: a
+/// rational fitted to `tanh` itself spends a full-weight rounding
+/// forming its numerator and another on the multiply by `x`, whereas
+/// here the numerator *is* `x`, carried exactly. Only two roundings land
+/// at the result's own scale -- `D`'s outer fma and the division -- and
+/// the four coefficients' own error is attenuated by `(D-1)/D <= 0.19`.
+/// Same lever as `ln_normal`'s peel, applied to a denominator.
+///
+/// The seam is at `0.8` because the direct arm passes the exp chain's
+/// relative error through with gain exactly `1/sinh(2x)`: **1.92** at
+/// `x=0.25`, 0.85 at 0.5, **0.42** at 0.8. Writing the small arm as
+/// `expm1`'s own Pade instead forces that Pade's argument to be `2x`, so
+/// its fitted `|v| < 0.5` domain pins the seam at `0.25` -- the worst
+/// place for it. A fit in `x` is free to move out to where the gain has
+/// decayed; a Remez-LP minimax `D` over `[0, 0.8]` costs 0.06
+/// ulp-equivalent, an order under the two roundings above, and stays
+/// under 0.2 ulp out to `0.9`.
+///
+/// Small `|x|` comes out *exact*, not merely accurate: below `|x| ~
+/// 3e-4` the correction `dp * x^2` is under half an ulp of `1.0`, `D`
+/// rounds to exactly `1.0`, and the result is `x / 1.0`. That covers
+/// every denormal, and `-0.0` keeps its sign. Below the seam the arm is
+/// also exactly odd -- `x2` and `D` never see the sign -- so `tanh(-x)`
+/// is bit-for-bit `-tanh(x)` there, which the old form was not.
 ///
 /// `2*x` is clamped to `[-87.0, 88.0]` before the reduction: the raw
 /// `2*x` inherited exp's unchecked-domain garbage for |x| > ~44
@@ -3224,35 +3251,36 @@ pub fn cosh_throughput(x: f32) -> f32 {
 #[doc(alias = "tanhf")]
 #[inline(always)]
 pub fn tanh(x: f32) -> f32 {
-    // Standalone copy of expm1 (not a call through the public `expm1`
-    // fn, same shared-helper scheduling risk as everywhere else) but
-    // with a single exponent-field construction instead of exp's k1/k2
-    // split: the clamp bound guarantees `k = round(x*2*log2e)` stays in
-    // [-126, 127], comfortably short of the k=128 edge case the split
-    // exists for. Same fma(p, exp2int, -1.0) tail fusion as expm1.
-    //
-    // Unlike the earlier form, `2*x` is never materialized as its own
-    // value: every downstream constant is pre-scaled by the matching
-    // power of two instead (2*LOG2_E, halved LN2_HI/LN2_LO, the poly's
-    // c[n] coefficients each *2^(n+1), the Pade numerator/denominator
-    // each /8 to match its two extra Horner multiplies). This is exact,
-    // not an approximation: correctly-rounded arithmetic (every `fma`/
-    // `*` step here) commutes exactly with power-of-2 scaling of all its
-    // inputs, so each intermediate is bit-for-bit the old value at half
-    // (or a smaller power-of-two fraction of) its former scale, all the
-    // way through to the final `a`/`b` -- verified bit-identical
-    // exhaustively, see IDEAS.md idea #119. Deletes the standalone
-    // `2.0 * x` multiply from the critical path.
     let xc = x.clamp(-43.5, 44.0);
 
-    const PADE_N_A: f32 = -1.9999927; // unscaled: shared with expm1/sinh_small's own copy
-    const PADE_N_B: f32 = -120.0 / 4.0;
-    const PADE_D_C1: f32 = 12.000030 / 2.0;
-    const PADE_D_C2: f32 = 59.999996 / 4.0;
-    const PADE_D_C3: f32 = -120.0 / 8.0;
-    let a = xc * fma(PADE_N_A, xc * xc, PADE_N_B)
-        / fma(xc, fma(xc, xc - PADE_D_C1, PADE_D_C2), PADE_D_C3);
+    // Small arm's denominator, x*coth(x) over [0, 0.8]. The numerator is
+    // `xc` itself, so it needs no instruction at all.
+    const COTH1: f32 = 0.33333313;
+    const COTH2: f32 = -0.02221908;
+    const COTH3: f32 = 0.0021010686;
+    const COTH4: f32 = -0.00018176674;
+    let x2 = xc * xc;
+    let dp = fma(fma(fma(COTH4, x2, COTH3), x2, COTH2), x2, COTH1);
+    let ds = fma(dp, x2, 1.0);
 
+    // Direct arm: a standalone copy of expm1 (not a call through the
+    // public `expm1` fn, same shared-helper scheduling risk as
+    // everywhere else) but with a single exponent-field construction
+    // instead of exp's k1/k2 split -- the clamp bound guarantees
+    // `k = round(x*2*log2e)` stays in [-126, 127], comfortably short of
+    // the k=128 edge case the split exists for. Same
+    // fma(p, exp2int, -1.0) tail fusion as expm1.
+    //
+    // `2*x` is never materialized as its own value: every downstream
+    // constant is pre-scaled by the matching power of two instead
+    // (2*LOG2_E, halved LN2_HI/LN2_LO, the poly's c[n] coefficients each
+    // *2^(n+1)). This is exact, not an approximation: correctly-rounded
+    // arithmetic (every `fma`/`*` step here) commutes exactly with
+    // power-of-2 scaling of all its inputs, so each intermediate is
+    // bit-for-bit the old value at half (or a smaller power-of-two
+    // fraction of) its former scale, all the way through to `b` --
+    // verified bit-identical exhaustively, see IDEAS.md idea #119.
+    // Deletes the standalone `2.0 * x` multiply from the critical path.
     const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
     const LOG2_E_X2: f32 = 2.0 * LOG2_E;
     let k = fma(xc, LOG2_E_X2, ROUND_MAGIC) - ROUND_MAGIC;
@@ -3274,8 +3302,13 @@ pub fn tanh(x: f32) -> f32 {
     let exp2int = exp2int_field!(k);
     let b = fma(p, exp2int, -1.0);
 
-    let e = if xc.abs() < 0.25 { a } else { b };
-    e / (e + 2.0)
+    // Two selects, one division -- not one select and two divisions.
+    // Both arms are already a ratio, so the branch can be taken a step
+    // earlier and the divider visited once.
+    let small = xc.abs() < 0.8;
+    let n = if small { xc } else { b };
+    let d = if small { ds } else { b + 2.0 };
+    n / d
 }
 
 /// tanh'(x) = 1 - tanh(x)^2 (backlog idea #150), the gradient ML

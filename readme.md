@@ -60,7 +60,7 @@ sinh_throughput (in-domain)| 0.080    |     4     |  0.000  |    1
 cosh_throughput (in-domain)| 0.049    |     3     |  0.000  |    0
        sinh_checked (all f32) | 0.041 |     4     |  0.000  |    1
        cosh_checked (all f32) | 0.027 |     4     |  0.000  |    0
-        tanh (in-domain) |    0.145   |     5     |  0.000  |    0
+        tanh (in-domain) |    0.044   |     2     |  0.000  |    0
                  sigmoid |    0.091   |     3     | (no std sigmoid)
         softplus (|x|<80)|    0.075   |     3     | (no std softplus)
 softplus_checked (all f32)| 0.039   |     3     | (no std softplus)
@@ -391,7 +391,7 @@ sinh_throughput     |          62.00 |             1.943
 cosh_throughput     |          61.00 |             1.616
 sinh_checked        |          59.00 |             1.974
 cosh_checked        |          58.00 |             1.938
-tanh                |          85.64 |             1.731
+tanh                |          63.00 |             1.759
 sigmoid             |          61.00 |             1.222
 softplus            |          74.11 |             2.449
 softplus_checked    |          73.36 |             2.506
@@ -436,7 +436,7 @@ published figure lies above *both* of its own arms measured in isolation** --
 the arms fuse into one artificial chain whenever the second reads a register
 the first clobbered. Worst offenders: `exp2m1` 80.00 against arms of
 37.00/48.00, `exp10m1` 112.00 against 37.00/80.00, `expm1_checked` 78.00
-against 32.00/51.00, `tanh` 85.64 against 53.00/62.00, `erf` 87.00 against
+against 32.00/51.00, `tanh` 63.00 against 45.00/62.00, `erf` 87.00 against
 44.00/65.98, `asin` 56.74 against 26.99/40.99, `acosh` 97.88 against
 51.08/82.02. The opposite failure also happens: where both arms write the
 same register and the *cheap* one is laid out last, mca times the cheap one
