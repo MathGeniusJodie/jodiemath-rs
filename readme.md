@@ -67,6 +67,7 @@ softplus_checked (all f32)| 0.039   |     3     | (no std softplus)
 logsigmoid_checked (all f32)| 0.039 |     3     | (no std logsigmoid)
     silu_checked (all f32)| 0.045   |     5     | (no std silu; 4.69 on a dense scan -- `silu` is 3.85, the avg/max trade in its doc)
 logaddexp (|a|,|b|<80)|    0.141   |  ~1e3-1e5, heavy-tailed (real, narrow cancellation -- see its own doc comment) | (no std logaddexp)
+logaddexp_checked (all f32)| 0.037 |  ~1e3-1e5, heavy-tailed (same cancellation, bit-identical over |a-b|<=87; the lower avg is the wider domain, not a better answer) | (no std logaddexp)
                   asinh |    0.034   |     2     | 
                   acosh |    0.003   |     3     |  0.000  |    1
                   atanh |    0.004   |     2     | 
@@ -342,6 +343,17 @@ would not be comparable to the rest of the table (see the `(!)`/`(r)`
 notes above for what that costs). llvm-mca puts the rewrite at -66.0%
 latency and -70.5% throughput; read that table instead.
 
+Unlike the wall-clock tables, this one is cheap to re-verify in full (one
+`cargo run --release --example mca`, then diff it against the rows below),
+and it is worth doing, because a row here silently going stale after
+somebody else's rewrite is this crate's documented route to adopting a
+change that is really a regression. Every row below has been checked
+against current `master`. The last such sweep found 10 of 79 rows carrying
+pre-rewrite numbers: `erf` latency 83.98, `remainder`/`remainder_ieee`/
+`fmod` latency 6.0 cyc low each, `sinh_throughput` 1.943 and
+`cosh_throughput` 1.616 throughput, plus sub-1% drift on
+`sin`/`asinh`/`erfc`/`erfcx`.
+
 ```
 theoretical cost from llvm-mca (-mcpu=native, 100 iterations)
                     | latency (cyc)  | throughput (cyc)
@@ -357,7 +369,7 @@ exp10               |          52.00 |             1.461
 exp10_checked       |          55.00 |             1.657
 log2                |          38.06 |             1.583
 log2_unchecked      |          38.06 |             1.021
-sin                 |          64.00 |             1.776
+sin                 |          64.00 |             1.778
 sin_fast            |          48.00 |             1.151
 sin_checked         |          82.00 |             2.495
 cos                 |          61.00 |             1.654
@@ -387,8 +399,8 @@ exp_m1_over_x       |          81.00 |             1.639
 exp2m1              |          80.00 |             1.843
 sinh                |          51.00 |             1.720
 cosh                |          50.00 |             1.606
-sinh_throughput     |          62.00 |             1.943
-cosh_throughput     |          61.00 |             1.616
+sinh_throughput     |          62.00 |             1.689
+cosh_throughput     |          61.00 |             1.498
 sinh_checked        |          59.00 |             1.974
 cosh_checked        |          58.00 |             1.938
 tanh                |          63.00 |             1.759
@@ -400,7 +412,8 @@ logsigmoid_checked  |          75.56 |             2.699
 silu                |          65.02 |             1.407
 silu_checked        |          60.97 |             1.466
 logaddexp           |          74.11 |             2.449
-asinh               |          74.49 |             4.159
+logaddexp_checked   |          73.35 |             2.506
+asinh               |          74.48 |             4.159
 acosh               |          97.88 |             3.948
 atanh               |         100.83 |             2.974
 asin                |          56.74 |             0.900
@@ -409,21 +422,21 @@ atan                |          61.27 |             1.491
 atan_latency        |          61.99 |             1.591
 atan2               |          67.19 |             1.694
 tan                 |          78.00 |             2.985
-erf                 |          83.98 |             2.037
-erfc                |          62.28 |             2.899
-erfcx               |          66.99 |             2.896
+erf                 |          87.00 |             2.040
+erfc                |          62.08 |             2.885
+erfcx               |          66.99 |             2.827
 hypot               |          21.11 |             0.766
 hypot_checked       |          57.19 |             1.178
 rhypot              |          32.02 |             1.389
 rsqrt               |          28.00 |             1.381
 powf                |         125.81 |             6.996
 powf_unchecked      |         118.00 |             6.171
-remainder           |          34.11 |                 ? (*)
+remainder           |          40.13 |                 ? (*)
 remainder_unchecked |          33.00 |             0.646
 remainder_checked   |          45.17 |             1.357
-remainder_ieee      |          29.11 |                 ? (*)
+remainder_ieee      |          35.13 |                 ? (*)
 remainder_wide      |          58.13 |             2.266
-fmod                |          29.11 |                 ? (*)
+fmod                |          35.13 |                 ? (*)
 fmod_unchecked      |          28.00 |             0.643
 ```
 

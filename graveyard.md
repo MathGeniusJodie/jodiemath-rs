@@ -8464,3 +8464,93 @@ instruction delta, opposite signs. Read Block RThroughput.
   crate's `erfinv` tail polys now use one.
 - **A shared poly's fit range is the union of its callers' ranges.** The
   one that named it is not necessarily the one that reaches furthest.
+
+## `logaddexp_checked`: the fourth correction-term flusher, and 10 stale readme mca rows
+
+`logaddexp` carried `softplus`'s exact correction-term cutoff -- `corr = 0`
+once `|a-b| > 87` -- and nothing in the crate reported it, because both of
+`denormal_audit`'s lists take `fn(f32) -> f32`. Shipped as
+`logaddexp_checked`, the same tier `softplus_checked`/`logsigmoid_checked`/
+`silu_checked` already are, and the price came out exactly where IDEAS.md
+predicted it would:
+
+```
+                     instrs  uOps  BlockRT  cyc/elem   latency
+logaddexp               100   110    28.00     2.449     74.110
+logaddexp_checked       103   116    30.00     2.506     73.345
+                                              (+2.3%)    (-1.0%)
+```
+
+Digit-for-digit `softplus_checked`'s own +2.3% / -1.0%, which is expected
+rather than a coincidence: `logaddexp(x, 0.0) == softplus(x)` identically,
+so the mca rows for the two pairs measure the same instruction stream (the
+house convention pins the 2nd arg of a 2-arg row to a constant). All three
+rungs of the ladder move the same way, so the throughput column is not
+doing anything on its own here.
+
+Both tiers stay -- `logaddexp` on throughput, `logaddexp_checked` on
+latency and on the tail -- the same Pareto split as `softplus`.
+
+What the new tier buys, measured rather than argued:
+
+- **2224564** values of `d = |a-b|` in `(87, 104]` where `logaddexp`
+  returns exactly `0.0` and the true `log1p(exp(-d))` is a representable
+  f32. It only shows when `max(a,b)` is itself near zero, which is narrow
+  -- and is the log-sum-exp normalisation case exactly.
+- `denormal_audit` now reports it: `logaddexp(x,0)` **FLUSHES ALL** from
+  `x = -103.972`, `logaddexp_checked(x,0)` **carries denormals**. That row
+  is the file's first 2-arg coverage of any kind, and it is not an
+  approximation of the 2-arg behaviour: the curry is an identity.
+- Bit-identity over the agreement band is **exhaustive**, not sampled.
+  Both tiers build `m` and `d` identically and differ only in a correction
+  that is a function of `d` alone, so all 1118699521 f32 bit patterns of
+  `d` in `[0, 87]` at `m = 0` cover the whole band: **0 mismatches**.
+
+Two things worth carrying forward:
+
+- **The f64 reference collapses in the region being fixed.** The obvious
+  `(a.exp() + b.exp()).ln()` returns `0.0` for `(-88, 0)` in *f64* too,
+  because `1 + 6e-39` is `1.0` at f64 as well. `m + log1p(exp(-d))` is the
+  reference that does not (accuracy.rs already used that form; the trap is
+  for anyone writing a quick check by hand).
+- **The 2-arg fuzz cannot see any of this.** Landing in the restored band
+  needs `|a-b| > 87` *and* `max(a,b)` near zero simultaneously; four
+  repeats of the thorough sweep put `logaddexp` max ulp at 1186 / 3453 /
+  4213 / 20407 and `logaddexp_checked` at 934 / 1300 / 1895 / 11112 -- all
+  of it the documented cancellation, sampling noise, and no signal about
+  the tail either way. avg is the stable half: 0.139 vs 0.037, and the
+  difference there is the wider domain (most of the finite plane has
+  `|a-b| > 87`, where the answer is exactly `m` at 0 ulp), not a better
+  answer anywhere.
+
+The reduction is now a `macro_rules! exp_neg_scaled64`, shared by
+`softplus_checked` and `logaddexp_checked`. Verified the way this crate
+requires: a full pre/post diff of all 303 `LLVM-MCA-BEGIN` regions in
+`mca_target`'s asm, normalised for label renumbering -- **0 changed
+regions**, 2 new ones. `silu_checked` still has the same four lines
+written out inline; it was in another domain (see IDEAS.md).
+
+### Side finding: 10 of the readme's 79 llvm-mca rows were stale
+
+A full `cargo run --release --example mca` diffed against the published
+table, which is a ~25-minute background job and a 20-line script. The
+drift is from other functions' rewrites landing without their rows:
+
+```
+                   readme lat -> real     readme thr -> real
+erf                     83.98    87.00
+remainder               34.11    40.13
+remainder_ieee          29.11    35.13
+fmod                    29.11    35.13
+sinh_throughput             -        -         1.943    1.689
+cosh_throughput             -        -         1.616    1.498
+erfcx                       -        -         2.896    2.827
+sin / asinh / erfc      sub-1% drift on one or both columns
+```
+
+`sinh_throughput` at -13.1% and `erf` at +3.6% are the two big ones. Note
+which direction they point: the published `erf` latency was *better* than
+the real one and the published `sinh_throughput` *worse*, so a stale table
+can hide a regression and can also invent one. The two `*_checked`
+sin/cos rows found stale earlier the same day were the same failure mode.
+Re-measuring the table is cheap; do it before quoting any row of it.

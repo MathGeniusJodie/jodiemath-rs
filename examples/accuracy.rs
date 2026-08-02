@@ -1313,6 +1313,28 @@ fn main() {
         let s = fuzz2(TWOARG_SAMPLES, logaddexp_domain, logaddexp, logaddexp_ref);
         report("logaddexp (|a|,|b|<80)", &s, t0);
     }
+    if run("logaddexp_checked") {
+        // No |a|,|b|<80 restriction, same reason as softplus_checked's
+        // block: this tier has no correction-term cutoff to stay clear
+        // of. The reference is `m + log1p(exp(-d))`, *not* the obvious
+        // `(a.exp()+b.exp()).ln()` -- that one collapses to `m` in f64
+        // too (`1 + 6e-39` is `1.0` at f64 as well), reproducing the very
+        // defect this tier fixes. A blind 2-arg fuzz essentially never
+        // lands in the restored band anyway (it needs |a-b| > 87 *and*
+        // max(a,b) near zero); edgecheck pins that band directly.
+        let logaddexp_ref = |a: F64xN, b: F64xN| {
+            let m = a.simd_max(b);
+            let d = (a - b).abs();
+            m + log1p_u10(exp_u10(-d))
+        };
+        let s = fuzz2(
+            TWOARG_SAMPLES,
+            |a: f32, b: f32| a.is_finite() && b.is_finite(),
+            logaddexp_checked,
+            logaddexp_ref,
+        );
+        report("logaddexp_checked", &s, t0);
+    }
     if run("gelu") {
         // x * Phi(x) via erfc_u15 (see gelu's own doc comment for why not
         // erf_u10 -- 1+erf(z) cancels toward 0 for negative x). Same

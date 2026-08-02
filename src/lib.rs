@@ -3549,6 +3549,31 @@ pub fn softplus(x: f32) -> f32 {
     if x.is_nan() { f32::NAN } else { normal }
 }
 
+// `exp(-a) * 2^64` for `a` in `[0, 105]`, the reduction the `_checked`
+// tiers of the softplus family need: their correction term has to survive
+// down into the denormals, which a single 2^k exponent field cannot
+// represent -- but `exp(-a) * 2^64` is normal over the whole range, so the
+// caller lands the denormal itself with one exact `2^-64` multiply and a
+// single rounding. Biasing the field by `+64` is what keeps `k`, which
+// runs to `-152` at `a = 105`, inside the field's own `[-126, 127]`.
+//
+// Macro, not a fn -- see exp_r_poly! for the +32% fn-boundary precedent
+// this avoids; the two call sites below are verified asm-identical to the
+// hand-written copies they replace. `silu_checked` still writes the same
+// four lines out inline (it consumes the *scaled* value directly rather
+// than multiplying `2^-64` back in, and lives in another domain).
+macro_rules! exp_neg_scaled64 {
+    ($a:expr) => {{
+        const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
+        let a = $a;
+        let k = fma(a, -LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
+        let t1 = fma(k, LN2_HI, a);
+        let t2 = fma(k, LN2_LO, t1);
+        let p = exp_r_poly!(-t2);
+        p * exp2int_field!(k + 64.0)
+    }};
+}
+
 /// Full-range sibling of [`softplus`]: no correction-term cutoff, so the
 /// tail stays live all the way to where `ln(1+e^x)` genuinely reaches
 /// zero. [`softplus`] returns exactly `0.0` across `-103.97 < x < -87`
@@ -3582,15 +3607,8 @@ pub fn softplus(x: f32) -> f32 {
 /// answer at all.
 #[inline(always)]
 pub fn softplus_checked(x: f32) -> f32 {
-    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
     const P64: f32 = 5.421010862427522e-20; // 2^-64, exact
-    let ax = x.abs().min(105.0);
-    let k = fma(ax, -LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
-    let t1 = fma(k, LN2_HI, ax);
-    let t2 = fma(k, LN2_LO, t1);
-    let r = -t2;
-    let p = exp_r_poly!(r);
-    let e = (p * exp2int_field!(k + 64.0)) * P64;
+    let e = exp_neg_scaled64!(x.abs().min(105.0)) * P64;
     let normal = x.max(0.0) + log1p_unit(e);
     if x.is_nan() { f32::NAN } else { normal }
 }
@@ -3640,6 +3658,50 @@ pub fn logaddexp(a: f32, b: f32) -> f32 {
     let e = exp_narrow(-d.min(87.0));
     let corr = if d > 87.0 { 0.0 } else { log1p_unit(e) };
     let normal = m + corr;
+    if a.is_nan() || b.is_nan() { f32::NAN } else { normal }
+}
+
+/// Full-range sibling of [`logaddexp`], the same relation
+/// [`softplus_checked`] has to [`softplus`] -- and literally that function
+/// at `b = 0`, since `logaddexp(x, 0.0) == softplus(x)`.
+///
+/// [`logaddexp`] drops the correction term entirely once `|a-b| > 87`, so
+/// it returns exactly `max(a,b)`. That is invisible whenever `max(a,b)`
+/// is far from zero (the correction sits below its last ulp anyway) and
+/// is the *entire answer* when it is not: `logaddexp(-88.0, 0.0)` returns
+/// `0.0` where the true value is `6.054601e-39`, a representable
+/// denormal. Near-zero `max(a,b)` is not a corner -- it is the
+/// log-sum-exp normalization case exactly, where every term has just been
+/// shifted so the largest is `0`. This tier keeps the tail live over the
+/// whole band, out to where `ln(1+e^-d)` genuinely reaches zero at
+/// `d ~ 103.97`: **2224564** values of `d` in `(87, 104]` where
+/// [`logaddexp`] returns exactly `0.0` and this returns the denormal.
+///
+/// Mechanism and price are [`softplus_checked`]'s, unchanged: one scaled
+/// exponent field (`k + 64` stays inside `[-126, 127]` where `k` alone
+/// runs to `-152`) then one exact `2^-64` multiply to land the denormal
+/// with a single rounding, and the `min(105.0)` absorbing both the old
+/// `min(87.0)` and the correction select.
+///
+/// Bit-identical to [`logaddexp`] over `|a-b| <= 87`, and that is
+/// exhaustive rather than sampled: both tiers build `m = max(a,b)` and
+/// `d = |a-b|` the same way and differ only in the correction term, which
+/// is a function of `d` alone, so walking every one of the 1118699521
+/// `f32` bit patterns in `[0, 87]` (at `m = 0`) covers the whole
+/// agreement band. 0 mismatches. The accepted `m`/`corr` cancellation
+/// documented on [`logaddexp`] is therefore neither better nor worse
+/// here.
+#[inline(always)]
+pub fn logaddexp_checked(a: f32, b: f32) -> f32 {
+    const P64: f32 = 5.421010862427522e-20; // 2^-64, exact
+    let m = a.max(b);
+    // `min` is IEEE `minNum` and returns `105.0` for a NaN `d` -- which is
+    // also what a NaN `a`/`b` produces via `a - b`, and what `a = b = inf`
+    // produces out of `inf - inf`. Every one of those wants a dead
+    // correction term, and the trailing `is_nan` restores the NaN cases.
+    let d = (a - b).abs().min(105.0);
+    let e = exp_neg_scaled64!(d) * P64;
+    let normal = m + log1p_unit(e);
     if a.is_nan() || b.is_nan() { f32::NAN } else { normal }
 }
 

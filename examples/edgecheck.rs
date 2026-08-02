@@ -1124,6 +1124,46 @@ fn real_main() {
     check("logaddexp(nan,1)", logaddexp(f32::NAN, 1.0), f32::NAN);
     check("logaddexp(1,nan)", logaddexp(1.0, f32::NAN), f32::NAN);
 
+    // logaddexp_checked: every logaddexp pin above still holds (none of
+    // them is in the band the two tiers differ over), plus that band
+    // itself -- |a-b| past logaddexp's 87 cutoff with max(a,b) at zero,
+    // where the correction term *is* the whole answer. Values are
+    // softplus_checked's own, through logaddexp(x,0) == softplus(x).
+    check("logaddexp_checked(0,0)", logaddexp_checked(0.0, 0.0), std::f32::consts::LN_2);
+    check("logaddexp_checked(100,1)", logaddexp_checked(100.0, 1.0), 100.0);
+    check("logaddexp_checked(inf,5)", logaddexp_checked(f32::INFINITY, 5.0), f32::INFINITY);
+    check(
+        "logaddexp_checked(inf,-inf)",
+        logaddexp_checked(f32::INFINITY, f32::NEG_INFINITY),
+        f32::INFINITY,
+    );
+    check(
+        "logaddexp_checked(-inf,-inf)",
+        logaddexp_checked(f32::NEG_INFINITY, f32::NEG_INFINITY),
+        f32::NEG_INFINITY,
+    );
+    check("logaddexp_checked(inf,inf)", logaddexp_checked(f32::INFINITY, f32::INFINITY), f32::INFINITY);
+    check("logaddexp_checked(nan,1)", logaddexp_checked(f32::NAN, 1.0), f32::NAN);
+    check("logaddexp_checked(1,nan)", logaddexp_checked(1.0, f32::NAN), f32::NAN);
+    check(
+        "logaddexp_checked(x,0)==softplus_checked(x)",
+        logaddexp_checked(3.0, 0.0),
+        softplus_checked(3.0),
+    );
+    check(
+        "logaddexp_checked(-87.3,0) normal",
+        logaddexp_checked(-87.3, 0.0),
+        1.2192433e-38,
+    );
+    check("logaddexp_checked(-95,0) denormal", logaddexp_checked(-95.0, 0.0), 5.521e-42);
+    check("logaddexp_checked(-104,0) is 0", logaddexp_checked(-104.0, 0.0), 0.0);
+    check("logaddexp_checked(0,-88) denormal", logaddexp_checked(0.0, -88.0), 6.054601e-39);
+    check(
+        "logaddexp_checked(-80,0)==logaddexp(-80,0)",
+        logaddexp_checked(-80.0, 0.0),
+        logaddexp(-80.0, 0.0),
+    );
+
     // gelu(x) = x*Phi(x) = x*0.5*erfc(-x/sqrt2) (backlog idea #70). For
     // x >= 0 gelu's tail correction is identically zero, so gelu(3) is
     // still exactly that composition and pins it structurally. For x < 0

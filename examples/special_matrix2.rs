@@ -154,6 +154,7 @@ fn main() {
         ("remainder_ieee", remainder_ieee),
         ("rhypot", rhypot),
         ("logaddexp", logaddexp),
+        ("logaddexp_checked", logaddexp_checked),
         ("xlogy", xlogy),
         ("xlog1py", xlog1py),
         ("compound", compound),

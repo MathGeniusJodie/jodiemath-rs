@@ -387,8 +387,19 @@ throughput_fn!(thr_logsigmoid, "logsigmoid_throughput", logsigmoid);
 latency_fn!(lat_logsigmoid_checked, "logsigmoid_checked_latency", logsigmoid_checked);
 throughput_fn!(thr_logsigmoid_checked, "logsigmoid_checked_throughput", logsigmoid_checked);
 
+// Constant 2nd arg, the house convention for the 2-arg rows (atan2/hypot
+// above). It is worth stating what that specialises away here, because
+// the identity is exact rather than approximate: `logaddexp(x, 0.0)` *is*
+// `softplus(x)` -- `max(x,0)`, `|x-0|`, and a folded-away `b.is_nan()` --
+// so these two rows and the softplus pair either side of them measure the
+// same instruction stream and are expected to print identical numbers.
 latency_fn!(lat_logaddexp, "logaddexp_latency", |x: f32| logaddexp(x, 0.0));
 throughput_fn!(thr_logaddexp, "logaddexp_throughput", |x: f32| logaddexp(x, 0.0));
+
+latency_fn!(lat_logaddexp_checked, "logaddexp_checked_latency", |x: f32| logaddexp_checked(x, 0.0));
+throughput_fn!(thr_logaddexp_checked, "logaddexp_checked_throughput", |x: f32| logaddexp_checked(
+    x, 0.0
+));
 
 latency_fn!(lat_gelu, "gelu_latency", gelu);
 throughput_fn!(thr_gelu, "gelu_throughput", gelu);
@@ -871,6 +882,7 @@ fn main() {
         lat_logsigmoid, thr_logsigmoid;
         lat_logsigmoid_checked, thr_logsigmoid_checked;
         lat_logaddexp, thr_logaddexp;
+        lat_logaddexp_checked, thr_logaddexp_checked;
         lat_gelu, thr_gelu;
         lat_silu, thr_silu;
         lat_silu_checked, thr_silu_checked;
