@@ -9919,3 +9919,52 @@ own unroll factor, not a guess) and divide by that, printing
 Same shape as `sin_wide`'s 3.2x and for the same reason -- the f64 gather
 drops the vectorization factor from 8 to 4. `tan_wide`'s region is `xmm`
 /`ymm` where `tan_checked`'s is `ymm`/`zmm`.
+
+## `sin`/`cos` exceed 1 by an ulp too, and the clamp is +14% -- rejected, documented instead
+
+2026-08-02, follow-on from `sin_wide`'s own clamp finding. An exhaustive
+`|result| <= 1` scan over all 2^32 patterns, run across every trig tier in
+this crate *inside* `|x| < 2^22*pi` (`cos`'s documented domain, the
+narrower of the two):
+
+| | patterns with `|result| > 1` | worst |
+|---|---|---|
+| `sin` | 660 | 1.0000001 |
+| `cos` | **2720382** | 1.0000001 |
+| `sin_fast` | 670 | 1.0000001 |
+| `cos_fast` | 2720361 | 1.0000001 |
+| `sin_checked` / `cos_checked` / `sin_wide` / `cos_wide` | 0 | 1.0 |
+
+Always exactly one ulp over, never more, and always where the true value
+is under 1 by less than an ulp -- so it is *inside* the published 2-ulp
+row and invisible to every accuracy number the crate keeps. The four
+clean tiers are clean only because they clamp.
+
+**Priced and rejected.** `.clamp(-1.0, 1.0)` on `sin` and `cos`, measured
+one at a time by replacing the real function bodies:
+
+| region | before | after | delta |
+|---|---|---|---|
+| `sin` throughput | 1.778 | 2.033 | **+14.3%** |
+| `sin` latency | 64.00 | 72.00 | **+12.5%** |
+| `cos` throughput | 1.654 | 1.883 | **+13.8%** |
+| `cos` latency | 61.00 | 69.00 | **+13.1%** |
+
+`tan` does not move (2.985 / 78.00 either way -- it goes through
+`pi_reduce_and_poly!` directly, not through `sin`/`cos`), and it would not
+want the bound anyway.
+
+14% on the crate's cheapest accurate trig tier, to move an error that is
+already inside its own published max, is the wrong trade. **Documented in
+`sin`'s and `cos`'s doc comments instead**, with the measured cost, so the
+next reader does not have to re-derive either half: a caller who needs
+`|sin| <= 1` -- feeding `acos`, a `sqrt(1 - s*s)`, or a range assertion --
+has four functions that guarantee it.
+
+Two things worth reusing. **An exhaustive scan of an *invariant* costs
+nothing** -- there is no reference function to evaluate, so all 2^32
+patterns take a couple of minutes against the hours an exhaustive accuracy
+sweep needs, and it finds a class of defect ulp rows structurally cannot
+see. And **"is the invariant violated" is a separate question from "is the
+answer accurate"**: 1 ulp over 1.0 is simultaneously a correct answer and
+a broken postcondition.

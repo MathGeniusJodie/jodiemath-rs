@@ -906,6 +906,18 @@ macro_rules! frac_x_over_pi {
     }};
 }
 
+/// `|sin(x)| <= 1` is **not** a guarantee here, and that is a priced
+/// decision rather than an oversight: `sinf_poly` is a minimax fit of
+/// `sin` near its own maximum and has no reason to stay under it, so this
+/// returns `1.0000001` (exactly one ulp over) for 660 of the f32 patterns
+/// in `|x| < 2^22*pi`, and [`cos`] for 2720382 of them. Still inside the
+/// 2-ulp row above -- the true value is under 1 by less than an ulp --
+/// but a caller feeding the result to `acos`, a `sqrt(1-s*s)`, or a
+/// range assertion wants to know. A `.clamp(-1.0, 1.0)` fixes it and
+/// measures **+14.3% throughput / +12.5% latency** on this function
+/// (`cos`: +13.8% / +13.1%), which is not a trade this tier should make.
+/// [`sin_checked`], [`cos_checked`], [`sin_wide`] and [`cos_wide`] all
+/// clamp and do guarantee it.
 #[doc(alias = "sinf")]
 #[inline(always)]
 pub fn sin(x: f32) -> f32 {
@@ -927,7 +939,10 @@ pub fn sin(x: f32) -> f32 {
     let parity = qb.to_bits() << 31;
     f32::from_bits(s.to_bits() ^ parity)
 }
-/// cos(x). `q` here is the nearest *half-odd-integer* to `x/pi`, which
+/// cos(x). Same `|cos(x)| <= 1` caveat as [`sin`] -- see its doc comment;
+/// `cos` is the worse of the two, 2720382 patterns one ulp over.
+///
+/// `q` here is the nearest *half-odd-integer* to `x/pi`, which
 /// costs a mantissa bit that sin's whole-integer `q` does not, so cos is
 /// documented over the narrower `|x| < 2^22 * pi` (~1.32e7) -- see
 /// graveyard.md for what widening it would cost. Use cos_checked for
