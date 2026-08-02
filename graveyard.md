@@ -9092,3 +9092,65 @@ session, for the next instance to diff against rather than re-run:
 `erf` 0.0270/3, `erfc` **0.1948/7**, `erfcx` 0.2080/6, `erfcx (|x|<=20)`
 0.2078/6, `erfcx (x>=20)` 0.2683/2, `norm_cdf` 0.0996/8, `norm_pdf`
 0.0269/4, `gelu` 0.2029/9.
+
+## `erfcx_pos`: the leading-term peel does not transfer
+
+This crate's highest-hit-rate accuracy lever (`log_2`, `ln`, `log10`,
+`coshm1` -- the last one peeling *two* leading terms, same as tried here)
+applied to the function the previous two entries identify as the binding
+term for `erfc`/`erfcx`/`norm_cdf`/`gelu`. **It buys ~1%.** Recording it
+because the diagnosis in those entries -- "roughly three quarters of the
+remaining budget is the f32 evaluation of the polynomial itself" -- reads
+like an invitation to peel, and it is not one.
+
+`erfcx(xa) = v*HI + v*P(v)`, so the same polynomial regrouped is
+`v*HI + v*c0 + v^2*c1 + v^3*S(v)` with `S = c2..c10`: the poly's own
+evaluation roundings then reach the answer scaled by `v^3` (0.125 at the
+worst point) instead of `v` (0.5).
+
+numpy simulation of the exact f32 instruction sequence (f64-emulated fma),
+80000 points -- an even sweep of `v` over `(0, 0.5]` plus a log sweep of
+`xa` over `[1e-5, 30]`. Run twice, because the shipped coefficients are
+coordinate-descent polished *for the Estrin order* and scoring a regrouping
+against them is the trap the Horner entry above documents; the second block
+uses a fresh ulp-weighted LP fit (0.2345 ulp-equivalent after plain
+round-to-f32, no polish) so both groupings are treated alike:
+
+| grouping | shipped polished coeffs | fresh LP coeffs |
+|---|---|---|
+| shipped Estrin | 5.336 max / 0.8154 avg | 4.980 / 0.7932 |
+| peel `c0` and `c1` | 5.241 / 0.8051 | 4.942 / 0.7829 |
+| peel `c1` only | 5.241 / 0.8096 | 4.906 / 0.7893 |
+| shipped Estrin, **exact `v`** | -- | 3.371 / 0.5681 |
+| peel `c0`+`c1`, **exact `v`** | -- | 3.111 / 0.5572 |
+
+**0.8% on max with the real `v`, and 7.7% even with a perfect one** --
+against +1 operation and +1 dependency level on four public functions.
+Not taken, and not worth a refit-and-repolish cycle to confirm at higher
+precision.
+
+### Why it transfers to the log family and not here
+
+The peel only attenuates roundings that happen *inside* the polynomial. It
+cannot touch the two that form `v*P` and add it to `v*HI`, and in this
+function those are the big ones: both land at the result's own scale by
+construction, where `ln`'s and `log10`'s equivalents land at `|s| <= 0.415`
+and `|s*LOG10_E| <= 0.18`. On top of that the Estrin grouping *already*
+attenuates the large partial sums -- the `t8`/`hi` branch reaches 156 and
+-198 at `v = 0.5`, but enters through `v^4` twice, so it arrives at 0.15
+ulp. What is left inside the poly for a peel to demote is the `lo` group
+alone, and 0.26 ulp is exactly what it gets.
+
+**The screening question is not "does the poly's evaluation dominate" but
+"how much of that evaluation happens before the last full-weight
+rounding".** `ln`'s poly *was* the whole mantissa term with every rounding
+at full weight; `erfcx_pos`'s is a correction that a product and a sum then
+round again regardless.
+
+### Caveat on the grid
+
+This simulation reports 4.98 where the real exhaustive `erfcx` max is 6, so
+the grid misses the true worst points and the absolute numbers are not
+comparable to the harness's. The *relative* comparison between groupings is
+what it is for, and 0.8% is far enough inside the noise of any grid choice
+that a real-chain measurement would not change the conclusion.
