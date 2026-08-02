@@ -101,6 +101,8 @@ logaddexp_accurate (all f32)| 0.000 |     0     | (no std logaddexp; the cancell
          erfc (|x|<=10) |    0.129   |     7     | (no std erfc; the 7 splits about evenly between `exp`'s own error and the erfcx polynomial's evaluation -- neither dominates, see erfc's doc comment)
         erfcx (|x|<=20) |    0.144   |     6     | (no std erfcx; the 6 is on the *negative* arm, where it is `exp`'s error amplified by the reflection -- see erfcx's doc comment)
          erfcx (x>=20)  |    0.268   |     2     | (no std erfcx)
+     norm_cdf (all f32) |    0.066   |     7     | (no std norm_cdf; exhaustive. Same two terms as `erfc`, in the same proportion -- `exp` and the erfcx polynomial)
+     norm_pdf (all f32) |    0.027   |     4     | (no std norm_pdf; exhaustive. `exp`-bound: the rest of the chain is an exactly-split square and a two-word `1/sqrt(2*pi)`)
        dawson (all f32) |    0.058   |     6     | (no std dawson; exhaustive since the reference stopped being an 800-point quadrature, see accuracy.rs)
        erfinv (|x|<1)   |    0.364   |     4     | (no std erfinv; exhaustive)
       erfc_inv (0<y<2)  |    0.679   |     5     | (no std erfc_inv; exhaustive)

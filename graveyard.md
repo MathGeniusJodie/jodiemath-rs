@@ -10127,3 +10127,80 @@ an absolute max. Quote the exhaustive row.
 Exhaustive before/after exists for `erfinv` only (0.3692 avg / 6 max ->
 0.3642 / 4); the earlier baseline run was killed after that first row, and
 `erfc_inv`/`probit` have exhaustive numbers on the new code only.
+
+## `exp_reduce!` range-halving: the last untried lever on the erfc family, priced and rejected
+
+`erfc` (max 7), `erfcx` (6), `norm_cdf` (7) and `gelu` (9) are all
+**`exp`-bound** -- the attribution entries above establish that, and a
+fresh quick sweep on current master (2b51ddb) reproduces every published
+number, so the diagnosis is not stale: `erfc` 0.1289 / 6q, `erfcx` 0.1439 /
+6q, `norm_cdf` 0.0657 / 6q, `norm_pdf` 0.0269 / 3q, `erfcx (x>=20)` 0.2683
+/ 2. Every `erfcx_pos`-side lever is closed (offset in both directions,
+Horner, degree drop, even/odd split, leading-term peel, EFT on `v`,
+two-branch split), so the only remaining move is to make `exp` itself
+better for these four callers.
+
+`exp_r_poly!` is core-locked and its degree bump is already recorded as a
+real win at a real cost. But **`exp_reduce!` is not core-locked** -- its
+only five call sites are `exp_checked`, `erfc`, `erfcx`, `norm_cdf` and
+`norm_pdf`, i.e. exactly one domain -- so its *reduction* can be changed
+without a core claim even though its polynomial cannot. That leaves one
+classical lever nobody has priced here: **halve the Cody-Waite range.**
+
+Reduce against `ln2/2` instead of `ln2`, so `|r| <= ln2/4`. The degree-5
+minimax truncation error scales as `r^6`, so it drops **64x**:
+
+| | `|r| <= ln2/2` | `|r| <= ln2/4` |
+|---|---|---|
+| deg 5 minimax, `e^r` | 7.5e-8 = **1.26 ulp** | 1.2e-9 = **0.02 ulp** |
+| deg 4 minimax, `e^r` | 1.2e-6 = 20 ulp | 8.1e-8 = 1.37 ulp |
+
+The 1.26 matches the headroom table's own 1.354 for `exp_r_poly`, which is
+the check that the estimate is calibrated. So the accuracy case is real
+and is *stronger* than the degree-6 bump (which buys ~40x, not 64x).
+
+**It is the reconstruction that kills it.** `2^(k/2)` for integer `k` is
+`2^floor(k/2)` times `1` or `sqrt(2)`, and `exp2_field_split` only builds
+integer powers. Getting the odd half back costs, on top of the shipped
+chain: `vroundps` (floor of `k/2`), one fma (the parity residual), a
+compare and a blend (select `1.0` vs `sqrt(2)`), and **two** ops for the
+scale itself -- `fma(p, S_HI, p*S_LO)` -- because a single-word `sqrt(2)`
+carries 0.44 ulp of relative error, which would hand back a third of what
+the range-halving just won. That is **~6 instructions**.
+
+Priced the way idea #89's gather screen prices things, against the thing
+being improved: the entire degree-5 `exp_r_poly!` is 5 `vfmadd231ps` =
+**2.5 cycles Block RThroughput per 8 elements**. Six added ops are ~3
+cycles. **The reconstruction costs more than the whole polynomial it is
+making more accurate**, on all five callers including `exp_checked` and
+therefore its own 20+ downstream users. For comparison the degree-6 bump
+is +1 fma (+0.5 cyc) and was rejected at +5-23% throughput. Not
+implemented.
+
+Row 3 of the table is the other half of the verdict: **deg 4 at half range
+is a dead heat with deg 5 at full range** (1.37 vs 1.26 ulp), so the
+"spend the saved degree on the reconstruction" variant buys nothing at all
+-- it trades one fma for six ops at equal accuracy.
+
+### Two smaller reduction-side ideas, also priced and not taken
+
+- **Kill the second Cody-Waite rounding.** `r` is rounded twice (`fma(-k,
+  LN2_HI, x)` then `fma(-k, LN2_LO, r)`), each up to `ulp(0.347)/2 =
+  1.5e-8`, i.e. 0.25 ulp each in the result. Carrying the low part
+  multiplicatively instead (`rl = -k*LN2_LO`, then `fma(p, rl, p)` after
+  the poly) removes the second one for +1 op and +1 dependency level.
+  Worth 0.25 ulp of `exp`'s 3 -- below the noise of what the callers see,
+  and the added level lands on the critical path of all five.
+- **Move `erfc`'s `pe` into the exponent** instead of applying it as
+  `fma(-r, pe, r)` on the `erfcx` factor. Op-count wash (erfc loses one
+  fma, `exp_reduce!` gains one add) and accuracy wash: the linearisation
+  `e^-pe ~ 1-pe` already errs by `pe^2/2 < 1e-11`, and `r1 - pe` inside
+  the reduction introduces a fresh `1.5e-8` rounding of its own. Nothing
+  on either axis.
+
+**Transferable:** `exp_reduce!`'s five call sites are one whole `jm`
+domain, so a future instance holding `exp_checked` can change the
+*reduction* freely -- only the poly needs the core lock. That is a real
+degree of freedom nobody had noticed; it just does not happen to contain a
+win, because every way of buying accuracy in a reduction costs more
+reconstruction than an f32 polynomial is worth.

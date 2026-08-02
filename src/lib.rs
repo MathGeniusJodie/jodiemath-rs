@@ -5917,6 +5917,11 @@ const _: () =
 /// the Gaussian factor so the closing multiply and the reflection's add
 /// are one `fma` -- the `x <= 0` arm bit-identical, the other rounding
 /// `2 - e*t` once instead of twice.
+///
+/// Current: max ulp 7, avg 0.0657 (exhaustive over all f32). Split the
+/// same way [`erfc`]'s is and it comes apart the same way: `exp`'s own
+/// error and [`erfcx_pos`]'s evaluation, neither dominating, so this
+/// number moves when `exp` does and not before.
 #[inline(always)]
 pub fn norm_cdf(x: f32) -> f32 {
     let xa = x.abs();
@@ -5992,6 +5997,11 @@ pub fn probit(p: f32) -> f32 {
 /// no-op on the value. `exp_reduce!` rather than `exp_checked` for the
 /// same reason [`erfc`] uses it: the clamp above already proves the
 /// argument is in range, asserted next to the constant.
+///
+/// Current: max ulp 4, avg 0.0269 (exhaustive over all f32). There is no
+/// polynomial of its own here -- the square is split exactly and the
+/// constant carries two words -- so what is left is `exp`'s 3 plus the
+/// closing rounding, and it moves only when `exp` does.
 #[inline(always)]
 pub fn norm_pdf(x: f32) -> f32 {
     // `1/sqrt(2*pi)` as a double-`f32` pair, same shape as
