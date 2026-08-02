@@ -8245,3 +8245,69 @@ instruction count and is not, and because it is the counterexample to
 "the sign mask is bookkeeping, it cannot be on the critical path" -- in
 this family it is, by construction, since the sign is applied to the
 poly's *argument* rather than to its result.
+## `erfcx_pos`: the reciprocal offset `2 + x` is not the conditioning lever
+
+Follow-up to the "`erfcx_pos`'s residual is not the fit and not `v`" entry
+above, which measured that even with a *perfect* `v` the f32 chain scores
+3.75 against a fit of 0.72 -- i.e. three quarters of the budget is the
+polynomial's own evaluation. That entry left one obvious question open,
+and this closes it: the evaluation error is coefficient cancellation, so
+change the variable that produces the coefficients.
+
+`erfcx(x) = v*HI + v*P(v)` with `v = 1/(2 + x)`, so `v` spans `(0, 0.5]`
+and the shipped degree-10 `P` has alternating coefficients up to 255.6
+whose terms at `v = 0.5` sum to 4.26 against a true bracket of 2.0 --
+a condition number of 2.1, which is exactly the size of the measured
+residual. Raising the offset shrinks the interval (`a = 3` gives
+`v <= 1/3`), and the endpoint condition number does improve, a lot:
+
+| offset `a` | idealized LP fit (deg 10) | `sum abs(terms)/value` at `v = 1/a` | max abs(coeff) |
+|---|---|---|---|
+| 2 (shipped) | 0.121 ulp | 3.16 | 260 |
+| 3 | 0.182 ulp | **1.19** | 4503 |
+| 4 | 0.767 ulp | 4.67 | 6.3e5 |
+| 6 | 216 ulp | 739 | 7.3e9 |
+
+**And the real chain gets worse anyway.** Simulating the exact shipped
+f32 instruction sequence (same Estrin grouping, same two-word `HI`
+peel) over 3M f32 points log-spaced on `[1e-5, 30]`, each `a` with its
+own LP-minimax coefficients:
+
+| variant | max ulp | avg ulp |
+|---|---|---|
+| shipped, `a=2`, Estrin | 6.16 | 1.093 |
+| shipped, `a=2`, Horner | 5.35 | 1.069 |
+| LP refit `a=2`, Estrin | 5.73 | 1.076 |
+| LP refit `a=2`, Horner | 5.07 | 1.054 |
+| LP refit `a=2.5`, Estrin | 5.87 | 1.187 |
+| LP refit **`a=3`**, Estrin | **7.04** | 1.382 |
+| LP refit `a=3.5`, Estrin | 8.77 | 1.688 |
+
+The endpoint condition number was the wrong proxy: it is measured at
+`v = 1/a` only, and the `a=3` fit's damage is at *intermediate* `v`,
+where coefficients of 1057/-4714/4126 produce terms far larger than the
+sum at the endpoint. **A single-point conditioning number does not
+screen a polynomial refit; simulate the chain.**
+
+Two things this does confirm rather than close:
+
+- **Horner beats Estrin here on both axes**, 5.35 vs 6.16 max on the
+  shipped coefficients -- independently reproducing the earlier entry's
+  finding with a different grid. It is not taken for the same reason as
+  before: ten dependent fmas behind a division that is already on the
+  critical path. It remains the one real Pareto point in this function.
+- **An `a=2` refit is a ~7% max improvement (6.16 -> 5.73) at zero
+  cost**, and is *also* not taken: 1.07x of idealized margin is far
+  inside the weak-to-moderate band this file records failing repeatedly
+  (see the LP-margin entries), and the shipped coefficients were tuned
+  against the real chain rather than an idealized model.
+
+So `erfcx_pos` stays where it is, and with it `erfc` (max 6-7), `erfcx`
+(6), `norm_cdf` (8 on a quick fuzz) and `gelu` (9) -- all four are its
+evaluation, not their own code. Moving them needs a *structurally*
+cheaper representation of `erfcx` on `[0, inf)`, not another fit.
+
+Incidental, and worth correcting in the record: an older note in this
+file quotes `norm_cdf`'s true exhaustive max as **295**. That predates
+the `erfcx_pos` rebuild; on current master the quick fuzz reports **8**
+(avg 0.0996), and `norm_pdf` 3 (avg 0.0269).
