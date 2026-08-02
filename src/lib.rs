@@ -6254,9 +6254,14 @@ const _: () =
 /// `2 - e*t` once instead of twice.
 ///
 /// Current: max ulp 7, avg 0.0657 (exhaustive over all f32). Split the
-/// same way [`erfc`]'s is and it comes apart the same way: `exp`'s own
-/// error and [`erfcx_pos`]'s evaluation, neither dominating, so this
-/// number moves when `exp` does and not before.
+/// same way [`erfc`]'s is and it comes apart the same way: at the worst
+/// point (`x = -1.884`) [`erfcx_pos`]'s own evaluation carries 2.93 ulp
+/// of it and the Gaussian factor the rest, neither dominating, so this
+/// number moves when `exp` does and not before. The `x/sqrt(2)` rounding
+/// is a distant third at 0.415, because `d(ln erfcx)/d(ln z)` is only
+/// -0.73 there -- which is the whole reason this is written against
+/// `erfcx` rather than `erfc`. Carrying that argument in as a two-word
+/// `z` was measured and does not pay; see IDEAS.md.
 #[inline(always)]
 pub fn norm_cdf(x: f32) -> f32 {
     let xa = x.abs();

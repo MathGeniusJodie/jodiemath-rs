@@ -11180,3 +11180,101 @@ nothing because the denormal arm this function needs anyway (the `k-1`
 field halves the intermediate, same as `expm1`) can return the peeled
 `f*ln2` term, which is already an operand of that fma and *does* carry
 the sign. One select, three jobs.
+
+## `norm_cdf`'s un-split `FRAC_1_SQRT_2`: measured at 5.9% of the binding max
+
+The last un-split single-word irrational multiply in the crate, left open
+above with the note that fixing it "needs `gelu`'s `RSQRT2_HI`/`RSQRT2_LO`
++ `erfc(z+dz) = erfc(z)*(1-2z*dz)` treatment, which is several ops rather
+than one `fma`". It does. It is also worth almost nothing, and the reason
+is a sensitivity that the earlier note read off the wrong function.
+
+### The attribution, which had never been done for `norm_cdf`
+
+`norm_cdf`'s doc comment claimed its 7 splits like `erfc`'s -- `exp`'s own
+error and `erfcx_pos`'s evaluation, neither dominating -- but the standing
+measurements only ever split `erfc` and `erfcx`. Done properly at
+`norm_cdf`'s own worst point (`x = -1.8841501`, exhaustive max 7):
+
+| term | ulp of the result | share |
+|---|---|---|
+| `erfcx_pos`'s polynomial evaluation | **2.931** | 42% |
+| `exp_reduce!(-p)` | **<= 3.0** (pure factor) | 43% |
+| `x/sqrt(2)` argument rounding | **0.415** | 5.9% |
+
+So the doc's claim was right, and is now a number rather than an analogy.
+
+**Why the argument term is so small, and why `gelu`'s reasoning does not
+transfer.** `gelu` carries a two-word argument because it feeds `erfc`,
+whose relative sensitivity `|d(ln erfc)/d(ln z)|` grows as `2z^2` -- ~170
+half-ulps at `z = 9.2`. `norm_cdf` feeds `erfcx_pos`, and `erfcx` is
+*flat*: `d(ln erfcx)/d(ln z)` is `-1` asymptotically and only **-0.729** at
+the point that actually binds. That is the whole reason `norm_cdf` is
+written against `erfcx` instead of `erfc` in the first place, and it is
+exactly what makes the argument fix pointless here. **A two-word-argument
+fix inherits its value from the callee's condition number, not from the
+constant's own offset** -- `FRAC_1_SQRT_2`'s 1.711e-8 relative offset is
+identical in both functions, and it is worth 170 half-ulps in one and 0.4
+in the other.
+
+Also worth stating: the constant's *bias* is not even the dominant part of
+the argument term. `fl(xa * FRAC_1_SQRT_2)` carries the constant's fixed
+-1.711e-8 relative offset **plus** the product's own rounding, up to
+5.96e-8. Screened against exact `erfcx` and exact `exp` over 600k samples
+per band, correctly rounding `z` moves that path's max from ~1.69 to ~1.40
+ulp and its avg from 0.336 to 0.312 -- the bias is real and one-signed
+(signed mean +0.14 to +0.20 ulp) but it sits inside a larger symmetric
+rounding it cannot remove.
+
+### The upper bound, built and measured
+
+Not the cheap version -- the *ceiling*: `z` as a two-word pair with its
+residual carried into `erfcx_pos`, i.e. the argument rounding removed
+outright. `v = 1/(2+z)` in both of `erfcx_pos`'s branches, so
+`dv/dz = -v^2` uniformly and one fma puts `dz` back:
+
+    let zp = xa * RSQRT2_HI;
+    let dz = fma(xa, RSQRT2_LO, fma(xa, RSQRT2_HI, -zp));
+    let v  = fma(-dz, v0 * v0, vb);      // inside erfcx_pos
+
+Gated on a `const CORRECT: bool` so `erfc`/`erfcx`/`norm_pdf` compile
+identically -- confirmed, their mca regions came back byte-identical
+(`erfc_throughput` 136/157/41, `erfcx_throughput` 130/148/40,
+`norm_pdf_throughput` 76/83/25, all unchanged). Only `norm_cdf` pays:
+
+| region | instrs | uOps | BlockRT | cyc/unit |
+|---|---|---|---|---|
+| norm_cdf_latency | 5210 -> 5571 | 5468 -> 5817 | 1312 -> 1440 | 68.985 -> 72.970 (+5.8%) |
+| norm_cdf_throughput | 143 -> 152 | 172 -> 182 | 44 -> 48 | 3.436 -> 3.811 (+10.9%) |
+
+Exhaustive over all 2^32: avg **0.0657 -> 0.0656**, max **7 -> 7**, and
+the worst point does not even move (`x = -1.8841501` either way). That is
+the entire return on removing the argument rounding *completely* -- 0.15%
+of the average and none of the max, for +10.9% throughput. The cheap half
+(a two-word constant with no residual carried, +1 fma) can only be a
+fraction of that, so it is closed too. The 0.415 ulp the attribution
+predicted is precisely what a 7 absorbs without moving.
+
+**A `-0.0`-style edge trap on the way, worth recording**: the first build
+returned non-finite for `x = +-inf`. `zp = inf * RSQRT2_HI` is `inf`, so
+`fma(xa, RSQRT2_HI, -zp)` is `inf - inf = NaN` and the residual poisons the
+result. `gelu` already guards this (its `np = max(-x, 0)` clamp is
+documented as keeping `dz` finite at `x = +inf`); any *new* two-word
+argument split needs the same guard, and the ulp sweep does catch it --
+it reported `NON-FINITE RESULT in 2 of 4294967296 samples` rather than a
+plausible-looking number.
+
+### Transferable
+
+- **Value a two-word argument split by the callee's condition number.**
+  Same constant, same offset, 400x difference in what it is worth between
+  `erfc` and `erfcx`. Compute `d(ln f)/d(ln z)` *at the point that
+  actually binds* before writing any code.
+- **A constant's one-signed bias is not automatically the dominant part of
+  an argument's error.** Here the co-located product rounding is 3.5x
+  larger and symmetric, so removing the bias alone recovers a minority of
+  a minority.
+- The remaining single-word irrational, `probit`'s `SQRT_2 * erfinv(...)`,
+  is unaffected by this result: `erfinv` is steep near the ends, so its
+  condition number is the opposite case and it still wants a harness row
+  first.

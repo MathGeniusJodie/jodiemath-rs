@@ -142,6 +142,18 @@ the bar by construction if they find anything.
   first: for `log10` the correctly-rounded-mantissa-term oracle capped the
   whole lever at -19% aggregate avg before any code was written.
 
+- **`probit`'s `SQRT_2 * erfinv(...)`** is the last un-split single-word
+  irrational multiply in the crate. `norm_cdf`'s `xa * FRAC_1_SQRT_2`, which
+  used to be listed beside it, is **measured and closed** -- see
+  graveyard.md: removing that argument's rounding *entirely* (two-word `z`,
+  residual carried into `erfcx_pos`) is worth avg 0.0657 -> 0.0656 and max
+  7 -> 7 for +10.9% throughput, because `erfcx`'s `d(ln erfcx)/d(ln z)` is
+  only -0.73 at the binding point. `probit` is the opposite case --
+  `erfinv` is steep near the ends -- so the result does not transfer, but
+  price it by the callee's condition number at the binding point before
+  writing code, and note it still needs a harness row first (`accuracy.rs`
+  scores `probit` by a round-trip residual, not in ulp).
+
 - **Sollya `fpminimax`**: not installed. Candidate: `acos_poly` (max 4).
   (erfc's n/d used to be listed here as "max ~100, root cause already
   traced — a tighter fit alone won't fix it". Both halves of that were
