@@ -5027,28 +5027,32 @@ pub fn atanh(x: f32) -> f32 {
     if a < 0.25 { small } else { big }
 }
 
-// degree-6 minimax poly (Horner via fma), fitted for acos's sqrt(1-|x|)
-// factor; only acos uses it (asin has its own decoupled asin_poly
-// below). The leading constant is acos_poly(0) and must equal exactly
-// pi/2: `1.5707964` parses to the same bits as
-// `std::f32::consts::FRAC_PI_2` (0x3fc90fdb) -- `1.5707963` is one digit
-// short of round-trip precision and parses one ulp LOW, which alone cost
-// acos most of its average error before being caught. The other six are a
-// minimax fit of `acos(x)/sqrt(1-x)` weighted by `sqrt(1-x)/ulp(acos(x))`
-// -- the weight that makes "minimax" mean the ulp error of the *shipped*
-// combine, which peaks as x -> 1 -- then polished by coordinate descent
-// scored on the real exhaustive sweep over all of [-1,1] (both signs; the
-// `+PI` branch has its own error structure). Current: acos max ulp 4, avg
-// 0.0555 (exhaustive, scored as the whole formula).
+// `asin(sqrt(t))/sqrt(t)` on `t` in `[0, 1/4]`, degree 5, ulp-weighted
+// minimax (LP). One poly serves *both* of acos's branches -- see [`acos`]
+// for the identity that makes the two arms ask the same question. The
+// leading coefficient is `1.0`, the function's own value at `t = 0`, which
+// the fit reproduces to f32 without being pinned there.
+//
+// The weight is the harder of the two arms at each `t`: `sqrt(t)/2^-23`
+// for the small arm (whose result sits at `pi/2`, so its error budget is
+// absolute) and `2*sqrt(t)/ulp(2*sqrt(t)*P)` for the big one (whose
+// result shrinks to 0 as `|x| -> 1`, so its budget is relative). The big
+// arm binds at every `t`, and the small arm's accuracy comes free.
+//
+// Degree 5 and not 6, and not coordinate-descended, for the same reason:
+// this poly is not what is left. Its idealized minimax margin is 0.064
+// ulp against a measured 0.43 avg on the arm that binds, so the evaluation
+// chain -- the sqrt's own half ulp and the final rounding -- is the floor.
+// Degree 6 measures 0.00433 avg against degree 5's 0.00435, exhaustively.
+// Degree 4 is the real edge: its margin is 1.03 and it scores max 4.
 #[inline(always)]
-fn acos_poly(x: f32) -> f32 {
-    let u = 2.34696e-3f32;
-    let u = fma(u, x, -1.1324962e-2);
-    let u = fma(u, x, 2.7140902e-2);
-    let u = fma(u, x, -4.895824e-2);
-    let u = fma(u, x, 8.880409e-2);
-    let u = fma(u, x, -2.145914e-1);
-    fma(u, x, 1.5707964)
+fn acos_poly(t: f32) -> f32 {
+    let u = 4.2285666e-2f32;
+    let u = fma(u, t, 2.4075409e-2);
+    let u = fma(u, t, 4.5502156e-2);
+    let u = fma(u, t, 7.494872e-2);
+    let u = fma(u, t, 1.6666777e-1);
+    fma(u, t, 1.0)
 }
 
 /// Dedicated asin-only copy of `acos_poly`'s shape (same Horner form,
@@ -5082,36 +5086,78 @@ fn asin_poly(x: f32) -> f32 {
 /// unlike sin/asinh/etc., acos isn't an odd function, so x=-0.0 has no
 /// legitimate negative result the way it does for those).
 ///
-/// Both halves are one `fma`: `acos(x) = s*P(a)` for `x >= 0` and
-/// `pi - s*P(a)` for `x < 0`, so negating `s` and selecting the addend
-/// between `pi` and `0` covers both without ever rounding the product
-/// `s*P(a)` to f32 on its own. That is the same lesson [`asin`]'s big
-/// branch records, applied to the arm that still had a separate multiply
-/// and add.
+/// Two branches, both computed unconditionally and selected (branchless,
+/// auto-vectorizes), and **both evaluate the same polynomial**. The
+/// half-angle identity
 ///
-/// The sign question is settled by exactly one value-based compare.
-/// `x < 0.0` is false for `-0.0`, which is correct: `acos(-0.0)` is
-/// `+pi/2`, and the same compare picks the `0.0` addend and leaves `s`
-/// unnegated. A *bit*-based sign (`mulsign`) disagrees on precisely that
-/// input and returned `-pi/2` for it once; there is no longer any
-/// bit-based sign here to disagree.
+/// ```text
+/// acos(a) = 2*asin(sqrt((1-a)/2))
+/// ```
 ///
-/// mca: 47 -> 43 instructions, 50 -> 45 uOps, Block RThroughput flat at
-/// 12.00, throughput 0.820 -> **0.771** cyc/elem, latency 39.99 -> 34.99
-/// (honest, not the branch artifact -- `tools/mca_arms.py` gives both arms
-/// equal to the published figure before and after). Accuracy is unchanged
-/// to three decimal places, and deliberately so: an oracle screen with
-/// both factors exact in f64 scores this combine at max **1** ulp, so
-/// there was never any accuracy in it to win -- see graveyard.md for where
-/// acos's max 4 actually lives.
+/// sends `a` in `[1/2, 1)` to an `asin` argument in `(0, 1/2]` -- exactly
+/// the range the small branch's own `pi/2 - asin(x)` already needs. So the
+/// two arms are not two approximations that happen to meet at a crossover;
+/// they are one approximation, `asin(sqrt(t))/sqrt(t)` on `t` in
+/// `[0, 1/4]`, asked at two different `t`. Everything else is addressing:
+///
+/// ```text
+/// |x| <  1/2   t = x*x              m = -x        c = pi/2
+/// x   >= 1/2   t = (1-|x|)/2        m = +2*sqrt(t) c = 0
+/// x   <= -1/2  t = (1-|x|)/2        m = -2*sqrt(t) c = pi
+/// ```
+///
+/// and the answer is `fma(m, P(t), c)`. `m`'s sign is `x`'s in the big arm
+/// and `x`'s flipped in the small one, which is why `m` is one `mulsign`
+/// over a selected magnitude rather than two separately-signed terms.
+///
+/// **Why a crossover at all**, given the identity holds on the whole
+/// domain: at `|x| < 1/2` it would ask for `asin` of an argument near
+/// `1/sqrt(2)`, past this poly's range and into the square-root
+/// singularity that makes `asin` hard. `1/2` is also where `1 - |x|`
+/// becomes Sterbenz-exact, so the big arm's `t` carries no error at all.
+///
+/// **The addends carry their low words, and that is where the average
+/// went.** `fl32(pi/2)` sits 0.367 ulp above `pi/2`, a systematic bias on
+/// every small-arm result, and `fl32(pi)` is 0.367 ulp above `pi` for the
+/// same reason -- it is exactly `2*fl32(pi/2)`, same mantissa. One
+/// multiply by `LO_RATIO` therefore recovers the low word of *whichever*
+/// addend was selected, including the exact `0` of the big positive arm,
+/// and folding it in as the `fma`'s addend puts it in before the rounding
+/// it is meant to steer. Exhaustively: avg **0.0768 -> 0.00435**, a 17.7x
+/// drop for two instructions. Adding it *after* the `fma` instead does
+/// nothing whatsoever -- 0.367 ulp always rounds back off an f32 that is
+/// already rounded.
+///
+/// The sign question is settled without a value compare on `x`: `mulsign`
+/// is safe here because `-0.0` takes the small arm, where `m` is `+0.0`
+/// and the result is the `pi/2` addend either way.
+///
+/// mca: 43 -> 56 instructions, 45 -> 59 uOps, Block RThroughput flat at
+/// 12.00, throughput 0.771 -> **0.961** cyc/elem; latency arms (`tools/
+/// mca_arms.py`, since the published 44.02 is neither arm) 34.99 -> 38.99
+/// small and 34.99 -> 45.98 big. That is the price, and it is the price
+/// [`asin`] already pays -- 0.961 cyc/elem, on 58 instructions and 64 uOps
+/// to this function's 56 and 59. Both cheaper Pareto points are measured
+/// and recorded in graveyard.md: the same shape without the low words is
+/// 0.881 cyc/elem at avg 0.0768, and the old single-branch shape was 0.771
+/// at avg 0.1118 / max 4.
 #[doc(alias = "acosf")]
 #[inline(always)]
 pub fn acos(x: f32) -> f32 {
     const PI: f32 = std::f32::consts::PI;
-    let a = x.abs();
-    let s = (1.0 - a).sqrt();
-    let neg = x < 0.0;
-    fma(if neg { -s } else { s }, acos_poly(a), if neg { PI } else { 0.0 })
+    // (pi/2 - fl32(pi/2)) / fl32(pi/2). The same ratio recovers pi's own
+    // low word, because fl32(pi) is exactly 2*fl32(pi/2) -- same mantissa,
+    // exponent one higher -- so one multiply serves all three addends.
+    const LO_RATIO: f32 = -2.7827534e-8;
+    let na = f32::from_bits(x.to_bits() | SIGN_MASK); // -|x|
+    let small = na > -0.5;
+    // t = x^2 below the crossover, (1-|x|)/2 above it. The second is
+    // exact: |x| >= 1/2 makes 1 - |x| Sterbenz-exact and halving is free.
+    let t = if small { x * x } else { fma(na, 0.5, 0.5) };
+    let y = t.sqrt();
+    let m = mulsign(if small { na } else { y + y }, x);
+    let c = if small { FRAC_PI_2 } else if x < 0.0 { PI } else { 0.0 };
+    fma(m, acos_poly(t), c * LO_RATIO) + c
 }
 
 /// acos(x) in degrees (backlog idea #123): plain composite, same

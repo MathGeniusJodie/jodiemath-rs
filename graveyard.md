@@ -11875,3 +11875,157 @@ variant at the point that binds, not in isolation.
   worst point migrating to near zero, where it landed at `3.9e-4`. A
   numpy model of the exact f32 evaluation order is worth building before
   a multi-hour exhaustive sweep.
+
+## `acos`: both branches want the *same* polynomial, and the low word goes in before the rounding, not after
+
+The predecessor entry above left a priced lead -- a dedicated `|x| < 0.5`
+branch, avg -29% and max 4 -> 3 -- and two conclusions attached to it. One
+of them was wrong, and the wrong one was worth 17.7x.
+
+### The identity: two arms, one poly
+
+```text
+acos(a) = 2*asin(sqrt((1-a)/2))
+```
+
+For `a` in `[1/2, 1)` that sends the argument of `asin` into `(0, 1/2]` --
+**exactly** the range the small branch's own `pi/2 - asin(x)` already
+covers. So acos's two branches are not two approximations meeting at a
+crossover. They are one approximation,
+
+```text
+P(t) ~ asin(sqrt(t))/sqrt(t)   on t in [0, 1/4]
+```
+
+asked at two different `t`: `t = x*x` below the crossover and
+`t = (1-|x|)/2` above it. Everything else is addressing -- a multiplier
+`m` (`-x`, or `+-2*sqrt(t)`) and an addend `c` (`pi/2`, `0`, or `pi`) --
+and the answer is `fma(m, P(t), c)`.
+
+That matters on price. The obvious two-poly form (a dedicated small poly
+*plus* a refitted big one) is a second full Horner chain; the shared form
+pays one poly, one extra select and one extra `sqrt`-side add.
+
+### Where acos's max 4 actually was: the fit, and the domain it was fitted on
+
+The predecessor's oracle screen established the combine contributes at
+most 1 ulp. The rest is `acos_poly`, and an LP screen prices it exactly.
+Idealized ulp-weighted minimax margin for `acos(a)/sqrt(1-a)`:
+
+| degree | on `[0,1)` (as shipped) | on `[0.5,1)` |
+|---|---|---|
+| 4 | -- | 1.0347 |
+| 5 | 9.5420 | **0.0636** |
+| 6 | **1.2794** | 0.0034 |
+| 7 | 0.1898 | -- |
+| 8 | 0.0274 | -- |
+
+So the shipped poly was **fit-limited, not rounding-chain-limited** -- 1.28
+idealized ulp under a measured max of 4 -- and halving its domain is worth
+380x at the same degree, or 20x *with a term removed*. This is the
+[[guard is the licence]] lever: the crossover is what licenses both the
+narrower domain and dropping the pinned `fl32(pi/2)` constant term, which
+existed only because `a = 0` used to reach this poly.
+
+(Use a Chebyshev basis for the `[0,1)` column. The monomial LP goes
+non-monotone past degree 6 -- it reported degree 7 on `[0.5,1)` as *worse*
+than degree 6 -- which is conditioning, not minimax.)
+
+### The measurement, exhaustive over every f32 in [-1,1]
+
+`avgALL`/`max` are in-domain; readme's column is ~0.496x these because it
+scores all 2^32 patterns and the out-of-domain ones are NaN-vs-NaN.
+
+| variant | avg sml+ | sml- | big+ | big- | avgALL | max |
+|---|---|---|---|---|---|---|
+| shipped | 0.09821 | 0.11677 | 0.93495 | 0.36275 | 0.11175 | 4 |
+| shared p5, 1-word `c` | 0.07914 | 0.06956 | 0.42724 | 0.35259 | 0.07684 | 2 |
+| **shared p5, 2-word `c`** | 0.00226 | 0.00203 | 0.42724 | 0.13808 | **0.00435** | **2** |
+| shared p6, 2-word `c` | 0.00225 | 0.00202 | 0.42386 | 0.13748 | 0.00433 | 2 |
+| shared p4, 2-word `c` | 0.00395 | 0.00357 | 0.92305 | 0.23569 | 0.00829 | 4 |
+
+**Degree 5 is the whole search.** Degree 6 buys 0.00002 avg for a term;
+degree 4 loses the max outright. The residual is not the fit: 0.0636
+idealized against 0.427 measured on the arm that binds means the sqrt's
+own half ulp and the final rounding are the floor, so this poly was **not**
+coordinate-descended -- the crate's own headroom screen says not to.
+
+### The correction: a low word added *after* the rounding does nothing
+
+The entry above records "adding a two-word `pi/2` to the small arm
+measured *identical*, so that part is not needed." It measured identical
+because it was spelled `fma(-x, P, FRAC_PI_2) + PI_2_LO` -- the low word
+is 0.367 ulp, and 0.367 ulp added to an f32 that has **already been
+rounded** always rounds straight back off. It was a no-op, not a null
+result.
+
+Spelled `fma(-x, P, PI_2_LO) + FRAC_PI_2`, so the low word is in the
+`fma`'s addend and therefore present *before* the rounding it is meant to
+steer, the same constant is worth **avg 0.0768 -> 0.00435, 17.7x**, for two
+instructions.
+
+Two further points, because the addends are three different constants:
+
+- **One multiply serves all three.** `fl32(pi)` is exactly `2*fl32(pi/2)`
+  -- same mantissa, exponent one higher -- so their low words share one
+  ratio, and `c * LO_RATIO` recovers the right low word for `pi/2`, for
+  `pi`, and (exactly zero) for the big positive arm's `0`.
+- **The predecessor's 8x regression is now inapplicable, and its rule is
+  intact.** Two-word `PI` was rejected above as an 8x *regression* because
+  `acos_poly`'s constant term was `fl32(pi/2)` and near `x = 0` the
+  negative arm computed `fl(PI) - fl(pi/2)` exactly, a pairing the poly had
+  been descended against. The refit is part of this change: `a = 0` no
+  longer reaches that poly at all, whose constant term is now `1.0`, so
+  there is nothing left fitted against the one-word value. The rule that
+  killed it -- *a two-word constant is only free when nothing downstream
+  was fitted against the one-word value* -- is what says it is safe here.
+
+### Price, and the two cheaper Pareto points
+
+mca, `acos_throughput`: **43 -> 56 instructions, 45 -> 59 uOps**, Block
+RThroughput flat at 12.00, **0.771 -> 0.961 cyc/elem** (+24.6%). Latency
+via `tools/mca_arms.py` (the published 44.02 is neither arm): 34.99 ->
+38.99 small, 34.99 -> **45.98** big. `acosd` follows at 0.774 -> 1.041;
+`acospi` is untouched at 0.820, confirmed byte-identical.
+
+That price is exactly what `asin` already pays for the same shape and the
+same max 2 -- `asin_throughput` is 0.961 cyc/elem on **58** instructions
+and **64** uOps, against this function's 56 and 59.
+
+Both cheaper points are real and measured, and are left recorded rather
+than shipped as extra tiers:
+
+| | cyc/elem | instrs | avg (in-domain) | max |
+|---|---|---|---|---|
+| old single-branch shape | 0.771 | 43 | 0.1118 | 4 |
+| shared poly, no low words | 0.881 | 51 | 0.0768 | 2 |
+| shared poly, low words (shipped) | 0.961 | 56 | 0.00435 | 2 |
+
+### Rejected: `2*sqrt(t)` as `sqrt(4t)`, to shorten the latency chain
+
+`sqrt(4t) == 2*sqrt(t)` bit-exactly (scaling by 4 commutes with a
+correctly-rounded sqrt), and `4t = 2 - 2|x|` can be formed straight from
+`x` -- which takes both the `t` select and the doubling off the sqrt's
+dependency chain, and needs no guard because the small arm discards the
+result anyway. Predicted a real latency win. **It is a wash at best and
+costs throughput**: the poly still wants `t`, so `4t` is a *second* value
+to compute rather than a re-association of the first. 56 -> 58
+instructions, 59 -> 62 uOps, binding latency arm 45.98 -> 45.00. Not
+taken. The lesson is the ordinary one -- removing an operation from a
+dependency chain only helps if it is removed from the *program*, and here
+it was duplicated instead.
+
+### Stale elsewhere
+
+`asin_poly`'s doc comment opens "Dedicated asin-only copy of `acos_poly`'s
+shape (same Horner form, same `sqrt(1-x)*poly` combine)". That is no longer
+true of `acos_poly`, which is now a poly in `t` with a different combine.
+`asin_poly` itself is unaffected -- the decoupling that comment describes is
+exactly why -- but the sentence needs a word from whoever next holds `asin`.
+
+`readme`'s two wall-clock rows for `acos` (12.1 ns latency, 0.21 ns
+throughput, "30.8x vs std") are now optimistic by about the throughput
+delta above. They are deliberately **not** re-recorded here: that table's
+own header says its rows are only comparable because they were taken in one
+sitting, and this box is running unrelated multi-core work. The mca table,
+which readme already names as the perf reference, is updated.

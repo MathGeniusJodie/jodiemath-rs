@@ -92,7 +92,7 @@ logaddexp_accurate (all f32)| 0.000 |     0     | (no std logaddexp; the cancell
                   acosh |    0.003   |     3     |  0.000  |    1
                   atanh |    0.004   |     2     | 
                    asin |    0.016   |     2     |  0.000  |    0
-                   acos |    0.056   |     4     |  0.000  |    0
+                   acos |    0.002   |     2     |  0.000  |    0
                    atan |    0.063   |     3     |  0.000  |    0
            atan_latency |    0.052   |     3     |  0.000  |    0
                  atanpi |    0.031   |     4     | (no std atanpi; `1/pi` folds in *before* the quadrant reflection, whose constant is then an exact `0.5`. The max is `atan_poly`'s own, on the `|x|<1` arm this leaves bit-identical)
@@ -449,7 +449,7 @@ asinh               |          74.48 |             4.159
 acosh               |          97.88 |             3.948
 atanh               |         100.83 |             2.974
 asin                |          60.91 |             0.961
-acos                |          34.99 |             0.771
+acos                |          44.02 |             0.961
 atan                |          61.27 |             1.491
 atan_latency        |          61.99 |             1.591
 atan2               |          67.19 |             1.694
