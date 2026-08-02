@@ -11079,3 +11079,35 @@ dependency depth.
 - **Price the cheaper half explicitly.** Here it was not a Pareto point but
   a dominated one, and only an end-to-end run showed that -- the fit
   objective ordering (0.507 vs 0.597) suggested it should have helped.
+### Peeling a leading term (`fma(x, P-1, x)`) silently loses signed zero
+
+**This trap is general, not an `erfinv` detail.** Any peel of the form
+`x * P(u)` -> `fma(x, P_m1(u), x)` over a domain that includes `-0.0`
+returns `+0.0` where the original returned `-0.0`, and the accuracy sweep
+cannot see it.
+
+The mechanism is forced, not a slip. A peel is only worth doing when
+`P ~ 1`, which is exactly when `c0 - 1` is *negative*. So for `x = -0.0`:
+
+    -0.0 * (P-1)  =  +0.0        (negative times negative zero)
+    +0.0 + (-0.0) =  +0.0        (IEEE-754 round-to-nearest)
+
+whereas `-0.0 * P` is `-0.0` and carried the sign for free. Both the
+product's sign flip and the `+0 + -0` tie-break are required behaviour, so
+no ordering of the fma recovers it.
+
+The ulp sweep is structurally blind here: `+0.0` and `-0.0` compare equal,
+so the difference scores 0 across an exhaustive 2^32 run. `examples/
+edgecheck.rs`'s `check("erfinv(-0)", erfinv(-0.0), -0.0)` pin is what
+caught it, on a change that was otherwise fuzz-clean, mca-clean and
+exhaustively-verified-better. Keep that pin, and add the equivalent one
+before peeling any other odd function.
+
+The fix costs nothing where the function is odd and already signs its
+other arm: build **both** arms on `|x|` and apply one `mulsign` to the
+merged select, rather than letting the central arm carry a signed `x`
+through the poly. In `erfinv` that is the same single `mulsign` the tail
+arm alone used to pay -- `erfinv_throughput` uOps and `Block RThroughput`
+both flat -- and it is bit-identical to the old form for every non-zero
+`x`, since `fma` is sign-symmetric (`fma(x,p,x) == -fma(ax,p,ax)` for
+`x < 0`).
