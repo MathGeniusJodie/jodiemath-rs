@@ -8176,3 +8176,38 @@ the direct arm is untouched at 62.00.
    two roundings for an `N` that a good `D` did not need. Candidates:
    any odd function whose series starts `x + O(x^3)` and that already
    divides.
+
+## The same sign fold does *not* pay for `tand`: measured, reverted
+
+Third application of the pattern that shipped for `tan` (-5.3%) and
+`tan_checked` (-6.7%). `tand` is `sind(x) / cosd(x)`, so the shape is
+identical -- but the two parities here are genuinely *independent*
+(`sind`'s is `round(x/180)`'s, `cosd`'s is `round(x/180 - 0.5)`'s), so
+nothing dies when they are folded. Only the bookkeeping moves: two
+shifts and two xors become one `vpternlogd` + shift + xor.
+
+```
+region              instrs    uOps   BlockRT   cyc/elem   latency
+tand_throughput     95->92   97->94  30->29.5  2.533->2.655  70.017->70.001
+                                                  (+4.8%)
+  control: sind 1.151, cosd 1.406, tand_unchecked 2.104 unchanged
+```
+
+Instructions down 3, uOps down 3, `Block RThroughput` down 0.5, and the
+simulated cyc/elem **up** 4.8% with an unchanged opcode mix (2 `vdivps`,
+18+4 fma, 16 `vmulps` on both sides) -- the documented signature of mca's
+throughput column being wrong here, not a real regression. Reverted
+anyway, and the reason is not the ambiguity: the fold has to inline
+`sind`'s and `cosd`'s whole bodies into `tand`, and again into
+`tand_unchecked`, i.e. four copies of a reduction that currently exists
+twice, to buy at most 3 instructions out of 95 that mca will not confirm.
+`tan`/`tan_checked` earned their duplication by *deleting* a shared
+parity term (4 and 11 instructions); this one has no shared term to
+delete.
+
+**The transferable screen**: before folding two sign combines across a
+quotient, check whether the two masks share a term. If they do
+(`sin`/`cos` off one reduction, either tier), the fold deletes real work.
+If they do not (`sind`/`cosd`, whose grids are offset by half a step
+*before* the magic round), it only relocates three integer ops and is not
+worth the copies.
