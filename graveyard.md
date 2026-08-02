@@ -9255,3 +9255,44 @@ was *only* the wider format, and every f32 reformulation reduces to making
 two O(0.5) quantities cancel to O(1e-8) while each carries `2^-24`. Do not
 try another algebraic rearrangement of this function -- the requirement is
 on the working format, and nothing else.
+## `acos`: screened after the `asin` crossover work, no lever, and one whole class of old rejection is now stale
+
+Screened because `asin` and `asinpi` had just gone 5 -> 2 by finding their
+error concentrated in one window. **`acos` has no such window.** Strided
+scan (every 64th f32, so the avg column is not comparable to the
+exhaustive figures elsewhere -- shape only):
+
+```
++[0.0,0.1)   max 3      -[0.0,0.1)   max 2
++[0.1,0.27)  max 3      -[0.1,0.27)  max 3
++[0.27,0.5)  max 3      -[0.27,0.5)  max 2
++[0.5,0.7)   max 3      -[0.5,0.7)   max 2
++[0.7,0.9)   max 3      -[0.7,0.9)   max 1
++[0.9,0.99)  max 3      -[0.9,0.99)  max 1
++[0.99,1.0)  max 3      -[0.99,1.0)  max 1
+```
+
+Flat across the whole positive half. `acos` is a single expression --
+`sqrt(1-a)*P(a)`, plus `+ PI` for negative `x` -- with no crossover to
+move and no subtraction that cancels (`acos(|x|)` never exceeds `pi/2`,
+so `PI - acos(|x|)` is a 2x amplification at worst, and the negative half
+measures *better* than the positive one, not worse). The `asin`/`asinpi`
+lever does not apply here, and nothing else in the shape suggests one.
+
+**What is genuinely stale, and is left open rather than taken.** Six or
+more `acos_poly` rejections in this file are of the form "improved acos
+but regressed `asin` max ulp 9 -> 12" -- the degree 6 -> 7 bump, the Df32
+pi/2 leading-term split, the joint LP with both maxes capped, the
+unconstrained joint objective. **That coupling no longer exists.**
+`acos_poly` has exactly one call site (`acos`), `asin` has carried its own
+`asin_poly` since the decoupling, and after the crossover work that poly
+is degree 5 on `[0.5, 1)` and shares nothing. So the constraint that
+killed those attempts is gone and each is re-openable against `acos` and
+`acosd` alone.
+
+Not taken here, on price rather than on principle: the best-measured of
+them (degree 6 -> 7) was worth **acos avg/max 0.496/4 -> 0.490/3** for
+**+7-11% mca**, and that is a worse trade than the two this session did
+take (5 -> 2 for +6.8% and +8.0%). Anyone re-opening it should re-measure
+the mca side first, since it will now land on `acos`/`acosd` only, where
+the old figure was quoted with `asin` also paying.
