@@ -403,26 +403,16 @@ function's speed or accuracy directly; several unblock ideas above.
      mca-derived scheduling decision in this crate is Tiger-Lake-
      specific — the decided tradeoffs (division-vs-poly, Estrin
      groupings) need re-measuring before claiming portability.
-179. **`erfinv`'s tail forms `1-x^2` as `1 - fl(x*x)`**, which is the
-     whole of its max ulp. At the measured worst case `x = 0.99983` the
-     rounding of `x*x` is `2^-25` *absolute*, i.e. `1.7e-4` relative to
-     `1-x^2 = 3.4e-4`, and `-ln` turns that into an absolute error in
-     `w` that the tail then amplifies. `(1-|x|)*(1+|x|)` has no such
-     loss -- `1-|x|` is Sterbenz-exact for `|x| >= 0.5`, `1+|x|` costs
-     one bit -- and it is exactly the `n*(2-n)` product `erfc_inv_half`
-     already computes, so `erfinv`'s tail can reduce on `n = 1-|x|` and
-     reuse it verbatim while keeping its own central arm on `x`. Direct
-     ulp row, quick fuzz: `erfinv` avg 0.3853 / **max 69** at
-     `x = 9.9982935e-1`, against a poly-only floor of ~16. Untested.
+179. *Closed, shipped `5db7e4b` -- see graveyard.md.* `erfinv`'s tail
+     factors `1-x^2` as `n*(2-n)` on `n = 1-|x|`: 72 -> 11 max ulp, and
+     one instruction and one `vdivps` cheaper.
 
-180. **`erfinv_tail_poly` is ~16 ulp through its own Estrin chain**
-     (idealized minimax at degree 8 over `w` in `[0.673, 15.94]` is
-     11.46), and after #179 it would be the binding term for all three
-     of `erfinv`/`erfc_inv`/`probit`. Degree 9 reaches 7.36 idealized,
-     degree 10 5.24, degree 11 1.30 -- but the poly is shared, so budget
-     the mca cost on every caller as certain (see the degree-bump entry
-     in graveyard.md). `w` is the right variable: `sqrt(w)` measures
-     22.2 and every reciprocal variable 100+.
+180. *Closed, shipped `efd92b9` -- see graveyard.md, and note the degree
+     was **not** the lever.* `erfinv_tail_poly` is fitted in
+     `t = sqrt(w) - 1` at degree 9. A degree bump in `w` alone measures
+     worse than degree 9 does; the monomial terms reach 15.6x the value
+     at degree 10, so the quantisation amplifier outruns the fit.
+     15.6 -> 5.9 max ulp on all three callers.
 
 181. **`probit` can drop its `sqrt(2)` multiply on the tail arm.**
      `sqrt(2) * sqrt(w) * Q(w)` is `sqrt(2w) * Q(w)`, so folding the

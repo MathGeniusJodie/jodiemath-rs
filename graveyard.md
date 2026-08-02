@@ -8361,3 +8361,106 @@ complex zero and compare it to the fit domain.** Real-axis behaviour says
 nothing -- `dawsn` is strictly positive on `(0, 4]` and `E` is smooth,
 monotone and bounded there, which is exactly what made this look like a
 free win.
+
+## `erfinv`/`erfc_inv`/`probit`: the reduction, then the poly's *variable* -- 15.6 -> 5.9 max ulp
+
+2026-08-02, IDEAS.md #179 and #180, shipped as `5db7e4b` and `efd92b9`.
+
+### #179, the reduction: a compensated `log1p` aimed at the wrong rounding
+
+`erfinv`'s tail needs `w = -ln(1-x^2)` and formed it as
+`log1p(-fl(x*x))` with an explicit `c/t` correction term. The correction
+recovers the rounding of the *subtraction* `1 + nu`. The rounding that
+dominates is `fl(x*x)`'s, which happens before `log1p` is called and which
+no `log1p` can see: it is `2^-25` **absolute**, which at `x = 0.99983` is
+`1.7e-4` relative to `1 - x^2 = 3.4e-4`, and the tail amplifies it by
+`d(erfinv)/dw`.
+
+`(1-|x|)(1+|x|) = n*(2-n)` on `n = 1-|x|` has no such loss and was already
+`erfc_inv_half`'s reduction. Two things make it strictly cheaper as well as
+strictly better here: `s = fma(-n, n, n+n)` is one rounding of the whole
+product, and `s >= 2^-23` for every `|x| < 1`, so `erfinv` needs none of
+`erfc_inv_half`'s `denormal_rescale!` -- and the `c/t` **division** goes
+with the correction term.
+
+Exhaustive over the positive tail band `[0.7, 1.0)`, 5033165 patterns,
+against accuracy.rs's f64 Newton reference: **avg 5.0129 -> 4.9566, max
+71.670 -> 11.312**. instrs 171 -> 166, uOps 186 -> 183, BlockRT 45 -> 44,
+mca throughput 3.251 -> 3.212, latency 42.66 -> 41.94. Better on every
+axis; no Pareto variant needed.
+
+### #180, the poly: the degree is not the lever, the variable is
+
+#180 proposed a degree bump on `erfinv_tail_poly`, shared by all three
+functions, quoting idealized minimax 11.46 at degree 8 / 7.36 at 9 / 5.24
+at 10 / 1.30 at 11. **The degree bump alone is a trap**, and the numbers
+above are for the wrong range (see the next section).
+
+`w` spans `[0.673, 16]`, a 24x range, and a monomial poly over it has
+`sum|c_k w^k| / |Q|` reaching 5.7x at degree 8 and **15.6x at degree 10**.
+That ratio is exactly the amplifier on each coefficient's f32
+quantisation, so past some degree the fit improves and the evaluation
+degrades faster. Measured through the real chain (`erfc_inv` max ulp,
+every 64th pattern of its tail-poly band):
+
+| poly | idealized (f32-quantised) | `erfinv` max | `erfc_inv` max |
+|---|---|---|---|
+| shipped degree 8 in `w`, Estrin | 13.65 | 11.31 | 15.56 |
+| degree 9 in `w`, Estrin | 5.83 | 8.33 | 9.05 |
+| degree 10 in `w`, Estrin (`w^8` top) | 3.71 | 6.71 | 13.20 |
+| degree 10 in `w`, Estrin (Horner over `w^4`) | 3.71 | 7.84 | 12.32 |
+| degree 10 in `w`, pure Horner | 3.71 | 5.95 | 8.85 |
+| **degree 9 in `t = sqrt(w)-1`, Estrin** | **3.03** | **5.77** | **5.85** |
+| degree 10 in `t`, Estrin | 2.78 | -- | (sim 4.74) |
+| degree 10 in `t`, pure Horner | 2.78 | -- | (sim 4.11) |
+
+Degree 10 in `w` idealizes 3.7x better than degree 8 and measures *worse*
+than degree 9 on `erfc_inv`'s max, in two of the three evaluation orders.
+Pure Horner rescues it (every intermediate stays bounded by the answer)
+but costs depth 10 instead of 4: mca latency +21.3% / +9.0% / +7.8%.
+
+In `t = sqrt(w) - 1` the span is `[-0.179, 2.993]` and the amplifier is
+1.6-3.4x at *every* degree. `sqrt(w)` is free -- the `sqrt(w)*Q` combine
+needs it anyway and `erfc_inv_half` was already forming `v - 7.0` beside
+it -- and `v - 1` is exact for every `v` in `[0.5, 4]`, the same argument
+`erfinv_far_poly`'s `sqrt(w) - 7` already makes.
+
+| | avg before | avg after | max before | max after |
+|---|---|---|---|---|
+| `erfinv` (exhaustive, `[0.7,1)`) | 4.9566 | 1.5565 | 11.312 | 5.765 |
+| `erfc_inv` (2.9M of its tail band) | 5.2835 | 1.4128 | 15.555 | 5.853 |
+| `probit` (2.9M of its tail band) | 5.1376 | 1.3483 | 15.367 | 7.194 |
+
+### The fit range was short by one seam, and that was 4 ulp of the 13.7
+
+The shipped comment said the fit's domain "exactly matches what an f32
+caller can ever actually reach" -- `w` up to `-ln(1-x_max^2) = 15.9424`.
+True for `erfinv`. **`erfc_inv`/`probit` hand over to `erfinv_far_poly` at
+exactly `ERFC_INV_W_FAR = 16.0`**, so they were extrapolating over
+`(15.9424, 16]`, which is precisely where their worst case sat. The same
+degree-8 coefficients idealize to **9.60 ulp over `[0.673, 15.9424]` and
+13.65 over `[0.673, 16]`**. A shared poly's fit range has to be the union
+of its callers' ranges, not the range of the caller it was named after.
+
+### mca, and a clean case of its cycles column being unusable
+
+The shipped change is +2 instructions per call on each of the three
+functions and +1 Block RThroughput on each of the six regions
+(+1.7-2.3%). The opcode histograms of all three *latency* regions differ
+by exactly the same delta per chain element (+1 `vaddss`, +1
+`vfmadd213ss`, +1 `vmovss`, -1 `vmulss`), with **zero** `jmp`/`jcc`
+change -- and mca reports `erfinv_latency` **+14.1%** while reporting
+`erfc_inv_latency` **-9.8%** and `probit_latency` **-8.5%**. Identical
+instruction delta, opposite signs. Read Block RThroughput.
+
+### Transferable
+
+- **Before bumping a poly's degree, compute `max sum|c_k x^k| / |P(x)|`.**
+  It is one line, it is the amplifier on the coefficients' own f32
+  quantisation, and it is what decides whether a better fit converts. On a
+  wide range it grows with degree faster than the fit shrinks.
+- **A recentred variable is worth more than a degree**, and costs one
+  subtract if you pick a centre the subtraction is exact for. Both of this
+  crate's `erfinv` tail polys now use one.
+- **A shared poly's fit range is the union of its callers' ranges.** The
+  one that named it is not necessarily the one that reaches furthest.
