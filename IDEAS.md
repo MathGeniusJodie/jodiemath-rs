@@ -97,6 +97,20 @@ examples:
   every function it touched, including `tanh`'s max 6 -> 5 that three
   dedicated refit attempts could not reach.
 
+- **`sin_wide`/`cos_wide`/`tan_wide` at VF = 8**, worth a measured
+  ~8.05 -> ~5.5 cyc/elem on `sin_wide`. Their 3.2x throughput cost is
+  mostly *not* the three gathers (24 of 66 Block RThroughput): LLVM drops
+  the vectorization factor from 8 to 4 the moment an `f64` gather appears,
+  so every arithmetic op in the function costs twice as much per element.
+  A `[u32; 256]` probe table measured VF = 8 and **5.022** against the
+  shipped `[f64; 256]`'s 7.540 (both clamp-less). Converting for real
+  needs 29-bit chunks at *fixed* bit positions instead of the shipped
+  significant-bit split, which brings back a `|x| < 0.25` bypass, a
+  `2^(150-e)` scale rebuild and a fourth gather -- see graveyard.md for
+  the full costing and why it was not taken with the first landing.
+  Reducing the gather *count* does not help: two `f64` gathers measured
+  7.539, identical to three.
+
 ## Open: fit and accuracy search
 
 These would improve an existing function at zero perf cost, so they clear
