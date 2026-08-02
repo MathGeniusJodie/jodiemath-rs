@@ -10204,3 +10204,129 @@ domain, so a future instance holding `exp_checked` can change the
 degree of freedom nobody had noticed; it just does not happen to contain a
 win, because every way of buying accuracy in a reduction costs more
 reconstruction than an f32 polynomial is worth.
+## `dawson`'s tail was paying full-weight roundings for a correction worth 3% -- peeled, shipped
+
+**Shipped 2026-08-02.** The leading-term peel, applied to `dawson_tail_poly`.
+IDEAS.md lists the peel as one of the two shapes with the best hit rate here,
+and this is the cleanest instance of it the file has: the branch went from
+"fit error plus a chain of roundings" to "fit error", exactly, and got one
+multiply cheaper doing it.
+
+### The screen that found it
+
+A four-row decomposition over `|x| > 4` (stride 16, ~1.3M points, the
+`accuracy.rs` series reference in scalar f64), separating the *structure*
+from the *coefficients*:
+
+| row | what it is | avg | max |
+|---|---|---|---|
+| shipped chain | `R(z)*w` as written | 0.4637 | **5** |
+| fit-only | shipped f32 coefficients evaluated exactly in f64, one final rounding | 0.2842 | **3** |
+| oracle | correctly-rounded `R`, i.e. `fl32(d/w)*w` | 0.2944 | **1** |
+
+So of the tail's 5 ulp, **2 were the evaluation chain and 2 were the fit**,
+and only 1 was structural. That 2-ulp chain is what the peel removes -- all
+of it, not some of it.
+
+### Why it is total rather than partial
+
+`R(z) = 1 + z*T(z)` with `z = w^2 <= 1/64` on the whole branch, so `z*T` is
+never more than **0.033** of the result. Peeling the `1` out of the
+polynomial and into the final `fma`'s addend puts every rounding inside `T`
+at the scale of the correction instead of the scale of the answer: they
+arrive attenuated 30x or more, and the final `fma` carries the only
+full-weight rounding left. The measured peeled row is `0.284184 / 3` against
+a fit-only floor of `0.284190 / 3` -- identical to five decimal places. There
+is nothing left in this branch that is not its coefficients.
+
+### It is also one op cheaper
+
+`R(z)` then `* w` is 4 fma + 4 mul. `fma(w*z, T(z), w)` is 4 fma + 3 mul --
+the trailing multiply by `w` is absorbed into the `fma` that adds the peeled
+term, and `T` is one degree shorter than `R`.
+
+| | before | after |
+|---|---|---|
+| `dawson_throughput` instrs | 84 | 84 |
+| region `vmulps` | 14 | **12** |
+| region fma (213+231) | 32 | 32 |
+| uOps | 92 | 93 |
+| Block RThroughput | 23.00 | **22.00** |
+| cyc/elem | 1.701 | 1.645 |
+| `dawson_latency` | 62.111 | 62.002 |
+
+Instruction count is *flat* despite two fewer multiplies: LLVM spent the two
+slots on `vmovaps` (6 -> 8), which is also where the +1 uOp comes from. Read
+the histogram, not the total -- the arithmetic really did drop by one
+multiply per element, and `Block RThroughput` is the rung that shows it.
+
+### Accuracy
+
+| | avg | max |
+|---|---|---|
+| tail only, `|x| > 4` | 0.4637 -> **0.2842** | 5 -> **3** |
+| whole function, exhaustive all 2^32 | 0.0581 -> **0.0502** | 6 (unchanged) |
+
+The headline max does not move because it never lived here: it is the
+central branch at `x = 1.4041231`. Six `worst_corpus` entries move, all
+`|x| > 4`, all by exactly 1 ulp and all *toward* the true value
+(`dawson(100)`: `5.0002495e-3` -> `5.00025e-3` against a true
+`5.00025004e-3`).
+
+Bit-identical for `|x| > 2897`, and for the same reason as before the change:
+the result is `w` there once the correction falls under half an ulp of `w`,
+and `z*T < 2^-24` is the same threshold that used to round `R` to exactly
+`1.0`. The `z = +inf` discarded arm still combines to a consistently-signed
+infinity rather than a `NaN` -- `T`'s coefficients are all positive and
+`w*z` only carries `w`'s sign in.
+
+## The same peel does **not** transfer to `dawson`'s central branch -- rejected, measured
+
+**Rejected 2026-08-02**, measured in the same run as the tail peel above, so
+the cost of knowing was zero.
+
+`x*P(u)/Q(u)` invites the identical treatment: `P/Q = 1 + u*S(u)/Q(u)` with
+`S = (P-Q)/u`, giving `fma(x, corr, x)`. It is **free** in op count -- the
+final `x * ratio` multiply becomes the peel's own `fma`, and `N = P-Q` is the
+same degree as `P`. It is also *better conditioned* than `P`: at `u = 16`
+every term of `N` is negative (sum `-631.4`, condition 1.00) where `P`'s
+terms alternate (sum `21.1`, largest term `13.0`, condition 1.29).
+
+None of that matters, because the attenuation runs the wrong way. The tail's
+correction is 3% of its result; the central branch's is
+`|ratio-1|/|ratio|`, which is 0.18 at `x = 0.5` but **30x** at `x = 4`,
+where `ratio = 0.0323`. Measured as an oracle row (exactly-computed
+correction, so this is the *floor* of the idea, not an implementation):
+
+| octave | oracle peel avg/max | shipped avg/max |
+|---|---|---|
+| `2^-10 .. 2^-7` | 0.0000 / **0** | 0.43 / 2 |
+| `2^-4` | 0.0017 / 1 | 0.60 / 4 |
+| `2^-2` | 0.0285 / 1 | 1.33 / 5 |
+| `2^-1` | 0.0931 / 1 | 1.01 / 4 |
+| `2^0` | 0.679 / 2 | 1.09 / 5 |
+| `2^1` | 2.850 / **8** | 1.00 / 5 |
+| `2^2` (tail's range) | 11.90 / **32** | 0.81 / 5 |
+
+Break-even is where `ratio = 0.5`, i.e. `x ~ 1.06`. Below it the peel is
+better than the shipped chain *and* better than the shipped chain's own
+oracle; above it, it loses fast.
+
+**What this leaves open, and what it closes.** Closed: a single peeled form
+for the whole central branch. Open, and priced: a *third* branch,
+`fma(x, u*S(u)/Q(u), x)` for `|x| <= 1`, sharing `Q` with the existing
+rational. Its oracle floor over `2^-13 .. 2^0` is max 1 against a shipped
+2-5, so it is worth roughly 0.014 of the exhaustive avg (0.050 -> ~0.036)
+-- but **zero** of the headline max, which is at `x = 1.404` on the other
+side of the split, and it costs a select plus a second numerator on every
+call. Recorded rather than taken: an avg-only win that adds a branch to a
+7-op hot path is the wrong side of this crate's Pareto rule.
+
+### Transferable
+
+The peel's gain is not a property of the polynomial, it is
+`1 / (1 + |peeled term| / |result|)` -- so **screen it by evaluating that one
+ratio at the far end of the branch's domain before writing any code.** Under
+~0.1 (the tail: 0.033) it removes the entire evaluation chain; over ~1 it is
+an amplifier. That single number would have predicted both results here, and
+it also explains the `erfcx_pos` peel's ~1%: same lever, ratio in between.

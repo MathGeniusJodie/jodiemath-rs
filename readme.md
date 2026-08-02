@@ -103,7 +103,7 @@ logaddexp_accurate (all f32)| 0.000 |     0     | (no std logaddexp; the cancell
          erfcx (x>=20)  |    0.268   |     2     | (no std erfcx)
      norm_cdf (all f32) |    0.066   |     7     | (no std norm_cdf; exhaustive. Same two terms as `erfc`, in the same proportion -- `exp` and the erfcx polynomial)
      norm_pdf (all f32) |    0.027   |     4     | (no std norm_pdf; exhaustive. `exp`-bound: the rest of the chain is an exactly-split square and a two-word `1/sqrt(2*pi)`)
-       dawson (all f32) |    0.058   |     6     | (no std dawson; exhaustive since the reference stopped being an 800-point quadrature, see accuracy.rs)
+       dawson (all f32) |    0.050   |     6     | (no std dawson; exhaustive. The 6 is the central branch at x=1.404; the `|x|>4` tail is peeled and sits exactly on its own fit-only floor, max 3)
        erfinv (|x|<1)   |    0.364   |     4     | (no std erfinv; exhaustive)
       erfc_inv (0<y<2)  |    0.679   |     5     | (no std erfc_inv; exhaustive)
         probit (0<p<1)  |    0.761   |     5     | (no std probit; exhaustive)
