@@ -32,7 +32,7 @@ cbrt_accurate_unchecked |    0.000   |     1     | (bit-identical to cbrt_accura
       cos_wide (all f32)|    0.150   |     2     |  0.000  |    1
         sinpi (all f32) |    0.197   |     2     | (no std sinpi)
         cospi (all f32) |    0.058   |     2     | (no std cospi)
-        tanpi (all f32) |    0.227   |     5     | (no std tanpi)
+        tanpi (all f32) |    0.033   |     2     | (no std tanpi; `pi` is peeled out of the polynomial into a closing `fma`, so the argument is never scaled to radians -- see `tan_poly`)
         sind (|x|<4.7e7)|    0.124   |     2     | (no std sind)
         cosd (|x|<4.7e7)|    0.073   |     2     | (no std cosd)
         tand (|x|<4.7e7)|    0.177   |     3     | (no std tand)
@@ -407,7 +407,7 @@ tan_checked         |         101.00 |             4.289
 tan_wide            |         116.06 |            13.915 (*L)
 sinpi               |          42.02 |             1.133
 cospi               |          47.00 |             1.226
-tanpi               |          76.00 |             2.223
+tanpi               |          77.05 |             2.155
 sinc                |          53.02 |             1.256
 sind                |          48.00 |             1.151
 cosd                |          56.00 |             1.406

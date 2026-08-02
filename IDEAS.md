@@ -116,6 +116,18 @@ examples:
 These would improve an existing function at zero perf cost, so they clear
 the bar by construction if they find anything.
 
+- **Peel the scaling constant out of `tand`, the way `tanpi` now does.**
+  `tanpi` went max 5 -> 2, avg 7x better, and an instruction *cheaper*, by
+  fitting the polynomial to `tan(pi*w)/w - fl(pi)` and handing the leading
+  `pi*w` to a closing `fma` instead of forming `t = fl(PI*w)` first. The
+  win is not the deleted rounding -- a prior screen priced that at 0.44
+  ulp and correctly rejected it -- it is that the polynomial then carries
+  at most 0.215 of the result instead of all of it. `tand` (max 3) ships
+  as `sind(x)/cosd(x)`, and the graveyard's direct-poly attempt for it
+  failed on its *reduction* (it reused `sind`'s `d` as the pole distance),
+  not on this. Same shape, with `K = fl(pi/180)` and an exact `45-|e|`
+  pole distance in degrees. `sind` domain, not `tanpi`'s.
+
 - **Sollya `fpminimax`**: not installed. Candidate: `acos_poly` (max 4).
   (erfc's n/d used to be listed here as "max ~100, root cause already
   traced — a tighter fit alone won't fix it". Both halves of that were

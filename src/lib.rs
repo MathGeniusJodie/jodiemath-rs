@@ -1163,34 +1163,57 @@ pub fn sinc_unnormalized(x: f32) -> f32 {
     if x == 0.0 { 1.0 } else { normal }
 }
 
-// tan(t) = t * Q(t^2), `t = pi*e` with e in [-0.25, 0.25], degree 6,
-// two-group Estrin (`lo + u^4*hi`) so no group is deeper than the `u^4`
-// it multiplies, leading coefficient pinned to exactly 1.0. An
-// ulp-weighted minimax (LP) fit of tan(t)/t against t^2 -- weighted by
-// `|d tanpi / d Q| / ulp(tanpi)` for whichever of `tan_core`'s two
-// branches (direct `t*Q`, reflected `1/(t*Q)`) binds harder at each point
-// -- then coordinate-descended over the f32 quantisation against the real
-// chain. Not a transcription of any published algorithm's constants.
+// The *remainder* of tan(pi*w) after its leading term: with `u = w*w` and
+// `w` in [0, 0.25], this is `B(u) = tan(pi*w)/w - fl(pi)`, so that
+// `tan(pi*w) == fma(w, PI, w*B(u))`. Degree 6, two-group Estrin
+// (`lo + u^4*hi`) so no group is deeper than the `u^4` it multiplies.
 //
-// Degree 6, not 5, because this poly is `tanpi`'s binding term and
-// nothing else's. An oracle screen (the chain run with a correctly-rounded
-// `tan(t)/t` in place of `Q`) puts the chain's own floor at max 3.7 ulp
-// against degree 5's real 7.8, so the fit was carrying the error rather
-// than the roundings; degree 6 lands near that floor and degree 7
-// idealises 5x better again without converting.
+// The peel is the whole point, and it is what makes this cheaper *and*
+// sharper than a polynomial for `tan(t)/t` in `t = pi*w`:
 //
-// The grouping is load-bearing, not cosmetic. Horner-on-`u^2` at the top
-// (`l0 + u2*(l1 + u2*l2)`) needs `l2` a full degree-2 group, so the extra
-// term lands *on* the Estrin spine: same instruction count as this form
-// minus one, but a fourth dependency level, which llvm-mca prices at
-// tanpi latency 88.72 against this form's 76.00 (the shipped degree-5's
-// own 78.88 for reference). It buys max ulp 5 -> 4. Not taken: 17% of
-// tanpi's latency is a steep price for one ulp when the average is
-// already better here (0.2267 against 0.2309).
+// - **The leading `pi*w` never rounds.** `fma(w, PI, ..)` forms that
+//   product exactly and rounds once, at the end. Routing through an
+//   intermediate `t = fl(PI*w)` instead rounds it early, and `tan` then
+//   amplifies that by `d(ln tan)/d(ln t) = 2t/sin(2t)`, up to 1.571 at
+//   the seam.
+// - **B only has to be right to ~4.7x fewer bits than Q would.** B's own
+//   error reaches the result attenuated by `w*B/tan(pi*w)`, which is
+//   0 at `w = 0` and at most 0.215 at `w = 0.25`; a `t*Q(t^2)` form has
+//   no such attenuation, since there the polynomial carries the entire
+//   value. That is the term that dominated this function before.
+// - Both `tan_core` arms get it, and the two `PI*` multiplies the old
+//   argument-space form needed are gone, so it is an instruction
+//   *cheaper*: `tanpi` 94 -> 93 instrs, 100 -> 98 uOps, Block
+//   RThroughput flat, 2.223 -> 2.155 cyc/elem.
+//
+// This is not the `pi`-into-the-coefficients fold twice rejected for
+// `sinpi`/`sind` (see graveyard.md). That one keeps the shape `w*S(u)`
+// with `S(0) = fl(pi)`, which reproduces the old leading rounding
+// *exactly* -- `fl(S(0)*w)` and `fl(PI*w)` are the same operation -- and
+// so buys only the refit's risk. Peeling `PI` out into the closing fma is
+// what changes the arithmetic; the graveyard's own screen of the fold
+// priced the argument rounding alone (avg 0.44 ulp of a 2.05 total) and
+// correctly concluded *that* term could not pay. It is the attenuation
+// above, not the argument rounding, that this collects.
+//
+// `c[0]` is `pi - fl(pi)` to the bit, so `w -> 0` reproduces the true
+// `pi*w` by construction rather than by fit. Pinning it is free here (the
+// unpinned LP converges to the same value), unlike `erfcx_pos`'s c0.
+//
+// Fitted by a weighted minimax LP (scipy/HiGHS) of `B` against `u` over
+// w in [0, 0.25], weighted by `w/tan(pi*w)` -- the factor that turns an
+// absolute error in B into a relative error of the result, and the same
+// expression for *both* of `tan_core`'s arms, which is why one fit serves
+// both. The LP must be column-scaled (`z = u/0.0625`); in raw `u` the
+// Vandermonde is singular enough at degree 6 that HiGHS returns a
+// coefficient stuck on its bound and a residual 27x too large.
+//
+// Degree 6, not 5: degree 5 quantises to 4.8 ulp-equivalent against
+// degree 6's 1.1, and degree 6 idealises below the LP's own resolution.
 #[inline(always)]
 fn tan_poly(u: f32) -> f32 {
     let c: [f32; 7] = [
-        1.0, 0.3333313, 0.13338836, 0.053408977, 0.024446711, 0.0030841262, 0.009410244,
+        -8.742278e-8, 10.335385, 40.82169, 160.9828, 741.58649, 701.91418, 28496.229,
     ];
     let u2 = u * u;
     let u4 = u2 * u2;
@@ -1200,15 +1223,24 @@ fn tan_poly(u: f32) -> f32 {
     fma(u4, l2, fma(u2, l1, l0))
 }
 
-// tan(pi*e) (idea #128, tanpi only -- the same direct-poly idea applied
+// tan(pi*r) (idea #128, tanpi only -- the same direct-poly idea applied
 // to tand regressed a real fuzz-found precision bug and was reverted,
-// see IDEAS.md), `e` the exact half-turn-fraction reduction `tanpi`'s
-// own `r` already is. `theta=PI*e`, `aphi=PI*(0.5-|e|)`: the caller
-// computes both, subtracting *before* scaling by `PI`, not after --
-// `0.5-|e|` in the small, bounded `[-0.5,0.5]` domain is more precise
+// see IDEAS.md), `r` the exact half-turn-fraction reduction `tanpi`'s own
+// `r` already is, and `s = 0.5-|r|` the exact distance to the pole.
+//
+// Both arguments stay in half-turns and are *exact*: `r` because the
+// `x - round(x)` reduction is, `s` because `0.5-|r|` is Sterbenz. Neither
+// is ever scaled to radians -- `tan_poly` carries `pi` internally and
+// hands the leading `pi*r` to a closing `fma`, so the argument is never
+// rounded at all and the seam below is `|r| <= 0.25` exactly rather than
+// a comparison against `fl(pi/4)`.
+//
+// Keeping the pole distance in half-turns is load-bearing and predates
+// the `pi`-peel: the caller subtracts *before* any scaling, not after.
+// `0.5-|r|` in the small, bounded `[-0.5,0.5]` domain is far more precise
 // than the mathematically-equivalent `FRAC_PI_2-|theta|` computed after
 // scaling, since `theta`'s own ulp (fixed by its larger, ~pi/2-ish
-// magnitude) is coarser than `e`'s, and near the pole that coarseness
+// magnitude) is coarser than `r`'s, and near the pole that coarseness
 // swamps the tiny quantity being computed. Both forms are Sterbenz-exact
 // *given their own inputs*, so this isn't about avoiding rounding in the
 // subtraction itself, only about which domain has finer-grained ulps to
@@ -1216,20 +1248,20 @@ fn tan_poly(u: f32) -> f32 {
 // for the exact same reflection formula, differing only in this
 // subtract-then-scale vs scale-then-subtract order).
 //
-// `tan_poly` directly for `|e| <= 0.25`; past that, the cotangent
-// reflection `tan(pi*e) = 1/tan(aphi)` (sign matching `e`/`theta`).
+// Direct for `|r| <= 0.25`; past that, the cotangent reflection
+// `tan(pi*r) = 1/tan(pi*s)` (sign matching `r`).
 //
-// `aphi == 0.0` exactly (`x` a genuine half-integer, `tan`'s true pole)
+// `s == 0.0` exactly (`x` a genuine half-integer, `tan`'s true pole)
 // needs an explicit override, found by fuzzing, not assumed: the
-// reflected formula is a real `1.0/0.0` there, but `mulsign(.., theta)`
-// ties its sign to `theta`'s own sign, which alternates with which
-// half-integer `x` happens to be (tracks `theta`'s sign, not tan's
+// reflected formula is a real `1.0/0.0` there, but `mulsign(.., r)`
+// ties its sign to `r`'s own sign, which alternates with which
+// half-integer `x` happens to be (tracks `r`'s sign, not tan's
 // actual pole-crossing direction) -- while the previous
 // `sinpi(x)/cospi(x)` form (like this crate's own f64 `tanpi_ref` test
 // reference, verified exhaustively over 1000 half-integers) always
 // lands on the *same* sign, `-inf`, regardless of which half-integer:
 // `sinpi`'s numerator sign and `cospi`'s zero sign there both alternated
-// in lockstep, canceling to a constant ratio sign that `theta`'s sign
+// in lockstep, canceling to a constant ratio sign that `r`'s sign
 // alone doesn't reconstruct. (That lockstep was a property of the
 // *pre-2026-07-30* `cospi`, whose zeros alternated `-0.0`/`+0.0`;
 // today's `cospi` gives `+0.0` at every half-integer, so the same ratio
@@ -1237,12 +1269,12 @@ fn tan_poly(u: f32) -> f32 {
 // unaffected either way -- this override is what fixes the sign, and
 // `tanpi_ref` keeps the older f64 shape deliberately, see its own note.)
 #[inline(always)]
-fn tan_core(theta: f32, aphi: f32) -> f32 {
-    let ae = theta.abs();
-    let direct = theta * tan_poly(theta * theta);
-    let reflected = mulsign(1.0 / (aphi * tan_poly(aphi * aphi)), theta);
-    let normal = if ae <= std::f32::consts::FRAC_PI_4 { direct } else { reflected };
-    if aphi == 0.0 { f32::NEG_INFINITY } else { normal }
+fn tan_core(r: f32, s: f32) -> f32 {
+    let ar = r.abs();
+    let direct = fma(r, std::f32::consts::PI, r * tan_poly(r * r));
+    let reflected = mulsign(1.0 / fma(s, std::f32::consts::PI, s * tan_poly(s * s)), r);
+    let normal = if ar <= 0.25 { direct } else { reflected };
+    if s == 0.0 { f32::NEG_INFINITY } else { normal }
 }
 
 /// tan(pi*x), argument in half-turns (idea #128): `tan` has period 1 in
@@ -1251,18 +1283,24 @@ fn tan_core(theta: f32, aphi: f32) -> f32 {
 /// a parity correction that this one doesn't), so `x`'s exact `q=round(x)`/
 /// `r=x-q` reduction (identical to `sinpi`'s own) already lands directly
 /// on `tan(pi*x) = tan(pi*r)`, no sign combine needed. `tan_core` handles
-/// the direct-poly/cotangent-reflection split and the pole itself (`r` a
-/// half-integer distance from `x`, i.e. `x` itself a half-integer):
-/// `aphi=0` there, so `1.0/(aphi*tan_poly(aphi*aphi))` is a real
-/// `1.0/0.0`, giving the correctly-signed `+-inf` for free, the same
-/// "division by a true zero, never a `0/0`" free case the previous
+/// the direct-poly/cotangent-reflection split and the pole itself (`x` a
+/// half-integer): the pole distance `s = 0.5-|r|` is exactly `0` there,
+/// so the reflected arm is a real `1.0/0.0`, giving `+-inf` for free --
+/// the same "division by a true zero, never a `0/0`" case the previous
 /// `sinpi(x)/cospi(x)` form also had.
+///
+/// Nothing here is scaled to radians: `r` and `s` both reach `tan_core`
+/// exact, and `pi` enters once, inside `tan_poly`'s closing `fma`. See
+/// that comment -- peeling it there is what carries this function's
+/// accuracy, and it costs an instruction less than scaling first.
+///
+/// Current: max ulp 2, avg 0.0327 (exhaustive over all f32).
 #[inline(always)]
 pub fn tanpi(x: f32) -> f32 {
     let q = x.round_ties_even();
     let r = x - q;
     let ar = r.abs();
-    let normal = tan_core(std::f32::consts::PI * r, std::f32::consts::PI * (0.5 - ar));
+    let normal = tan_core(r, 0.5 - ar);
     if x == 0.0 { x } else { normal }
 }
 

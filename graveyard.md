@@ -10420,3 +10420,153 @@ reason: score an oracle row per operand *separately*, not just a combined
 one. Here the combined oracle looks like 2 ulp of headroom while the two
 single-operand oracles are both *negative*, and only running all three shows
 which it is.
+
+## `tanpi`: peel `pi` out of the polynomial, not into it -- max 5 -> 2, avg 7x, and an instruction cheaper
+
+`tan_poly` was a degree-6 minimax of `tan(t)/t` in `t = pi*r`, with
+`tan_core` forming `t = fl(PI*r)` and `aphi = fl(PI*(0.5-|r|))` first. It
+is now the *remainder* after the leading term:
+
+    B(u) = tan(pi*w)/w - fl(pi),  u = w*w,  w in [0, 0.25]
+    tan(pi*w) == fma(w, PI, w*B(u))
+
+Same degree, same Estrin grouping, **one instruction fewer**, and the two
+`PI*` multiplies are gone -- `tan_core` now takes `r` and `s = 0.5-|r|`
+directly, both exact, and the seam is `|r| <= 0.25` exactly instead of a
+comparison against `fl(pi/4)`.
+
+| | avg ulp | max ulp |
+|---|---|---|
+| `tanpi` before | 0.2267 | 5 |
+| `tanpi` after | **0.0327** | **2** |
+
+llvm-mca, `tools/mca_region.py`:
+
+| region | instrs | uOps | BlockRT | cyc/elem |
+|---|---|---|---|---|
+| `tanpi_throughput` | 94 -> **93** | 100 -> **98** | 26 -> 26 | 2.223 -> **2.155 (-3.1%)** |
+| `tan2pi_throughput` | 96 -> **95** | 102 -> **101** | 27 -> 27 | 2.405 -> **2.342 (-2.6%)** |
+| `tanpi_latency` | 3140 -> 3074 | 3530 -> 3654 | 832 -> 832 | 76.00 -> 77.05 |
+
+Full-file asm region diff: **4 of 313 regions changed**, exactly
+`tanpi`/`tan2pi` in both modes. Nothing else in the crate moves --
+`tan_poly` and `tan_core` have no other caller.
+
+The throughput rows are a clean take by the ladder (instrs down, uOps
+down, RThroughput flat). **The latency row's +1.4% is the usual
+artifact and was arbitrated rather than believed:** jmp/jcc is 256 on
+both sides, so it is not arm concatenation this time; the uOp rise is
+*load* uOps. The scalar latency harness had `PI` in a register
+(`vbroadcast` 1 -> 0) feeding 640 `vmulss`; now 512 `vmulss` + 896
+`vfmadd`, and 128 of those fmas take `PI` as a RIP-relative memory
+operand -- +1 uOp each, 2 per element, off the dependency chain. The
+critical path is 7 levels deep either way (`r -> t -> t^2 -> poly ->
+mul` becomes `r -> r^2 -> poly -> mul -> fma`), which is the structural
+reason to disbelieve the +1.4%.
+
+### Why this was sitting there, and the rule it sharpens
+
+The graveyard already contained a screen of "fold `pi` into `tan_poly`'s
+coefficients", and that screen **rejected it on a correct measurement of
+the wrong term**: instrumented over 20M samples, the argument-rounding
+contribution was avg 0.44 ulp of a 2.05 total, only 0.02% of the
+above-3-ulp samples had it contributing even half, so "folding `pi` into
+the coefficients -- which would delete both effects and two `vmulps` --
+cannot pay for a refit, and is not attempted."
+
+Every number in that screen is right. It priced **deleting the `PI*r`
+rounding**, which is indeed worth ~0.4 ulp. What it did not price is the
+thing the peel actually collects:
+
+**B's own error reaches the result attenuated by `w*B/tan(pi*w)`** --
+zero at `w=0`, at most **0.215** at `w=0.25`. A `t*Q(t^2)` form has no
+attenuation at all, because there the polynomial carries the *entire*
+value. So the peeled polynomial has to be right to ~4.7x fewer bits for
+the same result, and that slack is where the 5 -> 2 comes from. The
+argument rounding is a rounding error; the attenuation is a change of
+*sensitivity*, and only the first one shows up in an
+error-attribution instrument.
+
+This is also **not** the `pi`-into-the-coefficients fold twice rejected
+for `sinpi` (idea #43) and `sind` (idea #44). Those keep the shape
+`w*S(u)` with `S(0) = fl(pi)`, and `fl(S(0)*w)` is bit-for-bit the same
+operation as `fl(PI*w)` -- the leading rounding is reproduced exactly,
+so the transform buys nothing and the refit's risk is all there is. That
+is why both regressed. Peeling `PI` into a closing `fma` is a different
+transform with the same name: `fma(w, PI, ...)` forms `pi*w` **exactly**
+and rounds once, at the end.
+
+Oracle screen, before any fitting (probe over `r` in `[0,0.5)`, ideal
+polynomial in each form, f64 reference):
+
+| | shipped form, ideal Q | peeled form, ideal B |
+|---|---|---|
+| direct arm, `r` in [0, 0.25] | 2.810 | **0.962** |
+| reflected arm, `r` in (0.25, 0.5) | 3.626 | **1.561** |
+
+The 3.626 reproduces the 3.7 oracle floor this file already recorded for
+the shipped chain, which is the check that the probe is calibrated. The
+peel moves the *floor*, which is what no coefficient work could do.
+
+### Fitting notes
+
+Weighted minimax LP (scipy/HiGHS) of `B` against `u`, weight
+`w/tan(pi*w)` -- the factor turning an absolute error in B into a
+relative error of the result, and **the same expression for both arms**,
+so one fit serves the direct `w*B` and the reflected `1/(w*B)` alike.
+
+- **The LP must be column-scaled** (`z = u/0.0625`). In raw `u` at degree
+  6, HiGHS returns a coefficient pinned to its bound and a residual of
+  1.61e-6 -- 27x too large -- and reports the same number for degree 7,
+  which is the tell. Same failure the `sind` entry hit on `d^9`.
+- Degree 5 quantises to **4.78** ulp-equivalent, degree 6 to **1.115**,
+  degree 7 no better than 6. Degree 6 idealises below the LP's own
+  resolution.
+- `c[0]` is pinned to `pi - fl(pi)` exactly. Free here, unlike
+  `erfcx_pos`'s c0: the *unpinned* LP converges to -8.742276e-08 against
+  the exact -8.742278e-08, so the pin costs nothing and buys an exactly
+  reproduced asymptote as `w -> 0`.
+
+### What this retires
+
+The **degree-6-on-the-Horner-spine variant** recorded above (max 4, avg
+0.2309, latency 88.72 vs 76.00, "too thin a pareto point to carry an
+API") is now strictly dominated and needs no tier: the peeled form is max
+**2**, avg **0.0327**, and *cheaper* than the form that variant was
+losing to. Deleted from consideration rather than shipped as
+`tanpi_accurate`.
+
+### Transferable
+
+**A rejection that instruments "how much does this rounding contribute"
+has only closed the rounding, not the restructure.** The question that
+finds these is not "what does this step's error cost" but "**what
+fraction of the result does the polynomial carry**" -- if it carries all
+of it, peeling the leading term off is a sensitivity change worth several
+bits, independent of any rounding it also deletes. `log_2` (3 -> 1 ulp),
+`erfcx_pos`'s two-word `c0`, and now `tanpi` are three instances.
+
+Screening shape that made it cheap: an out-of-tree probe comparing the
+two forms' *oracle floors* (ideal polynomial in each) settled it in one
+run, before a single coefficient was fitted.
+
+### Exhaustive confirmation and a second, independent one
+
+Harness, all 2^32 bit patterns: `tanpi` **avg 0.0327 / max 2**, worst
+`x = 3.2719934e-1` (was 0.2267 / 5). `tan2pi` quick-fuzz 0.2273 / 5 ->
+**0.0324 / 2**; `sin2pi`/`cos2pi` unmoved at 2, as the asm diff requires.
+
+Cross-checked without the harness, because it was worth knowing whether
+the number depended on the reference: **every distinct internal state
+`tanpi` can reach occurs for `x` in `[0, 0.5]`** -- there `round_ties_even(x)`
+is 0, so `r == x` -- and larger `|x|` only ever produce `r` on coarser
+subgrids of that same set. Sweeping all 1056964607 f32 in `[0, 0.5]`
+against an f64 `tan(pi*x)` gives **max 2.1198 fractional ulp at
+x = 4.1912597e-1** (in the reflected arm, whose oracle floor is 1.561),
+avg 0.2552 over that range. The harness reports integer bit-distance and
+says 2; the two agree.
+
+That reachability argument is reusable for any function whose reduction
+is `x - round(x)`: the exhaustive answer lives in one half-turn, and a
+single-threaded probe over it costs a couple of minutes with no bench
+lock, which matters when three instances are queued behind one.
