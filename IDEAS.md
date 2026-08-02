@@ -402,6 +402,49 @@ wrong about one of them -- see graveyard.md):
   before/after needs one adding, and only the `v` block should move to
   f64 -- porting `ln`/`atan2` too is a different and much larger project.
 
+- **`acosd` wants the two-word `RAD_TO_DEG` now, and its doc comment says
+  the opposite.** Measured, exhaustive over every f32 in `[-1,1]` (these
+  are in-domain figures; readme's column would be ~0.496x them):
+
+  | `acosd` variant | avg | max |
+  |---|---|---|
+  | one-word `K`, old `acos` | 0.10975 | 5 |
+  | one-word `K`, new `acos` (shipped) | 0.12913 | 4 |
+  | two-word `K`, old `acos` | 0.10996 | 5 |
+  | **two-word `K`, new `acos`** | **0.05269** | **3** |
+
+  `acosd`'s doc comment records it as "the one member of this family where
+  `RAD_TO_DEG_HI`'s two-word `fma` measures no benefit: `acos`'s own error
+  dominates". Column 3 shows that was *correct when measured* -- 0.10975 ->
+  0.10996, nothing. It is now stale for exactly the reason it gave: after
+  the half-angle rewrite `acos` is avg 0.00435 / max 2, so its error no
+  longer dominates anything, and what is left is `RAD_TO_DEG_HI` being a
+  **truncated** Cody-Waite hi word sitting 5.49e-8 = 0.46 ulp low. That is
+  a systematic bias on every result, and removing the noise it was hiding
+  under is what exposed it. Textbook [[re-stale-check cross-function
+  deps]]: re-verify, do not cite the old entry.
+
+  Note the shipped regression this repairs. The `acos` rewrite moved
+  `acosd` **max 5 -> 4 but avg 0.10975 -> 0.12913**, same mechanism -- the
+  bias stopped being averaged against `acos`'s own larger, more random
+  error. The two-word `fma` takes it to 0.05269 / 3, i.e. 2.1x better than
+  before the rewrite rather than merely restoring it. `acosd` is its own
+  domain (`acos`'s claim lists it only as "used by"), which is why this is
+  a note and not a commit. Cost is one `fma` and one multiply, unpriced.
+  `acosd` has no readme precision row; its current exhaustive numbers are
+  avg 0.0641 / max 4 over all 2^32 patterns.
+
+- **`exp2m1`'s `saturation_pins` bounds are stale and the gate is not
+  doing its job.** `examples/saturation_pins.rs` sweeps `exp2m1` around
+  `[-151.0, 128.0]`, but `exp2m1` clamps to `[-126.0, 128.0]`. The lower
+  probe therefore sits 25 units *inside* the saturated region and the real
+  transition is never tested; the upper one is correct. The fix is the one
+  character `-151.0` -> `-126.0`, and it is expected to pass either way --
+  the value is `-1.0` on both sides -- which is the point: the gate should
+  be exercising the constant that is actually in the code. `exp10m1`'s
+  bounds were corrected already; this one was left because it is a
+  different domain.
+
 ## Open: infrastructure, build and harness
 
 Tooling, feature flags, and portability. None of these change an existing
