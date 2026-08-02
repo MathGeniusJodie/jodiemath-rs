@@ -3278,58 +3278,92 @@ pub fn exp_m1_over_x_narrow(x: f32) -> f32 {
     if k == 0.0 { q } else { b / x }
 }
 
-/// 2^x - 1 (C23 `exp2m1`). Same cancellation problem as `expm1` (2^x is
-/// close to 1 whenever x is close to 0, so computing 2^x first and
-/// subtracting 1 loses low bits) and the same fix: `expm1`'s own Pade
-/// approximant for e^y-1 is reused directly via the substitution
-/// `y = x*LN_2` (2^x - 1 = e^{x ln2} - 1). This substitution would *not*
-/// be safe for the direct branch: reducing through `exp2_checked(x*LOG2_E)`
-/// the way exp's own doc comment warns against would reintroduce that
-/// exact bug for large x, so the direct branch below instead duplicates
-/// `exp2_checked`'s own k/f reduction and Q(f) poly verbatim (not routed
-/// through the public `exp2_checked`, same reasoning as `expm1`'s own
-/// standalone copy of `exp`'s reduction) and fuses the trailing `-1` into
-/// the last multiply (`fma(p, t2, -1.0)`, one rounding instead of two).
-///
-/// Branch threshold is `|x| < 0.65` (backlog idea #7's "seam retunes not
-/// yet done" list), not `expm1`'s own already-audited `0.5` -- checked
-/// directly against the real exhaustive sweep (not just a refit), same
-/// methodology as the crossover audit that shifted `asin`'s: `0.5` gives
-/// avg ulp 0.0769, and every threshold tried between `0.55` and `0.75`
-/// improves on that (avg bottoms out around `0.0766`-`0.0767` in
-/// `0.65`-`0.7`) before `0.8`+ makes it worse again as the Pade branch's
-/// own domain gets stretched. `0.65` keeps `|y| < 0.65*ln2 ≈ 0.4505`,
-/// still comfortably inside the `|y|<0.5` domain `expm1` itself already
-/// trusts this same approximant over -- no new coefficients, no new
-/// domain risk, just using more of the already-valid range. Max ulp is
-/// unaffected either way (4, exhaustive) -- the real worst point
-/// (`x≈-0.3991`) sits well inside the Pade branch regardless of where
-/// this threshold falls, so this is a pure avg-ulp win with no seam
-/// discontinuity and no throughput/latency cost (branchless select, same
-/// op count regardless of the literal). Inherits `exp2_checked`'s full
-/// `[-151, 128)` clamp, so is total (never NaN/inf-producing outside its
-/// true asymptotes): `exp2m1(-inf) = -1`, `exp2m1(inf) = inf`. The
-/// round-domain Q(f) refit was tried and rejected here too (see IDEAS.md
-/// §exp/exp2).
-#[inline(always)]
-#[allow(clippy::approx_constant)] // g0's constant term is a fitted minimax
-// coefficient near ln(2), not ln(2) itself (bit pattern deliberately differs)
-pub fn exp2m1(x: f32) -> f32 {
-    let y = x * LN_2;
-    let a = pade_expm1_ratio!(y, mul);
+// `2^f - 1` for the round-based reduction's own `|f| <= 0.5`, as
+// `f*ln2 + f^2*P(f)`. The leading `f*ln2` is peeled out into the closing
+// fma rather than left as a polynomial coefficient, so `x` is never
+// rescaled into `e`'s units at all -- the same lever that took `tanpi`
+// from max 5 to 2, and it matters more here because the old form's worst
+// case sat exactly on the rounding of `y = x*LN_2`.
+//
+// Degree 4 in `P` (degree 6 overall). Fitting `2^f - 1` directly rather
+// than `e^y - 1` at `y = x*ln2` is what removes that rounding; fitting it
+// on a *centred* `f` rather than `exp2`'s own `[0,1)` is what removes the
+// near-zero branch, since `k = floor(x)` sends every small negative `x`
+// to `f ~ 1` where `2^f - 1 ~ 1` and the combine cancels catastrophically.
+// Round-based costs a bounded 1.414x amplification at `|f| = 0.5` against
+// floor's 1.0, and buys the whole Pade and its division. Macro, not a fn
+// -- see `exp_r_poly!`.
+macro_rules! exp2m1_f_poly {
+    ($f:expr, $f2:expr) => {{
+        let c: [f32; 5] = [2.402265e-1, 5.55035e-2, 9.618533e-3, 1.3395752e-3, 1.526698e-4];
+        let l1 = fma(c[1], $f, c[0]);
+        let l2 = fma(c[3], $f, c[2]);
+        let m = fma(c[4], $f2, l2);
+        fma(m, $f2, l1)
+    }};
+}
 
-    let xs = x.clamp(-151.0, 128.0);
-    let k = xs.floor();
-    let f = xs - k;
+// 2^-124. Below this the `k-1` field's halved intermediate is denormal,
+// exactly as in `expm1`. The arm returns the peeled `f*ln2` term itself,
+// which is already an operand of the combine's fma and so costs no
+// arithmetic: `2^x - 1` is `x*ln2` to the last bit down here, and taking
+// it *before* the fma is also what carries `exp2m1(-0.0) = -0.0`, since
+// `fma(+0.0, P, -0.0)` rounds to `+0.0`. Threshold is higher than
+// `expm1`'s because the result is `ln2` times the argument, not the
+// argument.
+const EXP2M1_LINEAR: f32 = 4.0 * f32::MIN_POSITIVE;
+
+/// 2^x - 1 (C23 `exp2m1`). Same cancellation problem as [`expm1`] -- 2^x
+/// is close to 1 whenever x is close to 0, so forming 2^x and subtracting
+/// 1 loses low bits -- and the same fix: fit `2^f - 1` and reassemble,
+/// rather than fit `2^f` and subtract. `2^x - 1 = 2^k*(1+F) - 1` with
+/// `F = 2^f - 1`, and the combine's sensitivity to `F` stays below ~1.414
+/// everywhere instead of blowing up near the origin.
+///
+/// Two choices here that `expm1` did not have to make.
+///
+/// **The argument is never rescaled.** The old form reached this function
+/// through `y = x*LN_2` so it could share `expm1`'s approximant, and that
+/// multiply's own rounding is where its worst case lived (`x ~ -0.3991`,
+/// deep inside the Pade branch, which is why no seam retune could reach
+/// it). `exp2m1_f_poly!` is fitted in `f` directly with the leading
+/// `f*ln2` peeled out into the closing fma, so nothing is ever converted
+/// into `e`'s units.
+///
+/// **The reduction rounds rather than floors.** `exp2`'s own `k =
+/// floor(x)`, `f in [0,1)` is not usable for a *minus one*: every small
+/// negative `x` lands on `f ~ 1`, where `F ~ 1` and `2^-1*(1+F) - 1`
+/// cancels catastrophically -- that is the real reason the old code
+/// needed a near-zero branch at all. `k = round(x)`, `f in [-0.5, 0.5]`
+/// (exact: `f` is a multiple of `ulp(x)` and smaller than it) keeps `f`
+/// continuous through 0, at the cost of the 1.414 amplification at
+/// `|f| = 0.5` against floor's 1.0. That trade buys the entire Pade and
+/// its division.
+///
+/// Clamp is `[-126, 128]`, tightened from `exp2_checked`'s `[-151, 128)`
+/// so a single exponent field at `k-1` covers the range: `2^x - 1` is
+/// exactly `-1` for every `x < -25`, so the low end had nothing to lose.
+/// Still total: `exp2m1(-inf) = -1`, `exp2m1(inf) = inf`, and `x = 128`
+/// overflows on its own through the `k-1` field the same way
+/// [`expm1_checked`] does.
+///
+/// Exhaustive avg 0.040 / max 2. Throughput **-30.7%** (mca 1.843 ->
+/// 1.278 cyc/elem; 90 -> 59 instructions, 103 -> 62 uOps, Block
+/// RThroughput 27 -> 17). Latency's old 80.00 was the documented branch
+/// artifact (arms 37.00/48.00); both arms are 52.00 now.
+#[inline(always)]
+pub fn exp2m1(x: f32) -> f32 {
+    let xs = x.clamp(-126.0, 128.0);
     const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
-    let k1b = fma(xs, 0.5, ROUND_MAGIC) - (ROUND_MAGIC - 383.0);
-    let k2b = (k + 766.0) - k1b;
-    let t1 = f32::from_bits((k1b.to_bits() << 8) & EXPONENT_MASK);
-    let t2 = f32::from_bits((k2b.to_bits() << 8) & EXPONENT_MASK);
-    let q = exp2_q_poly!(f);
-    let p = fma(q, t1 * f, t1);
-    let b = fma(p, t2, -1.0);
-    if x.abs() < 0.65 { a } else { b }
+    let k = (xs + ROUND_MAGIC) - ROUND_MAGIC;
+    let f = xs - k;
+    let f2 = f * f;
+    let fl = f * LN_2;
+    let big = fma(f2, exp2m1_f_poly!(f, f2), fl);
+    let t = f32::from_bits((k + EXPM1_HALF_MAGIC).to_bits() << 23);
+    let b = fma(big, t, t - 0.5);
+    let b = b + b;
+    if x.abs() < EXP2M1_LINEAR { fl } else { b }
 }
 
 /// 10^x - 1 (C23 `exp10m1`), completing the C23 set next to `exp2m1`

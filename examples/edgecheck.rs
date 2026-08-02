@@ -2456,7 +2456,9 @@ fn real_main() {
     // the 0.5 Pade seam is gone, the reduction now covers the whole
     // domain in one arm (see expm1's own doc comment).
     check_seam("expm1 seam", expm1, 2.0 * f32::MIN_POSITIVE);
-    check_seam("exp2m1 seam", exp2m1, 0.65);
+    // exp2m1's 0.65 Pade seam is gone too; its only branch is the
+    // `|x| < 2^-124` linear arm (see its doc comment).
+    check_seam("exp2m1 seam", exp2m1, 4.0 * f32::MIN_POSITIVE);
     check_seam("sinh seam", sinh, 0.5);
     check_seam("tanh seam", tanh, 0.8);
     check_seam("asin seam", asin, 0.27);

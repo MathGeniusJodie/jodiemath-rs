@@ -11111,3 +11111,72 @@ arm alone used to pay -- `erfinv_throughput` uOps and `Block RThroughput`
 both flat -- and it is bit-identical to the old form for every non-zero
 `x`, since `fma` is sign-symmetric (`fma(x,p,x) == -fma(ax,p,ax)` for
 `x < 0`).
+## `exp2m1`: never rescale the argument, and round the reduction
+
+Third application of the `expm1` transform, and the one where two
+*separate* premises had to go.
+
+**Shipped**: exhaustive avg **0.0769 -> 0.0400**, max **4 -> 2**,
+throughput **1.843 -> 1.278 cyc/elem (-30.7%)**.
+
+### Premise 1: it reached the approximant through `y = x*LN_2`
+
+The old near-zero arm shared `expm1`'s Pade by substituting
+`2^x - 1 = e^{x ln2} - 1`. That multiply's own rounding *was* the max:
+the worst case sat at `x ~ -0.3991`, deep inside the Pade branch, which
+is exactly why idea #7's seam-retune audit found the threshold could not
+touch it -- it was auditing the wrong knob. Fitting `2^f - 1` in `f`
+directly, with the leading `f*ln2` peeled into the closing fma, removes
+the rescale entirely. Same lever as `tanpi`'s `pi` peel.
+
+### Premise 2: the reduction has to floor, because `exp2`'s does
+
+It does not, and for a *minus one* it must not. `k = floor(x)`,
+`f in [0,1)` sends every small negative `x` to `f ~ 1`, where `F = 2^f - 1
+~ 1` and `2^-1*(1+F) - 1` cancels catastrophically -- at `x = -1e-8`,
+`f` rounds to `1.0` outright and the answer comes back **0**. That, not
+the near-zero conditioning `expm1` has, is the real reason this function
+carried a Pade branch. `k = round(x)`, `f in [-0.5, 0.5]` is continuous
+through 0 and exact (`f` is a multiple of `ulp(x)` and smaller than it).
+
+The measured cost of rounding rather than flooring is a bounded
+amplification `2^k F/(2^k(1+F)-1)` reaching **1.414** at `|f| = 0.5`,
+against floor's exactly 1.0 at `k = 0`. Worth noting because the
+graveyard already rejected round-based `Q(f)` for `exp2`/`exp2_checked`/
+`exp10`/`exp10_checked` -- correctly, since for those there is no
+cancellation to fix and the 1.414 is pure loss. For `exp2m1` it buys a
+whole Pade and a division. **The old entry's verdict does not transfer to
+the `m1` members of that list, and this is why.**
+
+### Numbers
+
+| region | instrs | uOps | BlockRT | cyc/elem |
+|---|---|---|---|---|
+| `exp2m1_throughput` | 90 -> 59 | 103 -> 62 | 27 -> 17 | 1.843 -> **1.278** |
+
+Latency: the old 80.00 was the branch artifact (arms 37.00/48.00); both
+arms are 52.00 now, so the real move is 48.00 -> 52.00 on the arm that
+carries essentially all inputs.
+
+Two shapes were fitted and scored through the real f32 chain before
+picking:
+
+| shape | degree | wide max ulp |
+|---|---|---|
+| `F = f*Q(f)`, `Q` fitted on `[-0.5,0.5]` | 5 | 2.81 |
+| `F = fma(f2, P(f), f*ln2)` (leading peeled) | 4 | **2.20** |
+
+The peel wins on accuracy *and* is a degree lower. The clamp also
+tightened, `[-151, 128)` -> `[-126, 128]`, so one exponent field at `k-1`
+covers the range: `2^x - 1` is exactly `-1` for every `x < -25`, so the
+low end had nothing to lose. "The guard is the licence", again.
+
+### The sign-of-zero trap, hit for real
+
+`fma(f2, P, f*ln2)` returns `+0.0` at `x = -0.0`: `f2` is `+0.0`, the
+addend is `-0.0`, and `+0.0 + -0.0` is `+0.0`. The ulp sweep cannot see
+this (zero-vs-zero scores 0); `edgecheck` caught it. The fix costs
+nothing because the denormal arm this function needs anyway (the `k-1`
+field halves the intermediate, same as `expm1`) can return the peeled
+`f*ln2` term, which is already an operand of that fma and *does* carry
+the sign. One select, three jobs.
