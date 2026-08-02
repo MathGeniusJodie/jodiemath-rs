@@ -3064,11 +3064,13 @@ macro_rules! expm1_r_poly {
 // `expm1`'s exponent field, emitted at `k-1`: `exp2int_field!`'s magic
 // with the `+127` bias one lower. See `expm1`'s own doc comment for why
 // the field has to sit at `k-1` rather than `k`.
-const EXPM1_HALF_MAGIC: f32 = 12583038.0; // 1.5 * 2^23 + 126
+// 1.5 * 2^23 + 126
+const EXPM1_HALF_MAGIC: f32 = 12583038.0;
 
 // Below this, `expm1(x)` is `x` to the last bit, and the `k-1` field's
 // halved intermediate would be denormal. See `expm1`'s doc comment.
-const EXPM1_LINEAR: f32 = 2.0 * f32::MIN_POSITIVE; // 2^-125
+// 2^-125
+const EXPM1_LINEAR: f32 = 2.0 * f32::MIN_POSITIVE;
 
 /// exp(x)-1, computed as `e^r - 1` reassembled rather than as `e^x` with
 /// 1 subtracted off it, so the cancellation that gives `expm1` its name

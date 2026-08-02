@@ -112,14 +112,23 @@ def parse_units(lines):
         if cm is not None:
             # A const ends where its brackets balance on a line carrying the
             # terminating semicolon -- covers both the one-liner and the
-            # multi-line coefficient array.
+            # multi-line coefficient array. The trailing `//` comment has to
+            # come off first: `main` parses *raw* lines on purpose (so that
+            # editing a doc comment counts as touching its function), so a
+            # one-liner like `const K: f32 = 1.0; // why` does not end in a
+            # semicolon textually, and the scan used to run on to the next
+            # line that did -- swallowing whatever public function came
+            # next, which then belonged to no domain at all and could not
+            # be claimed. That is how `exp2int_field` went missing from the
+            # core list CLAUDE.md documents it in.
             name = cm.group("name")
             depth = 0
             end = i
             for j in range(i, n):
-                depth += lines[j].count("[") - lines[j].count("]")
-                depth += lines[j].count("(") - lines[j].count(")")
-                if depth <= 0 and lines[j].rstrip().endswith(";"):
+                code = lines[j].split("//")[0]
+                depth += code.count("[") - code.count("]")
+                depth += code.count("(") - code.count(")")
+                if depth <= 0 and code.rstrip().endswith(";"):
                     end = j
                     break
             else:
