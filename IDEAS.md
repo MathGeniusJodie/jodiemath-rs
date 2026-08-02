@@ -127,6 +127,20 @@ the bar by construction if they find anything.
   failed on its *reduction* (it reused `sind`'s `d` as the pole distance),
   not on this. Same shape, with `K = fl(pi/180)` and an exact `45-|e|`
   pole distance in degrees. `sind` domain, not `tanpi`'s.
+- **`log10_normal`'s peel sits on a floor that is one fma wide.** Its own
+  comment prices it: "`LOG10_E` is not exact, and `Q` cannot absorb the
+  difference because that is a `1/s` term, not a polynomial one. It costs a
+  fixed 0.39 ulp-equivalent, which is the floor this fit sits on -- degree 8
+  reaches exactly that number and buys nothing over degree 7's 0.60."
+  A **two-word `LOG10_E`** removes the `1/s` term outright, and the low word
+  already exists in `lib.rs` as `LOG10_E_LO` (`0xb22d91af`): the closing
+  `fma(s, LOG10_E, sq)` becomes `fma(s, LOG10_E, fma(s, LOG10_E_LO, sq))`,
+  one extra fma, and `Q` then has nothing left to fail to absorb. Same
+  shape applies to `log_2_normal`'s `fma(s, LOG2_E, sq)` with `LOG2_E_LO`,
+  though `log_2` has less to gain (already avg 0.003 / max 1). Not done
+  here because `log_2_normal`/`log10_normal` belong to another domain --
+  whoever holds `log10` should price it. The same two-word fix measured on
+  `log2p1`/`log10p1`'s correction term is in graveyard.md, with its cost.
 
 - **Sollya `fpminimax`**: not installed. Candidate: `acos_poly` (max 4).
   (erfc's n/d used to be listed here as "max ~100, root cause already

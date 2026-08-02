@@ -10570,3 +10570,93 @@ That reachability argument is reusable for any function whose reduction
 is `x - round(x)`: the exhaustive answer lives in one half-turn, and a
 single-threaded probe over it costs a couple of minutes with no bench
 lock, which matters when three instances are queued behind one.
+## `log2p1`/`log10p1`: a two-word scaling constant, avg -65% and -73% -- shipped
+
+**Shipped 2026-08-02.** Both functions compute `log1p`'s Sterbenz-exact
+correction and then scale it: `corr = (c/u) * LOG2_E`. That one multiply
+carried the whole gap between them and `log1p`.
+
+### Why the constant is not diluted here
+
+The usual reason a scaling constant's error does not matter is that it only
+ever multiplies an already-small correction. That reasoning fails on exactly
+the region that dominates by sample count: for `|x| < 2^-24`, `1+x` rounds to
+exactly `1.0`, so `c = x`, `c/u = x` exactly, the log kernel returns an exact
+`0.0`, and the final `0.0 + corr` is exact. The answer **is** `fl(x*log2(e))`
+and nothing else. A one-word constant's fixed relative offset therefore
+arrives undiluted, as bias rather than noise, over ~40% of all bit patterns
+(exponents `-126..-25`, both signs). `log1p` has no such term -- its `corr`
+is `c/u` with no scaling, so it returns `x` *exactly* there, which is the
+whole of its 3-4x lead.
+
+Sizes: `LOG2_E` is 1.334976e-8 low relative, `LOG10_E` 2.326313e-8 high,
+i.e. 0.11-0.22 and 0.20-0.39 ulp of the result. The crate had already priced
+the same constant independently -- `log10_normal`'s peel comment calls
+`LOG10_E`'s inexactness "a fixed 0.39 ulp-equivalent, which is the floor this
+fit sits on".
+
+### The fix, and the shape that matters
+
+    let cu = c / u;
+    let corr = fma(cu, LOG2_E, cu * LOG2_E_LO);
+
+Big product **inside** the fma, low word as the addend -- the same idiom as
+`erfcx_pos`'s two-word `1/sqrt(pi)`. That is one rounding for the whole
+scaled correction and no bias. The naive-looking transposition
+`fma(cu, LOG2_E_LO, cu * LOG2_E)` is *worse than the original*: it rounds the
+big product on its own first and then rounds again, trading a 0.13-ulp bias
+for a fresh half ulp. Low words: `LOG2_E_LO = 0x32a57060`,
+`LOG10_E_LO = 0xb22d91af` (note the sign -- `LOG10_E` is high, so its low
+word is negative, which is why `cu = +-inf` now yields `NaN` rather than
+`inf`; the existing `is_finite` guard maps both to `0.0`, so the edges are
+unchanged and edgecheck's `log2p1(3)==2.0` / `log10p1(99)==2.0` exactness
+pins still hold).
+
+### Measured
+
+Exhaustive over all 2^32, same binary either side, run unlocked:
+
+| | avg before | avg after | change | max |
+|---|---|---|---|---|
+| `log2p1` | 0.0919 | **0.0324** | **-65%** | 2 -> 2 |
+| `log10p1` | 0.1458 | **0.0387** | **-73%** | 2 -> 2 |
+
+against `log1p`'s own 0.025, which is the bar these two now sit next to
+rather than at 3-6x. `log10p1`'s worst-`x` moves out of the tiny region
+entirely (5.3175995e-7 -> 6.306496e-2), which is the tell that the region is
+now correctly rounded. Two of 9630 `worst_corpus` entries move, both
+`log10p1` near 1e-10, each 1 ulp toward the true value.
+
+**The max does not move**, and would not: it lives in the
+`log_2_normal`-dominated mid-range, not in the region this fixes. This is an
+avg-only win.
+
+### Cost -- real, and it is the price of the trade
+
++1 arithmetic op each. Every rung agrees, so this is not an mca artifact:
+
+| | instrs | uOps | BlockRT | cyc/elem | latency |
+|---|---|---|---|---|---|
+| `log2p1` | 100 -> 103 | 110 -> 112 | 22 -> 23 | 1.876 -> 1.934 (+3.1%) | +1.2% |
+| `log10p1` | 103 -> 106 | 112 -> 115 | 22 -> 23 | 1.936 -> 1.977 (+2.1%) | +0.6% |
+
+Taken as a single function rather than split into tiers: a 2.8-3.8x avg
+accuracy gain for 2-3% throughput is the trade this crate makes, and a 3%
+perf delta is explicitly too small to justify a second tier.
+
+### Also fixed: a stale doc number
+
+`log2p1`'s doc comment claimed "avg 0.102, max 3"; the readme said 0.092 /
+max 2. The before-run settles it at **0.0919 / max 2** -- the readme was
+right and the doc comment was stale by a max.
+
+### Transferable
+
+**A constant that "only scales a small correction" is not safe until you
+check whether some region makes the correction the entire answer.** The
+argument that protects it here (`corr` is dwarfed by the `k`-dominated log
+term) is true everywhere except the region holding 40% of the inputs, where
+the log term is identically zero. Look for the input set that annihilates the
+*other* term. The same question is now open on `log10_normal`'s own
+`fma(s, LOG10_E, sq)` -- see IDEAS.md, where the identical two-word split
+would remove the 0.39-ulp floor its comment documents.

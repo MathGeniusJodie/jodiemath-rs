@@ -62,8 +62,8 @@ comment and graveyard.md. All three `_wide` rows are exhaustive over all
                    log10 |    0.003   |     1     |  0.000  |    0
    log10_unchecked (+)   |    0.007   |     1     | (bit-identical to log10 on its domain)
                    log1p |    0.025   |     2     |  0.000  |    1
-                 log2p1  |    0.092   |     2     | (no std log2p1)
-                log10p1  |    0.146   |     2     | (no std log10p1)
+                 log2p1  |    0.032   |     2     | (no std log2p1; two-word log2(e) -- for |x|<2^-24, 1+x is exactly 1.0 and that product is the whole answer)
+                log10p1  |    0.039   |     2     | (no std log10p1; same two-word log10(e), and worth more -- its one-word offset is 2.33e-8 against log2(e)'s 1.33e-8)
                 compound |    0.196   |   ~200    | (no std compound; the exponent n*log1p(x) amplifies its own ulp by |n*log1p(x)|, up to ~88 -- see its doc comment)
        compound_accurate |    0.001   |     1     | (no std compound; f64 exponent, ~1.7x compound's throughput cost)
          exp (in-domain) |    0.071   |     3     |  0.000  |    1

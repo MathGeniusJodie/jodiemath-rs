@@ -2408,6 +2408,18 @@ pub fn mulsign(x: f32, y: f32) -> f32 {
 
 const LN_2: f32 = std::f32::consts::LN_2;
 const LOG2_E: f32 = std::f32::consts::LOG2_E;
+
+// Low words of two-word `log2(e)` and `log10(e)`, for the one place each
+// is not merely scaling an already-small correction: `log2p1`/`log10p1`'s
+// answer for `|x| < 2^-24` *is* `x * log2(e)` (resp. `log10(e)`) and
+// nothing else, because `1+x` is then exactly `1.0` and the log kernel
+// contributes an exact zero. A single f32 word carries a fixed one-signed
+// relative offset there -- `LOG2_E` is 1.33e-8 low, `LOG10_E` 2.33e-8
+// high, i.e. 0.11-0.22 and 0.20-0.39 ulp of the result -- which is bias,
+// not noise, over the ~half of all bit patterns that reach it. Paired with
+// the word above, each is exact to ~3e-16 relative, far past f32.
+const LOG2_E_LO: f32 = f32::from_bits(0x32a5_7060);
+const LOG10_E_LO: f32 = f32::from_bits(0xb22d_91af);
 const FRAC_PI_2: f32 = std::f32::consts::FRAC_PI_2;
 const FRAC_PI_4: f32 = std::f32::consts::FRAC_PI_4;
 
@@ -2765,14 +2777,26 @@ pub fn log1pmx(x: f32) -> f32 {
 /// guard (`u == 0` or `u == inf` collapse `c/u` to NaN even though
 /// `log_2(u)` alone is already the right answer there) and the same
 /// trailing `x == 0.0` select for the opposite-signed-zero-addition trap
-/// -- both copied from `log1p` verbatim. Avg ulp 0.102, max 3
-/// (exhaustive).
+/// -- both copied from `log1p` verbatim.
+///
+/// The scaling constant is *two words* (see `LOG2_E_LO`), which is what
+/// keeps this near `log1p`'s own accuracy instead of a third of it. For
+/// every `|x| < 2^-24` -- about 40% of all bit patterns -- `1+x` is
+/// exactly `1.0`, so the log kernel contributes an exact zero and this
+/// product *is* the entire answer; a one-word `log2(e)`'s fixed relative
+/// offset then lands undiluted on the result, which is bias rather than
+/// noise over that whole region. Avg ulp 0.0324, max 2 (exhaustive).
 #[allow(clippy::neg_cmp_op_on_partial_ord)]
 #[inline(always)]
 pub fn log2p1(x: f32) -> f32 {
     let u = 1.0 + x;
     let c = x - (u - 1.0);
-    let corr = (c / u) * LOG2_E;
+    // Two-word `log2(e)`: the big product rides inside the fma, so the
+    // whole scaled correction carries a single rounding and no constant
+    // bias. See `LOG2_E_LO` -- for `|x| < 2^-24` this product is the
+    // entire answer, and one word leaves a fixed offset in it.
+    let cu = c / u;
+    let corr = fma(cu, LOG2_E, cu * LOG2_E_LO);
     let corr = if corr.is_finite() { corr } else { 0.0 };
     let normal = log_family_wrapper_no_denormal!(u, log_2_normal) + corr;
     if x == 0.0 { x } else { normal }
@@ -2781,13 +2805,20 @@ pub fn log2p1(x: f32) -> f32 {
 /// log10(1+x) (C23 `log10p1`), completing the C23 set next to `log2p1`
 /// above: identical Sterbenz-exact-correction structure, just converted
 /// to log10 units (`(c/u) * LOG10_E` instead of `* LOG2_E`) and calling
-/// `log10` instead of `log_2` for the dominant term.
+/// `log10` instead of `log_2` for the dominant term. Two-word scaling
+/// constant for the same reason as `log2p1`, and it is worth more here:
+/// `LOG10_E`'s single-word relative offset is 2.33e-8 against `LOG2_E`'s
+/// 1.33e-8. Avg ulp 0.0387, max 2 (exhaustive).
 #[allow(clippy::neg_cmp_op_on_partial_ord)]
 #[inline(always)]
 pub fn log10p1(x: f32) -> f32 {
     let u = 1.0 + x;
     let c = x - (u - 1.0);
-    let corr = (c / u) * std::f32::consts::LOG10_E;
+    // Two-word `log10(e)`, exactly as `log2p1` above -- and it matters
+    // more here: `LOG10_E`'s single-word offset is 2.33e-8 relative
+    // against `LOG2_E`'s 1.33e-8. See `LOG10_E_LO`.
+    let cu = c / u;
+    let corr = fma(cu, std::f32::consts::LOG10_E, cu * LOG10_E_LO);
     let corr = if corr.is_finite() { corr } else { 0.0 };
     let normal = log_family_wrapper_no_denormal!(u, log10_normal) + corr;
     if x == 0.0 { x } else { normal }
