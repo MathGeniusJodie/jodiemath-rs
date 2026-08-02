@@ -10813,10 +10813,40 @@ at ~7 fewer ops. Sterbenz-exact wherever the reflected arm uses it
 Instruction and uOp counts say **+6% / +10%**; Block RThroughput and the
 cycle count say **-13% / -9.6%**. `vdiv` is 2 on both sides and `vmul`
 16 on both; the delta is +8 fma against the `sind`/`cosd` pair's integer
-parity ops and two `.clamp()`s, which sit on different ports. Recorded as
-**neutral-to-mildly-better, not as a 9.6% win** -- the counting rungs and
-the structural rung disagree and this was not settled with a prebuilt-
-binary wall-clock A/B.
+parity ops and two `.clamp()`s, which sit on different ports.
+
+**Arbitrated: the structural rung was right, the counting rungs were
+wrong.** Alternating wall-clock A/B on two prebuilt `quickbench` binaries
+(same tree, only `lib.rs` swapped between this commit and its parent),
+run under `jm bench`:
+
+| band | pairs | latency | throughput |
+|---|---|---|---|
+| `Band::Two`, quiet box | 6 | new 6/6, min 14.76 vs 22.99 (**-36%**) | new 5/6, min 0.742 vs 0.762 (**-2.6%**), median ratio 0.947 |
+| full period `[-180,180)`, quiet box | 8 | new 8/8, min 41.13 vs 51.62 (**-20%**) | new 8/8, min 1.774 vs 1.960 (**-9.5%**) |
+| `Band::Two`, loaded box | 12 | new 11/12, min 26.45 vs 39.65 (**-33%**) | inconclusive, medians cross |
+
+So the rewrite is **cheaper on both axes**, not neutral: throughput -2.6%
+to -9.5%, bracketing mca's -9.6% cyc/elem. When the counting rungs and
+Block RThroughput disagree *here*, believe Block RThroughput -- the +8
+fma land on ports the removed parity/clamp integer ops were never
+contending for, which is precisely what an instruction count cannot see.
+
+The middle row is the load-bearing one. `quickbench`'s three `Band`s all
+have `|x| <= 4` **degrees**, so every stock row takes `tand_core`'s direct
+arm and never the cotangent reflection -- which flatters branchy code. A
+full-period band mispredicts the `|d| <= 45` branch on ~half its inputs
+and the rewrite still wins 8/8 on both axes, because the old form paid
+*two* polynomials and a divide unconditionally where the new one pays one
+polynomial, and a divide only on the reflected arm.
+
+Method note, since the box moved under the measurement again: two runs an
+hour apart differ by **1.7x in absolute ns** (load 11.45 on 8 cores, from
+another worktree's accuracy sweep). Absolute ns is publishable only when
+the *old* binary reproduces the readme's existing figure first -- old
+measured 22.99 against a published 22.9, and 0.762 against a published
+0.79, in the same run that produced the new 14.76/0.742. That calibration
+is what licensed updating the two wall-clock rows; without it, don't.
 
 **`tand_latency` is unusable and its readme row is withdrawn rather than
 updated.** mca read 70.02 -> 37.349, i.e. *halved* while instructions
@@ -10824,12 +10854,26 @@ nearly doubled (1806 -> 3519). Cause: **jmp/jcc 0 -> 448.** The three
 selects (`|d| > 128`, `|d| <= 45`, `s == 0`) lower to branches in the
 scalar latency harness, and llvm-mca has no branch predictor -- the same
 artifact this file records for `tanpi`, but firing *optimistically* here
-instead of pessimistically. Structurally the new critical path is ~2-4
-levels longer (reduce -> guard -> poly -> mul -> fma -> divide in series,
-against the old form's two parallel polys then one divide), so the true
-latency is very likely slightly *worse*, and neither number belongs in
-the table. Publishing "37.35" would have been the single most misleading
-thing available here.
+instead of pessimistically.
+
+The row stays withdrawn, but **the reason recorded first was wrong and is
+corrected here.** It read: the new critical path is ~2-4 levels longer
+(reduce -> guard -> poly -> mul -> fma -> divide in series, against two
+parallel polys then one divide), so the true latency is likely slightly
+*worse*. The A/B above measures it **-20% to -36%**. That chain is only
+the *reflected* arm's; the direct arm has no divide at all, and the old
+form's divide was unconditional. Counting depth through the longest arm
+overstates a branchy function's latency the same way counting
+instructions overstated its throughput.
+
+So mca's 70.02 -> 37.35 (-47%) was directionally right and overstated by
+~1.3x, not the "2x fantasy" it looked like. It is still withheld, for a
+reason that survives the arbitration: **this column models branch-free
+codegen for every other function in it**, and `tand_latency` is the one
+region carrying 448 `jcc` with only 1 divide per element -- mca is
+scoring a perfectly-predicted single arm. A number that is not comparable
+to its own column's neighbours does not belong in the column, even once
+its direction checks out.
 
 Full-file asm diff: 4 of 313 regions, exactly `tand`/`tand_unchecked`.
 
@@ -10845,6 +10889,13 @@ Full-file asm diff: 4 of 313 regions, exactly `tand`/`tand_unchecked`.
   improved but by way of the polynomial's attenuation, not the constant.
   Check the constant's own error first -- it predicts which half of the
   win is available.
+- **A wall-clock A/B settles the ladder, and it can overturn the
+  *structural* rung too, not just the counting ones.** Both readings here
+  were wrong in the same direction: instrs/uOps overstated throughput
+  cost, and critical-path depth overstated latency cost. Both errors have
+  one cause -- reasoning about a *branchy* function as if every arm
+  executed. Price a branchy candidate in a band that actually
+  mispredicts; the stock harness bands may reach only one arm.
 - **`c[0]`'s sign is load bearing for signed zero.** `fma(d, K, d*B(0))`
   returns `-0.0` for `d = -0.0` only because `B(0) > 0` here, so both
   addends are `-0.0`. `tan_poly`'s `c[0]` is negative, which is why

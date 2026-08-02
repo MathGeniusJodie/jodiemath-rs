@@ -238,7 +238,7 @@ atan2_unchecked | 20.4 ns |    -    |  -
         tanpi | 15.2 ns |    -    |  -
          sind | 15.8 ns |    -    |  -
          cosd | 18.2 ns |    -    |  -
-         tand | 22.9 ns |    -    |  -
+         tand | 14.8 ns |    -    |  -
           erf | 16.2 ns |    -    |  -
       erfc (!)| 20.2 ns |    -    |  -
      erfcx (!)| 14.0 ns |    -    |  -
@@ -338,7 +338,7 @@ atan2_unchecked | 0.52 ns |    -    |  -
         tanpi | 0.65 ns |    -    |  -
          sind | 0.32 ns |    -    |  -
          cosd | 0.44 ns |    -    |  -
-         tand | 0.79 ns |    -    |  -
+         tand | 0.74 ns |    -    |  -
           erf | 0.56 ns |    -    |  -
       erfc (!)| 0.94 ns |    -    |  -
      erfcx (!)| 0.88 ns |    -    |  -
