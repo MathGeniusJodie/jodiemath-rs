@@ -7911,3 +7911,87 @@ Note the trap while confirming it: the obvious reference
 because `1 + 6e-39` is `1.0` in f64 too. The reference collapses in
 exactly the region being asked about — the `clog` result's lesson again.
 Score against `softplus_checked` (or `a + ln1p(exp(b-a))`), not that.
+
+## `tan`: one sign fold instead of two, and the `|sin|` shortcut that looks free and is wrong
+
+`tan` was `sin_over_cos_domain(x) / cos(x)`, i.e. each half applied its
+own sign combine and then the two signs were divided against each other.
+Only their *difference* is observable, so the whole thing collapses into
+one mask on the quotient.
+
+The two halves share `frac_x_over_pi!` already, so they also share `n`:
+the numerator reduces against `N = n + round(fc)` (the second magic
+round, `qb = fc + nb`) and the denominator against `n + copysign(0.5,
+fc)`. `sin(x) = (-1)^N sin(r_s)` and `cos(x) = -(-1)^n s sin(r_c)` with
+`s = sign(fc)`, so
+
+    tan(x) = (-1)^(N-n) * (-s) * sin(r_s)/sin(r_c)
+
+and `N - n = round(fc)` is already sitting in `qb ^ nb`'s low bit. One
+`vpternlogd`-shaped mask replaces two parity chains:
+
+```
+region              instrs      uOps    BlockRT   cyc/elem   latency
+tan_throughput      105->101  107->104   31->30   3.153->2.985   78->78
+                                                    (-5.3%)
+```
+
+`sin`, `cos`, `sin_fast`, `cos_fast` byte-identical (they are unchanged);
+`tan`'s own output bit-identical over all 2^32 f32 patterns against a
+literal replica of the old two-parity form. `sin_over_cos_domain` had one
+caller and is gone -- its body is now `tan`'s first four lines.
+
+**The version that is 13 instructions cheaper and wrong.** Both `(-1)^N`
+factors *look* like they cancel outright, leaving
+
+    tan(x) = sin(r_s) / |sin(r_c)|          -- no mask anywhere
+
+which measures 105 -> 92 instrs, 107 -> 95 uOps, BlockRT 31 -> 29, 3.153
+-> **2.658 cyc/elem (-15.7%)**, latency 78 -> 74, and even lets LLVM
+delete the `copysign` inside the denominator's `sinf_poly` as dead. It is
+wrong. The cancellation needs `sign(r_c) = -sign(r_s)`, which needs
+`|r_s| <= pi/2`, which needs `N` to be the *true* `round(x/pi)` -- and at
+`x = f32(pi/2) = 1.5707964` it is not. There `x/pi = 0.5000000139`, but
+`fc` rounds to exactly `0.5` (the next f32 up from 0.5 is 3.3x further
+away), so `qb = fc + nb` is an exact tie and round-to-even sends `N` to
+`n` instead of `n+1`. `r_s` comes back as `1.5707964 > pi/2`, `r_c =
+x - pi/2 = +4.37e-8` has the *same* sign as `r_s`, and the answer's sign
+flips: `+2.2877334e7` against a true `-2.2877334e7`.
+
+12 inputs over the domain do this, every one of them a pole, i.e. exactly
+where the magnitude is ~2e7 and a sign flip is ~4.6e7 ulp. An exhaustive
+bit-compare found them in one run; the quick fuzz did not, and would not
+-- 12 in 2.5e9 is not a sampling target. The general lesson is the one
+already in this file for `cospi`, one level up: **an identity derived
+from "the reduction lands where it should" has to be checked at the point
+where the reduction is a tie**, because that is the one place the two
+halves of a fused sign argument can disagree. The shipped form assumes
+nothing about `N` -- it is exact algebra for whichever `q` each half
+happened to land on -- and that is what the extra four instructions buy.
+
+**Also measured and rejected: `cos_fast`'s double-rounding fix.**
+`cos_fast`'s `k = round(x/pi - 0.5)` rounds twice (`fma(x, FRAC_1_PI,
+-0.5)` quantises to `ulp(x/pi)` before the magic round), which is why its
+max ulp is 2780 over `|x| < 2^22*pi` against `sin_fast`'s 219, and 3
+against `cos`'s 2 at `|x| <= 1e6`. Rewriting it in `cos`'s own shape --
+`n = round(x*FRAC_1_PI)`, `f = fma(x, FRAC_1_PI, -n)`, `q = n +
+copysign(0.5, f)` -- removes that second rounding entirely and costs the
+*same four float ops in the source*. In vector form it is not free:
+
+```
+region                 instrs    uOps  BlockRT   cyc/elem   latency
+cos_fast_throughput    57->64   61->68   16->16  1.406->1.526   56->57
+                                                   (+8.5%)
+```
+
++7 instructions, because `copysign` and the two-term parity are 3 more
+vector ops than `!kb << 31` and they need their own broadcast constants.
+That puts `cos_fast` at 1.526 against `cos`'s own 1.654 -- 8% cheaper
+than the exact version for ~100x the error -- which is not a pareto point
+worth having, so `cos_fast` keeps its cheap double-rounded `q`. (The
+accuracy side was not measured: the cost alone disqualifies it.) The
+underlying reason it cannot be done for free: the fix needs
+`sign(x/pi - n)`, one fma's worth of information that the `-0.5` form
+throws away, and there is no magic constant with a fractional part --
+`ulp(M) = 1` forces `M` integral, so the half-odd grid is unreachable in
+one round however the constant is chosen.

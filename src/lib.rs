@@ -4723,34 +4723,44 @@ pub fn atan2_pos(y: f32, x: f32) -> f32 {
     if y.is_sign_negative() { r + std::f32::consts::TAU } else { r }
 }
 
-/// Straight port of jodiemath's tanf: sin(x)/cos(x), over `cos`'s domain
-/// `|x| < 2^22 * pi` (~1.32e7), the narrower of the two (see their doc
-/// comments).
+/// sin(x)/cos(x), over `cos`'s domain `|x| < 2^22 * pi` (~1.32e7), the
+/// narrower of the two (see their doc comments) -- a ratio is only right
+/// as far out as its *denominator* is, so `sin`'s extra two binades of
+/// domain would buy `tan` nothing.
+///
+/// Bit-identical to `sin(x) / cos(x)` on that domain, but the two sign
+/// combines are folded into one before the divide instead of being
+/// applied to numerator and denominator separately. `sin`'s is
+/// `(-1)^N` for its own `N = round(x/pi)` and `cos`'s is `(-1)^n` for
+/// the plain `n` the same reduction already produced, so the quotient
+/// only ever sees their difference, `(-1)^(N-n)` -- and `N - n` is the
+/// second magic round's own `round(fc)`, sitting in `qb ^ nb`'s low bit.
+/// `cos`'s half-turn flip survives as the `fc` sign term.
+///
+/// The tempting one-instruction version of that fold, `sin(r_s) /
+/// |sin(r_c)|` with no mask at all, is wrong rather than merely riskier:
+/// it silently assumes `|r_s| <= pi/2`, which fails at `x = f32(pi/2)`
+/// itself. What is below assumes nothing -- it is exact algebra for
+/// whichever `q` each half landed on. See graveyard.md.
 #[doc(alias = "tanf")]
 #[inline(always)]
 pub fn tan(x: f32) -> f32 {
-    sin_over_cos_domain(x) / cos(x)
-}
-
-// [`sin`] restricted to [`cos`]'s domain, and built from [`cos`]'s own
-// `frac_x_over_pi!` grid rather than sin's wider multiple-of-4 one. Same
-// `q`, same residual, same output as `sin` for every x inside that domain
-// -- a ratio is only right as far out as its *denominator* is, so sin's
-// extra two binades would buy `tan` nothing while costing it a second,
-// non-shared reduction (mca: tan 105 -> 120 instrs, BlockRT 31 -> 36,
-// latency 78 -> 89, for byte-identical output).
-#[inline(always)]
-fn sin_over_cos_domain(x: f32) -> f32 {
-    let (nb, _, fc) = frac_x_over_pi!(x, ROUND_MAGIC);
+    // `nb`, `n`, `fc` and both Cody-Waite chains are `sin`'s and `cos`'s
+    // own, inlined here only so the shared reduction is visibly shared:
+    // sin's wider multiple-of-4 grid is deliberately not used, since a
+    // second, non-shared reduction costs tan ~15 instructions for
+    // byte-identical output (mca: 105 -> 120 instrs, BlockRT 31 -> 36).
+    let (nb, n, fc) = frac_x_over_pi!(x, ROUND_MAGIC);
     // `fc + nb` is a second magic round, of `x/pi` this time instead of
     // `x*FRAC_1_PI`: `nb` is already `ROUND_MAGIC + n` on the integer grid,
     // so adding the (corrected, |fc| <= 0.67) fraction back rounds to
-    // `ROUND_MAGIC + round(x/pi)` and leaves the parity bit in `qb`'s low
-    // mantissa bit. `sin` cannot reuse this shape -- its coarse grid is
-    // too wide for `nb` to sit on the integer grid at all.
+    // `ROUND_MAGIC + N`. `sin` cannot reuse this shape -- its coarse grid
+    // is too wide for `nb` to sit on the integer grid at all.
     let qb = fc + nb;
-    let s = pi_reduce_and_poly!(x, qb - ROUND_MAGIC);
-    f32::from_bits(s.to_bits() ^ (qb.to_bits() << 31))
+    let num = pi_reduce_and_poly!(x, qb - ROUND_MAGIC);
+    let den = pi_reduce_and_poly!(x, n + 0.5f32.copysign(fc));
+    let sign = ((qb.to_bits() ^ nb.to_bits()) << 31) ^ (!fc.to_bits() & SIGN_MASK);
+    f32::from_bits((num / den).to_bits() ^ sign)
 }
 
 // degree-6 minimax poly feeding erf's exp2-based tail (|x| >= 0.28),
