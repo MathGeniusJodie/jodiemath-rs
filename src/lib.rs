@@ -5025,23 +5025,38 @@ fn asin_poly(x: f32) -> f32 {
 
 /// acos(x), domain x in [-1,1] (result always in `[0,pi]`, never negative --
 /// unlike sin/asinh/etc., acos isn't an odd function, so x=-0.0 has no
-/// legitimate negative result the way it does for those). `mulsign`
-/// (bit-based sign) and `x < 0.0` (value-based comparison) disagree on
-/// exactly one input: `-0.0`, whose sign *bit* is set but whose *value*
-/// equals `+0.0`. `mulsign` flipped `y`'s sign there (per the bit), while
-/// `x < 0.0` correctly saw "not negative" and skipped the `+pi`
-/// correction -- so `acos(-0.0)` came out `-pi/2` instead of the correct
-/// `+pi/2`. Fixed by normalizing `-0.0` to `+0.0` before `mulsign` sees
-/// it: `x + 0.0` is `-0.0 + 0.0 = +0.0` exactly (IEEE754's defined
-/// round-to-nearest behavior for that one case) and a no-op for every
-/// other `x`, genuinely negative or not.
+/// legitimate negative result the way it does for those).
+///
+/// Both halves are one `fma`: `acos(x) = s*P(a)` for `x >= 0` and
+/// `pi - s*P(a)` for `x < 0`, so negating `s` and selecting the addend
+/// between `pi` and `0` covers both without ever rounding the product
+/// `s*P(a)` to f32 on its own. That is the same lesson [`asin`]'s big
+/// branch records, applied to the arm that still had a separate multiply
+/// and add.
+///
+/// The sign question is settled by exactly one value-based compare.
+/// `x < 0.0` is false for `-0.0`, which is correct: `acos(-0.0)` is
+/// `+pi/2`, and the same compare picks the `0.0` addend and leaves `s`
+/// unnegated. A *bit*-based sign (`mulsign`) disagrees on precisely that
+/// input and returned `-pi/2` for it once; there is no longer any
+/// bit-based sign here to disagree.
+///
+/// mca: 47 -> 43 instructions, 50 -> 45 uOps, Block RThroughput flat at
+/// 12.00, throughput 0.820 -> **0.771** cyc/elem, latency 39.99 -> 34.99
+/// (honest, not the branch artifact -- `tools/mca_arms.py` gives both arms
+/// equal to the published figure before and after). Accuracy is unchanged
+/// to three decimal places, and deliberately so: an oracle screen with
+/// both factors exact in f64 scores this combine at max **1** ulp, so
+/// there was never any accuracy in it to win -- see graveyard.md for where
+/// acos's max 4 actually lives.
 #[doc(alias = "acosf")]
 #[inline(always)]
 pub fn acos(x: f32) -> f32 {
     const PI: f32 = std::f32::consts::PI;
     let a = x.abs();
-    let y = (1.0 - a).sqrt() * acos_poly(a);
-    mulsign(y, x + 0.0) + if x < 0.0 { PI } else { 0.0 }
+    let s = (1.0 - a).sqrt();
+    let neg = x < 0.0;
+    fma(if neg { -s } else { s }, acos_poly(a), if neg { PI } else { 0.0 })
 }
 
 /// acos(x) in degrees (backlog idea #123): plain composite, same

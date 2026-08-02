@@ -11441,3 +11441,78 @@ positive, so `fma(+0.0, P, -0.0)` rounds to `+0.0`. The ulp sweep scores
 zero-vs-zero as 0 and cannot see it. The denormal arm this function needs
 anyway returns the peeled `d*LN_10`, which carries the sign for free --
 one select, three jobs. `edgecheck`'s `exp10m1(-0)` pin is what proves it.
+
+## `acos`: the single-fma combine is free, and an oracle screen says the max 4 is *not* in the combine
+
+`asin`'s doc comment records that its big branch is "one `fma`, not a
+multiply and a subtract", worth ~2 ulp of the result and an instruction
+cheaper. `acos`'s negative arm still did the rejected thing --
+`PI - fl(sqrt(1-a)*P(a))`, rounding the product on its own first. So the
+transform transferred; the *reason* did not.
+
+### What the oracle screen says (exhaustive, every f32 in `[-1,1]`)
+
+Scoring the shipped combine with **both factors exact in f64**:
+
+| | avg | max |
+|---|---|---|
+| exact factors, shipped combine | 0.0750 | **1** |
+| exact everything | 0 | 0 |
+
+So the combine contributes at most 1 ulp, and `acos`'s max 4 lives
+entirely in `acos_poly` and the `sqrt`. Predicted consequence: the fma
+cannot buy accuracy. Measured consequence, same sweep:
+
+| variant | avg+ | max+ | avg- | max- | avg all | max all |
+|---|---|---|---|---|---|---|
+| shipped | 0.1048 | 3 | 0.1191 | 4 | 0.1119 | 4 |
+| single-fma combine | 0.1048 | 3 | 0.1187 | 4 | **0.1118** | 4 |
+
+Dead even, exactly as the screen predicted. **It shipped anyway, because
+it is cheaper**: 47 -> 43 instrs, 50 -> 45 uOps, Block RThroughput flat at
+12.00, 0.820 -> 0.771 cyc/elem, latency 39.99 -> 34.99 (both figures
+honest -- `mca_arms.py` gives both arms equal to the published number on
+both sides). It also deletes the `mulsign` + `x + 0.0` signed-zero dance:
+with one value-based `x < 0.0` compare choosing both the sign of `s` and
+the addend, there is no bit-based sign left to disagree at `-0.0`.
+
+Worth stating as a rule: **an oracle screen that says "no accuracy here"
+is not a reason to drop the transform.** Price it on the other axis.
+
+### Rejected: a two-word `PI` on the negative arm
+
+`fl(PI)` sits 0.367 ulp above `pi`, so a low word looks like free avg.
+It is a **large regression**: avg- 0.1191 -> 0.9352, ~8x worse.
+
+The mechanism is worth recording because it is not obvious.
+`fl32(pi) == 2 * fl32(pi/2)` *exactly* -- same mantissa, exponent one
+higher. `acos_poly`'s constant term is `fl32(pi/2)`, so near `x = 0` the
+negative arm computes `fl(PI) - fl(pi/2) = fl(pi/2)` with no error at all,
+and the whole poly was coordinate-descended against that consistency.
+Adding a low word to `PI` alone breaks the pairing that the poly was
+tuned to. A two-word constant is only free when nothing downstream has
+already been fitted against the one-word value.
+
+### Measured but not taken: a dedicated small branch (the real lever)
+
+`acos(x) = pi/2 - asin(x)` below `|x| < 0.5`, reusing `asin_small`'s odd
+poly, removes the `sqrt` and its inexact `1.0 - a` from the region where
+Sterbenz does not apply -- the same move that took `asin` from max 5 to 2.
+
+| variant | avg+ | max+ | avg- | max- | avg all | max all |
+|---|---|---|---|---|---|---|
+| single-fma combine | 0.1048 | 3 | 0.1187 | 4 | 0.1118 | 4 |
+| + small branch | 0.0861 | 3 | 0.0717 | **2** | **0.0789** | **3** |
+
+avg **-29%** and max **4 -> 3**, with the negative arm reaching max 2. The
+residual max 3 then sits at `x = 0.5404`, just above the crossover, i.e.
+in the big branch -- so the crossover would want its own tune afterwards,
+as `asin`'s did.
+
+Not taken here only because it is ~9 instructions on a 43-instruction
+region (a whole second poly, evaluated unconditionally for the branchless
+select) against a crate whose stated axis is throughput, and the free
+combine win above was ready to land on its own. This is a **priced,
+ready-to-implement lead**, not a rejection: the numbers above are the real
+exhaustive sweep, and adding a two-word `pi/2` to the small arm on top
+measured *identical* (0.0789/3), so that part is not needed.
