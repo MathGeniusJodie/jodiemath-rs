@@ -1397,22 +1397,110 @@ pub fn cosd(x: f32) -> f32 {
     f32::from_bits(s.to_bits() ^ parity)
 }
 
-/// tan(x*pi/180), argument in degrees -- same `sind(x)/cosd(x)` ratio
-/// construction as `tanpi`'s own original doc comment describes
-/// (period-180 cancellation, poles handled for free by IEEE754
-/// division). See `sind`'s own doc comment for the shared reduction's
-/// exactness limit (`|x|` up to ~4.7e7) and safety clamp.
+// tan(w degrees) after its leading term, peeled exactly the way
+// `tan_poly` peels `tanpi`'s: with `u = w*w` and `w` in [0, 45], this is
+// `B(u) = tan(w*pi/180)/w - fl(pi/180)`, so that
+// `tan(w deg) == fma(w, DEG_TO_RAD_SMALL, w*B(u))`. Degree 6, two-group
+// Estrin, `c[0]` pinned to `pi/180 - fl(pi/180)` exactly.
+//
+// See `tan_poly`'s comment for why the peel is worth it in general. The
+// attenuation is the same 0.2146 here (it is the same function, only
+// reparametrised), but the *starting point* is much better than
+// `tanpi`'s was: `fl(pi/180)` sits only 0.13 ulp from `pi/180`, against
+// `fl(pi)`'s 0.47 from `pi`. That is why this buys a max ulp and only
+// ~14% of the average, where `tanpi` got 7x -- most of `tanpi`'s average
+// was its own leading constant's bias, and `tand` never had much.
+//
+// Fitted the same way (weighted minimax LP, weight `w/tan(w deg)`,
+// column-scaled by `u/2025` -- in raw `u` the Vandermonde is singular at
+// this degree). Degree 5 quantises to 4.58 ulp-equivalent, degree 6 to
+// **0.347**, degree 7 to 1.60 (quantisation noise beats the extra term).
+#[inline(always)]
+fn tand_poly(u: f32) -> f32 {
+    let c: [f32; 7] = [
+        1.3519960e-10,
+        1.7721820e-6,
+        2.1602940e-10,
+        2.6339457e-14,
+        3.6819033e-18,
+        1.3777568e-22,
+        1.3176453e-25,
+    ];
+    let u2 = u * u;
+    let u4 = u2 * u2;
+    let l0 = fma(c[1], u, c[0]);
+    let l1 = fma(c[3], u, c[2]);
+    let l2 = fma(c[6], u2, fma(c[5], u, c[4]));
+    fma(u4, l2, fma(u2, l1, l0))
+}
+
+// tan of an already-reduced `d` in degrees: `tand_poly` directly for
+// `|d| <= 45`, else the cotangent reflection `tan(d) = 1/tan(s)`.
+//
+// **`s` is signed, and that is what makes a period fold unnecessary.**
+// `tanpi`'s `r = x - round(x)` is exact, so `|r| <= 0.5` strictly; here
+// `q` comes from a *rounded* `x*INV_180`, so near a pole `|d|` can land
+// just past 90 (up to ~95.6 over the exact-reduction range) and a
+// magnitude-only pole distance would hand the reflected arm the wrong
+// sign. Taking `s = mulsign(90, d) - d` instead makes
+// `tan(d) = 1/tan(s)` hold with sign for `s` of either sign, so the
+// overshoot needs no correction at all -- which is the whole reason this
+// costs no more than the `sind`/`cosd` ratio it replaces. Sterbenz-exact
+// wherever the reflected arm actually uses it (`45 <= |d| <= 180`).
+//
+// `s == 0.0` (`x` an odd multiple of 90, `tan`'s true pole) returns
+// `-inf` on both sides, matching the ratio form this replaces and
+// `tanpi`'s own convention; the reflected arm is a real `1.0/0.0` there
+// rather than a `0/0`, but the sign it would give tracks `d`'s, which
+// alternates with which pole `x` landed on.
+//
+// The sign of `c[0]` is load bearing for `tand(-0.0) == -0.0`: both
+// `d*DEG_TO_RAD_SMALL` and `d*B(0)` must carry `d`'s sign for the
+// closing `fma` to return `-0.0` rather than `+0.0`, and `c[0]` is
+// positive so it does. (`tan_poly`'s `c[0]` is *negative*, which is why
+// `tanpi` needs its own explicit `x == 0.0` pin instead.) Pinned in
+// edgecheck.
+#[inline(always)]
+fn tand_core(d: f32) -> f32 {
+    let ad = d.abs();
+    let s = mulsign(90.0, d) - d;
+    let direct = fma(d, DEG_TO_RAD_SMALL, d * tand_poly(d * d));
+    let reflected = 1.0 / fma(s, DEG_TO_RAD_SMALL, s * tand_poly(s * s));
+    let normal = if ad <= 45.0 { direct } else { reflected };
+    if s == 0.0 { f32::NEG_INFINITY } else { normal }
+}
+
+/// tan(x*pi/180), argument in degrees. `tan` has period 180, so unlike
+/// [`sind`]/[`cosd`] this needs no parity correction and no second
+/// reduction: `q = round(x/180)`, `d = x - q*180` in `[-90, 90]` lands
+/// directly on `tan(x deg) = tan(d deg)`. See `sind`'s doc comment for
+/// that reduction's exactness limit (`|x|` up to ~4.7e7), and
+/// `tand_core`/`tand_poly` for the peeled polynomial and the signed pole
+/// distance.
 ///
-/// idea #128's direct-poly approach (see [`tanpi`], which uses it)
-/// was tried here too and reverted: reusing `sind`'s own `d` for the
-/// pole-distance calculation loses precision `d` never kept (it's
-/// already reduced away from `x`, unlike `tanpi`'s `r`), and fixing
-/// that needed a whole second, `cosd`-style independent reduction --
-/// at which point real mca/quickbench numbers no longer showed a clean
-/// win over this simpler ratio form. See IDEAS.md.
+/// Not `sind(x)/cosd(x)`, which is what this used to be: that form
+/// carries both factors' error plus the division's, and its polynomial
+/// carries the whole value rather than the ~0.21 the peel leaves it.
+/// idea #128's earlier direct-poly attempt was reverted on cost -- it
+/// reused `sind`'s own `d` as a *magnitude* pole distance, which needs a
+/// period fold or a whole second `cosd`-style reduction to be correct
+/// near a pole. A signed `s` removes that requirement outright.
+///
+/// The `|d| > 128` substitution is the safety guard [`sind`]'s
+/// `POLY_SAFE_BOUND` clamp is: past the exact-reduction range `d` is
+/// meaningless and can be large enough for `d*d` to overflow, so this
+/// keeps the output finite (not correct -- finite) for every finite
+/// input out to `f32::MAX`. In range `|d| <= ~95.6`, so it never fires
+/// on a real reduction, and it is written `> 128.0` so that `NaN` fails
+/// the test and propagates.
+///
+/// Current: max ulp 2, avg 0.0383 (`|x| < 4.7e7`).
 #[inline(always)]
 pub fn tand(x: f32) -> f32 {
-    sind(x) / cosd(x)
+    let qb = fma(x, INV_180, ROUND_MAGIC);
+    let q = qb - ROUND_MAGIC;
+    let d = fma(-q, 180.0, x);
+    tand_core(if d.abs() > 128.0 { 0.0 } else { d })
 }
 
 /// sind without the safety clamp (backlog idea #98): valid while `sind`'s
@@ -1447,13 +1535,16 @@ pub fn cosd_unchecked(x: f32) -> f32 {
     f32::from_bits(s.to_bits() ^ parity)
 }
 
-/// tand without the safety clamp -- same `sind_unchecked(x)/
-/// cosd_unchecked(x)` ratio construction as [`tand`] itself, so it
-/// inherits both this domain (`|x|` up to ~4.7e7) and its safety
-/// tradeoff for free.
+/// tand without the safety guard: same reduction and same `tand_core` as
+/// [`tand`], minus the `|d| > 128` substitution, so it inherits that
+/// domain (`|x|` up to ~4.7e7) and drops the out-of-range finiteness
+/// promise. Bit-identical to [`tand`] on that domain, where the guard
+/// provably never fires.
 #[inline(always)]
 pub fn tand_unchecked(x: f32) -> f32 {
-    sind_unchecked(x) / cosd_unchecked(x)
+    let qb = fma(x, INV_180, ROUND_MAGIC);
+    let q = qb - ROUND_MAGIC;
+    tand_core(fma(-q, 180.0, x))
 }
 
 // q = round(x/pi) must be an *exact* integer for x - q*pi to land

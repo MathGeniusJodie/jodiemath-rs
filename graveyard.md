@@ -10761,3 +10761,92 @@ then subtracts the leading term is a candidate, and the tell is a doc
 comment explaining a *near-zero branch* as the fix for cancellation --
 that branch is treating the symptom. `exp_m1_over_x` (max 5),
 `exp2m1` (max 4) and `exp10m1` all still carry the Pade and the seam.
+
+## `tand`: the peel transfers, but the win is the *signed* pole distance
+
+`tand` was `sind(x)/cosd(x)`. It is now its own reduction plus `tanpi`'s
+peel: `q = round(x/180)`, `d = x - q*180` in `[-90,90]`, then
+`tan(d deg) == fma(d, DEG_TO_RAD_SMALL, d*B(d*d))` with
+`B(u) = tan(w*pi/180)/w - fl(pi/180)`, degree 6, `c[0]` pinned exact.
+
+| | avg ulp | max ulp |
+|---|---|---|
+| before | 0.1773 | 3 |
+| after | **0.0383** | **2** |
+
+`tand_unchecked` tracks it (0.0384), so the readme's "(+) bit-identical
+on its domain" still holds -- it is the same `tand_core`, minus only the
+out-of-range guard, which provably cannot fire in range.
+
+### What unlocked it: a signed `s`, which the earlier attempt lacked
+
+This file already rejected idea #128's direct-poly `tand` on cost:
+"reusing `sind`'s own `d` for the pole-distance calculation loses
+precision `d` never kept ... fixing that needed a whole second,
+`cosd`-style independent reduction -- at which point real mca/quickbench
+numbers no longer showed a clean win."
+
+The diagnosis was right and the fix was overkill. `tanpi`'s `r = x -
+round(x)` is exact, so `|r| <= 0.5` strictly; `tand`'s `q` comes from a
+*rounded* `x*INV_180`, so near a pole `|d|` can land just past 90 (up to
+~95.6 over the exact-reduction range). A **magnitude** pole distance
+`90 - |d|` then goes negative and a closing `mulsign(.., d)` hands the
+reflected arm the wrong sign -- which is what needs either a period fold
+(~6 ops) or a second reduction (much worse).
+
+Taking `s = mulsign(90, d) - d` instead makes `tan(d) = 1/tan(s)` hold
+**with sign for `s` of either sign**, so the overshoot corrects itself
+and the closing `mulsign` disappears too. Measured identical accuracy to
+the period-fold version (max 1.87 vs 1.87 on a 1.0e8-point strided sweep)
+at ~7 fewer ops. Sterbenz-exact wherever the reflected arm uses it
+(`45 <= |d| <= 180`).
+
+### Cost: the two rungs of the ladder disagree, and it is not arbitrated
+
+`tand_throughput` (branchless on both sides, jmp/jcc 0):
+
+| | instrs | uOps | BlockRT | cyc/elem |
+|---|---|---|---|---|
+| before | 95 | 97 | 30 | 2.533 |
+| after | **101** | **107** | **26** | **2.290** |
+
+Instruction and uOp counts say **+6% / +10%**; Block RThroughput and the
+cycle count say **-13% / -9.6%**. `vdiv` is 2 on both sides and `vmul`
+16 on both; the delta is +8 fma against the `sind`/`cosd` pair's integer
+parity ops and two `.clamp()`s, which sit on different ports. Recorded as
+**neutral-to-mildly-better, not as a 9.6% win** -- the counting rungs and
+the structural rung disagree and this was not settled with a prebuilt-
+binary wall-clock A/B.
+
+**`tand_latency` is unusable and its readme row is withdrawn rather than
+updated.** mca read 70.02 -> 37.349, i.e. *halved* while instructions
+nearly doubled (1806 -> 3519). Cause: **jmp/jcc 0 -> 448.** The three
+selects (`|d| > 128`, `|d| <= 45`, `s == 0`) lower to branches in the
+scalar latency harness, and llvm-mca has no branch predictor -- the same
+artifact this file records for `tanpi`, but firing *optimistically* here
+instead of pessimistically. Structurally the new critical path is ~2-4
+levels longer (reduce -> guard -> poly -> mul -> fma -> divide in series,
+against the old form's two parallel polys then one divide), so the true
+latency is very likely slightly *worse*, and neither number belongs in
+the table. Publishing "37.35" would have been the single most misleading
+thing available here.
+
+Full-file asm diff: 4 of 313 regions, exactly `tand`/`tand_unchecked`.
+
+### Transferable
+
+- **A magnitude pole distance and a signed one are not the same
+  reduction.** Whenever a reflection `f(d) = 1/f(s)` is fed a `d` from an
+  *inexact* quotient, `s` must carry the sign or the overshoot needs a
+  fold. The signed form costs one `mulsign` and saves the output one.
+- **The peel's payoff scales with how bad the leading constant was.**
+  `fl(pi)` is 0.47 ulp from `pi` and `tanpi`'s average improved 7x;
+  `fl(pi/180)` is only 0.13 ulp from `pi/180` and `tand`'s max still
+  improved but by way of the polynomial's attenuation, not the constant.
+  Check the constant's own error first -- it predicts which half of the
+  win is available.
+- **`c[0]`'s sign is load bearing for signed zero.** `fma(d, K, d*B(0))`
+  returns `-0.0` for `d = -0.0` only because `B(0) > 0` here, so both
+  addends are `-0.0`. `tan_poly`'s `c[0]` is negative, which is why
+  `tanpi` needs its own `x == 0.0` pin. An ulp sweep is blind to this
+  (zero-vs-zero scores 0); edgecheck is not.

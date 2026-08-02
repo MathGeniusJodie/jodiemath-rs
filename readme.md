@@ -35,7 +35,7 @@ cbrt_accurate_unchecked |    0.000   |     1     | (bit-identical to cbrt_accura
         tanpi (all f32) |    0.033   |     2     | (no std tanpi; `pi` is peeled out of the polynomial into a closing `fma`, so the argument is never scaled to radians -- see `tan_poly`)
         sind (|x|<4.7e7)|    0.124   |     2     | (no std sind)
         cosd (|x|<4.7e7)|    0.073   |     2     | (no std cosd)
-        tand (|x|<4.7e7)|    0.177   |     3     | (no std tand)
+        tand (|x|<4.7e7)|    0.038   |     2     | (no std tand; its own peeled poly and a *signed* pole distance, not `sind/cosd` -- see `tand_core`)
           sinc (|x|<1e6)|    0.094   |     4     | (no std sinc)
 ```
 
@@ -411,7 +411,7 @@ tanpi               |          77.05 |             2.155
 sinc                |          53.02 |             1.256
 sind                |          48.00 |             1.151
 cosd                |          56.00 |             1.406
-tand                |          70.02 |             2.533
+tand                |      (no row)  |             2.290
 ln                  |          49.13 |             1.625
 ln_unchecked        |          38.06 |             1.021
 log10               |          48.16 |             1.617
