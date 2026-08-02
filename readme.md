@@ -94,8 +94,8 @@ logaddexp_accurate (all f32)| 0.000 |     0     | (no std logaddexp; the cancell
                  atanpi |    0.078   |     4     | (no std atanpi)
   tan (|x|<2^22*pi) |    0.118   |     4     |  0.000  |    0
                    erf  |    0.027   |     3     | (no std erf)
-         erfc (|x|<=10) |    0.195   |     7     | (no std erfc)
-        erfcx (|x|<=20) |    0.208   |     6     | (no std erfcx)
+         erfc (|x|<=10) |    0.129   |     7     | (no std erfc; the 7 splits about evenly between `exp`'s own error and the erfcx polynomial's evaluation -- neither dominates, see erfc's doc comment)
+        erfcx (|x|<=20) |    0.144   |     6     | (no std erfcx; the 6 is on the *negative* arm, where it is `exp`'s error amplified by the reflection -- see erfcx's doc comment)
          erfcx (x>=20)  |    0.268   |     2     | (no std erfcx)
        dawson (all f32) |    0.058   |     6     | (no std dawson; exhaustive since the reference stopped being an 800-point quadrature, see accuracy.rs)
                   atan2 |    0.068   |     4     |  0.000  |    0
@@ -442,8 +442,8 @@ atan_latency        |          61.99 |             1.591
 atan2               |          67.19 |             1.694
 tan                 |          78.00 |             2.985
 erf                 |          87.00 |             2.040
-erfc                |          62.08 |             2.885
-erfcx               |          66.99 |             2.827
+erfc                |          61.42 |             3.069
+erfcx               |          64.03 |             2.903
 hypot               |          21.11 |             0.766
 hypot_checked       |          57.19 |             1.178
 rhypot              |          32.02 |             1.389

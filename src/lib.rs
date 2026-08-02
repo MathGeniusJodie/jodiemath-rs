@@ -5437,15 +5437,38 @@ const _: () = assert!((ERFCX_XS_CLAMP as f64) * (ERFCX_XS_CLAMP as f64) > 88.029
 // 10: the division is already on the critical path ahead of it, and
 // Horner measured only ~0.5 ulp better on max.
 //
-// What is left is dominated not by the fit (~0.5 ulp) but by forming
-// `v` itself: rounding `2+xa` and then the reciprocal costs ~2.3 ulp
-// that no polynomial can recover, since `erfcx` has a nonzero slope at
-// 0 while `v` is stationary in relative terms there. Compensating that
-// needs the exact residual of `2+xa` (4-6 more ops, correct ordering
-// included) for ~1.5 ulp -- measured, rejected on cost.
+// What is left is not the fit (~0.5 ulp) but the polynomial's own f32
+// evaluation. Forming `v` used to be worth as much again, and the two
+// lines that fix it are the second half of this function:
+//
+// `v = 1/(2+xa)` satisfies `v == 0.5 - (xa/2)*v` identically -- expand
+// the right side over `2*(2+xa)` and the `xa` cancels. So re-substituting
+// an approximate `v0 = fl(1/fl(2+xa))` into that identity gives a `v`
+// whose relative error is `(xa/2)` times `v0`'s, on top of the one
+// rounding the fma itself makes. `xa/2` is exact (a power of two), and it
+// is the *unrounded* `xa` that enters, which is the whole point: rounding
+// `2+xa` throws away `xa`'s low bits outright, and `erfcx` has a nonzero
+// slope at 0 while `v` is stationary in relative terms there, so that
+// rounding arrives amplified by `2*|d(ln erfcx)/d(ln v)| = 2.26` at
+// `xa = 0` -- one fma removes all of it.
+//
+// The identity is exact for every `xa`, but the *attenuation* is `xa/2`,
+// so above `xa = 2` it amplifies `v0`'s error instead: hence the select,
+// which is the only reason it is not unconditional. (Clamping the
+// multiplier instead of selecting is not the same function -- it breaks
+// the identity and returns garbage above the clamp.) Compensating `v`
+// the other way, with the *exact residual* of `2+xa` (an EFT: 4-6 more
+// ops, correct ordering included), was measured and rejected on cost;
+// the identity is cheaper and lands further.
+//
+// With it, `v` is close enough to exact that the polynomial's own f32
+// evaluation is the entire remaining error: handing these same
+// coefficients an exactly-rounded `v` computed in `f80` does not lower
+// the max at all.
 #[inline(always)]
 fn erfcx_pos(xa: f32) -> f32 {
-    let v = 1.0 / (2.0 + xa);
+    let v0 = 1.0 / (2.0 + xa);
+    let v = if xa <= 2.0 { fma(-0.5 * xa, v0, 0.5) } else { v0 };
     // c[0] is the *low* word of a two-word `1/sqrt(pi)`; the high word is
     // peeled out of the polynomial and applied in the final fma below.
     let c: [f32; 11] = [
@@ -5495,7 +5518,14 @@ fn erfcx_pos(xa: f32) -> f32 {
 ///
 /// The `erfcx` factor is [`erfcx_pos`] (see its comment): a degree-10
 /// polynomial in `1/(2+|x|)`, ~0.5 ulp of fit error against the old
-/// rational's ~15.
+/// rational's ~15, with the reciprocal's own rounding removed by one
+/// fma on the exact `|x|`.
+///
+/// Neither factor dominates any more, which is why this function's max
+/// has stopped moving: split the error at the worst point and the
+/// `erfcx` factor and the Gaussian path each carry ~4.2 ulp of it. The
+/// Gaussian half is `exp`'s own accuracy (~3 ulp, `exp_r_poly`), so half
+/// of what is left here is not reachable from inside this function.
 ///
 /// No clamp on `x` anywhere except [`ERFC_XS_CLAMP`] on the value being
 /// squared -- far past where `erfc` has decayed under the smallest
@@ -5506,7 +5536,7 @@ fn erfcx_pos(xa: f32) -> f32 {
 /// the const assertions on it), which is why this calls `exp_reduce!`
 /// rather than [`exp_checked`].
 ///
-/// Current: max ulp 6, avg 0.1949 (accuracy.rs's fuzz sweep restricted to
+/// Current: max ulp 7, avg 0.1289 (exhaustive sweep restricted to
 /// `|x| <= 10`, which is where the f64 reference stops being usable --
 /// past ~10.05 the true `erfc` rounds to exactly `0.0` (or `2.0` for
 /// `x < 0`) and this returns exactly that, pinned in edgecheck).
@@ -5515,10 +5545,13 @@ fn erfcx_pos(xa: f32) -> f32 {
 pub fn erfc(x: f32) -> f32 {
     // The x<0 reflection with no compare and no select. `w` shifts x's
     // sign bit straight into the exponent field (0x4000_0000 is 2.0f),
-    // and `mulsign` applies the same bit to `y`, so the two arms are
-    // `y + 0` and `-y + 2` -- `2 - y` with the single rounding the old
-    // `fma(y, z, w)` gave it, bit-identical, in integer ops on ports the
-    // polynomial's fmas are not contending for.
+    // and `mulsign` applies the same bit to the Gaussian factor, so the
+    // two arms are `e*t + 0` and `-e*t + 2`, in integer ops on ports the
+    // polynomial's fmas are not contending for. Carrying the sign on `e`
+    // rather than on the finished product lets the closing multiply and
+    // the reflection's add fuse into one fma: the `x >= 0` arm is
+    // unchanged (`fma(e, t, +0.0)` is exactly `e*t`) and the `x < 0` arm
+    // rounds `2 - e*t` once instead of twice.
     let w = f32::from_bits((x.to_bits() >> 1) & 0x4000_0000);
     let xa = x.abs();
     let xs = if xa > ERFC_XS_CLAMP { ERFC_XS_CLAMP } else { xa };
@@ -5530,8 +5563,7 @@ pub fn erfc(x: f32) -> f32 {
     // assertions beside it check. NaN reaches here as NaN (`NaN > c` is
     // false), and comes back out through `r`.
     let e = exp_reduce!(-p);
-    let y = e * fma(-r, pe, r);
-    mulsign(y, x) + w
+    fma(mulsign(e, x), fma(-r, pe, r), w)
 }
 
 // erfinv's central branch (backlog idea #66): erfinv(x) = x*P(x^2) for
@@ -5811,9 +5843,12 @@ const _: () =
 ///
 /// The tail reflection is `erfc`'s own trick, one power of two down:
 /// `w` shifts `x`'s sign bit into the exponent field, so the two arms
-/// are `y + 0` and `-y + 2`, and the outer `0.5` (exact) turns those
+/// are `e*t + 0` and `-e*t + 2`, and the outer `0.5` (exact) turns those
 /// into `Φ = y/2` and `Φ = 1 - y/2`. Saturation to exactly `0`/`1` at
-/// both tails still comes for free.
+/// both tails still comes for free. As in [`erfc`], the sign rides on
+/// the Gaussian factor so the closing multiply and the reflection's add
+/// are one `fma` -- the `x <= 0` arm bit-identical, the other rounding
+/// `2 - e*t` once instead of twice.
 #[inline(always)]
 pub fn norm_cdf(x: f32) -> f32 {
     let xa = x.abs();
@@ -5831,13 +5866,12 @@ pub fn norm_cdf(x: f32) -> f32 {
     let p = h * xs;
     let pe = fma(h, xs, -p);
     let e = exp_reduce!(-p);
-    let y = e * fma(-r, pe, r);
     // `-x` as a sign carrier only (Φ(x) uses erfc(-x/sqrt(2))), so the
     // negation is a bit flip and stays exact at +-0.0: x = +0.0 takes the
     // `1 - y/2` arm and x = -0.0 the `y/2` arm, and both are exactly 0.5.
     let nx = -x;
     let w = f32::from_bits((nx.to_bits() >> 1) & 0x4000_0000);
-    0.5 * (mulsign(y, nx) + w)
+    0.5 * fma(mulsign(e, nx), fma(-r, pe, r), w)
 }
 
 /// Inverse of `erfc` (backlog idea #139). `erfc` is odd about `y = 1`
@@ -6301,22 +6335,28 @@ pub fn compound_accurate(x: f32, n: f32) -> f32 {
 /// rather than wrapping to garbage. `x*x` is split exactly the same way
 /// [`erfc`] splits it (`exp(p+pe) ~ exp(p)*(1+pe)`, folded into the
 /// already-needed `2*` scale as `2+2*pe`) -- that split, not the
-/// polynomial, is what used to hold this branch at max ulp 126. With it
-/// in place the negative branch is no longer where the worst case lives:
-/// that moved to the positive branch near zero, where it is
-/// [`erfcx_pos`]'s own `v`-formation floor. Written as a multiply rather
-/// than `fma(g, 2.0*pe, ...)` on purpose: `g` saturates to `+inf`, and
-/// `2+2*pe` is always positive, so `inf*(2+2*pe) = +inf` where a signed
-/// `pe` in the multiplicand could have given `inf - inf`. The branch
+/// polynomial, is what used to hold this branch at max ulp 126. The
+/// scale and the reflection's subtraction are one `fma`, which is a
+/// rounding cheaper *and* an instruction cheaper than scaling first and
+/// subtracting after. `2+2*pe` stays the multiplicand rather than
+/// `fma(g, 2.0*pe, ...)` on purpose: `g` saturates to `+inf`, and
+/// `2+2*pe` is always positive, so `inf*(2+2*pe) - r = +inf` where a
+/// signed `pe` in the multiplicand could have given `inf - inf`.
+///
+/// **This branch is now where `erfcx`'s worst case lives**, and it is not
+/// this function's arithmetic: at the worst point (`x ~ -0.514`) the
+/// `erfcx_pos` factor contributes 1.7 ulp and the Gaussian path 5.2,
+/// which is `exp`'s own ~2.6 ulp there amplified by `2e^(x^2)/erfcx(x)`
+/// = 1.30. Nothing inside `erfcx` reaches it; `exp_r_poly` does. The branch
 /// diverges to `+inf` for `x < -9.382` (`x^2 > ~88.03`, where `2*e^(x^2)`
 /// leaves f32); `exp_checked`'s saturation makes that come out `+inf`
 /// rather than wrapping, and both sides of that boundary are pinned in
 /// edgecheck.
 ///
-/// Current: max ulp 6, avg 0.2142 (exhaustive sweep over `|x| <= 10`).
+/// Current: max ulp 6, avg 0.1439 (exhaustive sweep over `|x| <= 10`).
 /// Was 126 / 0.3768. The rest of the domain is measured too, and this
-/// is the part that used to not exist: `|x| <= 20` is 6 / 0.2154, and
-/// `x >= 20` out to `f32::MAX` is **4 / 0.6478** over 1.04e9 samples,
+/// is the part that used to not exist: `|x| <= 20` is 6 / 0.1442, and
+/// `x >= 20` out to `f32::MAX` is **2 / 0.2683** over 1.04e9 samples,
 /// scored against the asymptotic series (`exp(x^2)` overflows f64 past
 /// x ~ 26.6, so the composed reference cannot reach there).
 #[inline(always)]
@@ -6326,8 +6366,8 @@ pub fn erfcx(x: f32) -> f32 {
     let xs = if xa > ERFCX_XS_CLAMP { ERFCX_XS_CLAMP } else { xa };
     let p = xs * xs;
     let pe = fma(xs, xs, -p);
-    let g = exp_reduce!(p) * fma(pe, 2.0, 2.0);
-    if x >= 0.0 { r } else { g - r }
+    let g = exp_reduce!(p);
+    if x >= 0.0 { r } else { fma(g, fma(pe, 2.0, 2.0), -r) }
 }
 
 /// 1/sqrt(x). Unlike most functions in this crate, no bit-trick seed or

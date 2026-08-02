@@ -9532,3 +9532,212 @@ cyc/elem in total. Recorded because "does this function respect
 harness asked it before. (Outside their domains all four return `inf`,
 which is documented and is what `accuracy`'s NON-FINITE annotation
 counts.)
+
+## `erfcx_pos`: the reciprocal is an identity away from exact, and the record's own diagnosis was the thing to check
+
+Three entries above (the reciprocal-offset scan, the Horner reorder, the
+leading-term peel) all close with the same sentence: `erfc`/`erfcx`/
+`norm_cdf`/`gelu` are `erfcx_pos`'s evaluation and need "a structurally
+cheaper representation of `erfcx` on `[0, inf)`". That handover was
+followed and it is wrong in a useful way -- there was a cheap structural
+fix left, it is two instructions, and having taken it the diagnosis is now
+genuinely different: **none of these four functions is limited by
+`erfcx_pos` any more.**
+
+### What shipped, and why it is not the rejected compensation
+
+`v = 1/(2 + xa)` satisfies
+
+    v == 0.5 - (xa/2)*v
+
+identically (put the right side over `2*(2+xa)` and the `xa` cancels).
+Substituting the *computed* `v0 = fl(1/fl(2+xa))` back into it gives a `v`
+whose relative error is `(xa/2)` times `v0`'s, plus the one rounding the
+`fma` itself makes. `xa/2` is exact, and it is the **unrounded** `xa` that
+enters -- which is the whole point, because `fl(2+xa)` throws `xa`'s low
+bits away outright and `erfcx` has a nonzero slope at 0 while `v` is
+stationary in relative terms there, so that rounding arrives amplified by
+`2*|d(ln erfcx)/d(ln v)| = 2.257` at `xa = 0`.
+
+    let v0 = 1.0 / (2.0 + xa);
+    let v = if xa <= 2.0 { fma(-0.5 * xa, v0, 0.5) } else { v0 };
+
+The record already rejected "compensating `v`" at "4-6 more ops, correct
+ordering included, for ~1.5 ulp". That rejection was of an **EFT**: recover
+the exact residual of `2+xa` by Fast2Sum and Newton it back in. The
+identity is a different mechanism, costs two arithmetic instructions
+instead of four to six, and lands further -- it reaches the exact-`v`
+floor, not part of the way.
+
+- **The attenuation is `xa/2`, so above `xa = 2` the identity amplifies
+  `v0`'s error instead** -- hence the select, which is the only reason it
+  is not unconditional. Threshold scanned 0.75..2.5: everything in
+  `[1.0, 2.5]` gives the same max, `0.75` is worse; `2.0` is shipped as the
+  identity's own crossover. **Clamping the multiplier (`min(xa, 2.0)`)
+  instead of selecting is not the same function** -- it breaks the identity
+  and returns 9.5e8 ulp above the clamp. Measured, so it is not
+  re-proposed.
+- `erfcx_pos(0.0) == 1.0` is preserved bit-exactly and for free: at
+  `xa = 0` the fma is `fma(-0.0, 0.5, 0.5) = 0.5`, the same `v` as before,
+  so the pin the shipped coefficients are holding is untouched and no
+  refit was needed.
+- numpy simulation of the exact f32 instruction sequence, 6M distinct f32
+  points over `[1e-7, 30]`, shipped coefficients: **max 6.223 -> 4.187,
+  avg 0.9997 -> 0.6897**. The exact-`v` floor for this evaluation order
+  and these coefficients is **4.187 / 0.6650** -- i.e. the identity
+  recovers *all* of the available max and 93% of the available avg. That
+  is the sense in which `erfcx_pos` is now purely its own polynomial
+  evaluation.
+
+### Two `fma` folds found while pricing it, both free
+
+Both were taken and both are worth more than they look, because they pay
+for the identity's select:
+
+- **`erfc`/`norm_cdf`'s sign fold, one level up.** `y = e * t;
+  mulsign(y, x) + w` became `fma(mulsign(e, x), t, w)`. Carrying the sign
+  on the Gaussian factor rather than on the finished product lets the
+  closing multiply and the reflection's add fuse: the `x >= 0` arm is
+  bit-identical (`fma(e, t, +0.0)` is exactly `e*t`, confirmed -- the
+  positive-side scan is unchanged to four decimals) and the `x < 0` arm
+  rounds `2 - e*t` **once instead of twice**. `erfc`'s negative side
+  2.87 -> 2.61 max, 0.216 -> 0.193 avg, for **one fewer instruction**.
+- **`erfcx`'s negative arm.** `g = exp*(2+2pe); g - r` became
+  `fma(exp, 2+2pe, -r)`: one rounding and one instruction cheaper. The
+  `inf` argument the old comment gives for keeping `2+2*pe` as the
+  multiplicand still holds (`inf*(positive) - finite = +inf`), and
+  `erfcx(-inf) = +inf` is still pinned.
+
+### Measured
+
+Exhaustive, every f32 bit pattern, before/after on the same harness:
+
+| row | before | after |
+|---|---|---|
+| `erf` (control, no `erfcx_pos`) | 0.0270 / 3 | 0.0270 / 3 |
+| `erfc` | 0.1948 / 7 | **0.1289** / 7 |
+| `erfcx` | 0.2080 / 6 | **0.1439** / 6 |
+| `erfcx (\|x\|<=20)` | 0.2078 / 6 | **0.1442** / 6 |
+| `erfcx (x>=20)` | 0.2683 / 2 | 0.2683 / 2 (bit-identical, `xa > 2`) |
+| `norm_cdf` | 0.0996 / 8 | **0.0657 / 7** |
+| `norm_pdf` | 0.0269 / 4 | 0.0269 / 4 (unchanged -- no `erfcx_pos`) |
+| `gelu` | 0.2029 / 9 | **0.1433** / 9 |
+
+Range-restricted probe scans, both binaries, same ranges, for where the
+change actually bites: `erfc` over `|x|` in `[1e-7, 0.03125]` goes
+6.540 / 1.2522 -> **4.720 / 0.7165** on the positive side and
+3.513 / 0.6007 -> **2.678 / 0.3532** on the negative; over
+`[0.03125, 10]` it is 7.001 / 1.0556 -> 6.790 / 0.8891 and
+3.641 / 0.2923 -> 2.611 / 0.1925.
+
+llvm-mca, all eight regions, against the same baseline the entries above
+quote (62.079/2.885 and 66.986/2.827 reproduced to the digit):
+
+| region | instrs | uOps | BlockRT | cyc/unit |
+|---|---|---|---|---|
+| erfc_latency | 4551 -> 4766 | 4721 -> 4942 | 1184 -> 1216 | 62.08 -> **61.42 (-1.1%)** |
+| erfc_throughput | 131 -> 136 | 148 -> 157 | 40 -> 41 | 2.885 -> 3.069 (+6.4%) |
+| erfcx_latency | 4129 -> 4258 | 4869 -> 5125 | 1184 -> 1216 | 66.99 -> **64.03 (-4.4%)** |
+| erfcx_throughput | 125 -> 130 | 143 -> 148 | 39 -> 40 | 2.827 -> 2.903 (+2.7%) |
+| norm_cdf_latency | 4980 -> 5210 | 5169 -> 5468 | 1280 -> 1312 | 70.22 -> **68.99 (-1.8%)** |
+| norm_cdf_throughput | 140 -> 143 | 160 -> 172 | 43 -> 44 | 3.219 -> 3.436 (+6.7%) |
+| gelu_latency | 5773 -> 6034 | 6157 -> 6419 | 1504 -> 1536 | 75.56 -> **74.02 (-2.0%)** |
+| gelu_throughput | 156 -> 161 | 184 -> 193 | 50 -> 51 | 3.574 -> 3.792 (+6.1%) |
+
+Full asm region diff: **299 of 307 regions byte-identical**, the 8 changed
+ones exactly these four functions -- `exp_checked` and its other 20+
+callers (`log1p`, `sigmoid_grad`, `tanh_grad`, ...) did not move.
+
+Latency down on all four, throughput up 2.7-6.7% (`BlockRT` says +2.5%,
+which is the usual direction of this crate's mca throughput artifact, so
+the real number is probably nearer the structural one -- not arbitrated
+with a wall-clock A/B, the machine was at load 17-22 all session).
+
+### The diagnosis this replaces, which is the part worth keeping
+
+**`erfc`'s max did not move and cannot be moved from inside `erfc`.** Split
+its ulp error at each point into the `erfcx_pos` factor and everything the
+Gaussian path contributes (probe: score `erfc(x)` against
+`exp(-x^2)_f64 * erfcx(x)_f32`, i.e. take the *actual* f32 `erfcx` factor
+as given), exhaustively over `x` in `[1, 4]` where the worst case lives:
+
+    total          max 6.79
+    erfcx factor   max 4.19
+    gaussian+tail  max 4.19
+
+**Neither half dominates.** The Gaussian half is `exp`'s own accuracy
+(`exp` is 3 max ulp, and `exp_r_poly` is core-locked and recorded
+exhausted), so roughly half of `erfc`'s remaining max is not reachable
+from inside this function at all, and the other half is the polynomial
+evaluation the three entries above already measured as immovable.
+
+**`erfcx`'s worst case has moved to the negative arm and is also `exp`.**
+Same split on `erfcx(-a) = 2e^(a^2) - erfcx(a)`, exhaustive over
+`a` in `[0.25, 1]`:
+
+    total          max 5.90 at x = -0.514
+    erfcx_pos part max 1.74
+    gaussian part  max 5.23
+
+which is `exp_reduce!(0.264)`'s own ~2.6 ulp amplified by
+`2e^(x^2)/erfcx(x) = 1.30`. The positive arm is now 4.03 max. So the
+standing "`erfcx`'s worst case is `erfcx_pos` near zero" note in its doc
+comment was true and is not any more.
+
+### Also screened and not taken
+
+- **A two-branch split** -- the specific proposal this session inherited:
+  `erfcx(x) = fma(x, Q(x), 1.0)` below a seam (argument exact, no `2+xa`
+  rounding at all) and `u = 1/x` above it. Idealised LP-minimax relative
+  fit error, both branches, so the degree bill is on the record:
+
+  | seam T | small branch `1 + x*Q(x)` | tail branch `u*(HI + R(u))` |
+  |---|---|---|
+  | 1.0 | deg 7: 0.37 ulp | deg 10: 2.9, deg 11: ~0 |
+  | 1.25 | deg 8: 0.23 | deg 9: 2.6, deg 10: 0.25 |
+  | 1.5 | deg 9: 0.13 | deg 9: 0.39, deg 10: ~0 |
+  | 2.0 | deg 10: 0.31 | deg 8: 0.29 |
+  | 2.5 | deg 11: 0.44 | deg 7: 0.60 |
+
+  The cheapest balanced pair is ~18 degrees against the shipped 10, and
+  **both branches are evaluated on every lane** (the crate is branchless
+  by requirement), so it is ~+12 instructions -- roughly double the
+  polynomial work. Against that: the shipped chain restricted to `xa >= 1`
+  already scores 3.54 max and `xa >= 0.5` scores 4.79, so the *most* a
+  split can buy on the positive arm is ~6.2 -> ~3.5, and the sections
+  above show the public functions would not see it because `exp` binds
+  first. Not taken.
+- **Reciprocal offsets below 2.** The offset entry above scanned `a` = 2,
+  2.5, 3, 3.5 through the real chain and concluded raising it loses.
+  Lowering it also loses, and for the opposite reason: the `a+xa` rounding
+  is amplified by `1.128*a`, so `a = 1` halves that term -- but `v` then
+  spans `(0, 1]` instead of `(0, 1/2]` and the degree-10 fit degrades from
+  0.003 to 5.1 ulp-equivalent. Real chain, fresh LP fit at each offset,
+  5M f32 points: `a` = 0.5 / 0.75 / 1.0 / 1.25 / 1.5 / 1.75 / 2.0 / 2.5 /
+  3.0 gives max 575 / 73.2 / 23.6 / 8.30 / 7.18 / 5.69 / 6.05 / 5.80 /
+  7.10. Nothing outside the noise band the offset entry already
+  documented. **The offset lever is closed in both directions.**
+
+### Transferable
+
+- **An algebraic identity on the reciprocal beats an EFT on its
+  denominator.** `1/(a+x) == 1/a - (x/a)*(1/a+x)` re-substitutes the
+  *unrounded* `x`, so it does not need the residual of `a+x` at all. Two
+  instructions, attenuation `x/a`, valid wherever `|x| < a`.
+- **The one other site of that shape in the crate is `sigmoid`, and it is
+  not worth it** -- screened here so the next instance does not spend a
+  session on it. `w = 1.0/(1.0 + e)` obeys `w == 1 - e*w`, attenuation
+  `e`, so it helps exactly where `e < 1`, i.e. `x > 0`. But `sigmoid`'s
+  error does not live there: exhaustive per-octave, max is **1.71 for
+  `x > 0`** against **3.35 for `x < 0`**, and scoring the shipped result
+  against an exact reciprocal of the *same* f32 `e` puts at most 1.5 ulp
+  of that on the reciprocal in either direction. The rest is `exp`, on
+  the arm the identity cannot reach.
+- **A rejection is of a *mechanism*, not of a goal.** "Compensating `v`
+  was measured and rejected on cost" reads like the goal is closed. It
+  closed one route to it.
+- **Split a composite's error before concluding the primitive is the
+  binding term.** Three entries in a row named `erfcx_pos` as the limit
+  for four public functions; scoring the composite against
+  "exact-Gaussian, actual-f32-`erfcx`" takes ten lines and shows the two
+  halves are equal, which reframes what is left to do.

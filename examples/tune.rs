@@ -742,7 +742,8 @@ fn expm1_near0_deg5_c(x: f32, c: &[f32]) -> f32 {
 const ERFCX_C0_HI: f32 = f32::from_bits(0x3f106ebb);
 #[inline(always)]
 fn erfcx_pos_c(xa: f32, c: &[f32]) -> f32 {
-    let v = 1.0 / (2.0 + xa);
+    let v0 = 1.0 / (2.0 + xa);
+    let v = if xa <= 2.0 { fma(-0.5 * xa, v0, 0.5) } else { v0 };
     let v2 = v * v;
     let v4 = v2 * v2;
     let p01 = fma(c[1], v, c[0]);
