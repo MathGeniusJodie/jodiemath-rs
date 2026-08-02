@@ -102,6 +102,9 @@ logaddexp_accurate (all f32)| 0.000 |     0     | (no std logaddexp; the cancell
         erfcx (|x|<=20) |    0.144   |     6     | (no std erfcx; the 6 is on the *negative* arm, where it is `exp`'s error amplified by the reflection -- see erfcx's doc comment)
          erfcx (x>=20)  |    0.268   |     2     | (no std erfcx)
        dawson (all f32) |    0.058   |     6     | (no std dawson; exhaustive since the reference stopped being an 800-point quadrature, see accuracy.rs)
+       erfinv (|x|<1)   |    0.364   |     4     | (no std erfinv; exhaustive)
+      erfc_inv (0<y<2)  |    0.679   |     5     | (no std erfc_inv; exhaustive)
+        probit (0<p<1)  |    0.761   |     5     | (no std probit; exhaustive)
                   atan2 |    0.068   |     4     |  0.000  |    0
     atan2_unchecked (+) |    0.068   |     4     | (bit-identical to atan2 on its domain)
               atan2_pos |    0.063   |     3     | (no std atan2_pos)

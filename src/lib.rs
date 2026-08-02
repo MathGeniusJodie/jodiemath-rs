@@ -5656,12 +5656,28 @@ fn erfinv_central_poly(u: f32) -> f32 {
 // value it is computing at degree 8, 15.6x at degree 10 -- so each
 // coefficient's f32 quantisation lands on the answer amplified by that
 // much, and raising the degree makes it worse faster than it makes the fit
-// better. `t` spans `[-0.179, 2.993]`, where the same ratio is 1.6-3.4x at
-// every degree. Idealized ulp, f32-quantised, over the range below:
+// better. `t` spans `[-0.179, 2.993]`, where the same ratio stays 1.6-3.4
+// while the fit is short and only reaches 6.2 at the degree below. The
+// sweep that chose `t` over `w`, in idealized f32-quantised ulp:
 //
 //     degree  |    8     9    10
 //     in w    |  9.2   5.8   3.7
 //     in t    | 17.3   3.0   2.8
+//
+// **Twelve coefficients, not ten.** Re-swept later against a 300k-point
+// dense grid, the same ulp weight, and a wider coordinate descent -- the
+// shipped ten measure 3.32 on that grid, eleven only 2.38, and then the
+// twelfth drops it 3.1x:
+//
+//     coefficients |  10    11    12    13
+//     idealized ulp| 3.32  2.38  0.78  0.84
+//
+// That is the opposite of the diminishing return a degree sweep usually
+// shows, and it is where the sweep stops: a thirteenth measures *worse*
+// after quantisation (its amplifier is 11.8, against 6.2 at twelve), so
+// the twelfth is the term at which the fit stops being this chain's
+// binding item rather than a step along a curve. The price is +2 `fma` in
+// a poly on three functions' critical paths; see the commit's mca table.
 //
 // Same lever, and the same exactness argument, as `erfinv_far_poly`'s
 // `sqrt(w) - 7`: `v - 1` is exact for every `v` in `[0.5, 4]` (`v` there is
@@ -5683,17 +5699,19 @@ fn erfinv_central_poly(u: f32) -> f32 {
 // poly's worst case was, and worth 4.0 of its 13.7 idealized ulp.
 #[inline(always)]
 fn erfinv_tail_poly(t: f32) -> f32 {
-    let c: [f32; 10] = [
+    let c: [f32; 12] = [
         0.8963304,
-        0.019399296,
-        7.886844e-3,
-        -2.1719823e-3,
-        -4.3599683e-4,
-        -7.977164e-4,
-        9.2836854e-4,
-        -3.5990187e-4,
-        6.410802e-5,
-        -4.4732756e-6,
+        0.019397417,
+        0.007896575,
+        -0.0021255405,
+        -0.0007704421,
+        -1.969348e-5,
+        -2.4305053e-5,
+        0.00033242995,
+        -0.00024495937,
+        7.880177e-5,
+        -1.2436317e-5,
+        7.908929e-7,
     ];
     let t2 = t * t;
     let t4 = t2 * t2;
@@ -5702,9 +5720,11 @@ fn erfinv_tail_poly(t: f32) -> f32 {
     let l2 = fma(c[5], t, c[4]);
     let l3 = fma(c[7], t, c[6]);
     let l4 = fma(c[9], t, c[8]);
+    let l5 = fma(c[11], t, c[10]);
     let r0 = fma(l1, t2, l0);
     let r1 = fma(l3, t2, l2);
-    fma(fma(l4, t4, r1), t4, r0)
+    let r2 = fma(l5, t2, l4);
+    fma(fma(r2, t4, r1), t4, r0)
 }
 
 // erfinv's *far*-tail branch, a poly in `t = sqrt(w) - 7`. Reachable only

@@ -403,13 +403,23 @@ function's speed or accuracy directly; several unblock ideas above.
      at degree 10, so the quantisation amplifier outruns the fit.
      15.6 -> 5.9 max ulp on all three callers.
 
-181. **`probit` can drop its `sqrt(2)` multiply on the tail arm.**
-     `sqrt(2) * sqrt(w) * Q(w)` is `sqrt(2w) * Q(w)`, so folding the
-     scale into the sqrt removes both the multiply and `fl(sqrt 2)`'s
-     0.287-ulp-low bias, which is the last single-word irrational
-     constant in the function. Only the tail arm; the central arm still
-     needs `sqrt(2) * x * P(x^2)`. Costs a duplicated tail, which is why
-     it was not done when `probit` was rewritten onto `erfc_inv_half`.
+181. **`probit` can drop its `sqrt(2)` multiply -- but only if it drops
+     it on *both* arms.** The tail half is built and measured (see
+     graveyard.md): `sqrt(2)*sqrt(w)*Q` is `sqrt(2w)*Q` with `2*w` exact,
+     a `const SQRT2: bool` on `erfc_inv_half` keeps `erfinv`/`erfc_inv`
+     byte-identical, and it was worth -4.1% max / -6.6% avg. Then the
+     tail poly's twelfth coefficient landed and moved `probit`'s max to
+     the **central** arm (4.98 against the tail's 4.59), where the
+     remaining `sqrt(2) * x*P(x^2)` lives -- so the tail fold alone now
+     buys no max ulp at all, and it was not shipped. The package that
+     still pays is both together: the central multiply folds into a
+     scaled, re-descended copy of `erfinv_central_poly` for **zero** extra
+     operations (9 duplicated constants), and the two arms together are
+     4.98 -> ~4.3. Note the central arm's *other* ulp while you are in
+     there, and it is the bigger one: `x = fl(1 - n)` costs 2.66 -> 3.60
+     because `n < 0.5` puts `x` on a coarser grid than `n`, and undoing
+     that needs a compensated `x` (~3 ops). `erfinv_central_poly` itself
+     has no headroom -- screened, see graveyard.md.
 
 - **`denormal_audit`'s 2-arg coverage is still one function wide.** Both
   of its hand-maintained lists take `fn(f32) -> f32`. `logaddexp` is now

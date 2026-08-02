@@ -9968,3 +9968,162 @@ sweep needs, and it finds a class of defect ulp rows structurally cannot
 see. And **"is the invariant violated" is a separate question from "is the
 answer accurate"**: 1 ulp over 1.0 is simultaneously a correct answer and
 a broken postcondition.
+
+## `erfinv_tail_poly`: the twelfth coefficient, and where the three callers' error actually lives
+
+The `sqrt(w)-1` variable change landed earlier the same day took
+`erfinv`/`erfc_inv`/`probit` from ~15 to ~6 max ulp and left the tail
+polynomial at "2.8 idealized ulp, saturating". Re-screening it against a
+300k-point dense grid with the same ulp weight and a wider coordinate
+descent says it was not saturating -- it was one coefficient short of a
+cliff:
+
+| coefficients | 10 (shipped) | 11 | 12 | 13 |
+|---|---|---|---|---|
+| idealized ulp | 3.32 | 2.38 | **0.78** | 0.84 |
+| amplifier `max sum|c_k t^k| / |Q|` | 3.42 | 2.96 | 6.18 | 11.76 |
+
+10 -> 11 buys 28%, 11 -> 12 buys **3.1x**, and 13 measures worse after f32
+quantisation. A degree sweep that flattens and then falls off a cliff is
+not the usual shape, which is presumably why the first sweep stopped: two
+consecutive small steps read as saturation.
+
+Measured end to end (scipy `ndtri`/`erfcinv`/`erfinv` as the reference,
+f32 grid strided by 128, so the same points before and after):
+
+| | avg before | avg after | max before | max after |
+|---|---|---|---|---|
+| `erfinv` | 0.3973 | 0.3925 | 5.0727 | **3.6714** |
+| `erfinv`, tail arm only | 1.5990 | **0.5895** | 5.0727 | 3.6714 |
+| `erfc_inv` | 0.8680 | 0.7199 | 5.8861 | **4.5009** |
+| `probit` | 0.9444 | 0.8003 | 7.0831 | **4.9831** |
+
+llvm-mca, +2 `fma` per call landing on three functions:
+
+| region | instrs | uOps | BlockRT | cyc/unit |
+|---|---|---|---|---|
+| `erfinv_throughput` | 165 -> 173 | 193 -> 206 | 45 -> 47 | 3.930 -> 4.314 |
+| `erfc_inv_throughput` | 214 -> 219 | 275 -> 283 | 59 -> 61 | 6.166 -> 6.473 |
+| `probit_throughput` | 221 -> 223 | 283 -> 289 | 61 -> 63 | 7.167 |
+| `erfinv_latency` | 5506 -> 5698 | | 1408 -> 1472 | 47.870 -> 46.973 |
+| `erfc_inv_latency` | 7173 -> 7365 | | 1824 -> 1888 | 110.845 -> 111.861 |
+
++2 Block RThroughput on each (+3.3 to +4.4%), as the "degree bump costs
+real" rule predicts. Taken because 25-30% of the max on three functions is
+worth 4%.
+
+### Where the rest of it is, measured rather than guessed
+
+Same probe, after the bump, split by branch. This is the map the next
+attempt should start from:
+
+| | avg | max |
+|---|---|---|
+| `erfinv` central (gets `x` exactly) | 0.392 | 2.66 |
+| `erfc_inv` central (`x = fl(1-n)`) | 0.715 | 3.60 |
+| `probit` central (`+ sqrt(2)*`) | 0.737 | **4.98** |
+| `erfinv` tail | 0.590 | 3.67 |
+| `erfc_inv` tail | 0.720 | 4.50 |
+| `probit` tail | 0.801 | 4.59 |
+
+So `probit`'s binding term is no longer the tail at all -- it is the
+central arm, and the two steps that get it there are both *chain*, not
+fit: forming `x = 1.0 - n` costs 2.66 -> 3.60 (one bit, since `n < 0.5`
+puts `x` on a coarser grid than `n`), and the outer `sqrt(2)*` costs
+3.60 -> 4.98.
+
+### `erfinv_central_poly` has no headroom at all -- do not refit it
+
+Screened the same way, over `u = x^2` in `[0, 0.49]`, ulp-weighted, LP +
+descent:
+
+| coefficients | 9 (shipped) | 9 refit | 11 | 12 |
+|---|---|---|---|---|
+| idealized ulp | **0.464** | 0.504 | 0.504 | 0.677 |
+
+The shipped nine are already *better* than anything the same machinery
+produces at any degree, and the unquantised LP optimum at 11 coefficients
+is 0.0017 ulp -- i.e. the fit has been irrelevant here for a long time and
+f32 coefficient quantisation is the entire floor. The amplifier is 1.006,
+so there is nothing to win by changing variable either. The central arm's
+2.66-4.98 is chain rounding, full stop.
+
+## `probit`: folding `sqrt(2)` into the tail's own sqrt (IDEAS #181) -- real, then superseded
+
+`probit(p) = -sqrt(2)*erfc_inv_half(2p)`, and on the tail arm
+`sqrt(2)*sqrt(w)*Q` is `sqrt(2w)*Q` with **`2*w` exact**, so the scale can
+ride the sqrt the combine already performs: one rounding instead of two
+plus `fl(sqrt 2)`'s 0.287-ulp-low bias. The polys still want the unscaled
+`v = sqrt(w)`, which becomes `t = fma(vc, 1/sqrt2, -1)` -- the same
+instruction count as `v - 1`, with the constant's error landing on a
+polynomial argument whose relative sensitivity `|v Q'/Q|` is at most 0.064
+(0.052 far arm), so 0.7 ulp of it comes out as 0.045.
+
+Implemented as a `const SQRT2: bool` generic on `erfc_inv_half`, with
+`erfinv`/`erfc_inv` instantiating `false` -- their four mca regions verified
+**byte-identical** to before, so the tiering costs the other two callers
+nothing.
+
+Measured **on the pre-degree-bump code**: `probit` avg 0.9444 -> 0.8825
+(-6.6%), max 7.0831 -> 6.7963 (-4.1%), for `probit_throughput` 221 -> 225
+instrs, 283 -> 286 uOps, Block RThroughput 61 -> 62 (+1.6%), and
+`probit_latency` -3.7%. A real but thin trade.
+
+**Then the tail poly's twelfth coefficient landed and it stopped paying.**
+`probit`'s max moved to the central arm (4.98 against the tail's 4.59), so
+folding the scale out of the *tail* now buys zero max ulp and only ~5% of
+the average, for the same +4 instructions. Not shipped.
+
+It becomes worth revisiting only as a package with the central arm --
+`sqrt(2) * x*P(x^2)` folded into a scaled, re-descended copy of
+`erfinv_central_poly` (0 extra ops there, 9 duplicated constants), which
+together would be 4.98 -> ~4.3. On its own it is dominated.
+
+Third instance of the "[re-stale-check cross-function deps]" pattern, and
+the first where a *win* went stale rather than a rejection: a change worth
+taking against one baseline was worth nothing against the next one landed
+30 minutes later. Measure the lever against the code you are actually
+shipping on, not the code the idea was written against.
+
+### The scaled central polynomial, already fitted
+
+So the next attempt does not have to redo it. `sqrt(2)*erfinv(x)/x` over
+`u = x^2` in `[0, 0.49]`, ulp-weighted against `probit`'s own grid, LP
+start from `sqrt(2) *` the shipped coefficients then descended over f32
+quantisation -- **0.1672 idealized ulp**, against 0.4643 for the unscaled
+poly on `erfinv`'s grid, i.e. the scaling is free (naive `sqrt(2)*c`
+rounded to f32 without a descent is already 0.1923, so even that would
+do):
+
+    1.2533141, 0.3281154, 0.18047298, 0.12070113, 0.109420195,
+    -0.026161268, 0.37856013, -0.50125736, 0.4776894
+
+Caveat to check before believing the ~4.3: `probit`'s result is
+`sqrt(2)` times `erfc_inv`'s, so the same *relative* error lands on a
+different ulp grid -- 1.414x the ulp count where the binade does not
+change and 0.707x where it does. The 3.60 -> ~4.3 estimate assumes the
+max stays on a non-crossing sample, which is where it is today but is not
+guaranteed after the multiply comes out.
+
+### A strided estimate under-reports the max, on all three, every time
+
+The before/after table above is a *strided* f32 sweep (every 128th bit
+pattern) against scipy. The harness's exhaustive sweep, run afterwards on
+the same code, is worse on all three:
+
+| | strided-scipy max | exhaustive max |
+|---|---|---|
+| `erfinv` | 3.67 | **4** |
+| `erfc_inv` | 4.50 | **5** |
+| `probit` | 4.98 | **5** |
+
+That is the expected failure mode and not a contradiction -- a stride of
+128 walks past the worst bit pattern -- but it is worth writing down with
+numbers, because the gap is 9-11% and in the same direction every time. A
+strided scan with an independent oracle is a fine instrument for a *delta*
+(same points both sides, and the deltas here held up) and is not one for
+an absolute max. Quote the exhaustive row.
+
+Exhaustive before/after exists for `erfinv` only (0.3692 avg / 6 max ->
+0.3642 / 4); the earlier baseline run was killed after that first row, and
+`erfc_inv`/`probit` have exhaustive numbers on the new code only.
