@@ -273,23 +273,6 @@ macro_rules! exp_pos_neg_core {
     }};
 }
 
-// Pade approximant for e^v-1 near v=0 (an exact closed-form identity,
-// not an empirical fit), shared by expm1/exp_m1_over_x/exp2m1/tanh.
-// Two arms, not one: a macro invocation parses as one atomic expression,
-// so writing `v * pade_expm1_ratio!(v)` against a ratio-only macro would
-// silently reassociate `(v*N)/D` into `v*(N/D)` -- mathematically equal
-// but not bit-identical. The `mul` arm keeps `v * fma(N)` and the final
-// `/ fma(D)` inside one expansion so Rust precedence reproduces the
-// original left-to-right grouping exactly.
-macro_rules! pade_expm1_ratio {
-    ($v:expr) => {
-        fma(-1.9999927, $v * $v, -120.0) / fma($v, fma($v, $v - 12.000030, 59.999996), -120.0)
-    };
-    ($v:expr, mul) => {
-        $v * fma(-1.9999927, $v * $v, -120.0) / fma($v, fma($v, $v - 12.000030, 59.999996), -120.0)
-    };
-}
-
 // Shared by log_2/ln/log10: the denormal-rescale + special-case-select
 // wrapper around each caller's own `_normal` fn. Edge handling uses
 // selects (no early returns) so array loops auto-vectorize. `spec` is
