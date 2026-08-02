@@ -2408,68 +2408,75 @@ fn main() {
         report("fmod_checked", &s, t0);
     }
     if run("dawson") {
-        // No sleef bucket for Dawson's function, so the reference here is
-        // a real independent computation, not a round-trip: Simpson's-rule
-        // quadrature of the defining integral D(x) = x * integral_0^1
-        // exp(-x^2*(1-s^2)) ds for |x| <= 5 (N=800; measured against
-        // scipy.special.dawsn, its own relative error is <1e-11 out to
-        // x=2, 1.5e-8 (0.13 f32 ulp) at x=4 and 8.8e-8 (0.74 ulp) at the
-        // x=5 handover -- so it is a real reference below x~4, and adds
-        // up to ~1 ulp of its own noise in [4,5]),
-        // the literal double-factorial asymptotic series for |x| > 5 (15
-        // terms, converges to near f64 precision well before the series'
-        // own eventual divergence past its optimal truncation point).
-        let dawson_ref = |x: f64| -> f64 {
-            let ax = x.abs();
-            let mag = if ax <= 5.0 {
-                const N: usize = 800;
-                let h = 1.0 / N as f64;
-                let mut sum = (-ax * ax).exp() + 1.0;
-                for i in 1..N {
-                    let s = i as f64 * h;
-                    let f = (-ax * ax * (1.0 - s * s)).exp();
-                    sum += if i % 2 == 1 { 4.0 * f } else { 2.0 * f };
+        // No sleef bucket for Dawson's function, so the reference is a real
+        // independent computation:
+        //
+        //   |x| <= 7:  D(x) = exp(-x^2) * sum_n x^(2n+1)/(n!*(2n+1))
+        //   |x| >  7:  the double-factorial asymptotic series, 20 terms
+        //
+        // The series is **all-positive**, so nothing cancels anywhere in
+        // it -- the `exp(-x^2)` that undoes its growth is applied once, at
+        // the end. Measured against scipy.special.dawsn its relative error
+        // is <= 6.2e-16 at every x from 1e-5 to 10 (under 0.006 f32 ulp,
+        // everywhere), and the asymptotic arm is 0.0 relative at x = 7, 8,
+        // 10 and 20, so the handover at 7 is clean from both sides.
+        //
+        // It replaces an 800-point Simpson quadrature of the defining
+        // integral, which was accurate to <1e-11 out to x=2 but only
+        // 1.5e-8 at x=4 and 8.8e-8 (0.74 f32 ulp) at its own x=5 handover
+        // -- i.e. it carried ~1 ulp of its own noise across exactly the
+        // band where `dawson`'s max lives, and cost 800 `exp` calls per
+        // sample, which is why this row was a 2M-sample scalar loop with
+        // no `thorough` mode at all rather than a `measure!`. Both are
+        // fixed: the sum exits as soon as every lane has converged, and
+        // adjacent bit patterns need the same number of terms, so the
+        // vector rarely waits on a straggler.
+        let dawson_ref = |v: F64xN| -> F64xN {
+            let ax = v.abs();
+            let one = F64xN::splat(1.0);
+            // Series arm. `ax` is clamped so the huge-|x| lanes -- whose
+            // value is discarded -- cannot overflow the sum to `inf` and
+            // turn `exp(-inf) * inf` into a NaN.
+            let a = ax.simd_min(F64xN::splat(7.0));
+            let a2 = a * a;
+            let mut s = F64xN::splat(0.0);
+            let mut t = a;
+            for n in 0..200 {
+                // `* (1/k)` rather than `/ k`: the reciprocal is one scalar
+                // division per *term*, not one vector division per lane per
+                // term, and it is the difference between this row costing
+                // ~8s and ~77s. Its own error is a relative 1.1e-16 per
+                // step on an all-positive accumulation, i.e. under 1e-6 f32
+                // ulp after all 200.
+                let d = t * F64xN::splat(1.0 / (2 * n + 1) as f64);
+                s += d;
+                if !d.simd_gt(s * F64xN::splat(1e-19)).any() {
+                    break;
                 }
-                ax * (h / 3.0) * sum
-            } else {
-                let v = 1.0 / (ax * ax);
-                let mut term = 1.0;
-                let mut acc = 1.0;
-                for k in 1..=15 {
-                    term *= (2.0 * k as f64 - 1.0) * v * 0.5;
-                    acc += term;
-                }
-                acc / (2.0 * ax)
-            };
-            mag.copysign(x)
+                t = t * a2 * F64xN::splat(1.0 / (n + 1) as f64);
+            }
+            let series = exp_u10(-a2) * s;
+            // Asymptotic arm, on a floored `ax` for the same reason.
+            let b = ax.simd_max(F64xN::splat(7.0));
+            let z = one / (b * b + b * b);
+            let mut acc = one;
+            let mut term = one;
+            for k in 1..=20 {
+                term *= F64xN::splat((2 * k - 1) as f64) * z;
+                acc += term;
+            }
+            let asym = acc / (b + b);
+            // `+-inf` gives z = 0, acc = 1 and 1/inf = 0, which is
+            // dawson(+-inf) = 0. NaN needs its own arm rather than falling
+            // out: `simd_min`/`simd_max` follow IEEE minNum/maxNum and
+            // *drop* a NaN operand, so both arms come back finite for a NaN
+            // input and the row would score every NaN pattern as a
+            // non-finite blow-up.
+            let mag = ax.simd_le(F64xN::splat(7.0)).select(series, asym);
+            v.simd_ne(v).select(v, mag.copysign(v))
         };
-        let n_samples = 2_000_000u64;
-        let mut sum = 0u64;
-        let mut max = 0u64;
-        let mut worst = 0.0f32;
-        for _ in 0..n_samples {
-            let x = f32::from_bits(rand::rng().random::<u32>());
-            if !x.is_finite() {
-                continue;
-            }
-            let want = dawson_ref(x as f64) as f32;
-            let got = dawson(x);
-            let d = ulp_diff(got, want);
-            sum += d;
-            if d > max {
-                max = d;
-                worst = x;
-            }
-        }
-        println!(
-            "{:24} avg ulp {:>10.4}  max ulp {:>10}  worst x={:e} ({:>12} samples, {:>7.2}s elapsed)",
-            "dawson",
-            sum as f64 / n_samples as f64,
-            max,
-            worst,
-            n_samples,
-            t0.elapsed().as_secs_f64(),
-        );
+        let s = measure!(everywhere, dawson, dawson_ref);
+        report("dawson", &s, t0);
     }
 
     if run("identities") {

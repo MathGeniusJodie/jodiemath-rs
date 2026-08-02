@@ -8676,3 +8676,84 @@ Coefficients (degree 7, `c[0]` is the `s^0` term of `Q`):
   the floor is computable in one line before any fitting: `(f32(c) - c)/c`
   in the LP's own units. If a degree bump lands *on* that number, the
   extra degree is buying nothing and the LP producing it is degenerate.
+## `dawson`'s harness: the reference was the thing that could not be checked, and the row was never exhaustive
+
+2026-08-02. `dawson` was the last **1-arg** function in `accuracy.rs`
+scored by a hand-rolled scalar sampling loop instead of `measure!`, so it
+had no `thorough` mode at all -- its readme row carried the caveat
+"sampled, not exhaustive". The reason was the reference: an 800-point
+Simpson quadrature of `D(x) = x * integral_0^1 exp(-x^2(1-s^2)) ds`, i.e.
+800 `exp` calls per sample, which capped it at 2M samples (0.05% of the
+domain) and was *itself* only accurate to 1.5e-8 at `x = 4` and 8.8e-8
+(0.74 f32 ulp) at its `x = 5` handover -- ~1 ulp of reference noise
+across exactly the band `dawson`'s max lives in.
+
+**Replaced by an all-positive series**, which is both far more accurate
+and much cheaper:
+
+    |x| <= 7:  D(x) = exp(-x^2) * sum_n x^(2n+1) / (n! * (2n+1))
+    |x| >  7:  the double-factorial asymptotic series, 20 terms
+
+Nothing cancels anywhere in the sum -- the `exp(-x^2)` that undoes its
+growth is applied once, at the end -- so its relative error is just the
+summation's. Against `scipy.special.dawsn`: **<= 6.2e-16 at every x from
+1e-5 to 10** (under 0.006 f32 ulp) and **0.0** for the asymptotic arm at
+x = 7, 8, 10, 20, so the handover is clean from both sides.
+
+Three implementation notes, each a real bug on the way in:
+
+- **`simd_min`/`simd_max` drop NaN** (IEEE minNum/maxNum), so clamping
+  `|x|` for the two arms made *both* come back finite for a NaN input and
+  the row scored every NaN pattern as a non-finite blow-up (0.39% of
+  samples, `max ulp 18446744073709551615`). NaN needs its own explicit
+  arm.
+- **`/ (2n+1)` is a vector division per lane per term.** Hoisting it to
+  `* (1.0/(2n+1))` -- one scalar division per term -- took the quick row
+  from 77s to 18s. Its own error is a relative 1.1e-16 per step on an
+  all-positive accumulation, under 1e-6 f32 ulp after all 200 terms.
+- The clamps also stop the discarded arm overflowing: without
+  `min(ax, 7)` the sum reaches `inf` for large `|x|` and `exp(-inf)*inf`
+  is NaN.
+
+### What the exhaustive pass then said: the old number was right, and one ulp light
+
+| | avg ulp | max ulp | worst x |
+|---|---|---|---|
+| old row, 2M samples, Simpson reference | 0.059 | 5 | -- |
+| **exhaustive, all 2^32 patterns, series reference** | **0.0581** | **6** | 1.4041231 |
+
+495s for the whole domain, i.e. cheaper than the 2M-sample loop it
+replaces. So the sampling was not hiding anything structural -- but the
+max was understated by one, and that one is exactly the reference noise
+the old comment described.
+
+### Where the remaining 6 ulp sits, so the next attempt does not re-derive it
+
+Four-row decomposition over `[1e-3, 4)` at stride 4 (8.4M points),
+against the same series reference (this is the method the earlier dawson
+entry used, re-run on the current code):
+
+| what is being scored | avg | max |
+|---|---|---|
+| shipped f32 chain | 0.6595 | 5.694 |
+| the same rational in f64 from `fl(x*x)` | 0.4571 | 4.322 |
+| the same rational in f64 from an exact `x^2` | 0.4532 | 3.517 |
+| oracle `x * fl(dawsn(x)/x)` | 0.1332 | 1.293 |
+
+So of the 5.7: **~2.2 is the [6/6] fit**, ~0.8 is `u = fl(x*x)`, ~1.4 is
+the f32 evaluation chain, and ~1.3 is the irreducible `x * fl(R)` pair of
+roundings. The fit is still the largest single term but no longer
+dominant, which is why the earlier entry's "the frontier is flat" holds.
+
+### Rejected: a real-chain coordinate descent of the 12 free coefficients
+
+The lever that has worked repeatedly here -- descend the f32 coefficients
+against the *shipped chain* rather than against the idealised fit -- was
+run over `pc[1..6]`/`qc[1..6]`, +-8 ulp each, 6 passes, scored
+exhaustively at stride 16 over `[1e-4, 4]` (8.4M points), lexicographic
+on (max, avg). It converges after two passes to **max 5.481 -> 5.103
+(-6.9%) for avg 0.5536 -> 0.5753 (+3.9%)**: the same avg-for-max trade
+this file has now recorded 4/4 times for a max-objective refit of an
+already-tuned poly. Not shipped -- 7% of a max nobody is binding on, paid
+for in the average, on a poly whose degree was already chosen against a
+flat frontier.
