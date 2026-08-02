@@ -572,3 +572,68 @@ function's speed or accuracy directly; several unblock ideas above.
   endpoint. (Same shape as the two-word-constant rule: a polynomial
   tuned against one arrangement has already absorbed it, so changing
   the arrangement without refitting is not the same experiment.)
+
+## `dawson`'s max 6: the fit is losing 3x to *coefficient quantization*, not to degree
+
+Left open after the constant-peel landed (see graveyard.md). The chain is
+no longer the binding term: at both worst inputs (`x = 1.4041231` for the
+old form, `x = 1.4212224` for the shipped one) the rational evaluated in
+f64 from an exact `u` already scores **3 ulp on its own**. Getting the
+reported max under 6 therefore needs the fit under 3, and nothing about
+the evaluation order can do it.
+
+The numbers that make this a lead rather than a closed door are already
+in the `[6/6]` entry's own table:
+
+| | continuous minimax | after f32 quantization |
+|---|---|---|
+| `[6/6]` (shipped) | 1.25e-7 (2.09 ulp-eq) | **2.36** |
+| `[7/6]` | 6.45e-8 (1.08) | 3.07 |
+| `[7/7]` | -- | quantization-dominated |
+
+`[7/6]`'s *continuous* optimum is 1.08 ulp-equivalent -- roughly 3x
+better than what `[6/6]` ships -- and the entire gain is destroyed by
+rounding the coefficients to f32, which is why the search stopped at
+`[6/6]`. But that stop was on **independent** rounding of each
+coefficient plus a descent that was only run on `[6/6]`. A quantization
+descent over `[7/6]`/`[7/7]`'s larger coefficient space is the one thing
+that was never tried, and it is searching for ~3x of headroom that
+provably exists in the continuous problem. If it lands under ~2.0
+quantized, `dawson`'s max should follow.
+
+Two smaller ones from the same measurements:
+
+- **`u = fl(x*x)` costs one ulp of max in `[2,4)`** (fit alone 2, fit
+  plus `u`'s rounding 3) and ~0.02 avg overall. A double-`f32` `u` fixes
+  it but the polynomial then has to consume `u_hi + u_lo` on both sides,
+  which is not obviously worth one ulp on one octave -- price it only
+  after the fit is under 3, since it cannot be the binding term before.
+- **Folding the closing `x *` into the numerator's peel**
+  (`fma(x*u, A, x) / (1 + u*B)`) is accuracy-equivalent at the same op
+  count (central avg 0.5730 vs 0.5686 sampled) and was passed over on the
+  documented numerator/denominator-symmetry argument, *without* measuring
+  its codegen. If the symmetry rule is ever re-tested, this is a free
+  candidate sitting next to it.
+
+## `atan2pi`/`atan2`'s `x > 0` arm is division-limited
+
+After the half-turn fold landed, the `x > 0` half-plane's residual
+decomposes (20M samples of that arm) as:
+
+```
+new atan2pi total          avg 0.1177  max 3
+y/x rounding alone         avg 0.1011  max 1
+atanpi(q), q as given      avg 0.0289  max 3
+```
+
+**86% of it is the single `y/x` division's own rounding**, which no
+rearrangement of the quadrant fold can reach -- the fold work is done.
+The `x < 0` arm is at 0.0237 because adding an exact `+-1.0` puts the
+result in `[0.5, 1]` while `atanpi(q)` may be tiny, damping the
+quotient's relative error rather than exposing it.
+
+A two-word `y/x` is the only remaining lever, and it would apply
+identically to `atan2` (0.066) and `atan2d` (0.105), not just `atan2pi`.
+Not screened: the cost of a compensated division here is unpriced, and
+`compensated division reciprocal overflow` is a known trap on this exact
+shape (a standalone `1.0/x` can overflow for legitimate small `x`).
