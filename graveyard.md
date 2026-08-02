@@ -8311,3 +8311,53 @@ Incidental, and worth correcting in the record: an older note in this
 file quotes `norm_cdf`'s true exhaustive max as **295**. That predates
 the `erfcx_pos` rebuild; on current master the quick fuzz reports **8**
 (avg 0.0996), and `norm_pdf` 3 (avg 0.0269).
+
+## The reciprocal reorientation does **not** transfer to `dawson`, and the reason is the rule for when it does
+
+`tanh`'s entry above ships `x / D(x^2)` in place of a rational fitted to
+`tanh` itself, because the numerator is then `x`, carried exactly. Its
+"transferable" note names the candidate class as "any odd function whose
+series starts `x + O(x^3)` and that already divides". `dawson` is the
+first member of that class checked, and it fails -- so the note needs the
+sharper condition, which is this.
+
+`dawson(x) = x*P(u)/Q(u)`, `u = x^2`, degree 6/5, both leading
+coefficients pinned to `1.0`. Twelve coefficients, one division, one
+multiply. If `E(u) = x/dawson(x)` were a polynomial the whole numerator
+side would disappear: `dawson(x) = x / E(u)`, one polynomial and one
+division, cheaper *and* with `x` exact. `E` even looks friendly --
+smooth and near-linear, `E(0) = 1`, `E(16) = 30.92`, asymptotically
+`2u - 1`.
+
+Remez-LP minimax with `E(0)` pinned to `1.0`, verified on 400k points
+over `|x| <= 4` (`t = u/16` normalised, without which HiGHS fails
+outright above degree 6):
+
+| degree in `u` | max relative error |
+|---|---|
+| 6 | 60588 ulp |
+| 8 | 7736 ulp |
+| 10 | 2205 ulp |
+| 12 | 455 ulp |
+| 14 | 68 ulp |
+
+Against a shipped 6/5 rational whose fit is **2.8 ulp-equivalent for
+twelve coefficients**. Degree 14 is still 24x worse for two more. Not
+close, and not a tuning question.
+
+**The condition, which is what to check next time.** The reorientation
+works iff `x/f(x)` has no pole near the fit domain -- and its poles are
+exactly `f`'s *complex* zeros. For `tanh`: `x*coth(x)` has poles at
+`x = +-i*pi, +-2i*pi, ...`, distance `pi` from the origin, against a fit
+domain of `|x| <= 0.8`; the ratio 0.25 is why degree 4 in `x^2` suffices
+and why the coefficients decay. For `dawson`: `dawsn` has infinitely
+many complex zeros and the nearest ones are close relative to a domain
+that runs out to `|x| = 4`, so `E` is genuinely a rational and no
+polynomial degree rescues it. The shipped rational is not a stylistic
+choice.
+
+So the screen is one line before any fitting: **locate `f`'s nearest
+complex zero and compare it to the fit domain.** Real-axis behaviour says
+nothing -- `dawsn` is strictly positive on `(0, 4]` and `E` is smooth,
+monotone and bounded there, which is exactly what made this look like a
+free win.
