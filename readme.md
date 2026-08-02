@@ -72,7 +72,7 @@ logaddexp_checked (all f32)| 0.037 |  ~1e3-1e5, heavy-tailed (same cancellation,
                   asinh |    0.034   |     2     | 
                   acosh |    0.003   |     3     |  0.000  |    1
                   atanh |    0.004   |     2     | 
-                   asin |    0.019   |     5     |  0.000  |    0
+                   asin |    0.016   |     2     |  0.000  |    0
                    acos |    0.056   |     4     |  0.000  |    0
                    atan |    0.067   |     4     |  0.000  |    0
            atan_latency |    0.052   |     3     |  0.000  |    0
@@ -417,7 +417,7 @@ logaddexp_checked   |          73.35 |             2.506
 asinh               |          74.48 |             4.159
 acosh               |          97.88 |             3.948
 atanh               |         100.83 |             2.974
-asin                |          56.74 |             0.900
+asin                |          60.91 |             0.961
 acos                |          39.99 |             0.820
 atan                |          61.27 |             1.491
 atan_latency        |          61.99 |             1.591
@@ -451,7 +451,7 @@ the arms fuse into one artificial chain whenever the second reads a register
 the first clobbered. Worst offenders: `exp2m1` 80.00 against arms of
 37.00/48.00, `exp10m1` 112.00 against 37.00/80.00, `expm1_checked` 78.00
 against 32.00/51.00, `tanh` 63.00 against 45.00/62.00, `erf` 87.00 against
-44.00/65.98, `asin` 56.74 against 26.99/40.99, `acosh` 97.88 against
+44.00/65.98, `asin` 60.91 against 34.99/36.99, `acosh` 97.88 against
 51.08/82.02. The opposite failure also happens: where both arms write the
 same register and the *cheap* one is laid out last, mca times the cheap one
 -- `asinh` publishes 74.49 where its real in-domain chain is **84.02**.

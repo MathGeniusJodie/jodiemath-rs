@@ -4273,23 +4273,31 @@ fn acos_poly(x: f32) -> f32 {
     fma(u, x, 1.5707964)
 }
 
-/// Dedicated asin-only copy of `acos_poly`'s shape (same 7-coefficient
-/// Horner form, same `sqrt(1-x)*poly` combine, independently tuned),
-/// decoupling asin from acos's protected coefficients: every joint refit
-/// attempt died protecting acos's accuracy (see graveyard.md §asin/acos), so
-/// not sharing coefficients means acos can't regress no matter what this
-/// poly converges to. Fit against `acos(x)/sqrt(1-x)` restricted to
-/// asin's actual domain for this branch, `x` in `[0.25, 1)` -- the
-/// narrower domain is exactly the freedom the joint fits couldn't use.
+/// Dedicated asin-only copy of `acos_poly`'s shape (same Horner form,
+/// same `sqrt(1-x)*poly` combine, independently tuned), decoupling asin
+/// from acos's protected coefficients: every joint refit attempt died
+/// protecting acos's accuracy (see graveyard.md §asin/acos), so not
+/// sharing coefficients means acos can't regress no matter what this poly
+/// converges to. Fit against `acos(x)/sqrt(1-x)` restricted to asin's
+/// actual domain for this branch -- the narrower domain is exactly the
+/// freedom the joint fits couldn't use.
+///
+/// Six coefficients, one fewer than `acos_poly`: that domain is now
+/// `[0.5, 1)` rather than `[0.25, 1)`, which is a real licence and not a
+/// rounding of one. Degree 5 (ulp-weighted LP, then coordinate-descended
+/// over the f32 grid) measures max 2 / avg 0.324 through the real chain
+/// over every f32 in `[0.5, 1)`, against the degree-6 predecessor's max 2
+/// / avg 0.360 on the same inputs -- better on both axes with a term
+/// removed, because the term was paying for `[0.25, 0.5)`, which the
+/// small branch now owns.
 #[inline(always)]
 fn asin_poly(x: f32) -> f32 {
-    let u = 1.3137129e-3f32;
-    let u = fma(u, x, -7.664533e-3);
-    let u = fma(u, x, 2.2003133e-2);
-    let u = fma(u, x, -4.5330178e-2);
-    let u = fma(u, x, 8.745548e-2);
-    let u = fma(u, x, -2.1434246e-1);
-    fma(u, x, 1.5707785)
+    let u = -2.0342327e-3f32;
+    let u = fma(u, x, 1.20692495e-2);
+    let u = fma(u, x, -3.609505e-2);
+    let u = fma(u, x, 8.2684554e-2);
+    let u = fma(u, x, -2.1304381e-1);
+    fma(u, x, 1.5706329)
 }
 
 /// acos(x), domain x in [-1,1] (result always in `[0,pi]`, never negative --
@@ -4362,58 +4370,83 @@ pub fn acospi(x: f32) -> f32 {
     mulsign(y, x + 0.0) + if x < 0.0 { 1.0 } else { 0.0 }
 }
 
-// Odd approximation asin(x) ~ x * P(x^2), degree 3 in x^2, on |x| < 0.25.
+// Odd approximation asin(x) ~ x * P(x^2), degree 5 in x^2, on |x| < 0.5.
 // The leading coefficient is pinned to exactly 1.0 so tiny x returns x
-// (its correctly-rounded asin). The other three are a minimax refit over
-// [0, 0.25], *not* the odd Taylor series (1/6, 3/40, 15/336): Taylor is
-// optimal only at x=0 and leaves the worst case at the 0.25 edge (where
-// the next Taylor term is ~4.6e-7 relative), while an equal-degree minimax
-// fit spreads that error for a lower max ulp at identical op count. Nearer
-// |x|=1 the series would converge slowly (asin's sqrt singularity), so the
-// other branch takes over there. See graveyard.md §asin/acos/atan.
+// (its correctly-rounded asin). The other five are an ulp-weighted minimax
+// over [0, 0.5], *not* the odd Taylor series (1/6, 3/40, 15/336, ...):
+// Taylor is optimal only at x=0 and leaves the worst case at the far edge,
+// while an equal-degree minimax spreads that error at identical op count.
+//
+// The degree and the 0.5 edge are one decision, and it is `asin`'s own
+// doc comment that motivates it -- this branch is cheap and exact where
+// the other one cancels, so it should cover as much as it can afford to.
+// Degree 5 is what "as far as 0.5" costs, and it is not the ~12 terms an
+// equal-accuracy *Taylor* series would want: the minimax over [0, 0.5]
+// measures 0.081 ulp-equivalent at degree 5, against 1.49 at degree 4 and
+// 29.2 at today's degree 3. Nearer |x| = 1 the series would converge
+// slowly whatever the degree (asin's sqrt singularity), which is what
+// stops this branch from swallowing the other one entirely.
+// See graveyard.md §asin/acos/atan.
 #[inline(always)]
 fn asin_small(x: f32) -> f32 {
     let x2 = x * x;
     let c0 = 1.0f32;
-    let c1 = 0.166666746f32;
-    let c2 = 0.074942857f32;
-    let c3 = 0.0474379882f32;
-    let p = fma(fma(fma(c3, x2, c2), x2, c1), x2, c0);
+    let c1 = 0.16666752f32;
+    let c2 = 0.074952975f32;
+    let c3 = 0.04547038f32;
+    let c4 = 0.02417949f32;
+    let c5 = 0.042166352f32;
+    let p = fma(fma(fma(fma(fma(c5, x2, c4), x2, c3), x2, c2), x2, c1), x2, c0);
     x * p
 }
 
 /// Two branches, both computed unconditionally and selected (branchless,
-/// auto-vectorizes): a dedicated odd minimax poly below
-/// `|x| < 0.25` (see asin_small), and `asin(x) = pi/2 - acos(x)` above
-/// it, via acos's own well-conditioned `sqrt(1-a) * poly(a)` formula (a
-/// shrinking sqrt factor times a smooth bounded poly -- and
-/// `pi/2 - acos(a)` doesn't cancel either, since acos(a) is small
-/// exactly where pi/2 is O(1); near x=0 that difference IS catastrophic
-/// cancellation, which is what the small branch exists to avoid). Sign
-/// restored via `mulsign` (asin is odd). The poly is a dedicated
-/// `asin_poly`, decoupled from acos's coefficients -- see its doc
-/// comment. The crossover sits at 0.27, not 0.25 (asin_small's own fit
-/// domain) -- after asin_small's minimax refit tightened its branch, the
-/// worst case moved to just above the old 0.25 boundary, still inside
-/// asin_small's error curve at that point, so shifting the boundary
-/// (coefficients untouched) covers it with the small branch instead.
+/// auto-vectorizes): a dedicated odd minimax poly below `|x| < 0.5` (see
+/// asin_small), and `asin(x) = pi/2 - acos(x)` above it, via acos's own
+/// well-conditioned `sqrt(1-a) * poly(a)` formula (a shrinking sqrt
+/// factor times a smooth bounded poly -- and `pi/2 - acos(a)` doesn't
+/// cancel either, since acos(a) is small exactly where pi/2 is O(1);
+/// near x=0 that difference IS catastrophic cancellation, which is what
+/// the small branch exists to avoid). Sign restored via `mulsign` (asin
+/// is odd). The poly is a dedicated `asin_poly`, decoupled from acos's
+/// coefficients -- see its doc comment.
+///
+/// **The crossover is `0.5` and that is where all of this function's
+/// accuracy lives.** "Doesn't cancel" above is a statement about the
+/// asymptotics, not about the whole branch: just above `0.5` the big
+/// branch subtracts `1.209` from `pi/2` to get `0.524`, a ~2.3x
+/// amplification of the product's own rounding, and that grows to ~4.7x
+/// by `a = 0.27`. `1.0 - a` is inexact there too -- Sterbenz makes that
+/// subtraction exact only from `a >= 0.5` up. Both defects end at the
+/// same `0.5`, and both were entirely responsible for asin's error: with
+/// the old `0.27` crossover, every one of the 621495 inputs scoring
+/// `>= 3` ulp had `a` in `[0.27, 0.4997]`, and the big branch measured
+/// max 2 over the whole of `[0.5, 1)`. So the fix is to hand that window
+/// to the small branch, which has no cancellation at all, rather than to
+/// refit anything: max ulp **5 -> 2**, avg **0.0188 -> 0.0158**,
+/// exhaustive over all 2^32 patterns.
 ///
 /// The big branch is one `fma`, not a multiply and a subtract: the
-/// product `sqrt(1-a)*P(a)` is ~4x larger than the difference it feeds
-/// just above the crossover (1.297 against 0.274), so rounding it to
-/// f32 first costs ~2 ulp of the *result*. `fma` rounds once, at the
-/// result's own magnitude, and is a whole instruction cheaper than the
-/// `vmulps`/`vsubps` pair it replaces. Current: max ulp 5, avg 0.019
-/// (exhaustive). An earlier three-branch design with a rational
-/// mid-branch was strictly worse -- see IDEAS.md §asin/acos for that
-/// history and the rejected refit variants.
+/// product `sqrt(1-a)*P(a)` is larger than the difference it feeds, so
+/// rounding it to f32 first costs ~2 ulp of the *result*. `fma` rounds
+/// once, at the result's own magnitude, and is a whole instruction
+/// cheaper than the `vmulps`/`vsubps` pair it replaces.
+///
+/// Price of the crossover move, mca: +2 fma in `asin_small` and -1 in
+/// `asin_poly` (whose domain narrowed with it), so instrs 55 -> 58, uOps
+/// 60 -> 64, Block RThroughput 13 -> 14, throughput 0.900 -> 0.961
+/// cyc/elem (+6.8%). Latency *improves*: the two arms in isolation
+/// (`tools/mca_arms.py`, since llvm-mca's published latency for a
+/// branch-shaped region is neither arm) go 26.99 -> 34.99 on the small
+/// side and 40.99 -> **36.99** on the big one, and the big arm is the
+/// binding one both before and after.
 #[doc(alias = "asinf")]
 #[inline(always)]
 pub fn asin(x: f32) -> f32 {
     let a = x.abs();
     let small = asin_small(x);
     let big = mulsign(fma(-(1.0 - a).sqrt(), asin_poly(a), FRAC_PI_2), x);
-    if a < 0.27 { small } else { big }
+    if a < 0.5 { small } else { big }
 }
 
 // 180/pi as a double-f32, for the radians-to-degrees composites: HI+LO

@@ -373,10 +373,10 @@ asin 7f7fffff ffc00000
 asin ff7fffff 7fc00000
 asin 3e800000 3e815f4e
 asin be800000 be815f4e
-asin 3e8a3d71 3e8bfa2d
-asin be8a3d71 be8bfa2d
-asin 3e8f5c29 3e914d74
-asin be8f5c29 be914d74
+asin 3e8a3d71 3e8bfa2c
+asin be8a3d71 be8bfa2c
+asin 3e8f5c29 3e914d76
+asin be8f5c29 be914d76
 asin 3f000000 3f060a92
 asin bf000000 bf060a92
 asin 3f266666 3f352440
@@ -405,7 +405,7 @@ asin c32a0000 7fc00000
 asin 42b2cccd ffc00000
 asin c2b2cccd 7fc00000
 asin 3f7719b7 3fa73653
-asin becc5ca5 bed237fe
+asin becc5ca5 bed237fd
 asin bd6d4a21 bd6d6c28
 asin 34ddb3d9 34ddb3d9
 asin 460be628 ffc00000
@@ -463,10 +463,10 @@ asind 7f7fffff ffc00000
 asind ff7fffff 7fc00000
 asind 3e800000 4167a3e3
 asind be800000 c167a3e3
-asind 3e8a3d71 417aa0d8
-asind be8a3d71 c17aa0d8
-asind 3e8f5c29 418214e4
-asind be8f5c29 c18214e4
+asind 3e8a3d71 417aa0d6
+asind be8a3d71 c17aa0d6
+asind 3e8f5c29 418214e6
+asind be8f5c29 c18214e6
 asind 3f000000 41f00000
 asind bf000000 c1f00000
 asind 3f266666 42222a99
@@ -495,7 +495,7 @@ asind c32a0000 7fc00000
 asind 42b2cccd ffc00000
 asind c2b2cccd 7fc00000
 asind 3f7719b7 4295b237
-asind becc5ca5 c1bc3295
+asind becc5ca5 c1bc3294
 asind bd6d4a21 c0548d3a
 asind 34ddb3d9 37c67a7a
 asind 460be628 ffc00000

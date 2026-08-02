@@ -8757,3 +8757,103 @@ this file has now recorded 4/4 times for a max-objective refit of an
 already-tuned poly. Not shipped -- 7% of a max nobody is binding on, paid
 for in the average, on a poly whose degree was already chosen against a
 flat frontier.
+
+## `asin`: the crossover was the whole defect; 5 -> 2 max ulp, and the big poly loses a term
+
+`asin`'s error was not distributed. With the `0.27` crossover, **every one
+of the 621495 f32 scoring >= 3 ulp had `a = |x|` in `[0.27, 0.4997]`**, and
+the big branch measured max 2 over the entire rest of its domain:
+
+```
+a in [0.27,0.3)  max 5  avg 1.189      a in [0.5,0.7)  max 2  avg 0.505
+a in [0.3,0.4)   max 5  avg 1.169      a in [0.7,0.9)  max 2  avg 0.276
+a in [0.4,0.5)   max 5  avg 1.040      a in [0.9,1.0)  max 1  avg 0.238
+```
+
+Two things end at exactly `0.5` and both were in that window. The big
+branch is `pi/2 - sqrt(1-a)*P(a)`, whose subtraction amplifies the
+product's rounding by `|sqrt(1-a)*P(a)| / asin(a)` -- 2.3x at `a = 0.5`,
+4.7x at `0.27`. And `1.0 - a` is itself inexact below `0.5`; Sterbenz makes
+that subtraction exact only from `a >= 0.5` up. So the fix is not to refit
+the big poly, it is to stop calling it there.
+
+**Shipped: crossover 0.27 -> 0.5, `asin_small` degree 3 -> 5 in `x^2`,
+`asin_poly` degree 6 -> 5.** Exhaustive over all 2^32 patterns:
+
+```
+              avg ulp            max ulp
+asin      0.0188 -> 0.0158       5 -> 2
+asind     0.0222 -> 0.0195       9 -> 4
+asinpi    0.0159    unchanged    5    unchanged   (control: own polys)
+```
+
+mca, all rungs agreeing: instrs 55 -> 58, uOps 60 -> 64, Block
+RThroughput 13 -> 14, throughput 0.900 -> 0.961 cyc/elem (+6.8%). Latency
+*improves*, which the published column cannot show -- via
+`tools/mca_arms.py`, the small arm goes 26.99 -> 34.99 and the big arm
+40.99 -> **36.99**, and the big arm binds on both sides, so the published
+fused 56.74 -> 60.91 is the usual two-arm concatenation artifact and not a
+regression.
+
+### The two beliefs this had to get past, and why both were wrong
+
+- **"Extending `asin_small` needs ~12 terms to reach 0.5"** (this file,
+  in the entry rejecting a mid-range third branch). That is the *Taylor*
+  series' convergence, and asin's decays by only `x^2` per term. An
+  ulp-weighted minimax over `[0, 0.5]` needs **degree 5**: 0.081
+  ulp-equivalent idealized, against 1.49 at degree 4 and 29.2 at the
+  shipped degree 3. The same entry priced the alternative (a third,
+  mid-range branch) at "a whole extra poly evaluated unconditionally plus
+  a select" and rejected it on cost -- correctly, but the cheaper
+  restructuring was never priced.
+- **"One more term in `asin_small` costs +7.9% throughput"** (this file,
+  a separate entry, and it was measured). Two more terms cost +14.2% on
+  their own -- but the crossover move *narrows `asin_poly`'s domain to
+  `[0.5, 1)`*, and that is a real licence: degree 5 there, ulp-weighted LP
+  then coordinate-descended over the f32 grid, measures **max 2 / avg
+  0.324** through the real chain over every f32 in `[0.5, 1)`, against the
+  degree-6 predecessor's **max 2 / avg 0.360** on the same inputs. Better
+  on both axes with a coefficient removed, because that coefficient was
+  paying for `[0.25, 0.5)`. Net +1 fma, not +2.
+
+### The oracle screen, recorded because it points somewhere else
+
+Before any of the above, the real chain was scored over all 16106127 f32
+in `[0.27, 1)` with `P` replaced by a correctly-rounded oracle:
+
+```
+shipped poly                          max 5  avg 0.722
+oracle P = fl(acos(a)/S)              max 4  avg 0.995
+oracle P = fl((fl(pi/2) - asin(a))/S) max 2  avg 0.472
+```
+
+The gap between the two oracles is `fl(pi/2)`'s own representation error,
+`4.371e-8`, which is **1.47 ulp of the result at `a = 0.27`** and 0.37 at
+`a -> 1`; the fit target `acos(a)/sqrt(1-a)` does not contain it, so a
+perfect fit to that target cannot beat max 4. Two consequences worth
+carrying:
+
+- Any future `asin_poly` refit must target `(fl(pi/2) - asin(a))/sqrt(1-a)`,
+  not `acos(a)/sqrt(1-a)`. This is very likely why this file's earlier
+  "ulp-weighted minimax refit of `asin_poly`" measured **max 8** through
+  the real chain: the LP was solving for the wrong function.
+- Do **not** "fix" it by adding a `PI_2_LO` correction term. Measured:
+  `+ PI2_LO` after the fma takes the shipped chain from max 5 to **max 6**
+  (avg 0.722 -> 1.135), and a hypothetical exactly-rounded `pi/2` inside
+  the fma gives max 6 / avg 1.154. The shipped coefficients were
+  real-chain coordinate-descent tuned and had already absorbed most of the
+  bias; removing it explicitly breaks that compensation without replacing
+  it.
+
+The corrected-target LP also has a floor: `(fl(pi/2) - asin(a))/sqrt(1-a)`
+carries a `4.371e-8/sqrt(1-a)` singularity at `a = 1` that no polynomial
+tracks, and it pins the idealized minimax at **0.3658 ulp-equivalent for
+every degree >= 5**. That is exactly `4.371e-8 / ulp(pi/2)`, i.e. the bias
+itself, and it is why degree 6 buys nothing over degree 5 on `[0.5, 1)`.
+
+### Still open, same shape
+
+`asinpi` has the identical construction and the identical `0.27`
+crossover, and its exhaustive worst case is at `x = 0.27000788` -- max 5,
+unchanged by this work because it has its own `asinpi_small`/`asinpi_poly`
+pair. It is a different domain; nobody held it at the time.
