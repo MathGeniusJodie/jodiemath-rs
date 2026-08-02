@@ -9336,3 +9336,199 @@ it comes back **0.0760 / max 2** exhaustively, so that row was stale on
 *both* columns and is now 0.076 / 2. `cos_fast (|x|<2^22*pi)`'s avg went
 0.291 -> 0.288 in the same run; its 2780 max reproduced exactly, as did
 `cos (in-domain)` 0.0833/2 and `cos_fast (|x|<=1e6)` 0.0779/3.
+knowing before scripting a filtered run). Its max is untouched at 3: quick
+mode found 2, and quick's max is a lower bound, so it proves nothing.
+## `sin_wide`/`cos_wide`: the pi reduction that has no magnitude limit, and what the gather really costs
+
+2026-08-02. **The worst number in this crate was `sin_checked`/`cos_checked`
+over their own advertised domain.** `accuracy quick` reports
+
+```
+sin_checked (all f32)     avg ulp 314265980.5   max ulp 2130706432
+cos_checked (all f32)     avg ulp 319625290.3   max ulp 2130706432
+```
+
+and `2130706432` is not a coincidence -- it is `2 * 0x3f800000`, the ulp
+distance from `+1.0` to `-1.0`, i.e. the *worst a bounded output can be*.
+Past `2^51*pi` those two return a value in `[-1, 1]` with no relationship
+to `sin(x)`, and the `.clamp(-1.0, 1.0)` that keeps the row finite is
+exactly what stops it being obvious.
+
+`sin_checked`'s own doc comment said of that region "**nothing can** [fix
+the accuracy] -- an f32's own ulp there is ~5e8 radians", and graveyard.md
+said the same thing more precisely: "cannot be improved without a
+table-indexed Payne-Hanek (bits of `1/pi` selected by `x`'s exponent) ...
+and a table lookup is a gather, **which is the one thing this crate's
+auto-vectorized scalar style cannot absorb**." Both halves are wrong. The
+first confuses "the input's neighbours are far apart" with "the answer for
+*this* input is unknowable" -- `x` is an exact dyadic rational and
+`sin(x)` is a well-defined number, which is why glibc gets it right. The
+second was never measured.
+
+**Shipped: `sin_wide`/`cos_wide`.** `accuracy thorough`, exhaustive over
+every f32 bit pattern:
+
+```
+sin_wide (all f32)        avg ulp 0.1269   max ulp 2
+cos_wide (all f32)        avg ulp 0.1501   max ulp 2
+```
+
+### The identity that makes it a fixed-size problem
+
+An f32 is `m * 2^E` for a **24-bit integer** `m`, so
+
+```text
+x/pi mod 2 = (m * beta(e)) mod 2,     beta(e) = (2^E / pi) mod 2
+```
+
+because `m * floor(2^E/pi)` is an integer whose parity `beta`'s own bit 0
+already carries. `x/pi` -- the only unbounded quantity in the problem --
+is never formed. `beta(e)` is tabulated per raw biased exponent (256 rows,
+denormal row included) as three `f64` words of **29 / 53 / 53
+significant** bits, which names it to a relative `2^-135` at every
+magnitude; `m * beta` then needs 24 + 135 bits of which the low ~110 are
+kept. Fixed budget, no dependence on `|x|`.
+
+Three details that are the whole correctness argument:
+
+- **29 bits in word 0, not 53.** `m` is 24 bits, so `m * a0` is exact at
+  24 + 29 = 53, which makes `p0 - round(p0)` an exact peel of the integer
+  part with no error-free transform. A 53-bit word 0 would need a
+  `two_prod` there.
+- **Significant bits, not fixed bit positions.** A fixed-position split
+  (bits 0..-28, -29..-81, ...) is cheaper downstream -- `f0 + p1` becomes
+  exact and the `two_sum` disappears -- but every word is zero once
+  `beta` is small, i.e. for every `|x|` below ~0.125, which then needs a
+  bypass branch. Significant-bit splitting is uniform over all 256 rows
+  including denormals and needs no bypass at all.
+- **The `2^(150-e)` scale is folded into every word**, so the chain
+  multiplies `|x|` itself and never reconstructs `m`. An exact
+  power-of-two pre-scale, and it removes an exponent-field build, a widen
+  and a multiply from the hot path. It also makes the denormal row fall
+  out for free: a denormal's absent implicit bit just makes `|x|` a
+  23-bit integer instead of 24.
+
+The parity is `n0 + n1`, two small exact integers, so `ROUND_MAGIC64`'s
+`2^51` window -- the thing `reduce_pi64` actually falls off -- cannot
+apply. Verified against exact rationals (900-bit Machin `pi`, `Fraction`
+arithmetic): **0 parity mismatches and worst relative error `2^-53.00` on
+the reduced fraction**, over 120000 random `(e, m)` pairs spanning every
+exponent from the denormal row to `e = 254`. `2^-53` is the final
+`fc + ec` add, i.e. one rounding of the answer itself -- nothing else in
+the reduction is inexact.
+
+### The gather: 3.2x throughput, 11% latency
+
+| region | `_checked` | `_wide` | delta |
+|---|---|---|---|
+| `sin` throughput | 2.495 | **8.045** | +222% |
+| `cos` throughput | 3.157 | **9.299** | +195% |
+| `sin` latency | 82.00 | **91.05** | +11.0% |
+| `cos` latency | 87.00 | **99.06** | +13.9% |
+
+Latency is nearly free -- three gathers plus a wider chain add 9 cycles to
+one that is already 82 deep, because the gathers issue early and the table
+words are not on the critical path. (An earlier draft of this entry
+claimed **+1.3%**, from measuring a clamp-less `sin_wide` against a
+clamped `sin_checked`: the `.clamp` is two `vminps`/`vmaxps` at the very
+end of a serial chain and is worth 8 cycles on its own. Compare tiers with
+the same tail.)
+
+Throughput is not free, and **the gathers themselves are not the
+reason**, which is the transferable part:
+
+```
+llvm-mca Block RThroughput, one instruction:
+  vgatherdpd (%rax,%xmm2,8), %ymm0 {%k1}   2.0   (4 doubles)
+  vgatherdpd (%rax,%ymm2,8), %zmm0 {%k1}   4.0   (8 doubles)
+  vpgatherdd/vpgatherqd                    4.0
+  vpermi2q                                 1.0
+  vfmadd231pd %zmm                         1.0
+```
+
+At 12 gathers per 16 elements that is 24 of the region's 66 Block
+RThroughput. The other 42 is that **LLVM drops the vectorization factor
+from 8 to 4 the moment an `f64` gather appears** -- `sin_checked`
+vectorizes f32 in `ymm` and f64 in `zmm`, `sin_wide` falls back to `xmm`
+/`ymm`, so *every arithmetic op in the whole function* costs twice as much
+per element. Three measurements isolate it:
+
+| variant | VF | cyc/elem |
+|---|---|---|
+| `sin_checked` (baseline) | 8 | 2.495 |
+| `sin_wide`, table index replaced by a constant (no gather) | 8 | **3.286** |
+| `sin_wide`, `[u32; 256]` probe tables (32-bit gather) | 8 | **5.022** |
+| `sin_wide` as shipped, `[f64; 256]` tables | **4** | 7.540 |
+
+(the three probe rows are clamp-less, so they are comparable to each other
+and to `sin_wide`'s own 7.540 at that time, not to the shipped 8.045.)
+
+So the reduction's *arithmetic* is only +32% over the baseline, a 32-bit
+gather keeps VF = 8, and the shipped 3.0x is mostly a codegen cliff rather
+than the algorithm. **Reducing the gather count does not move it** -- two
+`f64` gathers instead of three measured 7.539, identical to three.
+
+Left open with a measured target rather than taken, because it is a real
+rewrite: `[u32; 256]` tables of 29-bit chunks at *fixed* bit positions
+(the thing the shipped version deliberately avoids) would keep VF = 8, but
+they need the `|x| < 0.25` bypass back, a `2^(150-e)` scale rebuild, and
+four gathers instead of three to reach the same precision. The probe above
+puts the ceiling at ~5.5 cyc/elem, i.e. **8.05 -> ~5.5**, against a
+baseline of 2.495. Anyone taking it should re-measure the probe first.
+
+### Kept as a separate tier, not a replacement
+
+Neither dominates: `sin_checked` is 3x cheaper in throughput and correct
+for every `|x|` a bounded caller will ever produce; `sin_wide` is correct
+everywhere. `tan_wide` is *not* shipped -- `tan_checked` calls the
+reduction twice, so it would pay the gathers twice, and no measurement
+was made.
+
+### The `.clamp(-1, 1)` survives an exact reduction, and the reason is not the reduction
+
+Worth recording because the argument for dropping it is completely
+convincing and completely wrong. `sin_checked`/`cos_checked` clamp because
+their reduction can hand `sinf_poly` a residual of ~1000, and a degree-9
+poly evaluated there is ~2.6e21 -- a real `|sin(x)| <= 1` violation for
+ordinary finite input. `sin_wide`'s reduction is exact, so `|r| <= pi/2`
+by construction and that mechanism cannot fire. The clamp was dropped on
+exactly that reasoning.
+
+An exhaustive `|result| <= 1` scan over all 2^32 patterns then found
+**2726588 violations, worst `1.0000001`**: `sinf_poly` is a minimax fit of
+`sin` near its own maximum and has no reason to stay under it. Every
+pinned `edgecheck` value passed, `special_matrix` passed, and the ulp rows
+cannot see it (1 ulp above 1.0 is a 1-ulp error, not an outlier). Two
+transferable points: **a proof that one mechanism cannot fire is not a
+proof that the invariant holds**, and the cheap check that catches this
+class -- an exhaustive scan of the *invariant* with no reference function
+to compute -- runs in a couple of minutes over the whole domain, which is
+far cheaper than an exhaustive accuracy sweep and finds a different kind
+of bug.
+
+The clamp is also free accuracy: the true `|sin|` never exceeds 1, so the
+correctly-rounded f32 answer never does either, and clamping can only move
+a result towards it.
+
+### Side finding, not fixed: `sin`/`cos`/`sin_fast`/`cos_fast` also exceed 1
+
+The same exhaustive `|result| <= 1` scan, run across every trig tier
+*in each one's own documented domain* (`|x| < 2^22*pi`):
+
+| | patterns with `|result| > 1` | worst |
+|---|---|---|
+| `sin` | 660 | 1.0000001 |
+| `cos` | 2720382 | 1.0000001 |
+| `sin_fast` | 670 | 1.0000001 |
+| `cos_fast` | 2720361 | 1.0000001 |
+| `sin_checked`/`cos_checked`/`sin_wide`/`cos_wide` | 0 | 1.0 |
+
+Same `sinf_poly` overshoot; the four `_checked`/`_wide` tiers are clean
+only because they clamp. Left alone deliberately -- those four are the
+fast tiers, `1.0000001` is a 1-ulp error and already inside their
+published max, and a clamp is two ops on functions costing 1.15-1.78
+cyc/elem in total. Recorded because "does this function respect
+`|sin| <= 1`" is a different question from its ulp row, and nothing in the
+harness asked it before. (Outside their domains all four return `inf`,
+which is documented and is what `accuracy`'s NON-FINITE annotation
+counts.)

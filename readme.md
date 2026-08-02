@@ -28,6 +28,8 @@ cbrt_accurate_unchecked |    0.000   |     1     | (bit-identical to cbrt_accura
   cos_fast (|x|<2^22*pi)|   0.288   |  2780     |  0.002  |    1
  sin_checked (|x|<=1e6) |    0.036   |     2     |  0.000  |    1
  cos_checked (|x|<=1e6) |    0.076   |     2     |  0.000  |    1
+      sin_wide (all f32)|    0.127   |     2     |  0.000  |    1
+      cos_wide (all f32)|    0.150   |     2     |  0.000  |    1
         sinpi (all f32) |    0.197   |     2     | (no std sinpi)
         cospi (all f32) |    0.058   |     2     | (no std cospi)
         tanpi (all f32) |    0.227   |     5     | (no std tanpi)
@@ -36,6 +38,18 @@ cbrt_accurate_unchecked |    0.000   |     1     | (bit-identical to cbrt_accura
         tand (|x|<4.7e7)|    0.177   |     3     | (no std tand)
           sinc (|x|<1e6)|    0.094   |     4     | (no std sinc)
 ```
+
+`sin_wide`/`cos_wide`'s rows are the only trig rows in this table measured
+over the **entire** f32 range, and that is the whole point of the tier.
+`sin_checked`/`cos_checked` are accurate to ~1e13 and then degrade, and
+past `2^51*pi` they return a value in `[-1,1]` with no relationship to the
+answer -- `accuracy`'s own `sin_checked (all f32)` row reads **avg
+314265980 / max 2130706432** on a quick fuzz (that max is `2*0x3f800000`,
+the ulp distance from `+1` to `-1`, i.e. the worst a clamped output can
+be). `sin_wide` reduces against a window of `1/pi` selected by `x`'s
+exponent instead of a fixed two-word constant, which costs three gathers
+and ~3.2x throughput; see its doc comment and graveyard.md. The two rows
+above are exhaustive over all 2^32 patterns, not sampled.
 
 ```
                          | jodie avg  | jodie max | std avg | std max
@@ -374,9 +388,11 @@ log2_unchecked      |          38.06 |             1.021
 sin                 |          64.00 |             1.778
 sin_fast            |          48.00 |             1.151
 sin_checked         |          82.00 |             2.495
+sin_wide            |          91.05 |             8.045
 cos                 |          61.00 |             1.654
 cos_fast            |          56.00 |             1.406
 cos_checked         |          87.00 |             3.157
+cos_wide            |          99.06 |             9.299
 tan_checked         |         101.00 |             4.289
 sinpi               |          42.02 |             1.133
 cospi               |          47.00 |             1.226

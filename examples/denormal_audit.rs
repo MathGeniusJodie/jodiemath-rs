@@ -162,6 +162,7 @@ fn main() {
 
     let b_rows = vec![
         audit("sin", sin, f64::sin, &dn),
+        audit("sin_wide", sin_wide, f64::sin, &dn),
         audit("tan", tan, f64::tan, &dn),
         audit("asin", asin, f64::asin, &dn),
         audit("atan", atan, f64::atan, &dn),

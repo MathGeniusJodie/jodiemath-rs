@@ -22,6 +22,7 @@ compile_error!(
 );
 
 mod doublefloat;
+mod pitable;
 use doublefloat::Df32;
 
 const SIGN_MASK: u32 = 0x80000000;
@@ -1589,6 +1590,94 @@ fn reduce_pi64<const HALF: bool>(x: f32) -> (f32, u32) {
     (r as f32, sgn)
 }
 
+/// `x - q*pi` and the sign the caller owes the result, same contract as
+/// [`reduce_pi64`] -- but with **no magnitude limit at all**. Payne-Hanek:
+/// the bits of `1/pi` are selected by `x`'s own exponent instead of being
+/// carried as a fixed two-word constant, so the reduced fraction is
+/// relative-`2^-53` accurate for every one of the 2^32 f32 patterns
+/// rather than degrading from `|x| ~ 1e13` and falling off a cliff at
+/// `2^51*pi`.
+///
+/// The whole scheme rests on one arithmetic fact: an f32 is
+/// `m * 2^E` for a **24-bit integer** `m`, so
+///
+/// ```text
+/// x/pi mod 2 = (m * beta(e)) mod 2,   beta(e) = (2^E / pi) mod 2
+/// ```
+///
+/// -- the integer part of `2^E/pi` multiplied by an integer `m` is an
+/// even/odd integer whose parity `beta`'s own bit 0 already carries, and
+/// everything above bit 0 is discarded exactly by the `mod 2`. So the
+/// only unbounded quantity in the problem, `x/pi`, never has to be
+/// formed. `pitable`'s three words name `beta(e)` to a relative
+/// `2^-135`, and `m * beta` needs at most 24 + 135 bits of which we keep
+/// the low ~110 -- a fixed, exponent-independent budget.
+///
+/// Word 0 carries exactly **29** significant bits so that `m * a0` is
+/// exact (24 + 29 = 53), which is what makes `p0 - round(p0)` an exact
+/// peel of the integer part with no error-free transform. `m * a1`'s own
+/// rounding is recovered by an `fma` and `m * a2` is already below the
+/// budget, so the only inexact step in the whole reduction is the final
+/// `fc + ec`, a single relative-`2^-53` rounding of the answer itself.
+///
+/// The `2^E` that turns `x` into that integer never appears: it is
+/// pre-multiplied into every table word, so the chain multiplies `|x|`
+/// itself and the exactness argument still holds (`|x|` carries the same
+/// 24 bits `m` does, 23 for a denormal). That is also why the table is
+/// indexed by the **raw** biased exponent with the denormal row included
+/// -- a denormal's missing implicit bit needs no separate branch, it just
+/// makes `|x|` a shorter integer. `+-inf`/NaN ride through as `inf`/NaN
+/// and come out NaN, as before.
+///
+/// Cost against [`reduce_pi64`]: three `vgatherdpd` (llvm-mca prices one
+/// at 4.0 Block RThroughput per 8 lanes) plus the wider chain. See
+/// `sin_wide`'s doc comment for the measured end-to-end figure.
+#[inline(always)]
+fn reduce_pi_wide<const HALF: bool>(x: f32) -> (f32, u32) {
+    let b = x.to_bits();
+    let e = ((b >> 23) & 0xff) as usize;
+    let sgnx = b & SIGN_MASK;
+    let m = f32::from_bits(b & !SIGN_MASK) as f64;
+    let a0 = pitable::REDUCE_PI_C0[e & 0xff];
+    let a1 = pitable::REDUCE_PI_C1[e & 0xff];
+    let a2 = pitable::REDUCE_PI_C2[e & 0xff];
+    // Exact (24 bits x 29 bits), so the integer part peels off exactly.
+    let p0 = m * a0;
+    let n0 = p0.round_ties_even();
+    let f0 = p0 - n0;
+    let p1 = m * a1;
+    let q1 = f64::mul_add(m, a1, -p1);
+    let p2 = m * a2;
+    // two_sum, not quick_two_sum: |f0| >= |p1| fails exactly when f0 is
+    // near zero, which is the case whose low word decides the answer.
+    let s0 = f0 + p1;
+    let v = s0 - f0;
+    let e0 = (f0 - (s0 - v)) + (p1 - v);
+    let ec = e0 + (q1 + p2);
+    let n1 = s0.round_ties_even();
+    // Exact: |s0| <= 0.5625 and |n1| <= 1, so Sterbenz applies.
+    let fc = s0 - n1;
+    // |x|/pi - n, the only rounded step in the reduction.
+    let t = fc + ec;
+    // The half-odd-integer grid, applied to the *exact* word so the
+    // shift itself introduces nothing (|fc| <= 0.5 and half = +-0.5, so
+    // the difference is exact).
+    let half = 0.5f64.copysign(t);
+    let tt = if HALF { (fc - half) + ec } else { t };
+    // One f64 multiply: |tt| <= 0.5, so this is the reduced residual to a
+    // relative 2^-52, well past what the f32 narrowing below keeps.
+    let r = (tt * std::f64::consts::PI) as f32;
+    // n = n0 + n1 is a small exact integer (|n| < 2^25), so the magic-round
+    // parity extraction has none of reduce_pi64's 2^51 window problem.
+    let par = ((n0 + n1 + ROUND_MAGIC64).to_bits() as u32) << 31;
+    // The chain ran on |x|; both the residual and (for the half-odd grid)
+    // the extra flip are odd in x, so one xor each restores the sign --
+    // and it is also what carries `-0.0` through, which `p0 - n0` would
+    // otherwise have turned into `+0.0`.
+    let sgn = if HALF { par ^ ((!(t.to_bits() >> 32)) as u32 & SIGN_MASK) ^ sgnx } else { par };
+    (f32::from_bits(r.to_bits() ^ sgnx), sgn)
+}
+
 // parity of an exact-integer float q via floor-based "mod 2" (q*0.5 and
 // its floor stay exact once q is an integer), not `q as i64`: Rust's
 // float-to-int cast is saturating, which LLVM can't lower to a single
@@ -1663,6 +1752,54 @@ pub fn cos_checked(x: f32) -> f32 {
     // |x| ~ 2^53*pi, and without this clamp cos_checked could silently
     // return values like 2.6e21 for legitimate finite input, violating
     // `|cos(x)| <= 1`.
+    sinf_poly(r).clamp(-1.0, 1.0)
+}
+
+/// `sin(x)` with **no magnitude limit**: 2 max ulp over every one of the
+/// 2^32 f32 patterns, where [`sin_checked`] degrades from `|x| ~ 1e13`
+/// and returns essentially a random value in `[-1, 1]` past `2^51*pi`.
+///
+/// The difference is entirely the reduction (see `reduce_pi_wide`):
+/// `sin_checked` carries `1/pi` as a fixed two-word constant, which runs
+/// out of bits at a magnitude that depends on `x`, while this selects the
+/// window of `1/pi` that `x`'s own exponent needs. Everything after the
+/// reduction is the same `sinf_poly`, so where `sin_checked` is still
+/// accurate the two differ only by the last-place rounding of the
+/// residual.
+///
+/// This is a Pareto point, not a replacement: the table costs three
+/// gathers and the wider chain, so `sin_checked` stays as the cheaper
+/// tier for callers whose arguments are bounded, and `sin` stays as the
+/// cheapest for `|x| < 2^24*pi`.
+#[inline(always)]
+pub fn sin_wide(x: f32) -> f32 {
+    let (r, flip) = reduce_pi_wide::<false>(x);
+    let r = f32::from_bits(r.to_bits() ^ flip);
+    // `sinf_poly`, not `sinf_poly_raw`, for the same `-0.0` reason
+    // `sin_checked` gives.
+    //
+    // The `.clamp(-1, 1)` is still needed, and *not* for the reason
+    // `sin_checked` needs it. There the clamp rescues a reduction that has
+    // run out of bits (residuals of ~1000 into a degree-9 poly, ~2.6e21
+    // out). Here `|r| <= pi/2` by construction -- and `sinf_poly` still
+    // returns `1.0000001` for **2726588** of the 2^32 patterns, because a
+    // minimax fit of `sin` near its own maximum has no reason to stay
+    // under it. Caught by an exhaustive `|result| <= 1` scan; the pinned
+    // `edgecheck` values all passed. It is also free accuracy: the true
+    // `|sin|` never exceeds 1, so the correctly-rounded f32 answer never
+    // exceeds `1.0` either, and the clamp can only move a result towards
+    // it.
+    sinf_poly(r).clamp(-1.0, 1.0)
+}
+
+/// `cos(x)` with **no magnitude limit**, the [`sin_wide`] companion --
+/// see it for the reduction, the cost, and why this is a separate tier
+/// rather than a replacement for [`cos_checked`].
+#[inline(always)]
+pub fn cos_wide(x: f32) -> f32 {
+    let (r, flip) = reduce_pi_wide::<true>(x);
+    let r = f32::from_bits(r.to_bits() ^ flip);
+    // See `sin_wide` for why this clamp survives an exact reduction.
     sinf_poly(r).clamp(-1.0, 1.0)
 }
 

@@ -135,6 +135,8 @@ fn main() {
         "sin",
         "sin_fast",
         "sin_checked",
+        "sin_wide",
+        "cos_wide",
         "cos",
         "cos_fast",
         "cos_checked",

@@ -820,6 +820,7 @@ fn main() {
             row("sin", &band(thorough, BAND_SAMPLES, lo, hi, sin, sin_ref_exact));
             row("sin_fast", &band(thorough, BAND_SAMPLES, lo, hi, sin_fast, sin_ref_exact));
             row("sin_checked", &band(thorough, BAND_SAMPLES, lo, hi, sin_checked, sin_ref_exact));
+            row("sin_wide", &band(thorough, BAND_SAMPLES, lo, hi, sin_wide, sin_ref_exact));
         }
     }
     if run("cos") {
@@ -878,7 +879,21 @@ fn main() {
             row("cos", &band(thorough, BAND_SAMPLES, lo, hi, cos, cos_ref_exact));
             row("cos_fast", &band(thorough, BAND_SAMPLES, lo, hi, cos_fast, cos_ref_exact));
             row("cos_checked", &band(thorough, BAND_SAMPLES, lo, hi, cos_checked, cos_ref_exact));
+            row("cos_wide", &band(thorough, BAND_SAMPLES, lo, hi, cos_wide, cos_ref_exact));
         }
+    }
+    // Own gates rather than rows inside the sin/cos groups: `run` is a
+    // substring test, so `accuracy thorough sin` still selects "sin_wide"
+    // while `accuracy thorough wide` selects just these two -- an
+    // exhaustive pass over the full f32 range without also re-running the
+    // ten `std sin` rows beside them.
+    if run("sin_wide") {
+        let s = measure!(everywhere, sin_wide, sin_ref);
+        report("sin_wide (all f32)", &s, t0);
+    }
+    if run("cos_wide") {
+        let s = measure!(everywhere, cos_wide, cos_ref);
+        report("cos_wide (all f32)", &s, t0);
     }
     if run("sinpi") {
         // sinpi_ref/cospi_ref (above) already mirror sinpi/cospi's own

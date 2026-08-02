@@ -340,8 +340,20 @@ fn real_main() {
     // `|x|~8.85e14`, which used to let these same inputs return values up
     // to `2.6e21` -- `check_finite` alone never caught that, since `2.6e21`
     // is finite; `check_bounded` closes that gap for good).
-    for f in [sin_checked as fn(f32) -> f32, cos_checked as fn(f32) -> f32] {
-        let n = if std::ptr::fn_addr_eq(f, sin_checked as fn(f32) -> f32) { "sin_checked" } else { "cos_checked" };
+    // `sin_wide`/`cos_wide` carry the same pins: their reduction is exact at
+    // every magnitude so they need no `.clamp(-1,1)` to satisfy the bound,
+    // which is exactly why the bound is worth asserting here rather than
+    // trusting the argument.
+    for f in [
+        sin_checked as fn(f32) -> f32,
+        cos_checked as fn(f32) -> f32,
+        sin_wide as fn(f32) -> f32,
+        cos_wide as fn(f32) -> f32,
+    ] {
+        let n = if std::ptr::fn_addr_eq(f, sin_checked as fn(f32) -> f32) { "sin_checked" }
+            else if std::ptr::fn_addr_eq(f, cos_checked as fn(f32) -> f32) { "cos_checked" }
+            else if std::ptr::fn_addr_eq(f, sin_wide as fn(f32) -> f32) { "sin_wide" }
+            else { "cos_wide" };
         check(&format!("{n}(nan)"), f(f32::NAN), f32::NAN);
         check(&format!("{n}(inf)"), f(f32::INFINITY), f32::NAN);
         check(&format!("{n}(-inf)"), f(f32::NEG_INFINITY), f32::NAN);
@@ -361,6 +373,10 @@ fn real_main() {
     // result, and its own reduction shares no sign-losing dependency here).
     check("sin_checked(-0)", sin_checked(-0.0), -0.0);
     check("cos_checked(-0)", cos_checked(-0.0), 1.0);
+    // reduce_pi_wide runs on |x| and xors the sign back in, precisely so
+    // that `p0 - round(p0)` turning `-0.0` into `+0.0` cannot reach here.
+    check("sin_wide(-0)", sin_wide(-0.0), -0.0);
+    check("cos_wide(-0)", cos_wide(-0.0), 1.0);
 
     // reduce_pi_checked/reduce_pi_half_checked (backlog idea #88): the
     // public pi-reduction primitive sin_checked/cos_checked build on.
