@@ -9741,3 +9741,46 @@ comment was true and is not any more.
   for four public functions; scoring the composite against
   "exact-Gaussian, actual-f32-`erfcx`" takes ten lines and shows the two
   halves are equal, which reframes what is left to do.
+
+## `dawson`: the concentrated-window screen says no, and the `u = fl(x*x)` term is not worth its ops
+
+Screened after the `erfcx_pos` identity entry above, because that entry's
+lever (kill the argument's own rounding with one fma) looks like it should
+transfer to `u = x^2` -- the decomposition in `dawson`'s harness entry
+prices `u = fl(x*x)` at ~0.8 of the 5.7 max. Both checks come out
+negative; recording so the next instance skips them.
+
+**The error is not concentrated, so the `asin`/`atanh` crossover lever does
+not apply.** Exhaustive at stride 8 over `[1e-3, 4]` (12.6M points),
+current code, series reference:
+
+| binade | max ulp | #(err >= 4.5) |
+|---|---|---|
+| 2^-10 .. 2^-5 | 1.51 -> 3.55 | 0 |
+| 2^-4 | 3.78 | 0 |
+| 2^-3 | 4.44 | 0 |
+| 2^-2 | 4.83 | 4 |
+| 2^-1 | 4.72 | 4 |
+| 2^0 | 5.50 | 355 |
+| 2^1 | 5.54 | 238 |
+
+It climbs monotonically with `|x|` and the worst set is spread across the
+whole of `[1, 4]` -- not a pocket a seam move or a dedicated sub-branch
+can excise. (`asin`'s entire >=3-ulp set sat inside `[0.27, 0.4997]`;
+that is what a concentration looks like.)
+
+**Compensating `u` is structurally expensive here, unlike `erfcx_pos`'s
+`v`.** The identity that worked for `1/(2+x)` re-substitutes the exact
+argument into a *closed form* of the variable. `u = x^2` has no such
+identity: the exact residual is one fma (`ue = fma(x,x,-u)`), but applying
+it to `x*P(u)/Q(u)` needs `d(ln P/Q)/du`, i.e. `P'` and `Q'` -- two more
+polynomial evaluations -- because the correction has to enter *through*
+the rational, not through its argument. The ceiling is also low: the
+harness entry's own f64 rows say an exact `x^2` takes 4.322 -> 3.517, so
+the whole term is worth ~0.8 ulp of a 5.7, for 5+ ops.
+
+**The rule this sharpens:** an argument-rounding compensation is cheap
+only when the variable has an algebraic identity that re-admits the
+unrounded input (`1/(a+x) == 1/a - (x/a)*(1/(a+x))`). When the argument
+enters an opaque approximant, compensating it costs a derivative, and the
+EFT that recovers the residual is the cheap half of the job.
