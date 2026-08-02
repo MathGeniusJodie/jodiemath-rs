@@ -67,7 +67,7 @@ comment and graveyard.md. All three `_wide` rows are exhaustive over all
                 compound |    0.196   |   ~200    | (no std compound; the exponent n*log1p(x) amplifies its own ulp by |n*log1p(x)|, up to ~88 -- see its doc comment)
        compound_accurate |    0.001   |     1     | (no std compound; f64 exponent, ~1.7x compound's throughput cost)
          exp (in-domain) |    0.071   |     3     |  0.000  |    1
-             exp_checked |    0.037   |     3     |  0.000  |    1
+             exp_checked |    0.004   |     1     |  0.000  |    1
        expm1 (in-domain) |    0.008   |     2     |  0.000  |    0
            expm1_checked |    0.004   |     2     |  0.000  |    0
 exp_m1_over_x (in-domain)|    0.017   |     2     | (no std exp_m1_over_x)
@@ -99,11 +99,11 @@ logaddexp_accurate (all f32)| 0.000 |     0     | (no std logaddexp; the cancell
   tan (|x|<2^22*pi) |    0.118   |     4     |  0.000  |    0
       tan_wide (all f32)|    0.250   |     4     |  0.000  |    0
                    erf  |    0.027   |     3     | (no std erf)
-         erfc (|x|<=10) |    0.129   |     7     | (no std erfc; the 7 splits about evenly between `exp`'s own error and the erfcx polynomial's evaluation -- neither dominates, see erfc's doc comment)
-        erfcx (|x|<=20) |    0.144   |     6     | (no std erfcx; the 6 is on the *negative* arm, where it is `exp`'s error amplified by the reflection -- see erfcx's doc comment)
+         erfc (|x|<=10) |    0.122   |     6     | (no std erfc; the erfcx polynomial's evaluation is now the larger of the two terms -- the exponential half is `exp_reduce!`, which carries its own degree-6 peeled poly, see erfc's doc comment)
+        erfcx (|x|<=20) |    0.134   |     4     | (no std erfcx; the 4 is on the *negative* arm, where the exponential's error arrives amplified by the reflection -- see erfcx's doc comment)
          erfcx (x>=20)  |    0.268   |     2     | (no std erfcx)
-     norm_cdf (all f32) |    0.066   |     7     | (no std norm_cdf; exhaustive. Same two terms as `erfc`, in the same proportion -- `exp` and the erfcx polynomial)
-     norm_pdf (all f32) |    0.027   |     4     | (no std norm_pdf; exhaustive. `exp`-bound: the rest of the chain is an exactly-split square and a two-word `1/sqrt(2*pi)`)
+     norm_cdf (all f32) |    0.062   |     6     | (no std norm_cdf; exhaustive. Same two terms as `erfc`, and now in the same proportion -- mostly the erfcx polynomial)
+     norm_pdf (all f32) |    0.018   |     2     | (no std norm_pdf; exhaustive. The most exponential-bound function in the family: the rest of the chain is an exactly-split square and a two-word `1/sqrt(2*pi)`)
        dawson (all f32) |    0.050   |     6     | (no std dawson; exhaustive. The 6 is the central branch at x=1.404; the `|x|>4` tail is peeled and sits exactly on its own fit-only floor, max 3)
        erfinv (|x|<1)   |    0.362   |     3     | (no std erfinv; exhaustive)
       erfc_inv (0<y<2)  |    0.622   |     4     | (no std erfc_inv; exhaustive)
@@ -422,7 +422,7 @@ log2p1              |          51.36 |             1.876
 compound            |          99.69 |             3.829
 compound_accurate   |         120.77 |             6.173
 exp                 |          42.00 |             1.195
-exp_checked         |          50.00 |             1.466
+exp_checked         |          54.00 |             1.526
 expm1               |          47.00 |             1.087
 expm1_checked       |          55.00 |             1.320
 exp_m1_over_x       |          65.03 |             1.279
@@ -455,8 +455,8 @@ atan_latency        |          61.99 |             1.591
 atan2               |          67.19 |             1.694
 tan                 |          78.00 |             2.985
 erf                 |          87.00 |             2.040
-erfc                |          61.42 |             3.069
-erfcx               |          64.03 |             2.903
+erfc                |          63.03 |             3.175
+erfcx               |          67.99 |             3.006
 hypot               |          21.11 |             0.766
 hypot_checked       |          57.19 |             1.178
 rhypot              |          32.02 |             1.389

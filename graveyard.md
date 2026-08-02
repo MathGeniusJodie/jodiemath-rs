@@ -11764,3 +11764,114 @@ Reusable, and it is the third time today the same shape has paid:
 - **Splitting by branch is what makes it visible.** `x > 0` and `x < 0`
   are half the plane each, improve for unrelated reasons, and the
   whole-plane average alone would have read as one undifferentiated 37%.
+## `exp_reduce!`: degree 6 and a peeled `1 + r`, at one arithmetic instruction *fewer* -- shipped
+
+`exp_r_poly!` is core-locked and shared by ~20 public functions.
+`exp_reduce!` is not: its five call sites -- `exp_checked`, `erfc`,
+`erfcx`, `norm_cdf`, `norm_pdf` -- are exactly one `jm` domain. Those
+five are also the crate's most exponential-bound functions. So the two
+macros can carry different polynomials, and the cost of a better one
+lands only on the callers that wanted it.
+
+A degree-6 `exp_r_poly` had been measured before and rejected at +5-23%
+throughput. That rejection priced the bump against `exp`/`expm1`/
+`sigmoid`, which are at 2-3 ulp with nothing downstream amplifying them.
+It never priced it against the erfc family, and it never combined it with
+a peel -- which is what makes it free.
+
+**Attribution first.** Scoring the shipped f32 evaluation order over the
+whole reduction range `|r| <= ln2/2`, against `e^r`:
+
+| poly | max | avg |
+|---|---|---|
+| shipped degree 5, `l0 = r + 1` | 2.392 | 0.7165 |
+| shipped degree 5, peeled | 2.148 | 0.6783 |
+| degree 6, peeled | **0.830** | **0.2654** |
+
+Degree 5 is genuinely spent: a full f32 minimax refit of the shipped
+shape moves its max 2.392 -> 2.352, i.e. 1.7%. The fit, not the
+evaluation, is the binding term at degree 5, and it is ~2.0
+ulp-equivalent against degree 6's ~0.15.
+
+**The peel is what pays for the degree.** Evaluating `e^r - 1` and
+folding the `+ 1` into the reconstruction as `fma(s, t1, t1)` is exact:
+`t1` is a power of two out of `exp2_field_split`, so that fma *is*
+`t1 * fl(1 + s)`, the same single rounding the multiply it replaces
+already paid. It removes `fl(1 + r)`'s rounding, which entered at
+`(1 + r)/e^r ~ 0.92` of full weight, and replaces it with one attenuated
+by `|e^r - 1|/e^r <= 0.415`. Opcode histogram, per call:
+
+    +1 vfmadd   (the degree-6 term)
+    -1 vaddps   (`l0 = r + 1`, gone)
+    -1 vmulps   (`p*t1`, absorbed into the fma)
+
+Net **one arithmetic instruction fewer**, and `vbroadcastss` does not
+move -- the new coefficient costs no broadcast. Total instruction count
+is +1 (one `vmovaps` of register pressure) and `Block RThroughput` is
+**unchanged in all five regions** (41/40/44/25/20 both sides).
+
+**Exhaustive result** (every f32 bit pattern; `erfc`/`erfcx` over their
+documented reference range):
+
+| | max before | max after | avg before | avg after |
+|---|---|---|---|---|
+| `exp_checked` | 3 | **1** | 0.0370 | 0.0042 |
+| `norm_pdf` | 4 | **2** | 0.0270 | 0.0178 |
+| `erfcx` | 6 | **4** | 0.1439 | 0.1333 |
+| `erfc` | 7 | **6** | 0.1289 | 0.1217 |
+| `norm_cdf` | 7 | **6** | 0.0662 | 0.0622 |
+| `erf` (control) | 3 | 3 | 0.0270 | 0.0270 |
+
+`exp_checked` is faithfully rounded. `erf` and `erfcx (x >= 20)` are
+bit-identical, which is the control: neither routes through
+`exp_reduce!`. The cost is one level of fma latency, +2 to +4 cycles
+(`exp_checked` 50.00 -> 54.00).
+
+### The rejected grouping, and why the tradeoff is real
+
+Degree 6 can be arranged two ways, and they are genuinely
+Pareto-incomparable -- one arithmetic op against one dependency level:
+
+- **Folded** (ships): top coefficient enters at the `r^2` level, `r^4`
+  never formed. Serialises the top pair behind the bottom one.
+  `Block RThroughput` unchanged; +1 fma level of latency.
+- **Distributed** (rejected): `[r + r^2*(c0 + c1 r)] + r^4*[(c2 + c3 r)
+  + c4 r^2]`, halves independent, meeting in the closing fma. Latency
+  *exactly* neutral -- `exp_checked_latency` 50.001 both sides, which is
+  what a depth-3 `s` predicts. But forming `r^4` raises `Block
+  RThroughput` by one in **every** region (41->42, 40->41, 44->45,
+  25->26, 20->21), with instrs and uOps moving the same way. Rejected:
+  throughput is the metric this crate prioritizes, and the folded form's
+  apparent throughput cost is *not* confirmed by the bottleneck metric
+  while this one's is.
+
+Degree 4 is the reason there is a choice at all: a depth-2 `m` can only
+reach degree 3 (`A + r^2*B` with `A`, `B` degree <= 1), so degree 6 needs
+either `r^4` or one more level. There is no third option.
+
+The two are worth the **same accuracy downstream** -- 0.830 vs 1.032 ulp
+in the isolated poly, but `erfc` 5.252 and `erfcx` 2.980 in simulation
+for *both*. That is the lesson: the 0.2 ulp between them sits far under
+`erfcx_pos`'s own ~2.9, so it never reaches the output. Price a poly
+variant at the point that binds, not in isolation.
+
+### Transferable
+
+- **A shared kernel's rejection does not bind a private one.** The
+  degree-6 result was correct and its cost was real; it was measured
+  against the wrong caller set. Check whether the accuracy-wanting
+  callers are a *subset* reachable behind a narrower lock before
+  accepting a shared-poly cost verdict.
+- **A leading-term peel can pay for a degree bump.** The peel hands back
+  an add and converts a multiply to an fma; that is the whole budget for
+  one more coefficient. Neither change alone is as good as the pair --
+  degree 6 alone had been priced at +5-23%, and the peel alone is worth
+  only ~0.25 ulp.
+- **`fma(s, t1, t1)` where `t1` is a power of two is exactly
+  `t1 * fl(1 + s)`.** Reconstruction multiplies by an exponent field are
+  free places to put a `+ 1`.
+- The simulation predicted `erfcx`'s worst point at `x = -0.514` where
+  the exhaustive sweep found `-0.505`, and predicted the post-change
+  worst point migrating to near zero, where it landed at `3.9e-4`. A
+  numpy model of the exact f32 evaluation order is worth building before
+  a multi-hour exhaustive sweep.

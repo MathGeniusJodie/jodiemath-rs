@@ -147,8 +147,42 @@ macro_rules! exp_r_poly {
 // should not pay for it: `erfc`'s argument is `-(xs*xs)`, a negated
 // square, so the upper bound is dead by construction (see its own
 // comment). Macro, not a fn -- see exp_r_poly! for why a new shared-fn
-// boundary is the thing to avoid here; verified via a full pre/post
-// assembly diff that `exp_checked` and its other callers are unchanged.
+// boundary is the thing to avoid here.
+//
+// This deliberately does *not* call `exp_r_poly!`, and that divergence is
+// what the split buys. Every call site here -- `exp_checked`, `erfc`,
+// `erfcx`, `norm_cdf`, `norm_pdf` -- feeds a function whose own max ulp
+// this exponential is the largest single term of. `exp_r_poly!`'s other
+// callers (`exp`, `exp_narrow`, `exp_scaled`, `expm1`, `sigmoid`) are
+// already at 2-3 ulp with nothing downstream amplifying them, so the
+// degree belongs here rather than in the shared macro. Two differences,
+// and they pay for each other:
+//
+//   * degree 6 in `r`, against the shared macro's 5. Degree 5's fit is
+//     the binding term at ~2.0 ulp-equivalent and is spent -- an f32
+//     minimax over the same shape and the same pinned leading 1/1 moves
+//     its max by under 2%. Degree 6 is ~0.15, i.e. no longer binding.
+//   * the leading `1 + r` is peeled: the polynomial evaluates `e^r - 1`
+//     and the `+ 1` folds into the reconstruction as `fma(s, t1, t1)`.
+//     `t1` is an exact power of two, so that fma is exactly
+//     `t1 * fl(1 + s)` -- the single rounding the multiply it replaces
+//     already paid, with `fl(1 + r)`'s own rounding gone. Worth having
+//     on its own terms, because the rounding it removes entered at
+//     `(1 + r)/e^r`, i.e. ~0.92 of full weight, while what replaces it
+//     is attenuated by `|e^r - 1|/e^r <= 0.415`.
+//
+// The peel is what makes the degree affordable rather than merely
+// cheap: it hands back the `1 + r` add and turns the reconstruction's
+// first multiply into an fma, which between them cover the extra term.
+// Against the degree-5 shared macro this is one arithmetic instruction
+// *fewer* per call at an unchanged `Block RThroughput` -- the whole
+// accuracy gain, for free on the metric that binds. What it does cost is
+// one level of fma latency; see the grouping note on `c` below, which is
+// where that level is chosen and where it could be bought back.
+//
+// `c` is an ulp-weighted minimax fit polished against this exact f32
+// evaluation order rather than against the idealized polynomial, so the
+// coefficients are not the ones a fit of `e^r - 1` alone produces.
 macro_rules! exp_reduce {
     ($x:expr) => {{
         let x = $x;
@@ -156,9 +190,30 @@ macro_rules! exp_reduce {
         let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
         let r = fma(-k, LN2_HI, x);
         let r = fma(-k, LN2_LO, r);
-        let p = exp_r_poly!(r);
+        // e^r - 1 = r + r^2*(c0 + c1 r + c2 r^2 + c3 r^3 + c4 r^4), with
+        // the top coefficient folded in at the `r^2` level rather than
+        // its own `r^4` one, so `r^4` is never formed (`exp_r_poly!`'s
+        // trick). That fold is why the extra degree costs no arithmetic;
+        // it pays for it by serialising the top pair behind the bottom
+        // one, which is one more level of fma latency.
+        //
+        // Distributing instead -- `[r + r^2*(c0 + c1 r)] + r^4*[(c2 +
+        // c3 r) + c4 r^2]`, whose two halves are independent and meet in
+        // the closing fma -- removes that level exactly, and is not what
+        // ships: forming `r^4` raises `Block RThroughput` by one in
+        // every caller, and throughput is the metric this crate
+        // prioritizes. The two are worth the same accuracy downstream,
+        // the ~0.2 ulp between them sitting far under `erfcx_pos`'s own
+        // contribution.
+        let c: [f32; 5] = [0.50000006, 0.16666451, 0.041665636, 0.0083748708, 0.0013946877];
+        let r2 = r * r;
+        let l1 = fma(c[1], r, c[0]);
+        let l2 = fma(c[3], r, c[2]);
+        let l3 = fma(c[4], r2, l2);
+        let m = fma(l3, r2, l1);
+        let s = fma(m, r2, r);
         let (t1, t2) = exp2_field_split(k);
-        p * t1 * t2
+        fma(s, t1, t1) * t2
     }};
 }
 
@@ -5994,11 +6049,12 @@ fn erfcx_pos(xa: f32) -> f32 {
 /// rational's ~15, with the reciprocal's own rounding removed by one
 /// fma on the exact `|x|`.
 ///
-/// Neither factor dominates any more, which is why this function's max
-/// has stopped moving: split the error at the worst point and the
-/// `erfcx` factor and the Gaussian path each carry ~4.2 ulp of it. The
-/// Gaussian half is `exp`'s own accuracy (~3 ulp, `exp_r_poly`), so half
-/// of what is left here is not reachable from inside this function.
+/// The `erfcx` factor is now the larger of the two. The Gaussian half
+/// is the exponential's own accuracy, and that is reachable: it is
+/// `exp_reduce!`, not the core-locked `exp_r_poly!`, and it carries a
+/// degree-6 peeled polynomial that the rest of `exp_r_poly!`'s callers
+/// do not pay for. What binds here now is [`erfcx_pos`]'s own f32
+/// evaluation, which its comment describes.
 ///
 /// No clamp on `x` anywhere except [`ERFC_XS_CLAMP`] on the value being
 /// squared -- far past where `erfc` has decayed under the smallest
@@ -6009,7 +6065,7 @@ fn erfcx_pos(xa: f32) -> f32 {
 /// the const assertions on it), which is why this calls `exp_reduce!`
 /// rather than [`exp_checked`].
 ///
-/// Current: max ulp 7, avg 0.1289 (exhaustive sweep restricted to
+/// Current: max ulp 6, avg 0.1217 (exhaustive sweep restricted to
 /// `|x| <= 10`, which is where the f64 reference stops being usable --
 /// past ~10.05 the true `erfc` rounds to exactly `0.0` (or `2.0` for
 /// `x < 0`) and this returns exactly that, pinned in edgecheck).
@@ -6380,11 +6436,13 @@ const _: () =
 /// are one `fma` -- the `x <= 0` arm bit-identical, the other rounding
 /// `2 - e*t` once instead of twice.
 ///
-/// Current: max ulp 7, avg 0.0657 (exhaustive over all f32). Split the
-/// same way [`erfc`]'s is and it comes apart the same way: at the worst
-/// point (`x = -1.884`) [`erfcx_pos`]'s own evaluation carries 2.93 ulp
-/// of it and the Gaussian factor the rest, neither dominating, so this
-/// number moves when `exp` does and not before. The `x/sqrt(2)` rounding
+/// Current: max ulp 6, avg 0.0622 (exhaustive over all f32). Split the
+/// same way [`erfc`]'s is and it comes apart the same way, except that
+/// the two halves are no longer comparable: [`erfcx_pos`]'s own
+/// evaluation carries ~2.9 ulp and the Gaussian factor now noticeably
+/// less, `exp_reduce!` having taken a degree-6 peeled polynomial for
+/// exactly this reason. What is left is mostly `erfcx_pos`, which is
+/// where this number moves next. The `x/sqrt(2)` rounding
 /// is a distant third at 0.415, because `d(ln erfcx)/d(ln z)` is only
 /// -0.73 there -- which is the whole reason this is written against
 /// `erfcx` rather than `erfc`. Carrying that argument in as a two-word
@@ -6465,10 +6523,13 @@ pub fn probit(p: f32) -> f32 {
 /// same reason [`erfc`] uses it: the clamp above already proves the
 /// argument is in range, asserted next to the constant.
 ///
-/// Current: max ulp 4, avg 0.0269 (exhaustive over all f32). There is no
+/// Current: max ulp 2, avg 0.0178 (exhaustive over all f32). There is no
 /// polynomial of its own here -- the square is split exactly and the
-/// constant carries two words -- so what is left is `exp`'s 3 plus the
-/// closing rounding, and it moves only when `exp` does.
+/// constant carries two words -- so what is left is the exponential's
+/// own error plus the closing rounding, and it moves only when that
+/// does. Nothing else in the family is this directly exponential-bound,
+/// which is why it is the one that converts `exp_reduce!`'s accuracy
+/// most nearly one-for-one.
 #[inline(always)]
 pub fn norm_pdf(x: f32) -> f32 {
     // `1/sqrt(2*pi)` as a double-`f32` pair, same shape as
@@ -6906,20 +6967,21 @@ pub fn compound_accurate(x: f32, n: f32) -> f32 {
 /// `2+2*pe` is always positive, so `inf*(2+2*pe) - r = +inf` where a
 /// signed `pe` in the multiplicand could have given `inf - inf`.
 ///
-/// **This branch is now where `erfcx`'s worst case lives**, and it is not
-/// this function's arithmetic: at the worst point (`x ~ -0.514`) the
-/// `erfcx_pos` factor contributes 1.7 ulp and the Gaussian path 5.2,
-/// which is `exp`'s own ~2.6 ulp there amplified by `2e^(x^2)/erfcx(x)`
-/// = 1.30. Nothing inside `erfcx` reaches it; `exp_r_poly` does. The branch
+/// **This branch is where `erfcx`'s worst case lives**, and it is not
+/// this function's arithmetic: the Gaussian path enters amplified by
+/// `2e^(x^2)/erfcx(x)`, ~1.30 at the worst point, so it is the
+/// exponential's own error that shows up here magnified. That is
+/// reached from `exp_reduce!` -- which is private to this domain and
+/// carries a degree-6 peeled polynomial, unlike the core-locked
+/// `exp_r_poly!` the rest of the crate's exponentials use. The branch
 /// diverges to `+inf` for `x < -9.382` (`x^2 > ~88.03`, where `2*e^(x^2)`
 /// leaves f32); `exp_checked`'s saturation makes that come out `+inf`
 /// rather than wrapping, and both sides of that boundary are pinned in
 /// edgecheck.
 ///
-/// Current: max ulp 6, avg 0.1439 (exhaustive sweep over `|x| <= 10`).
-/// Was 126 / 0.3768. The rest of the domain is measured too, and this
-/// is the part that used to not exist: `|x| <= 20` is 6 / 0.1442, and
-/// `x >= 20` out to `f32::MAX` is **2 / 0.2683** over 1.04e9 samples,
+/// Current: max ulp 4, avg 0.1333 (exhaustive sweep over `|x| <= 10`).
+/// The rest of the domain is measured too: `|x| <= 20` is 4 / 0.1338,
+/// and `x >= 20` out to `f32::MAX` is **2 / 0.2683** over 1.04e9 samples,
 /// scored against the asymptotic series (`exp(x^2)` overflows f64 past
 /// x ~ 26.6, so the composed reference cannot reach there).
 #[inline(always)]
