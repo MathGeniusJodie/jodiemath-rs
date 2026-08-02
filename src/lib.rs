@@ -5295,11 +5295,24 @@ pub fn asinpi(x: f32) -> f32 {
 
 // 3/3 Pade-style rational approximation of atan on [0,1], seeded from a
 // least-squares fit and coordinate-descent tuned. Current: atan avg/max
-// ulp 0.068/4, atan2 0.069/3 (exhaustive). Numerator and denominator
-// evaluate in parallel, so the depth cost over a lower-degree form is
-// one fma, not two. See graveyard.md §asin/acos/atan for the fit history
-// (including the "zero-move trap" of coordinate-descending a new
-// coefficient from 0.0).
+// ulp 0.063/3 (exhaustive). Numerator and denominator evaluate in
+// parallel, so the depth cost over a lower-degree form is one fma, not
+// two. See graveyard.md §asin/acos/atan for the fit history (including
+// the "zero-move trap" of coordinate-descending a new coefficient from
+// 0.0); the fit is closed, and ~99% of what is left is this chain's own
+// rounding rather than the approximation.
+//
+// **The numerator's leading `x` is peeled**, not carried through the
+// poly: `fma(x*x2, N(x2), x)` rather than a trailing `+1.0` inside the
+// Horner chain followed by `* x`. Identical polynomial and identical
+// four operations, but the unpeeled form spends one full-weight rounding
+// forming a value near 1 and a second on the multiply by `x`, where this
+// folds both into one rounding at the *result's* scale. It is also one
+// level shallower, so the numerator resolves a step earlier into the
+// division that dominates the critical path. The denominator keeps its
+// own trailing `1.0` and still needs that broadcast, so dropping the
+// numerator's copy costs no constant. Same lever as `tanh`'s small-arm
+// numerator peel.
 #[inline(always)]
 fn atan_poly(x: f32) -> f32 {
     let a2 = 0.008830042167832291;
@@ -5309,7 +5322,7 @@ fn atan_poly(x: f32) -> f32 {
     let b1 = 5.718157e-1;
     let b0 = 1.4605043e0;
     let x2 = x * x;
-    let numer = fma(fma(fma(a2, x2, a1), x2, a0), x2, 1.0) * x;
+    let numer = fma(x * x2, fma(fma(a2, x2, a1), x2, a0), x);
     let denom = fma(fma(fma(b2, x2, b1), x2, b0), x2, 1.0);
     numer / denom
 }

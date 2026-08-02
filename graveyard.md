@@ -11278,3 +11278,66 @@ plausible-looking number.
   is unaffected by this result: `erfinv` is steep near the ends, so its
   condition number is the opposite case and it still wants a harness row
   first.
+
+### atan_poly's numerator peel: the "x + O(x^3) that already divides" class pays out again
+
+`§tanh`'s small-arm table named a candidate class and left it open: *any
+odd function whose series starts `x + O(x^3)` and that already divides*.
+Only `dawson` had ever been checked against it (and failed). `atan_poly`
+is a verbatim member -- `x * N(x^2) / D(x^2)` -- and had never been tried.
+It pays:
+
+    numer = fma(fma(fma(a2,x2,a1),x2,a0), x2, 1.0) * x     // before
+    numer = fma(x*x2, fma(fma(a2,x2,a1),x2,a0), x)         // after
+
+Same polynomial, same four operations. The unpeeled form spends one
+full-weight rounding forming a value near 1 and a second on the multiply
+by `x`; the peeled form folds both into one rounding at the result's own
+scale. This is `tanh`'s row A -> row A2 (3.32 -> 2.46 max there), on a
+different function.
+
+Exhaustive (2^32) where available, 10M-sampled for the 2-arg rows:
+
+| | avg before | avg after | max before | max after |
+|---|---|---|---|---|
+| `atan` | 0.0675 | **0.0627** | 4 | **3** |
+| `atan_bounded` | 0.0526 | **0.0431** | 3 | 3 |
+| `atand` | 0.0628 | **0.0582** | 4 | **3** |
+| `atanpi` | 0.0775 | **0.0733** | 4 | 4 |
+| `atan2` | 0.0683 | **0.0660** | 3 | 3 |
+| `atan2_pos` | 0.0632 | **0.0621** | 3 | 3 |
+| `atan2d` | 0.1072 | **0.1051** | 4 | 4 |
+| `atan2pi` | 0.1139 | **0.1118** | 4 | **3** |
+
+No regression on any axis of any caller. mca: instructions, uOps and
+`Block RThroughput` are **byte-identical** on every region (`atan`
+52/54/20, `atan2` 62/64/20, `atan_bounded` 37/39/10) while latency drops
+3 cycles across the board -- `atan` 61.27 -> 58.27, `atan2` 67.19 ->
+64.19, `atan_bounded` 37.00 -> 34.00. Same ops, one level shallower: the
+numerator resolves a step earlier into the division that owns the
+critical path. This is the mirror of the usual "removing an op need not
+shorten the chain" -- here the chain shortens while the op count does
+not move at all.
+
+Two controls confirm the change is where it is claimed to be:
+`atan_latency` (its own direct degree-17 fit, no `atan_poly`) and
+`atanh` (never routes through `atan_poly`) are both bit-flat, 0.0516/3
+and 0.0037/2 on each side.
+
+Two notes for whoever reads this next:
+
+- **The old localization of `atan`'s max was wrong.** This file said "the
+  real worst case lives in the untouched `a<1` branch", on the strength
+  of a quick-fuzz max of 3. Exhaustively the max is 4 and it sits at
+  `x = 1.0220603`, i.e. *inside* the reflected `a >= 1` branch, just past
+  the fold. Any future work on the `FRAC_PI_2 - y` fold -- including the
+  pi hi/lo split rejected under idea #124 partly on that localization --
+  should be re-screened against the exhaustive worst case, not the
+  sampled one. (After the peel the worst case moves to `x = 0.9360248`,
+  back inside `a < 1`.)
+- **The 2-arg maxima above are sampled and were repeated 3x per side.**
+  `atan2pi` is the only one whose max moved reproducibly (base 4/4/4,
+  peel 3/3/3, no overlap). `atan2_unchecked` and `atan2_pos` each threw a
+  single 4 on the *base* side across three runs while the peel side threw
+  none -- suggestive, not established, so their readme maxima are left
+  alone. Only the avg columns are published for the 2-arg rows.

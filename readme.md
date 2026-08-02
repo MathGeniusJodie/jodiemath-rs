@@ -92,9 +92,9 @@ logaddexp_accurate (all f32)| 0.000 |     0     | (no std logaddexp; the cancell
                   atanh |    0.004   |     2     | 
                    asin |    0.016   |     2     |  0.000  |    0
                    acos |    0.056   |     4     |  0.000  |    0
-                   atan |    0.067   |     4     |  0.000  |    0
+                   atan |    0.063   |     3     |  0.000  |    0
            atan_latency |    0.052   |     3     |  0.000  |    0
-                 atanpi |    0.078   |     4     | (no std atanpi)
+                 atanpi |    0.073   |     4     | (no std atanpi)
   tan (|x|<2^22*pi) |    0.118   |     4     |  0.000  |    0
       tan_wide (all f32)|    0.250   |     4     |  0.000  |    0
                    erf  |    0.027   |     3     | (no std erf)
@@ -107,11 +107,11 @@ logaddexp_accurate (all f32)| 0.000 |     0     | (no std logaddexp; the cancell
        erfinv (|x|<1)   |    0.362   |     3     | (no std erfinv; exhaustive)
       erfc_inv (0<y<2)  |    0.622   |     4     | (no std erfc_inv; exhaustive)
         probit (0<p<1)  |    0.705   |     4     | (no std probit; exhaustive)
-                  atan2 |    0.068   |     4     |  0.000  |    0
-    atan2_unchecked (+) |    0.068   |     4     | (bit-identical to atan2 on its domain)
-              atan2_pos |    0.063   |     3     | (no std atan2_pos)
-                 atan2d |    0.107   |     4     | (no std atan2d)
-                atan2pi |    0.114   |     4     | (no std atan2pi)
+                  atan2 |    0.066   |     4     |  0.000  |    0
+    atan2_unchecked (+) |    0.066   |     4     | (bit-identical to atan2 on its domain)
+              atan2_pos |    0.062   |     3     | (no std atan2_pos)
+                 atan2d |    0.105   |     4     | (no std atan2d)
+                atan2pi |    0.112   |     3     | (no std atan2pi)
         hypot (bounded) |    0.034   |     1     |  0.000  |    0
 hypot_unchecked (bounded, +) | 0.034 |     1     | (bit-identical to hypot on its domain)
        hypot_checked |    0.015   |     1     | (no std comparison needed, no domain restriction)
