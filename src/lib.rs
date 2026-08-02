@@ -5883,10 +5883,28 @@ pub fn erfc(x: f32) -> f32 {
 // Coefficients are a real least-squares fit (scipy) of erfinv(x)/x
 // against u over [0,0.7], not a transcription of any published
 // algorithm's constants.
+//
+// **`P - 1`, not `P`.** The caller combines with `fma(x, ., x)` rather
+// than `x * .` -- the same one instruction and the same single
+// full-weight rounding, but every *intermediate* rounding inside the
+// Estrin tree lands at `|P-1| <= 0.114` instead of at `|P| ~ 1`, so each
+// reaches the result demoted ~9x. `c0` is in `[0.5, 1]`, so `c0 - 1` is
+// exact in f32: this is an evaluation restructure, not a refit, and the
+// approximation is unchanged. Same lever as `ln_normal`'s peeled `Q`,
+// and it transfers here for the reason it did not transfer to
+// `erfcx_pos` -- `x * P(x^2)` is the whole term, with nothing after the
+// poly but one multiply, so the poly's own roundings are the floor.
+//
+// The peel is instruction-neutral where it acts (a `vmulps` becomes a
+// `vfmadd`); the vectorized `erfc_inv`/`probit` bodies pay a few extra
+// constant broadcasts for the changed coefficients, at flat uOps and
+// flat `Block RThroughput`. Note that a peeled `P-1` is negative, so the
+// caller cannot form the result as `fma(x, ., x)` on a signed `x`
+// without losing `erfinv(-0.0)`; see `erfinv`.
 #[inline(always)]
-fn erfinv_central_poly(u: f32) -> f32 {
+fn erfinv_central_poly_m1(u: f32) -> f32 {
     let c: [f32; 9] = [
-        8.8622695e-1,
+        -1.1377305e-1,
         2.3201263e-1,
         1.2761366e-1,
         8.534858e-2,
@@ -5943,7 +5961,7 @@ fn erfinv_central_poly(u: f32) -> f32 {
 // binding item rather than a step along a curve. The price is +2 `fma` in
 // a poly on three functions' critical paths; see the commit's mca table.
 //
-// Same lever, and the same exactness argument, as `erfinv_far_poly`'s
+// Same lever, and the same exactness argument, as `erfinv_far_poly_m1`'s
 // `sqrt(w) - 7`: `v - 1` is exact for every `v` in `[0.5, 4]` (`v` there is
 // a multiple of `2^-24`..`2^-22` and `v-1` lands in `[-0.5, 3]`, which
 // holds them all), so the recentring costs no accuracy at all.
@@ -5961,10 +5979,16 @@ fn erfinv_central_poly(u: f32) -> f32 {
 // produce. `erfc_inv`/`probit` reach the seam exactly, so a fit stopping at
 // 15.9424 is extrapolating over the last sliver -- which is where the old
 // poly's worst case was, and worth 4.0 of its 13.7 idealized ulp.
+//
+// **`Q - 1`, not `Q`**, combined by the caller as `fma(v, ., v)` -- see
+// `erfinv_central_poly_m1` for the argument. `|Q-1| <= 0.107` over this
+// branch, so the Estrin tree's intermediate roundings reach the result
+// demoted ~9x, and `c0 - 1` is exact in f32, so the polynomial is
+// unchanged.
 #[inline(always)]
-fn erfinv_tail_poly(t: f32) -> f32 {
+fn erfinv_tail_poly_m1(t: f32) -> f32 {
     let c: [f32; 12] = [
-        0.8963304,
+        -0.103669584,
         0.019397417,
         0.007896575,
         -0.0021255405,
@@ -5995,7 +6019,7 @@ fn erfinv_tail_poly(t: f32) -> f32 {
 // from `erfc_inv`/`probit`, which build `w = -ln(1-x^2)` out of their own
 // argument instead of out of `x`, and so reach `w` up to ~102.6 -- far
 // past the `w <= 15.9424` that any 24-bit `x` can encode, which is all
-// `erfinv_tail_poly` is fitted for.
+// `erfinv_tail_poly_m1` is fitted for.
 //
 // Minimax (LP) fit of `erfinv/sqrt(w)` against `sqrt(w)` over `w` in
 // `[15.92, 102.8]`. The variable is `sqrt(w)`, not `w`, because
@@ -6009,10 +6033,14 @@ fn erfinv_tail_poly(t: f32) -> f32 {
 // A poly in `1/sqrt(w)` fits ~8x tighter still (0.37 ulp at one degree
 // lower), and is not used: the reciprocal is a `vdivps` on the divider
 // port for a fit that is already 5x under this chain's binding term.
+//
+// **`Q - 1`, not `Q`**, combined by the caller as `fma(v, ., v)` -- see
+// `erfinv_central_poly_m1`. `|Q-1| <= 0.041` over this branch, the
+// steepest demotion of the three (~24x), and `c0 - 1` is exact in f32.
 #[inline(always)]
-fn erfinv_far_poly(t: f32) -> f32 {
+fn erfinv_far_poly_m1(t: f32) -> f32 {
     let c: [f32; 8] = [
-        0.9812885,
+        -0.018711507,
         0.0039011878,
         -0.0006304676,
         9.076141e-5,
@@ -6032,12 +6060,12 @@ fn erfinv_far_poly(t: f32) -> f32 {
     fma(r1, t4, r0)
 }
 
-// Where `erfc_inv_half`'s tail hands over from `erfinv_tail_poly` to
-// `erfinv_far_poly`: the largest `w` a 24-bit `erfinv` argument can
+// Where `erfc_inv_half`'s tail hands over from `erfinv_tail_poly_m1` to
+// `erfinv_far_poly_m1`: the largest `w` a 24-bit `erfinv` argument can
 // produce is `-ln(1 - x_max^2) = 15.9424`, so the two polys split exactly
 // where `erfinv`'s own reachable range stops and `erfc_inv`/`probit`'s
 // extra reach begins. Keeping the split there is what leaves
-// `erfinv_tail_poly` -- and `erfinv` itself -- untouched by this.
+// `erfinv_tail_poly_m1` -- and `erfinv` itself -- untouched by this.
 const ERFC_INV_W_FAR: f32 = 16.0;
 
 // `|erfc_inv(n)|` for `n` in `(0, 1]`, the half both erfc_inv and probit
@@ -6061,7 +6089,7 @@ const ERFC_INV_W_FAR: f32 = 16.0;
 #[inline(always)]
 fn erfc_inv_half(n: f32) -> f32 {
     let x = 1.0 - n;
-    let central = x * erfinv_central_poly(x * x);
+    let central = fma(x, erfinv_central_poly_m1(x * x), x);
     let s = fma(-n, n, n + n);
     // `denormal_rescale!` and nothing else from `log_family_wrapper!`:
     // `s` reaches down to `2 * f32::MIN_POSITIVE_SUBNORMAL` for the
@@ -6072,11 +6100,11 @@ fn erfc_inv_half(n: f32) -> f32 {
     let w = -ln_normal(ss, koff);
     let v = w.sqrt();
     let q = if w > ERFC_INV_W_FAR {
-        erfinv_far_poly(v - 7.0)
+        erfinv_far_poly_m1(v - 7.0)
     } else {
-        erfinv_tail_poly(v - 1.0)
+        erfinv_tail_poly_m1(v - 1.0)
     };
-    let mag = if x <= 0.7 { central } else { v * q };
+    let mag = if x <= 0.7 { central } else { fma(v, q, v) };
     // `n == 0` is the pole and `n < 0` (with NaN) is a domain error. Both
     // have to be pinned rather than left to fall out: `s == 0` puts
     // `ln_normal` off its own positive-normal contract, and it returns a
@@ -6104,7 +6132,7 @@ fn erfc_inv_half(n: f32) -> f32 {
 ///
 /// `|x| == 1.0` exactly *does* need an explicit override, found by
 /// fuzzing, not assumed: `w` correctly reaches `+inf` there, but
-/// `erfinv_tail_poly`'s Estrin grouping
+/// `erfinv_tail_poly_m1`'s Estrin grouping
 /// evaluates several partial sums independently before combining them,
 /// and at `w=inf` different groups overflow to *opposite-signed*
 /// infinities depending on their own local coefficient signs (unlike a
@@ -6142,10 +6170,19 @@ pub fn erfinv(x: f32) -> f32 {
     let n = 1.0 - ax;
     let s = fma(-n, n, n + n);
     let w = -if s > 0.0 { ln_normal(s, 0.0) } else { f32::NAN };
-    let central = x * erfinv_central_poly(x * x);
+    // Both arms are built on `ax` and take `x`'s sign once, on the merged
+    // select, rather than the central arm carrying a signed `x` through
+    // the poly. The peeled `fma(x, P-1, x)` form cannot reproduce
+    // `erfinv(-0.0)`: `P-1` is negative, so `-0.0 * (P-1)` is `+0.0` and
+    // `+0.0 + -0.0` is `+0.0` under round-to-nearest -- losing the sign of
+    // zero that plain `x * P` carried for free. This is the same single
+    // `mulsign` the tail arm alone used to pay, and it is bit-identical to
+    // signing per-arm for every non-zero `x`, since `fma` is sign-symmetric
+    // (`fma(x, p, x) == -fma(ax, p, ax)` for `x < 0`).
+    let central = fma(ax, erfinv_central_poly_m1(x * x), ax);
     let v = w.sqrt();
-    let tail = mulsign(v * erfinv_tail_poly(v - 1.0), x);
-    let normal = if ax <= 0.7 { central } else { tail };
+    let tail = fma(v, erfinv_tail_poly_m1(v - 1.0), v);
+    let normal = mulsign(if ax <= 0.7 { central } else { tail }, x);
     if ax == 1.0 { f32::INFINITY.copysign(x) } else { normal }
 }
 

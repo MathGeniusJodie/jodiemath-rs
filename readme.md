@@ -104,9 +104,9 @@ logaddexp_accurate (all f32)| 0.000 |     0     | (no std logaddexp; the cancell
      norm_cdf (all f32) |    0.066   |     7     | (no std norm_cdf; exhaustive. Same two terms as `erfc`, in the same proportion -- `exp` and the erfcx polynomial)
      norm_pdf (all f32) |    0.027   |     4     | (no std norm_pdf; exhaustive. `exp`-bound: the rest of the chain is an exactly-split square and a two-word `1/sqrt(2*pi)`)
        dawson (all f32) |    0.050   |     6     | (no std dawson; exhaustive. The 6 is the central branch at x=1.404; the `|x|>4` tail is peeled and sits exactly on its own fit-only floor, max 3)
-       erfinv (|x|<1)   |    0.364   |     4     | (no std erfinv; exhaustive)
-      erfc_inv (0<y<2)  |    0.679   |     5     | (no std erfc_inv; exhaustive)
-        probit (0<p<1)  |    0.761   |     5     | (no std probit; exhaustive)
+       erfinv (|x|<1)   |    0.362   |     3     | (no std erfinv; exhaustive)
+      erfc_inv (0<y<2)  |    0.622   |     4     | (no std erfc_inv; exhaustive)
+        probit (0<p<1)  |    0.705   |     4     | (no std probit; exhaustive)
                   atan2 |    0.068   |     4     |  0.000  |    0
     atan2_unchecked (+) |    0.068   |     4     | (bit-identical to atan2 on its domain)
               atan2_pos |    0.063   |     3     | (no std atan2_pos)
