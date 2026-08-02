@@ -1815,9 +1815,25 @@ pub fn cos_prereduced(r: f32) -> f32 {
 /// correctly rounding to a tiny value there is exactly what should
 /// happen, the ratio just amplifies that tiny value's own relative
 /// error the same way any division does near a zero denominator.
+///
+/// Written out rather than spelled `sin_checked(x) / cos_checked(x)`
+/// only to fold the two sign masks into one. The reduction hands both
+/// halves the same `(-1)^n` and each xors it into its own residual
+/// before the poly; in the quotient it cancels, leaving only `cos`'s
+/// extra half-turn flip. `a ^ (a ^ b)` is `b`, so xoring the two masks
+/// once on the result is enough for LLVM to delete the shared
+/// `n + ROUND_MAGIC64` parity extraction outright, along with both
+/// residual xors. Everything else is `sin_checked`'s and
+/// `cos_checked`'s own body verbatim, clamp included -- `clamp(-1, 1)`
+/// is odd, so it commutes with a sign flip exactly as `sinf_poly` does
+/// -- and the result is bit-identical.
 #[inline(always)]
 pub fn tan_checked(x: f32) -> f32 {
-    sin_checked(x) / cos_checked(x)
+    let (rs, flip_s) = reduce_pi64::<false>(x);
+    let (rc, flip_c) = reduce_pi64::<true>(x);
+    let num = sinf_poly(rs).clamp(-1.0, 1.0);
+    let den = sinf_poly(rc).clamp(-1.0, 1.0);
+    f32::from_bits((num / den).to_bits() ^ (flip_s ^ flip_c))
 }
 
 /// Core of cbrt for normal finite x: bit-trick seed (~3% error), then a

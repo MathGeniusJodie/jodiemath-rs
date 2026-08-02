@@ -7995,3 +7995,37 @@ underlying reason it cannot be done for free: the fix needs
 throws away, and there is no magic constant with a fractional part --
 `ulp(M) = 1` forces `M` integral, so the half-odd grid is unreachable in
 one round however the constant is chosen.
+
+## `tan_checked`: the same sign fold, one level up
+
+`tan_checked` was `sin_checked(x) / cos_checked(x)`. Both halves get
+their sign from the *same* `reduce_pi64` parity `(-1)^n` (the checked
+tier applies it by xoring the residual's sign bit before `sinf_poly`,
+not by negating the result), and `cos_checked` adds one half-turn flip
+on top. In the quotient the shared parity cancels outright, so the whole
+`n + ROUND_MAGIC64` extraction is dead.
+
+Spelled as two `reduce_pi64` calls with the masks xored once on the
+quotient -- `a ^ (a ^ b)` is `b`, which instcombine takes from there:
+
+```
+region                     instrs      uOps    BlockRT   cyc/elem   latency
+tan_checked_throughput   119->108   138->126   32->30   4.598->4.289  103.095->101.000
+                                                          (-6.7%)      (-2.0%)
+  control: sin_checked 2.495 / 82.00 and cos_checked 3.157 / 87.00 unchanged
+```
+
+Bit-identical to `sin_checked(x) / cos_checked(x)` over all 2^32 f32
+patterns; all eight gates + `cargo test` clean. `clamp(-1, 1)` commutes
+with the sign flip (it is odd), which is why the clamps can stay where
+they are instead of moving to the quotient.
+
+The `|sin|`-with-no-mask shortcut that is wrong for the unchecked `tan`
+(entry above) is wrong here for the same reason and was not attempted:
+`cos_checked`'s residual sign is not `-sign(r_s)` at a tie.
+
+Also corrected on the way past: the readme's llvm-mca rows for
+`sin_checked` (108.02 / 4.546) and `cos_checked` (113.00 / 4.037) still
+carried their pre-f64-reduction numbers. Re-measured on current master:
+82.00 / 2.495 and 87.00 / 3.157. `tan_checked` had no row at all and now
+has one.
