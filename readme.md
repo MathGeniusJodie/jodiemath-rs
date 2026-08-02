@@ -25,9 +25,9 @@ cbrt_accurate_unchecked |    0.000   |     1     | (bit-identical to cbrt_accura
     sin_fast (|x|<=1e6) |    0.036   |     2     |  0.002  |    1
     cos_fast (|x|<=1e6) |    0.078   |     3     |  0.002  |    1
   sin_fast (|x|<2^22*pi)|   0.059   |   219     |  0.003  |    1
-  cos_fast (|x|<2^22*pi)|   0.291   |  2780     |  0.002  |    1
+  cos_fast (|x|<2^22*pi)|   0.288   |  2780     |  0.002  |    1
  sin_checked (|x|<=1e6) |    0.036   |     2     |  0.000  |    1
- cos_checked (|x|<=1e6) |    0.081   |     3     |  0.000  |    1
+ cos_checked (|x|<=1e6) |    0.076   |     2     |  0.000  |    1
         sinpi (all f32) |    0.197   |     2     | (no std sinpi)
         cospi (all f32) |    0.058   |     2     | (no std cospi)
         tanpi (all f32) |    0.227   |     5     | (no std tanpi)

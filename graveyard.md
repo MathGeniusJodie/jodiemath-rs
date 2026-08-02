@@ -9322,14 +9322,17 @@ understates the function indefinitely -- there is no later check that can
 catch it, because re-running is exactly as lucky. Any future edit to these
 rows should be the max over >=3 repeats, and should say so.
 
-**Flagged, not corrected:** `cos_checked (|x|<=1e6)` reads 0.081 avg where
-the quick sweep says **0.0759** -- 50x the documented ±0.0001 quick-avg
+**Resolved after the fact, in the commit that follows this entry:**
+`cos_checked (|x|<=1e6)` read 0.081 avg where the quick sweep said 0.0759 -- 50x the documented ±0.0001 quick-avg
 noise floor, and its three band siblings (`sin_fast` 0.0357 vs 0.036,
 `sin_checked` 0.0355 vs 0.036, `cos_fast` 0.0779 vs 0.078) all reproduce
 their readme numbers to the published precision, so the quick/thorough avg
 agree for this band shape and 0.0759 is probably right. Left alone because
-the row was presumably recorded `thorough` and `accuracy thorough
+the row was presumably recorded `thorough`, and `accuracy thorough
 cos_checked` does not select it (the gate is `run("cos")`, and
 `n.contains(filter)` needs the *gate* name, not the row label -- worth
-knowing before scripting a filtered run). Its max is untouched at 3: quick
-mode found 2, and quick's max is a lower bound, so it proves nothing.
+knowing before scripting a filtered run). Run as `accuracy thorough cos`
+it comes back **0.0760 / max 2** exhaustively, so that row was stale on
+*both* columns and is now 0.076 / 2. `cos_fast (|x|<2^22*pi)`'s avg went
+0.291 -> 0.288 in the same run; its 2780 max reproduced exactly, as did
+`cos (in-domain)` 0.0833/2 and `cos_fast (|x|<=1e6)` 0.0779/3.
