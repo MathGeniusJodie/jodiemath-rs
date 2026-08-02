@@ -2943,55 +2943,125 @@ pub fn exp_checked(x: f32) -> f32 {
     exp_reduce!(x.clamp(EXP_CLAMP_LO, EXP_CLAMP_HI))
 }
 
-/// A Pade approximant near 0 (where exp(x)-1 loses precision to
-/// cancellation), exp(x)-1 directly elsewhere. See exp's doc comment for
-/// the inherited unchecked-exp2 domain limit. The 5 Pade coefficients
-/// were tuned as free parameters against f64::exp_m1 over |x| < 0.5:
-/// max ulp 3, avg 0.109 on that branch.
+// `e^r - 1` on the Cody-Waite reduction's own `|r| <= ln2/2`, as
+// `r + r^2*P(r)`. Fitting `e^r - 1` instead of `e^r` is what removes
+// expm1's cancellation at the source: an absolute error carried on
+// `e^r` survives the combine's `-1` and comes out amplified by
+// `e^x/(e^x - 1)`, a factor that peaks at 2.541 just above `x = 0.5`.
+// Carried on `e^r - 1` the same error is proportional to that small
+// quantity itself, so the amplification acts on ~1/4 as much and the
+// combine ends up *de*-amplifying (`2^k*E / (2^k*(1+E) - 1) < 1`).
+//
+// Degree 4 in `P` (degree 6 in the result) is the natural stopping
+// point: the ulp-weighted LP's degree-5 coefficient converges to
+// exactly 0. Same top-pair-at-the-`r^2`-level Estrin fold as
+// `exp_r_poly!` -- `r^4` is never formed -- and the trailing `+ r` is
+// the combine's own fma, so this costs exactly what `exp_r_poly!`
+// costs. Macro, not a fn -- see `exp_r_poly!`.
+macro_rules! expm1_r_poly {
+    ($r:expr) => {{
+        let r = $r;
+        let c: [f32; 5] = [0.5, 1.6666504e-1, 4.1666778e-2, 8.3707254e-3, 1.3916677e-3];
+        let r2 = r * r;
+        let l1 = fma(c[1], r, c[0]);
+        let l2 = fma(c[3], r, c[2]);
+        let m = fma(c[4], r2, l2);
+        fma(fma(m, r2, l1), r2, r)
+    }};
+}
+
+// `expm1`'s exponent field, emitted at `k-1`: `exp2int_field!`'s magic
+// with the `+127` bias one lower. See `expm1`'s own doc comment for why
+// the field has to sit at `k-1` rather than `k`.
+const EXPM1_HALF_MAGIC: f32 = 12583038.0; // 1.5 * 2^23 + 126
+
+// Below this, `expm1(x)` is `x` to the last bit, and the `k-1` field's
+// halved intermediate would be denormal. See `expm1`'s doc comment.
+const EXPM1_LINEAR: f32 = 2.0 * f32::MIN_POSITIVE; // 2^-125
+
+/// exp(x)-1, computed as `e^r - 1` reassembled rather than as `e^x` with
+/// 1 subtracted off it, so the cancellation that gives `expm1` its name
+/// never happens. See exp's doc comment for the inherited unchecked-exp2
+/// domain limit.
+///
+/// There is no near-zero branch and no near-zero approximant: the
+/// Cody-Waite reduction already lands every input on `|r| <= ln2/2`, and
+/// `expm1_r_poly!` is accurate *relatively* there, so `2^k*E + (2^k - 1)`
+/// is well-conditioned across the whole domain in one arm. At `k = 0` --
+/// every `|x| < 0.3466`, which is most of the old Pade branch -- the
+/// addend is exactly 0 and the result is the polynomial itself,
+/// unrounded. That deletes a division, a whole second approximant and the
+/// select between them; see graveyard.md for the three levers that were
+/// closed on the old two-branch form before this one replaced it.
+///
+/// The field is emitted at `k-1` and the missing factor of two folded
+/// into an exact `b + b`, the same indirection [`expm1_checked`] uses:
+/// `k` reaches 128 inside the valid domain (`x` up to `88.72`, whose
+/// result is finite), and `2^128` is not representable, but `2^127` is.
+/// The addend `2^(k-1) - 0.5` is exact for every `k <= 24`, and past that
+/// the dropped half-unit is under a quarter ulp of a result already of
+/// order `2^k`.
+///
+/// The trailing select is the price of that `k-1` field, and it pays for
+/// two things at once. `b` is `expm1(x)/2` before the doubling, so any
+/// result under `2^-125` is *formed* as a denormal and the doubling
+/// cannot put back the bit that rounding took -- without the select all
+/// 2^24 denormal inputs come back a bit short. And at `k = 0` the addend
+/// is `+0.0`, so `-0.0` would come out `+0.0`. Both regions are exactly
+/// where `expm1(x) == x`, so one `|x| < 2^-125` select covers both.
+///
+/// Cost, and the one axis this is not free on. Throughput is
+/// **-32%** (mca 1.604 -> 1.087 cyc/elem; 79 -> 56 instructions, 86 -> 58
+/// uOps, Block RThroughput 24 -> 15), because the old two-arm form
+/// evaluated *both* arms on every lane -- the vectorized loop is
+/// if-converted, so a division nobody's lane needed was still paid for.
+/// Latency is a wash against the arm it replaces and a real regression
+/// against the arm it deletes: the old region published 69.00 cycles but
+/// that is the documented branch artifact, and its arms measured 32.00
+/// (Pade) and 46.00 (direct) in isolation. This is branchless at 47.00,
+/// so `|x| >= 0.5` is +1 cycle and `|x| < 0.5` pays 32 -> 47 in a
+/// latency-bound scalar chain. Throughput is the axis this crate
+/// optimizes and the accuracy is better in both regions, so the trade is
+/// taken rather than split into a tier.
 #[doc(alias = "expm1f")]
 #[inline(always)]
 pub fn expm1(x: f32) -> f32 {
-    let a = pade_expm1_ratio!(x, mul);
     // Deliberately a standalone copy of exp's reduction (not routed
     // through the public `exp` fn -- a shared-fn attempt regressed an
-    // unrelated caller by +32%, see exp_r_poly!'s comment) ending in
-    // fma(p*t1, t2, -1.0) instead of exp(x)-1.0: fuses the trailing
-    // subtract into the last multiply, one rounding fewer. This branch
-    // carries expm1's actual worst-case ulp (the Pade branch has
-    // headroom). The poly is shared via exp_r_poly! and the field split
-    // via exp2_field_split (an already-existing fn, verified via full
-    // assembly diff to cost nothing here).
+    // unrelated caller by +32%, see exp_r_poly!'s comment).
     const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
     let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
     let r = fma(-k, LN2_HI, x);
     let r = fma(-k, LN2_LO, r);
-    let p = exp_r_poly!(r);
-    let (t1, t2) = exp2_field_split(k);
-    let b = fma(p * t1, t2, -1.0);
-    if x.abs() < 0.5 { a } else { b }
+    let e = expm1_r_poly!(r);
+    let t = f32::from_bits((k + EXPM1_HALF_MAGIC).to_bits() << 23);
+    let b = fma(e, t, t - 0.5);
+    let b = b + b;
+    if x.abs() < EXPM1_LINEAR { x } else { b }
 }
 
 /// expm1(x), single-exponent-field tier (backlog idea #201, the same
-/// mechanism as [`exp_narrow`] applied here): identical Pade branch,
-/// identical reduction/poly for the direct branch, but the direct
-/// branch's combine drops straight to `fma(p, exp2int, -1.0)` (no `t1`
-/// multiply at all, not just a narrower field) since there's only one
-/// field to multiply by. Valid over the same `[-87.68311, 88.37627]`
-/// domain as `exp_narrow` (identical `k=round(x*log2(e))` reduction, so
-/// the same bit-level boundary applies). No clamp: unchecked, like
-/// `expm1` itself.
+/// mechanism as [`exp_narrow`] applied here): identical reduction, poly
+/// and combine to [`expm1`], but the field sits at `k` rather than `k-1`,
+/// so the addend is `2^k - 1` directly and the trailing `b + b` is gone.
+/// One instruction cheaper, and it costs the top of the domain: `k` has
+/// to stay inside a single field's own `[-126, 127]`, which is the same
+/// `[-87.68311, 88.37627]` bound `exp_narrow` carries. No clamp:
+/// unchecked, like `expm1` itself. Bit-identical to `expm1` over that
+/// range -- both addends are exact for `k <= 24` and both round the same
+/// way above it, and halving every operand of an fma halves its
+/// correctly-rounded result exactly.
 #[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
 pub fn expm1_narrow(x: f32) -> f32 {
-    let a = pade_expm1_ratio!(x, mul);
     const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
     let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
     let r = fma(-k, LN2_HI, x);
     let r = fma(-k, LN2_LO, r);
-    let p = exp_r_poly!(r);
-    let exp2int = exp2int_field!(k);
-    let b = fma(p, exp2int, -1.0);
-    if x.abs() < 0.5 { a } else { b }
+    let e = expm1_r_poly!(r);
+    let t = exp2int_field!(k);
+    let b = fma(e, t, t - 1.0);
+    f32::from_bits(b.to_bits() | (x.to_bits() & SIGN_MASK))
 }
 
 /// Full-range sibling of [`expm1`] (backlog idea #111): total over every
@@ -3005,31 +3075,16 @@ pub fn expm1_narrow(x: f32) -> f32 {
 ///
 /// Accuracy is not a tradeoff here: bit-identical to `expm1` everywhere
 /// `expm1` is itself valid (verified over all 2^32 patterns), so max ulp
-/// is `expm1`'s own 6, at the same worst point (`x ~ 0.9652`).
+/// is `expm1`'s own.
 ///
-/// The cost split is real and goes both ways (mca): throughput
-/// 1.695 -> 1.595 cyc/elem (-5.9%), latency 71.00 -> 75.06 cyc (+5.7%).
-/// Fewer total ops buys the throughput, but the clamp lands at the *head*
-/// of the dependency chain while the `exp2_field_split` work it replaces
-/// was partly parallel to it, so the critical path gets longer even as the
-/// op count falls -- the op-count-vs-path-depth distinction, in mirror
-/// image. Throughput is the axis this crate optimizes, and for scale:
-/// `exp` -> `exp_checked` pays +30% throughput for the same totality,
-/// where this is *negative*.
-///
-/// The field is emitted at `k-1` (offset `382`, not [`expm1_narrow`]'s
-/// `383`) with the missing factor of two folded into an exact `p + p`.
-/// That indirection is the whole trick, and idea #111's own premise --
-/// "the clamp caps `k` at 127 by construction" -- is what it corrects:
-/// capping `k` at 127 would cap the output near `2.4e38`, so the top
-/// third of an octave (`x` in `[88.376, 88.723)`, whose true results are
-/// finite and representable up to `f32::MAX`) would come back short, and
-/// everything above `ln(f32::MAX)` would *saturate finite* instead of
-/// overflowing to `inf` -- the exact failure `edgecheck.rs` caught in the
-/// rejected round-based `exp10_checked` reduction. Shifting the field
-/// down one and doubling `p` instead lets `k` reach 128 while `k-1` stays
-/// inside a single field's `[-126, 127]`, so the top of the range
-/// overflows naturally, on its own, with no extra select.
+/// The only thing this adds over [`expm1`] is the clamp; `expm1` already
+/// emits its field at `k-1`, which is what lets `k` reach 128 (`x` up to
+/// `88.72`, whose result is finite) while `k-1` stays inside a single
+/// field's `[-126, 127]`. Capping `k` at 127 instead would cap the output
+/// near `2.4e38`, so the top third of an octave would come back short and
+/// everything above `ln(f32::MAX)` would *saturate finite* rather than
+/// overflow -- the exact failure `edgecheck.rs` caught in the rejected
+/// round-based `exp10_checked` reduction.
 ///
 /// Clamp bounds follow from that same one-field budget. Top is
 /// `128/log2(e)`, [`exp_checked`]'s own bound: it sits a hair above
@@ -3037,21 +3092,19 @@ pub fn expm1_narrow(x: f32) -> f32 {
 /// Bottom only has to be somewhere `k-1 >= -126` still holds while the
 /// answer is already exactly `-1`: `e^x` is below half an ulp of 1 for
 /// any `x < -17.4`, so `-86.0` (`k = -124`) clears the field's floor with
-/// room to spare and every `x` below it correctly rounds to `-1.0`. The
-/// Pade branch, its `|x| < 0.5` threshold, the Cody-Waite reduction and
-/// `exp_r_poly!` are all shared with `expm1` unchanged.
+/// room to spare and every `x` below it correctly rounds to `-1.0`.
 #[inline(always)]
 pub fn expm1_checked(x: f32) -> f32 {
-    let a = pade_expm1_ratio!(x, mul);
     let xc = x.clamp(-86.0, 88.72283911167308);
     const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
     let k = fma(xc, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
     let r = fma(-k, LN2_HI, xc);
     let r = fma(-k, LN2_LO, r);
-    let p = exp_r_poly!(r);
-    let exp2int = f32::from_bits(((k + 382_f32).to_bits() << 8) & EXPONENT_MASK);
-    let b = fma(p + p, exp2int, -1.0);
-    if x.abs() < 0.5 { a } else { b }
+    let e = expm1_r_poly!(r);
+    let t = f32::from_bits((k + EXPM1_HALF_MAGIC).to_bits() << 23);
+    let b = fma(e, t, t - 0.5);
+    let b = b + b;
+    if x.abs() < EXPM1_LINEAR { x } else { b }
 }
 
 /// (e^x - 1)/x: the well-conditioned primitive behind financial

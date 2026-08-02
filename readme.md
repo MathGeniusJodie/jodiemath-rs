@@ -68,8 +68,8 @@ comment and graveyard.md. All three `_wide` rows are exhaustive over all
        compound_accurate |    0.001   |     1     | (no std compound; f64 exponent, ~1.7x compound's throughput cost)
          exp (in-domain) |    0.071   |     3     |  0.000  |    1
              exp_checked |    0.037   |     3     |  0.000  |    1
-       expm1 (in-domain) |    0.129   |     5     |  0.000  |    0
-           expm1_checked |    0.067   |     5     |  0.000  |    0
+       expm1 (in-domain) |    0.008   |     2     |  0.000  |    0
+           expm1_checked |    0.004   |     2     |  0.000  |    0
 exp_m1_over_x (in-domain)|    0.071   |     5     | (no std exp_m1_over_x)
                  exp2m1  |    0.077   |     4     | (no std exp2m1)
         sinh (in-domain) |    0.061   |     3     |  0.000  |    1
@@ -422,8 +422,8 @@ compound            |          99.69 |             3.829
 compound_accurate   |         120.77 |             6.173
 exp                 |          42.00 |             1.195
 exp_checked         |          50.00 |             1.466
-expm1               |          69.00 |             1.604
-expm1_checked       |          78.00 |             1.556
+expm1               |          47.00 |             1.087
+expm1_checked       |          55.00 |             1.320
 exp_m1_over_x       |          81.00 |             1.639
 exp2m1              |          80.00 |             1.843
 sinh                |          54.00 |             1.824
@@ -492,15 +492,16 @@ region is a loop.
 **The latency column above is wrong for the branch-shaped rows, and mostly
 too high.** llvm-mca has no branch predictor: it simulates a region as one
 straight-line stream, so for `jcc L1 / <A> / jmp L2 / L1: <B> / L2:` it runs
-both arms back to back and reports neither. 39 of the 151 latency regions in
-`mca_target.rs` contain a real conditional branch, and for **24 of them the
+both arms back to back and reports neither. 38 of the 160 latency regions in
+`mca_target.rs` contain a real conditional branch, and for **27 of them the
 published figure lies above *both* of its own arms measured in isolation** --
 the arms fuse into one artificial chain whenever the second reads a register
-the first clobbered. Worst offenders: `exp2m1` 80.00 against arms of
-37.00/48.00, `exp10m1` 112.00 against 37.00/80.00, `expm1_checked` 78.00
-against 32.00/51.00, `tanh` 63.00 against 45.00/62.00, `erf` 87.00 against
-44.00/65.98, `asin` 60.91 against 34.99/36.99, `acosh` 97.88 against
-51.08/82.02. The opposite failure also happens: where both arms write the
+the first clobbered. Worst offenders, by how far the published figure sits
+above its own worse arm: `clog_re` 295.41 against arms of 181.28/201.84,
+`exp10m1` 112.00 against 37.00/80.00, `exp_m1_over_x` 81.00 against
+32.00/58.00, `exp2m1` 80.00 against 37.00/48.00, `asind` 72.61 against
+43.99/48.99, `asinpi` 64.84 against 39.99/36.99, `asin` 60.91 against
+34.99/36.99. The opposite failure also happens: where both arms write the
 same register and the *cheap* one is laid out last, mca times the cheap one
 -- `asinh` publishes 74.49 where its real in-domain chain is **84.02**.
 
@@ -511,8 +512,8 @@ masked selects, so there is no branch to mis-simulate) and remains this
 crate's perf reference -- with the *separate* retained-loop caveat above,
 which is not a branch-prediction artifact at all. Rows with no conditional
 branch -- `exp2`, `sin`,
-`atan`, `sigmoid`, `cosh`, `powf`, `hypot`, `cbrt` and most others -- are
-unaffected.
+`atan`, `sigmoid`, `cosh`, `powf`, `hypot`, `cbrt`, all three `expm1` tiers
+and most others -- are unaffected.
 
 The exp family's throughput rows moved without any of those functions
 changing: `exp2_field_split` (which every `_checked`-style exponent

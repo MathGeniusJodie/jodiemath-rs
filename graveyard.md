@@ -10660,3 +10660,104 @@ the log term is identically zero. Look for the input set that annihilates the
 *other* term. The same question is now open on `log10_normal`'s own
 `fma(s, LOG10_E, sq)` -- see IDEAS.md, where the identical two-word split
 would remove the 0.39-ulp floor its comment documents.
+## `expm1`: fit `e^r - 1`, not `e^r`, and the seam disappears with the Pade
+
+Idea #169 profiled `expm1`/`exp_m1_over_x`/`tanh` and found all three had
+their error concentrated in a narrow band at and just above their seam,
+traced it to the direct arm forming `e^x` and subtracting 1 (losing
+`log2(e^x/(e^x-1))` bits, a factor peaking at **2.541** just above
+`x = 0.5`), closed three levers on it -- (a) widen the Pade's fit,
+(b) a doubling identity as a third branch, (c) retune the seam -- and
+concluded the concentration was "structural at the current op budget".
+`tanh` escaped that verdict by questioning a premise none of the three
+levers touched. So does this one, and it is the same *shape* of premise:
+**the direct arm does not have to compute `e^r` at all.**
+
+**Shipped**: exhaustive avg **0.1291 -> 0.0166**, max **5 -> 2**, and
+throughput **1.604 -> 1.087 cyc/elem (-32.2%)**. Not a tradeoff on
+throughput; see the latency note at the bottom for the one axis that moves
+the other way.
+
+### The mechanism
+
+The combine wants `2^k * e^r - 1`. Carry `E = e^r - 1` instead of
+`p = e^r` and it becomes `2^k*E + (2^k - 1)`, one fma, with `2^k - 1`
+exact for every `k <= 24` and under a quarter ulp of the answer above
+that. The error analysis inverts:
+
+| | error carried into the combine | amplification at `x = 0.5` |
+|---|---|---|
+| `p = e^r` | absolute, ~`ulp(1)` regardless of `r` | `e^x/(e^x-1)` = **2.541** |
+| `E = e^r - 1` | absolute, ~`ulp(E)`, i.e. proportional to `E` | `2^k E/(2^k(1+E)-1)` < **1** |
+
+The second row *de*-amplifies. That is the whole result: the polynomial's
+own evaluation roundings shrink with `|E|` exactly where the combine's
+sensitivity grows, and the two cancel instead of compounding.
+
+### What that deletes
+
+The Cody-Waite reduction already lands every input on `|r| <= ln2/2`, and
+the new form is relatively accurate over that whole range, so **there is
+no near-zero branch left to have a seam**. Gone: the Pade approximant,
+its division, the `|x| < 0.5` select, and `exp2_field_split` (one field at
+`k-1` suffices, `expm1_checked`'s own trick). At `k = 0` -- every
+`|x| < 0.3466`, most of the old Pade branch -- the addend is exactly 0 and
+the answer is the polynomial itself, unrounded.
+
+`expm1_r_poly!` is `r + r^2*P(r)`, `P` degree 4, fitted by ulp-weighted LP
+against `(e^r-1-r)/r^2`. Degree 4 is the natural stop: the degree-5
+coefficient converges to exactly 0, the same signal `cbrt` and
+`exp_pos_neg` gave at their own degree bumps. Same instruction count as
+`exp_r_poly!`, same Estrin fold, `r^4` never formed.
+
+### Numbers
+
+Exhaustive over `exp_domain` (all 2.24e9 in-range f32, not sampled):
+avg 0.004919, **max 1.5642** at `x = 3.7117928e-1`. `expm1`,
+`expm1_narrow` and `expm1_checked` agree bit-for-bit over every pattern in
+their shared domains.
+
+| region | instrs | uOps | BlockRT | cyc/elem |
+|---|---|---|---|---|
+| `expm1_throughput` | 79 -> 56 | 86 -> 58 | 24 -> 15 | 1.604 -> **1.087** |
+| `expm1_checked_throughput` | 78 -> 61 | 87 -> 64 | 22 -> 17 | 1.556 -> **1.320** |
+| `expm1_narrow_throughput` | 67 -> 50 | 73 -> 52 | 19 -> 14 | 1.278 -> **0.964** |
+
+All three rungs of the ladder move the same way, so this is not the
+throughput-column artifact. The size of the throughput win is itself a
+consequence of the branch deletion rather than of the op count alone: the
+vectorized loop is if-converted, so the old code paid for the Pade's
+`vdivps` on **every** lane including the ones that selected the other arm.
+
+### Two things that had to be paid for, and one that did not
+
+- **The `k-1` field makes the pre-doubling value denormal.** `b` is
+  `expm1(x)/2`, so every result under `2^-125` is *formed* as a denormal
+  and the doubling cannot restore the bit rounding took. Caught by an
+  exhaustive bit-compare against `expm1_narrow` (which uses the field at
+  `k` and so does not halve): **16777216 disagreements, exactly 2^24, the
+  whole denormal input range**. `denormal_audit` would have caught it too.
+  Fixed by an `|x| < 2^-125` select, which also carries `expm1(-0.0)`
+  (at `k = 0` the addend is `+0.0` and `-0.0 + 0.0` is `+0.0`) -- both
+  regions are exactly where `expm1(x) == x`, so one select covers both.
+- **Latency, honestly.** The old `expm1_latency` published 69.00 but is
+  one of the readme's flagged branch-shaped rows; its arms measure 32.00
+  (Pade) and 46.00 (direct). The new region is **branchless** (0 jcc
+  against the old region's 128) at 47.00. So `|x| >= 0.5` is +1 cycle and
+  `|x| < 0.5` goes 32 -> 47 in a latency-bound scalar chain. Not split
+  into a tier: throughput is the axis this crate optimizes and accuracy
+  improves in both regions.
+- **`expm1_narrow` did *not* become redundant**, which was the first
+  guess. `expm1` now uses a single field too, but at `k-1`; `expm1_narrow`
+  puts it at `k` and so writes `fma(e, t, t - 1.0)` with no doubling --
+  genuinely one instruction cheaper, at the cost of the top of the domain
+  (`k <= 127`, i.e. `x <= 88.37627`, versus `expm1`'s `88.72`). Same
+  Pareto split it always had, different reason for it.
+
+### Transferable
+
+Any `_m1`/`m1_`-shaped function whose direct arm reconstructs `f(x)` and
+then subtracts the leading term is a candidate, and the tell is a doc
+comment explaining a *near-zero branch* as the fix for cancellation --
+that branch is treating the symptom. `exp_m1_over_x` (max 5),
+`exp2m1` (max 4) and `exp10m1` all still carry the Pade and the seam.

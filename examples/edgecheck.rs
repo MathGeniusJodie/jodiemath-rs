@@ -2452,7 +2452,10 @@ fn real_main() {
     // shipped branch condition exactly, not the function's own doc
     // comment (which can drift, e.g. asin's was 0.25 before idea #58's
     // 2026-07-20 crossover shift to 0.27).
-    check_seam("expm1 seam", expm1, 0.5);
+    // expm1's only remaining branch is its `|x| < 2^-125` linear arm --
+    // the 0.5 Pade seam is gone, the reduction now covers the whole
+    // domain in one arm (see expm1's own doc comment).
+    check_seam("expm1 seam", expm1, 2.0 * f32::MIN_POSITIVE);
     check_seam("exp2m1 seam", exp2m1, 0.65);
     check_seam("sinh seam", sinh, 0.5);
     check_seam("tanh seam", tanh, 0.8);
