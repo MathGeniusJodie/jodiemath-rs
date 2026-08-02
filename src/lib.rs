@@ -5410,12 +5410,23 @@ pub fn atand(x: f32) -> f32 {
 }
 
 /// atan(x)/pi (backlog idea #85), the C23 half-turn convenience family.
-/// A composite over `atan`, but not a single-word multiply: `atan`'s
-/// result is already a rounded f32 and `1/pi` is irrational, so a plain
-/// `atan(x) * K` rounds twice and the second rounding inherits the f32
-/// `K`'s own 0.43-ulp low bias (see [`FRAC_1_PI_LO`]). The `fma` form
-/// rounds once, at the result's own magnitude, which leaves essentially
-/// only `atan`'s error behind.
+/// Not a composite over [`atan`]: it repeats `atan`'s own `min(a, 1/a)`
+/// reduction and calls [`atan_bounded`] on the result, so that the
+/// `|x| >= 1` quadrant fold happens **in half-turns, where its constant
+/// is an exact `0.5`**, rather than in radians against `fl(pi/2)`.
+///
+/// That constant is the whole reason. `atan` folds with `FRAC_PI_2 - t`,
+/// and `fl(pi/2)` sits 0.367 ulp above `pi/2` -- an absolute offset that
+/// survives the later `1/pi` scaling as a fixed **+0.47 ulp** of a result
+/// in `[0.25, 0.5)`, which is where every `|x| >= 1` input lands. Scaling
+/// *before* the fold replaces both that bias and the `FRAC_PI_2 - t`
+/// subtraction's own rounding with a single exact constant.
+///
+/// The `1/pi` multiply is still the two-word `fma` and still needs to be:
+/// `atan_bounded`'s result is a rounded f32 and `1/pi` is irrational, so
+/// a plain `* K` rounds twice and inherits the f32 `K`'s 0.43-ulp low
+/// bias (see [`FRAC_1_PI_LO`]). The `fma` form rounds once, at the
+/// result's own magnitude.
 ///
 /// A rescaled-coefficient fold (per asinpi/acospi's own precedent) is
 /// deliberately not used here: `atan_poly` is a Pade rational whose
@@ -5424,8 +5435,20 @@ pub fn atand(x: f32) -> f32 {
 /// and measures worse on both axes -- see graveyard.md.
 #[inline(always)]
 pub fn atanpi(x: f32) -> f32 {
-    let y = atan(x);
-    fma(y, FRAC_1_PI, y * FRAC_1_PI_LO)
+    let a = x.abs();
+    // `a.min(1.0/a)` is already non-negative, so `atan_bounded`'s own sign
+    // handling is dead work -- but LLVM only folds it away if the value is
+    // *visibly* sign-cleared, and `.abs()` is what makes it visible. Worth
+    // two instructions in the emitted region; a bit-mask spelling of the
+    // same thing measures identically, and reaching past `atan_bounded` to
+    // the private `atan_poly` would save two more at the cost of merging
+    // `atan`'s ownership domain into this one.
+    let t = atan_bounded(a.min(1.0 / a).abs());
+    let h = fma(t, FRAC_1_PI, t * FRAC_1_PI_LO);
+    // Exactly `atan`'s `a < 1.0` branch, in half-turns. `0.5 - h` for
+    // `h <= 0.25` rounds once, at the result's own magnitude; the sign is
+    // reapplied last because both arms are computed from `|x|`.
+    mulsign(if a < 1.0 { h } else { 0.5 - h }, x)
 }
 
 /// atan(x), `|x| <= 1` contract (backlog idea #61): `atan_poly` alone is

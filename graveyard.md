@@ -11516,3 +11516,135 @@ combine win above was ready to land on its own. This is a **priced,
 ready-to-implement lead**, not a rejection: the numbers above are the real
 exhaustive sweep, and adding a two-word `pi/2` to the small arm on top
 measured *identical* (0.0789/3), so that part is not needed.
+## `cargo build --example mca_target` does not re-emit asm -- a stale `.s` serves old numbers
+
+Cost time twice on 2026-08-02, in two different worktrees, so it is worth
+its own entry. `examples/mca.rs` regenerates the assembly with
+
+```sh
+touch examples/mca_target.rs
+cargo rustc --release --example mca_target -- --emit=asm -C debuginfo=0
+```
+
+and **both halves are load bearing.** Cargo's fingerprint does not record
+the `--emit=asm` passed as a raw rustc arg, so if `mca_target.rs` itself
+has not changed, `cargo rustc` treats the request as a no-op and leaves
+the previous `.s` in place; the `touch` is what forces it. A plain
+`cargo build --release --example mca_target` never emits assembly at all,
+no matter what changed -- it rebuilds the *library*, reports a normal
+recompile, and takes long enough to look like it worked.
+
+The failure is silent and reads as a *result*: `mca_region.py` happily
+scores the stale file and reports that a change costs exactly nothing.
+Here that produced "candidate is byte-identical to baseline on all five
+rungs" for an edit that demonstrably changed the function's output.
+
+Two tells, both cheap:
+
+- `ls -lt target/release/examples/mca_target-*.s` -- if the timestamp
+  predates the edit, every number from it is the old code's. A single
+  `.s` whose mtime is older than your last build is the whole diagnosis.
+- The crate's standing rule in the other direction: a change that *must*
+  move numbers moving none. Byte-identical asm means "not real" only once
+  you have confirmed the asm was actually regenerated.
+
+Both traps have the same root -- the `.s` is a build *side effect* that
+nothing in the normal build graph depends on -- so neither `cargo build`
+nor a fresh `cargo run --example mca` of the wrong shape will fix it.
+
+## `atanpi`: fold `1/pi` *before* the quadrant reflection, so its constant is an exact `0.5`
+
+`atanpi` was `atan(x)` followed by the two-word `1/pi` multiply, and the
+entry above called what remained "essentially just `atan`'s own error plus
+binade shift". That was true of the `|x| < 1` arm and wrong about the
+other one, which carries a bias `atan` cannot avoid and `atanpi` can.
+
+`atan` folds `|x| >= 1` with `FRAC_PI_2 - t`. **`fl(pi/2)` sits 0.367 ulp
+*above* `pi/2`**, and that is an absolute offset, so it survives the later
+scaling intact: `(fl(pi/2) - pi/2)/pi = 1.391e-8`, against an ulp of
+`2^-25` for a result in `[0.25, 0.5)` -- which is exactly where every
+`|x| >= 1` input lands. A fixed **+0.47 ulp**, on half the domain, that no
+amount of work on `atan_poly` can reach.
+
+Scaling *before* the fold moves the reflection into half-turns, where its
+constant is an exactly representable `0.5`, and replaces both that bias
+and the `FRAC_PI_2 - t` subtraction's own rounding with one exact
+constant. `0.5 - h` for `h <= 0.25` then rounds once, at the result's own
+magnitude.
+
+Exhaustive over every positive f32 pattern (the function is odd, so the
+negative half mirrors bit for bit), scored with `accuracy.rs`'s own
+integer `ulp_diff`:
+
+| branch | before | after |
+|---|---|---|
+| `\|x\| < 1` | 0.0561 avg / max 4 | **bit-identical** |
+| `\|x\| >= 1` | 0.0909 avg / max 2 | **0.0059 / max 2** |
+| whole domain | 0.0733 / 4 | **0.0308 / 4** |
+
+All rows are exhaustive, scored with `accuracy.rs`'s own integer
+`ulp_diff` on its scale: mirror the negative half of an exactly odd
+function, divide by all `2^32` patterns so the ~0.39% that are NaN dilute
+the mean as the harness lets them. **Both formulas were measured in one
+binary, each defined locally, so neither depends on what `src/lib.rs`
+contained at the time** -- and the old one reproduces the published
+0.0733 / max 4 in that same run, which establishes the scale rather than
+assuming it. Both also report the *same* worst input, `x = 9.3035436e-1`:
+direct evidence the max is untouched and sits on the arm this leaves
+bit-identical.
+
+Measuring it that way was not fussiness. A first attempt at this A/B
+scored the two sides against *different* `atan_poly`s, because another
+worktree landed a peel of that polynomial midway through the sweep; the
+baseline moved 0.0775 -> 0.0733 under it, and publishing against the
+stale figure would have credited this change with that one's average.
+A shared dependency going stale mid-measurement is the live form of this
+file's standing rule about re-verifying a baseline that belongs to
+somebody else's function.
+
+**The max does not move, and this does not claim it.** `atanpi`'s max 4
+lives on the `|x| < 1` arm, which this leaves bit-identical -- it is
+`atan_poly`'s own, at `x ~ 0.930`. The `|x| >= 1` arm was already max 2
+and stays there. What moves is the average, 2.4x.
+
+Cost, `mca_region.py`: 58 -> 60 instrs, 60 -> 62 uOps, **Block
+RThroughput unchanged at 20**, throughput 1.643 -> 1.724 cyc/elem
+(+4.9%), latency 68.079 -> 66.189 (-2.8%). Blast radius 2 of 313 regions,
+exactly `atanpi`'s own. All 7 edgecheck pins pass, `-0.0` and `+-inf`
+included: both arms are computed from `|x|` and the sign is reapplied
+last, so signed zero rides out on the closing `mulsign` rather than
+depending on a coefficient's sign the way `tand`/`tanpi` do.
+
+### The +2 instructions are a domain boundary, deliberately
+
+The reduction is `atan`'s own `min(a, 1/a)`, and the value handed to
+[`atan_bounded`] is already non-negative, so that function's internal
+`abs` and `mulsign` are dead work. LLVM folds the `abs` only if the value
+is *visibly* sign-cleared -- `.abs()` at the call site is what makes it
+visible, and is worth 2 of the 4 instructions it otherwise costs (62 ->
+60). A bit-mask spelling of the same thing measures identically. The last
+`mulsign` does not fold.
+
+Calling the private `atan_poly` directly removes the other two and lands
+on **58 instrs / 60 uOps, dead level with the baseline** -- but it makes
+`atanpi` share private code with `atan`, which merges `atan`'s ownership
+domain into `asinpi`'s (`jm_domains.py` joins public functions through
+shared *private* units; a call to a public one is a contract, not a
+merge). Measured and rejected on that ground rather than on cost: `atan`
+was claimed by another worktree and mid-edit in `atan_poly` at the time.
+`atan_bounded`'s documented contract is precisely this caller -- "callers
+who already know their input is bounded, e.g. already reduced via some
+other identity" -- so the public route is also the designed one.
+
+### Transferable
+
+- **A composite's floor is its callee's error only where it shares the
+  callee's branches.** The `|x| >= 1` arm of `atan` computes something
+  `atanpi` does not want: an angle in radians whose reflection constant
+  is irrational. Rescaling a composite's *output* can never undo a
+  constant its *callee* already folded in. Look for a reflection,
+  quadrant fold or offset inside the callee whose constant is exact in
+  the caller's units -- `pi/2 -> 0.5`, `pi -> 1`, `pi/4 -> 0.25`.
+- **"Essentially just the callee's error" is a claim about one branch
+  until it is measured per branch.** Splitting the sweep by the callee's
+  own branch condition was the entire diagnosis here and cost one probe.

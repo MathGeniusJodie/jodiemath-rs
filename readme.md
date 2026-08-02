@@ -95,7 +95,7 @@ logaddexp_accurate (all f32)| 0.000 |     0     | (no std logaddexp; the cancell
                    acos |    0.056   |     4     |  0.000  |    0
                    atan |    0.063   |     3     |  0.000  |    0
            atan_latency |    0.052   |     3     |  0.000  |    0
-                 atanpi |    0.073   |     4     | (no std atanpi)
+                 atanpi |    0.031   |     4     | (no std atanpi; `1/pi` folds in *before* the quadrant reflection, whose constant is then an exact `0.5`. The max is `atan_poly`'s own, on the `|x|<1` arm this leaves bit-identical)
   tan (|x|<2^22*pi) |    0.118   |     4     |  0.000  |    0
       tan_wide (all f32)|    0.250   |     4     |  0.000  |    0
                    erf  |    0.027   |     3     | (no std erf)
