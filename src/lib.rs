@@ -3049,15 +3049,26 @@ pub fn exp_checked(x: f32) -> f32 {
 // `exp_r_poly!` -- `r^4` is never formed -- and the trailing `+ r` is
 // the combine's own fma, so this costs exactly what `exp_r_poly!`
 // costs. Macro, not a fn -- see `exp_r_poly!`.
+// `P` alone, for callers that want `(e^r - 1)/r` as well as `e^r - 1`:
+// the first is `fma(r, P, 1.0)` and the second `fma(r2, P, r)`, so
+// exposing `P` lets `exp_m1_over_x` build its own quotient with the `r`
+// cancelled algebraically instead of dividing by a number that goes to
+// zero. Takes `r2` rather than squaring again so the two share it.
+macro_rules! expm1_p_poly {
+    ($r:expr, $r2:expr) => {{
+        let c: [f32; 5] = [0.5, 1.6666504e-1, 4.1666778e-2, 8.3707254e-3, 1.3916677e-3];
+        let l1 = fma(c[1], $r, c[0]);
+        let l2 = fma(c[3], $r, c[2]);
+        let m = fma(c[4], $r2, l2);
+        fma(m, $r2, l1)
+    }};
+}
+
 macro_rules! expm1_r_poly {
     ($r:expr) => {{
         let r = $r;
-        let c: [f32; 5] = [0.5, 1.6666504e-1, 4.1666778e-2, 8.3707254e-3, 1.3916677e-3];
         let r2 = r * r;
-        let l1 = fma(c[1], r, c[0]);
-        let l2 = fma(c[3], r, c[2]);
-        let m = fma(c[4], r2, l2);
-        fma(fma(m, r2, l1), r2, r)
+        fma(expm1_p_poly!(r, r2), r2, r)
     }};
 }
 
@@ -3203,48 +3214,68 @@ pub fn expm1_checked(x: f32) -> f32 {
 /// (e^x - 1)/x: the well-conditioned primitive behind financial
 /// (continuously-compounded-rate) and ODE (exponential-integrator)
 /// kernels, where callers otherwise write `expm1(x)/x` and hope `x`
-/// never lands exactly on the removable singularity at 0. `expm1`'s Pade
-/// branch is already this shape internally: `a = x * N(x)/D(x)`, so
-/// `a/x = N(x)/D(x)` with the `x` factor cancelling algebraically before
-/// any rounding -- no cancellation risk, not even at `x=0` itself
-/// (`N(0)/D(0) = -120/-120 = 1.0` exactly, matching the true limit, so
-/// no `x==0.0` select is needed at all). The direct branch (`|x|>=0.5`)
-/// is `expm1`'s combine divided by `x`, a single extra rounding.
-/// Duplicates `expm1`'s reduction/poly rather than routing through it
-/// (same standalone-copy precedent). Inherits the unchecked-exp2 domain
-/// limit: garbage outside roughly `x in [-87.3, 88.7)`.
+/// never lands exactly on the removable singularity at 0.
+///
+/// The singularity is removed the same way [`expm1`] removes its
+/// cancellation, and by the same algebra. `expm1_p_poly!` gives `P` with
+/// `e^r - 1 = r + r^2*P`, so `(e^r - 1)/r` is `fma(r, P, 1.0)` with the
+/// `r` cancelled *before* any rounding -- no division, and exactly `1.0`
+/// at `r = 0`, matching the true limit. Whenever `k == 0` (every
+/// `|x| < 0.3466`) the reduction leaves `r == x` untouched, so that
+/// quotient is already the answer and the function returns it directly.
+/// Only `|x| >= 0.3466`, where dividing by `x` is entirely safe, takes
+/// the `expm1(x)/x` route. So the select is on `k`, which the reduction
+/// has computed anyway, rather than on a fitted seam -- there is no seam
+/// here, both arms are the same polynomial.
+///
+/// Duplicates `expm1`'s reduction rather than routing through it (same
+/// standalone-copy precedent). Inherits the unchecked-exp2 domain limit:
+/// garbage outside roughly `x in [-87.3, 88.7)`.
+///
+/// Cost follows `expm1`'s: throughput **-22.0%** (mca 1.639 -> 1.279
+/// cyc/elem; 80 -> 61 instructions, 88 -> 64 uOps, Block RThroughput
+/// 23 -> 16), because the old form evaluated a Pade *and* its division on
+/// every lane of an if-converted loop. Latency moves the other way on the
+/// near-zero arm, and the old published 81.00 was the usual branch
+/// artifact: arms of 32.00/58.00 then against 42.03/60.03 now.
 #[inline(always)]
 pub fn exp_m1_over_x(x: f32) -> f32 {
-    let a = pade_expm1_ratio!(x);
     const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
     let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
     let r = fma(-k, LN2_HI, x);
     let r = fma(-k, LN2_LO, r);
-    let p = exp_r_poly!(r);
-    let (t1, t2) = exp2_field_split(k);
-    let b = fma(p * t1, t2, -1.0) / x;
-    if x.abs() < 0.5 { a } else { b }
+    let r2 = r * r;
+    let p = expm1_p_poly!(r, r2);
+    let q = fma(r, p, 1.0);
+    let e = fma(r2, p, r);
+    let t = f32::from_bits((k + EXPM1_HALF_MAGIC).to_bits() << 23);
+    let b = fma(e, t, t - 0.5);
+    let b = b + b;
+    if k == 0.0 { q } else { b / x }
 }
 
 /// (e^x - 1)/x, single-exponent-field tier (backlog idea #201, same
-/// mechanism as [`exp_narrow`]/[`expm1_narrow`]): identical Pade branch,
-/// identical reduction/poly for the direct branch, combine drops to
-/// `fma(p, exp2int, -1.0) / x` (no `t1` multiply). Same
-/// `[-87.68311, 88.37627]` domain as the others (identical
-/// `k=round(x*log2(e))` reduction). No clamp: unchecked, like
-/// `exp_m1_over_x` itself.
+/// mechanism as [`exp_narrow`]/[`expm1_narrow`]): identical reduction,
+/// poly and `k == 0` quotient arm as [`exp_m1_over_x`], but the field
+/// sits at `k` rather than `k-1`, so the addend is `2^k - 1` directly and
+/// the trailing `b + b` is gone. One instruction cheaper, and it costs
+/// the top of the domain: `[-87.68311, 88.37627]`, the same bound
+/// `exp_narrow` carries. No clamp: unchecked, like `exp_m1_over_x`
+/// itself.
 #[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
 pub fn exp_m1_over_x_narrow(x: f32) -> f32 {
-    let a = pade_expm1_ratio!(x);
     const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
     let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
     let r = fma(-k, LN2_HI, x);
     let r = fma(-k, LN2_LO, r);
-    let p = exp_r_poly!(r);
-    let exp2int = exp2int_field!(k);
-    let b = fma(p, exp2int, -1.0) / x;
-    if x.abs() < 0.5 { a } else { b }
+    let r2 = r * r;
+    let p = expm1_p_poly!(r, r2);
+    let q = fma(r, p, 1.0);
+    let e = fma(r2, p, r);
+    let t = exp2int_field!(k);
+    let b = fma(e, t, t - 1.0);
+    if k == 0.0 { q } else { b / x }
 }
 
 /// 2^x - 1 (C23 `exp2m1`). Same cancellation problem as `expm1` (2^x is

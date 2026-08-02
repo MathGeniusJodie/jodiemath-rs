@@ -10850,3 +10850,46 @@ Full-file asm diff: 4 of 313 regions, exactly `tand`/`tand_unchecked`.
   addends are `-0.0`. `tan_poly`'s `c[0]` is negative, which is why
   `tanpi` needs its own `x == 0.0` pin. An ulp sweep is blind to this
   (zero-vs-zero scores 0); edgecheck is not.
+
+## `exp_m1_over_x`: the removable singularity is `fma(r, P, 1.0)`
+
+Same transform as the `expm1` entry above, and it pays twice here because
+`(e^x - 1)/x` needed the Pade for a *second* reason: the division at
+`x = 0`.
+
+**Shipped**: exhaustive avg **0.0709 -> 0.0170**, max **5 -> 2**,
+throughput **1.639 -> 1.279 cyc/elem (-22.0%)**.
+
+The polynomial is `e^r - 1 = r + r^2*P(r)`, so the two things this
+function wants are both one fma off `P`:
+
+    (e^r - 1)/r  =  fma(r, P, 1.0)      <- r cancelled algebraically
+     e^r - 1     =  fma(r2, P, r)
+
+and the first is exactly `1.0` at `r = 0`, matching the true limit with no
+`x == 0` select. Whenever `k == 0` -- every `|x| < 0.3466` -- the
+Cody-Waite reduction leaves `r == x`, so that quotient *is* the answer and
+no division happens at all. Only `|x| >= 0.3466` divides, where dividing
+by `x` is unconditionally safe. So the select is on `k`, which the
+reduction already computed, and there is no fitted seam on either side of
+it: both arms are the same polynomial.
+
+That is the general shape worth remembering: **a removable singularity
+`f(x)/x` is free whenever the numerator's own polynomial carries `x` as an
+explicit factor.** The Pade was doing this job (`x*N/D` divided by `x` is
+`N/D`) but had to buy a division to do it.
+
+| region | instrs | uOps | BlockRT | cyc/elem |
+|---|---|---|---|---|
+| `exp_m1_over_x_throughput` | 80 -> 61 | 88 -> 64 | 23 -> 16 | 1.639 -> **1.279** |
+| `exp_m1_over_x_narrow_throughput` | 68 -> 60 | 75 -> 63 | 20 -> 15 | 1.347 -> **1.276** |
+
+Latency, honestly, and the same shape as `expm1`'s: the published 81.00
+was the branch artifact, arms 32.00 (Pade) / 58.00 (direct) then against
+42.03 / 60.03 now. The near-zero arm is ~10 cycles longer because it runs
+the full reduction where the Pade started from `x` directly. Throughput is
+the axis this crate optimizes.
+
+`expm1_r_poly!` split into `expm1_p_poly!` (returns `P`) plus a one-line
+wrapper to make `P` reachable; all three `expm1` mca regions verified
+**byte-identical** across that refactor, so it is purely structural.

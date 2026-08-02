@@ -70,7 +70,7 @@ comment and graveyard.md. All three `_wide` rows are exhaustive over all
              exp_checked |    0.037   |     3     |  0.000  |    1
        expm1 (in-domain) |    0.008   |     2     |  0.000  |    0
            expm1_checked |    0.004   |     2     |  0.000  |    0
-exp_m1_over_x (in-domain)|    0.071   |     5     | (no std exp_m1_over_x)
+exp_m1_over_x (in-domain)|    0.017   |     2     | (no std exp_m1_over_x)
                  exp2m1  |    0.077   |     4     | (no std exp2m1)
         sinh (in-domain) |    0.061   |     3     |  0.000  |    1
         cosh (in-domain) |    0.024   |     2     |  0.000  |    0
@@ -424,7 +424,7 @@ exp                 |          42.00 |             1.195
 exp_checked         |          50.00 |             1.466
 expm1               |          47.00 |             1.087
 expm1_checked       |          55.00 |             1.320
-exp_m1_over_x       |          81.00 |             1.639
+exp_m1_over_x       |          65.03 |             1.279
 exp2m1              |          80.00 |             1.843
 sinh                |          54.00 |             1.824
 cosh                |          53.00 |             1.695
@@ -498,10 +498,9 @@ published figure lies above *both* of its own arms measured in isolation** --
 the arms fuse into one artificial chain whenever the second reads a register
 the first clobbered. Worst offenders, by how far the published figure sits
 above its own worse arm: `clog_re` 295.41 against arms of 181.28/201.84,
-`exp10m1` 112.00 against 37.00/80.00, `exp_m1_over_x` 81.00 against
-32.00/58.00, `exp2m1` 80.00 against 37.00/48.00, `asind` 72.61 against
-43.99/48.99, `asinpi` 64.84 against 39.99/36.99, `asin` 60.91 against
-34.99/36.99. The opposite failure also happens: where both arms write the
+`exp10m1` 112.00 against 37.00/80.00, `exp2m1` 80.00 against 37.00/48.00,
+`asind` 72.61 against 43.99/48.99, `asinpi` 64.84 against 39.99/36.99,
+`asin` 60.91 against 34.99/36.99. The opposite failure also happens: where both arms write the
 same register and the *cheap* one is laid out last, mca times the cheap one
 -- `asinh` publishes 74.49 where its real in-domain chain is **84.02**.
 
