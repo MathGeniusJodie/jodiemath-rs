@@ -12029,3 +12029,140 @@ delta above. They are deliberately **not** re-recorded here: that table's
 own header says its rows are only comparable because they were taken in one
 sitting, and this box is running unrelated multi-core work. The mca table,
 which readme already names as the perf reference, is updated.
+
+## `dawson`: peel the pinned `1.0` out of each side, not out of the ratio
+
+**Shipped: whole-plane avg 0.050 -> 0.0481 exhaustive, max 6 unchanged,
+for a throughput cost of nothing.** A distribution win, not a max win,
+and the entry below is careful about which.
+
+### This is not the peel that was rejected twice
+
+The rejected one peels the **ratio**: `dawson(x) = x*P/Q` becomes
+`x + x*(P/Q - 1)`. That amplifies, and the reason is structural --
+`P/Q` is `dawsn(x)/x`, which decays about 30x across `|x| <= 4` (1.0 at
+the origin, ~0.032 at the seam). So at the top of the branch the
+"correction" `x*(P/Q - 1)` is ~30x *larger* than the result it corrects,
+and the closing add is catastrophic cancellation. Screened twice, rightly
+rejected both times.
+
+**What ships here peels each side's own constant instead, and leaves the
+ratio alone.** `pc[0]` and `qc[0]` are both pinned to exactly `1.0`, so
+`P = 1 + u*A(u)` and `Q = 1 + u*B(u)` with `A`, `B` of degree 5. Evaluate
+those and finish each side with `fma(u, A, 1.0)` / `fma(u, B, 1.0)`. The
+ratio is still formed as `num/den`. Nothing cancels: `num` runs from 1.0
+down to ~0.95 and back up to ~21 over the branch, `den` from 1.0 to ~653
+with all-positive coefficients, and neither approaches zero.
+
+The two transforms share a name and nothing else. The rejected one
+changes *what is computed*; this one changes only *where the pinned
+constant enters the evaluation*.
+
+### Why it helps: two full-weight roundings per side become one
+
+Entering the `1.0` at the top of the Estrin tree means `fma(pc[1], u,
+1.0)` and the closing `fma` **both** round at the scale of a quantity
+near 1, and `num` is itself near 1 -- so both roundings land at full
+weight on the ratio. Peeled, only the closing `fma` does; `A` and `B`
+evaluate at the scale of their own leading coefficients (0.086 and 0.58)
+and their roundings reach the ratio attenuated 12x and 1.7x.
+
+It costs nothing because the coefficient *count* does not change -- the
+degree-6 side has 7 coefficients either way, one of which is the pinned
+`1.0`. Same 6 fmas per side, same depth 4 from `u`, same shared `u2`.
+
+### Attribution: the fit is not the whole story below `|x| ~ 0.125`
+
+Per-octave, sampled, four rows (shipped f32 chain / the rational in f64
+from an exact `u` / the same from `u = fl(x*x)` / oracle `x*fl(dawsn/x)`):
+
+```
+octave            shipped     fit only    +u round      oracle
+[2^-6, 2^-5)    0.586/4      0.057/1      0.057/1     0.187/1
+[2^-5, 2^-4)    0.605/4      0.215/1      0.215/1     0.187/1
+[2^-3, 2^-2)    1.333/5      1.321/2      1.321/2     0.194/1
+[1, 2)          1.084/5      0.974/3      0.990/3     0.261/1
+[2, 4)          1.000/5      0.833/2      0.859/3     0.251/1
+```
+
+Two regimes. Below `|x| ~ 0.125` the fit is essentially perfect
+(0.06-0.22 avg) and **the evaluation chain is the entire error** -- which
+is exactly the band the peel addresses. From `0.125` up the fit is the
+larger term on average, and the chain adds ~2 to the max. `u = fl(x*x)`
+contributes ~0.02 avg and one ulp of max in `[2,4)`, confirming the older
+entry's finding that it is not amplified here.
+
+### Exhaustive result, and the max honestly
+
+Exhaustive over all 184549377 patterns with `|x|` in `[2^-20, 4]`, both
+chains in one binary against one reference. Below `2^-20` both return `x`
+bit-exactly and `x` is the correctly rounded answer; above 4 the tail is
+selected and is untouched; `dawson` is exactly odd in both forms, so this
+settles the whole central branch.
+
+```
+ulp        now (count)   peeled (count)
+0          118846337        120794773
+1           52973843         52808723
+2           10614096          9436316
+3            1945765          1408234
+4             164409            98646
+5               4906             2678
+6                 21                7
+avg          0.43740          0.41352
+```
+
+Every bucket from 2 up shrinks -- 11%, 28%, 40%, 45%, 67% -- and 1.95M
+patterns move to exactly-rounded.
+
+**The max does not move: 6 both sides, and this does not claim otherwise.**
+It is worth saying why, because the worst input *relocates*, which is
+easy to misread as an improvement. Scoring the rational in f64 from an
+exact `u` at each side's own worst point:
+
+```
+x = 1.4041231 (now's worst)     shipped 6  peeled 3   fit alone 3
+x = 1.4212224 (peeled's worst)  shipped 3  peeled 6   fit alone 3
+```
+
+The fit alone is 3 at both. The other 3 is a rounding *alignment* in the
+chain, and each form has its own handful of inputs where it aligns badly.
+The peel makes that rarer (21 patterns at 6 ulp -> 7) without making it
+impossible. Moving the max below 6 needs the fit under 3, and the `[6/6]`
+quantization entry above already closed that.
+
+**A sampled probe said max 5 and was wrong.** 400k samples per octave --
+far denser than the harness's own fuzz -- reported max 5 for the peeled
+form and 6 for the shipped one, and the readme row would have gained a
+max improvement that does not exist. There are 7 inputs at 6 ulp in
+1.8e8; no sampling finds those. The exhaustive scan cost three minutes.
+For a *max* claim on a 1-arg function, sampling is not evidence.
+
+### Cost
+
+Throughput free, all four rungs agreeing: 84 -> 85 instrs, uOps unchanged
+at 93, Block RThroughput unchanged at 22.00, 1.645 -> 1.643 cyc/unit.
+Blast radius 2 of 313 asm regions, exactly `dawson`'s own.
+
+**The latency column is withheld rather than published.** It reads
+62.002 -> 42.017, a 32% improvement, and it is not real: the region gains
+63 instructions while uOps (2500) and Block RThroughput (512) are both
+unchanged, and the dependency chain from `x` is provably the same depth
+either way (`u`, three Estrin levels, the closing `fma`, the divide, the
+multiply). The region carries 128 `jmp`/`jcc` -- identical on both sides,
+so this is not a branchiness *change*, but llvm-mca has no branch
+predictor and misprices the whole shape. A number that is 30% wrong in
+the flattering direction is worse than no number.
+
+### Also measured, not taken
+
+- **Folding the closing `x *` into the numerator's peel**, i.e.
+  `fma(x*u, A, x) / (1 + u*B)`. Identical op count again, and
+  accuracy-equivalent on the sampled sweep (central avg 0.5730 against
+  the shipped peel's 0.5686, both showing the same maxima). Not taken
+  because it breaks the numerator/denominator symmetry that the `[6/5]`
+  vs `[6/6]` entry above found to be load-bearing -- at equal degrees
+  LLVM packs the two sides into the halves of one SIMD register, and
+  breaking the shape dropped it to scalar code plus a branchy region
+  there. That is a documented reason to prefer the symmetric form, not a
+  measurement of this variant's codegen, which was not made.

@@ -104,7 +104,7 @@ logaddexp_accurate (all f32)| 0.000 |     0     | (no std logaddexp; the cancell
          erfcx (x>=20)  |    0.268   |     2     | (no std erfcx)
      norm_cdf (all f32) |    0.062   |     6     | (no std norm_cdf; exhaustive. Same two terms as `erfc`, and now in the same proportion -- mostly the erfcx polynomial)
      norm_pdf (all f32) |    0.018   |     2     | (no std norm_pdf; exhaustive. The most exponential-bound function in the family: the rest of the chain is an exactly-split square and a two-word `1/sqrt(2*pi)`)
-       dawson (all f32) |    0.050   |     6     | (no std dawson; exhaustive. The 6 is the central branch at x=1.404; the `|x|>4` tail is peeled and sits exactly on its own fit-only floor, max 3)
+       dawson (all f32) |    0.048   |     6     | (no std dawson; exhaustive. The 6 is the central branch at x=1.421, where the rational's own fit is already 3; the `|x|>4` tail is peeled and sits exactly on its own fit-only floor, max 3)
        erfinv (|x|<1)   |    0.362   |     3     | (no std erfinv; exhaustive)
       erfc_inv (0<y<2)  |    0.622   |     4     | (no std erfc_inv; exhaustive)
         probit (0<p<1)  |    0.705   |     4     | (no std probit; exhaustive)

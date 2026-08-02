@@ -6617,51 +6617,65 @@ pub fn norm_pdf(x: f32) -> f32 {
 // whole budget near `u=0` and leaves the top of the range 30x worse in
 // the ulp that actually gets measured.
 //
-// `pc[0]` and `qc[0]` are both pinned to exactly `1.0`, which is what
-// makes `dawson(x) == x` exact for small `|x|` -- the ratio is then
-// exactly 1 there, and `x * 1.0` is exact. This is the one place where
-// pinning a coefficient to its mathematically exact value pays for
-// itself many times over rather than costing (cf. `erfc`): the pin is
-// worth ~1.5 avg ulp across every octave below `2^-13`, which is most
-// of the domain by sample count, and it costs only the fit freedom of a
-// single constant term the minimax would otherwise have placed within
-// its own error band of 1 anyway.
+// Both constant terms are pinned to exactly `1.0`, which is what makes
+// `dawson(x) == x` exact for small `|x|` -- the ratio is then exactly 1
+// there, and `x * 1.0` is exact. This is the one place where pinning a
+// coefficient to its mathematically exact value pays for itself many
+// times over rather than costing (cf. `erfc`): the pin is worth ~1.5 avg
+// ulp across every octave below `2^-13`, which is most of the domain by
+// sample count, and it costs only the fit freedom of a single constant
+// term the minimax would otherwise have placed within its own error band
+// of 1 anyway.
+//
+// **That pinned `1.0` is the closing `fma`'s addend on each side, not a
+// coefficient inside the Estrin tree.** Writing `P` as `1 + u*A(u)` and
+// `Q` as `1 + u*B(u)` leaves each side with a *single* full-weight
+// rounding -- its own last `fma` -- where entering the `1.0` at the top
+// of the tree instead spends two, since both the `fma(c1, u, 1.0)` leaf
+// and the closing `fma` then round at the scale of a quantity near 1.
+// `A` and `B` themselves evaluate at the scale of their own leading
+// coefficients (0.086 and 0.58), so their roundings reach the ratio
+// attenuated. It is free -- identical coefficients, identical op count,
+// identical depth -- and it matters because the rational's own fit is
+// ~2-3 ulp here while the evaluation chain contributes as much again.
+//
+// This is *not* a peel of the ratio itself. `P/Q` decays ~30x across the
+// branch, so writing `dawson(x) = x + x*(P/Q - 1)` makes the correction
+// dwarf the result at the top of the range; that form amplifies and is
+// rejected (see graveyard.md). Peeling each side's own constant leaves
+// the ratio intact -- `num` and `den` stay well away from zero and
+// nothing cancels.
+//
+// Numerator and denominator are deliberately kept the *same shape*: at
+// equal degrees LLVM packs the two into the halves of one SIMD register
+// and evaluates them together, and breaking the symmetry has already
+// been measured to drop it back to scalar code plus a branchy region.
 #[inline(always)]
 fn dawson_central_ratio(u: f32) -> f32 {
-    let pc: [f32; 7] = [
-        1.0,
-        -0.085751414,
-        0.037434783,
-        -0.0004054072,
-        0.00019858626,
-        5.6392253e-8,
-        2.8313497e-8,
-    ];
-    let qc: [f32; 7] = [
-        1.0,
-        0.5809171,
-        0.15803601,
-        0.026255792,
-        0.002856104,
-        0.00021274923,
-        5.002549e-6,
-    ];
+    // `ac`/`bc` are the fitted numerator and denominator with their pinned
+    // `1.0` constant terms *removed*, so `P = 1 + u*A` and `Q = 1 + u*B`.
+    // Same polynomial and same coefficient values as an unpeeled `pc`/`qc`
+    // pair; only where the `1.0` enters the evaluation changes.
+    let ac: [f32; 6] =
+        [-0.085751414, 0.037434783, -0.0004054072, 0.00019858626, 5.6392253e-8, 2.8313497e-8];
+    let bc: [f32; 6] =
+        [0.5809171, 0.15803601, 0.026255792, 0.002856104, 0.00021274923, 5.002549e-6];
     let u2 = u * u;
-    let pl0 = fma(pc[1], u, pc[0]);
-    let pl1 = fma(pc[3], u, pc[2]);
-    let pl2 = fma(pc[5], u, pc[4]);
-    // pc[6]/qc[6] (the even 7th coefficients, degree 6) fold into the top
-    // group at the `u^2` level rather than needing a `u^6` of their own --
-    // the same trick `ln_normal`'s c[8] uses, one fma and no new multiply.
-    let pl2b = fma(pc[6], u2, pl2);
-    let pr0 = fma(pl2b, u2, pl1);
-    let num = fma(pr0, u2, pl0);
-    let ql0 = fma(qc[1], u, qc[0]);
-    let ql1 = fma(qc[3], u, qc[2]);
-    let ql2 = fma(qc[5], u, qc[4]);
-    let ql2b = fma(qc[6], u2, ql2);
-    let qr0 = fma(ql2b, u2, ql1);
-    let den = fma(qr0, u2, ql0);
+    // Each side's top coefficient (degree 6 in `u` overall) rides into the
+    // existing `u^2` group rather than needing a `u^6` of its own -- the
+    // same trick `ln_normal`'s c[8] uses, one fma and no new multiply.
+    let al0 = fma(ac[1], u, ac[0]);
+    let al1 = fma(ac[3], u, ac[2]);
+    let al2 = fma(ac[5], u, ac[4]);
+    let ar0 = fma(al2, u2, al1);
+    let a = fma(ar0, u2, al0);
+    let num = fma(u, a, 1.0);
+    let bl0 = fma(bc[1], u, bc[0]);
+    let bl1 = fma(bc[3], u, bc[2]);
+    let bl2 = fma(bc[5], u, bc[4]);
+    let br0 = fma(bl2, u2, bl1);
+    let b = fma(br0, u2, bl0);
+    let den = fma(u, b, 1.0);
     num / den
 }
 
