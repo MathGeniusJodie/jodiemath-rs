@@ -9296,3 +9296,40 @@ them (degree 6 -> 7) was worth **acos avg/max 0.496/4 -> 0.490/3** for
 take (5 -> 2 for +6.8% and +8.0%). Anyone re-opening it should re-measure
 the mca side first, since it will now land on `acos`/`acosd` only, where
 the old figure was quoted with `asin` also paying.
+
+## readme precision-table audit: three stale rows, and the one that keeps going stale
+
+A full quick sweep reconciled row by row against readme's precision tables
+(52 rows matched by exact name; the four `sin_fast`/`cos_fast`/`sin_checked`/
+`cos_checked` "hits" a looser matcher produced were artifacts of the two
+different bands sharing a base name, and those rows are correct).
+
+**Corrected:**
+
+- `log2p1` **0.102 / 3 -> 0.092 / 2**. Verified exhaustively over all 2^32
+  patterns, not from the quick run. Almost certainly went stale when
+  `log_2_normal`'s peel shipped; nobody re-recorded the `p1` sibling.
+- `atan2` and `atan2_unchecked` **max 3 -> 4**. Not a regression, and this
+  is the interesting one: **both reached 4 in ordinary 10M-sample runs**,
+  `atan2` on the second of four repeats and `atan2_unchecked` on the first.
+  `atan2_pos` stayed at 3 across all four, and `atan2pi` (published as 4)
+  came back 3 on one of them. Every one of those is the same phenomenon.
+
+**The 2-arg rows cannot be recorded from one run.** `atan2`/`hypot`/`powf`/
+`remainder` have no exhaustive mode, so their published max is whatever the
+last sampled run happened to find, and a row recorded from a lucky run
+understates the function indefinitely -- there is no later check that can
+catch it, because re-running is exactly as lucky. Any future edit to these
+rows should be the max over >=3 repeats, and should say so.
+
+**Flagged, not corrected:** `cos_checked (|x|<=1e6)` reads 0.081 avg where
+the quick sweep says **0.0759** -- 50x the documented ±0.0001 quick-avg
+noise floor, and its three band siblings (`sin_fast` 0.0357 vs 0.036,
+`sin_checked` 0.0355 vs 0.036, `cos_fast` 0.0779 vs 0.078) all reproduce
+their readme numbers to the published precision, so the quick/thorough avg
+agree for this band shape and 0.0759 is probably right. Left alone because
+the row was presumably recorded `thorough` and `accuracy thorough
+cos_checked` does not select it (the gate is `run("cos")`, and
+`n.contains(filter)` needs the *gate* name, not the row label -- worth
+knowing before scripting a filtered run). Its max is untouched at 3: quick
+mode found 2, and quick's max is a lower bound, so it proves nothing.

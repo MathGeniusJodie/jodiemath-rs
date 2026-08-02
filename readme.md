@@ -45,7 +45,7 @@ cbrt_accurate_unchecked |    0.000   |     1     | (bit-identical to cbrt_accura
                    log10 |    0.003   |     1     |  0.000  |    0
    log10_unchecked (+)   |    0.007   |     1     | (bit-identical to log10 on its domain)
                    log1p |    0.025   |     2     |  0.000  |    1
-                 log2p1  |    0.102   |     3     | (no std log2p1)
+                 log2p1  |    0.092   |     2     | (no std log2p1)
                 log10p1  |    0.146   |     2     | (no std log10p1)
                 compound |    0.196   |   ~200    | (no std compound; the exponent n*log1p(x) amplifies its own ulp by |n*log1p(x)|, up to ~88 -- see its doc comment)
        compound_accurate |    0.001   |     1     | (no std compound; f64 exponent, ~1.7x compound's throughput cost)
@@ -84,8 +84,8 @@ logaddexp_accurate (all f32)| 0.000 |     0     | (no std logaddexp; the cancell
         erfcx (|x|<=20) |    0.208   |     6     | (no std erfcx)
          erfcx (x>=20)  |    0.268   |     2     | (no std erfcx)
        dawson (all f32) |    0.058   |     6     | (no std dawson; exhaustive since the reference stopped being an 800-point quadrature, see accuracy.rs)
-                  atan2 |    0.069   |     3     |  0.000  |    0
-    atan2_unchecked (+) |    0.069   |     3     | (bit-identical to atan2 on its domain)
+                  atan2 |    0.068   |     4     |  0.000  |    0
+    atan2_unchecked (+) |    0.068   |     4     | (bit-identical to atan2 on its domain)
               atan2_pos |    0.063   |     3     | (no std atan2_pos)
                  atan2d |    0.107   |     4     | (no std atan2d)
                 atan2pi |    0.114   |     4     | (no std atan2pi)
