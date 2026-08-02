@@ -42,10 +42,11 @@ cbrt_accurate_unchecked |    0.000   |     1     | (bit-identical to cbrt_accura
 -------------------------|------------|-----------|---------|--------
                       ln |    0.004   |     1     |  0.000  |    1
      ln_unchecked (+)    |    0.007   |     1     | (bit-identical to ln on its domain)
-                   log10 |    0.127   |     3     |  0.000  |    0
-   log10_unchecked (+)   |    0.255   |     3     | (bit-identical to log10 on its domain)
+                   log10 |    0.003   |     1     |  0.000  |    0
+   log10_unchecked (+)   |    0.007   |     1     | (bit-identical to log10 on its domain)
                    log1p |    0.025   |     2     |  0.000  |    1
                  log2p1  |    0.102   |     3     | (no std log2p1)
+                log10p1  |    0.146   |     2     | (no std log10p1)
                 compound |    0.196   |   ~200    | (no std compound; the exponent n*log1p(x) amplifies its own ulp by |n*log1p(x)|, up to ~88 -- see its doc comment)
        compound_accurate |    0.001   |     1     | (no std compound; f64 exponent, ~1.7x compound's throughput cost)
          exp (in-domain) |    0.071   |     3     |  0.000  |    1
@@ -385,8 +386,8 @@ cosd                |          56.00 |             1.406
 tand                |          70.02 |             2.533
 ln                  |          49.13 |             1.625
 ln_unchecked        |          38.06 |             1.021
-log10               |          48.14 |             1.635
-log10_unchecked     |          38.22 |             1.113
+log10               |          48.16 |             1.617
+log10_unchecked     |          38.06 |             1.022
 log1p               |          51.25 |             1.903
 log2p1              |          51.36 |             1.876
 compound            |          99.69 |             3.829

@@ -8554,3 +8554,117 @@ the real one and the published `sinh_throughput` *worse*, so a stale table
 can hide a regression and can also invent one. The two `*_checked`
 sin/cos rows found stale earlier the same day were the same failure mode.
 Re-measuring the table is cheap; do it before quoting any row of it.
+## `log10_normal`: the peel, and a `k`-combine placement that pays for it
+
+The `log10` half of `ln_normal`'s peel (IDEAS.md), and it lands strictly
+better than `ln`'s did: `ln` bought its 3 -> 1 max for **+11.7% latency**,
+this one buys the same for **zero**, because the third placement of
+`k*LOG10_2_LO` tried here is one op *cheaper* and the same dependency
+depth as the shape it replaces.
+
+Exhaustive over all 2130706432 positive normal f32, hardware fma, scored
+against `f64::log10` rounded to f32 (this is exactly `log10_unchecked`):
+
+| chain | avg | max |
+|---|---|---|
+| shipped (`fma(p, s, k_hi) + k*LOG10_2_LO`, un-peeled deg-8 `P`) | 0.254004 | 3 |
+| peeled deg-7 `Q`, `k*LO` into the poly's low group (**shipped**) | **0.006904** | **1** |
+
+and at stride 251 over the same range, with the intermediate points:
+
+| chain | avg | max |
+|---|---|---|
+| shipped | 0.254344 | 3 |
+| `k`-combine restructured only, un-peeled `P` | 0.009033 | 3 |
+| peeled deg 7, `fma(k, HI, fma(s, LOG10_E, sq + k*LO))` | 0.006927 | 1 |
+| peeled deg 7, `fma(k, HI, fma(s, LOG10_E, fma(k, LO, sq)))` | 0.006929 | 1 |
+| peeled deg 7, `s*LOG10_E` formed early into `a` | 0.008844 | 3 |
+| peeled deg 7, `k*LO` into `a` (**shipped**) | **0.006913** | **1** |
+| oracle: correctly-rounded mantissa term + restructured combine | 0.005619 | 1 |
+
+`k == 0` octave, exhaustive over all 8388608 mantissas (this is the region
+`log10p1` lives in): shipped 0.464848 max 3 -> peeled 0.290768 max 1. All
+three peeled placements are identical there, since `k*LOG10_2_LO` is 0.
+
+The attribution matches `ln`'s exactly: **the peel owns the max, the
+k-combine owns the aggregate average.** Restructuring the combine alone is
+36x better on the aggregate (0.2540 -> 0.0090) and changes *nothing* at
+`k == 0`; peeling alone is what takes the max 3 -> 1.
+
+### Where `k*LOG10_2_LO` goes, and why it is free here
+
+`ln`'s peel puts `s` into the `k` word (`base = fma(k, LN2_LO, s)`), which
+it can do because `ln`'s leading coefficient is exactly 1.0. `log10`'s is
+not, so `s*LOG10_E` has to stay inside a closing fma and the tail is a
+term longer. Written the obvious way that is three serial ops after the
+polynomial where the old shape had two, i.e. `ln`'s +1 dependency level.
+
+It does not have to be. `k*LOG10_2_LO` depends only on `k`, so it is ready
+before the polynomial is, and it can ride into the poly's own low group:
+
+    let a = fma(s2, l0, k * LOG10_2_LO);   // was `s2 * l0`
+    ...
+    fma(k, LOG10_2_HI, fma(s, LOG10_E, sq))
+
+That is a mul + fma replacing a mul + mul + add + fma: **one op fewer than
+the shipped shape**, tail back to two levels, poly depth unchanged at four.
+Accuracy is if anything marginally the best of the three placements
+(0.006913 vs 0.006927/0.006929) -- `a` sits at `|s^2*l0| <= 0.019` and
+`|k*LOG10_2_LO| <= 6e-4`, both far under ulp(result) once `|k| >= 1`.
+
+mca, every column, `log10`'s three regions plus `log10p1`:
+
+| region | instrs | uOps | BlockRT | cyc/unit |
+|---|---|---|---|---|
+| log10_latency | 2949 -> 2885 | 3339 -> 3275 | 556.50 -> 545.83 | 48.141 -> 48.157 |
+| log10_throughput | 95 -> 95 | 104 -> 103 | 20 -> 19 | 1.635 -> **1.617** |
+| log10_unchecked_latency | 1866 -> 1802 | 1930 -> 1866 | 512 -> 480 | 38.219 -> **38.063** |
+| log10_unchecked_throughput | 62 -> 60 | 66 -> 65 | 17 -> 16 | 1.113 -> **1.022** |
+| log10p1_latency | 3279 -> 3214 | 3346 -> 3280 | 704 -> 672 | 51.986 -> **51.689** |
+| log10p1_throughput | 104 -> 103 | 114 -> 112 | 23 -> 22 | 1.959 -> **1.936** |
+
+Nothing is worse on any of the four columns except `log10_latency`'s
++0.03%, which is under the documented scheduler-window noise and has
+instrs, uOps *and* BlockRT all moving the other way. So this dominates the
+old function outright and no `log10_latency` variant is warranted.
+
+Harness, `thorough` (exhaustive over all 2^32 patterns): `log10`
+0.127/3 -> **0.0034/1**, `log10_unchecked` 0.255/3 -> **0.0069/1**,
+`log10p1` 0.2319/3 -> **0.1458/2**. The `log10p1` baseline was re-measured
+on the pre-change code in this session, not quoted -- it had no readme row.
+
+### The fit, and the floor the peel cannot cross
+
+`log10(m) = s*LOG10_E + s^2*Q(s)`, `Q(s) = (log10(1+s) - s*LOG10_E)/s^2`,
+ulp-weighted LP against `s^2/log10(1+s)` with the weights scaled by `2^24`
+(without that scaling HiGHS's 1e-7 primal tolerance returns a degenerate
+vertex -- see the `ln_normal` entry), then sequentially quantised.
+
+**This peel has a floor `ln`'s does not.** `LOG10_E` is not exact, and `Q`
+cannot absorb the difference because `(log10(e) - LOG10_E)/s` is a `1/s`
+term, not a polynomial one. Its weighted contribution is scale-invariant:
+`w(s) * (L-A)/s -> (L-A)/L` as `s -> 0`, a fixed **0.39029 ulp-equivalent**.
+Degree 7 reaches 0.5968 and degree 8 reaches **0.3903, i.e. exactly the
+floor to five digits** -- degree 8 is not a Pareto point here the way it is
+for `ln`, it is just the constant's own rounding, and the LP that returns
+it is degenerate for the same reason. Degree 7 is shipped and is one
+degree lower than the `P` it replaces, which is what pays for the peel.
+
+Coefficients (degree 7, `c[0]` is the `s^0` term of `Q`):
+
+    -0.21714722, 0.14476636, -0.10857988, 0.086721875,
+    -0.07200416, 0.06459543, -0.06182998, 0.038040668
+
+### Transferable
+
+- **A peel's extra dependency level is not intrinsic.** `ln`'s +11.7%
+  latency was read as the peel's price; it is the price of *that*
+  placement of the Cody-Waite LO word. Any term that depends only on `k`
+  (or only on the argument's exponent) can be hoisted into the
+  polynomial's low group, where it is off the critical path and costs a
+  mul-to-fma upgrade instead of an add. Worth re-checking on `ln_normal`
+  and `log_2_normal`, whose peels both still pay the level.
+- **A non-exact leading coefficient puts a hard floor under a peel**, and
+  the floor is computable in one line before any fitting: `(f32(c) - c)/c`
+  in the LP's own units. If a degree bump lands *on* that number, the
+  extra degree is buying nothing and the LP producing it is degenerate.

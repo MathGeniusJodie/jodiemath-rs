@@ -2276,12 +2276,17 @@ pub fn log10(x: f32) -> f32 {
 }
 
 /// Core of log10 for positive normal finite x only -- see ln_normal, same
-/// approach (own degree-8 refit, own doc comment explains the shared
-/// Estrin-folding trick) with coefficients fitted directly for log10
-/// (not log_2's own coefficients times a constant, and not ln_normal's
-/// degree-8 refit times a constant either -- least-squares was run
-/// fresh against log10(1+s)/s). Real max ulp (exhaustive) confirmed
-/// unchanged at degree 8, same as ln_normal's own verification.
+/// contract, same decomposition (`s = m - 1`, exact by Sterbenz) and the
+/// same *peeled* poly shape: `log10(m) = s*LOG10_E + s^2*Q(s)`, with the
+/// leading term kept out of the polynomial rather than evaluated as its
+/// constant coefficient, so the polynomial's own evaluation roundings all
+/// reach the answer attenuated by `s^2/log10(1+s) <= 0.35` instead of
+/// landing on it at full weight.
+///
+/// `k` joins through a Cody-Waite split of log10(2): `k*LOG10_2_HI` is
+/// exact (see LN2_HI's own comment for the trick) and `k*LOG10_2_LO` adds
+/// back the residual, so the whole `k` term reaches the result inside a
+/// single fma rounding.
 #[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
 pub fn log10_normal(x: f32, koff: f32) -> f32 {
@@ -2289,16 +2294,29 @@ pub fn log10_normal(x: f32, koff: f32) -> f32 {
     let m = f32::from_bits((x.to_bits() as i32).wrapping_sub(e << 23) as u32);
     let k = e as f32 + koff;
     let s = m - 1.0;
-    let c: [f32; 9] = [
-        0.43429446,
+    // `Q(s) = (log10(1+s) - s*LOG10_E)/s^2`, degree 7, fitted by an
+    // ulp-weighted LP against `s^2/log10(1+s)` -- the weight that makes the
+    // fit minimise the *result*'s relative error, since this poly only ever
+    // reaches the answer scaled by `s^2`. One degree lower than the
+    // un-peeled `P` it replaces, which is what pays for the peel.
+    //
+    // Unlike `ln`'s peel, the leading term here carries a rounding of its
+    // own: `LOG10_E` is not exact, and `Q` cannot absorb the difference
+    // because that is a `1/s` term, not a polynomial one. It costs a fixed
+    // 0.39 ulp-equivalent, which is the floor this fit sits on -- degree 8
+    // reaches exactly that number and buys nothing over degree 7's 0.60.
+    //
+    // The coefficients are quantised to f32 sequentially (fix one, re-solve
+    // the LP over the rest), not independently.
+    let c: [f32; 8] = [
         -0.21714722,
-        0.14476772,
-        -0.10857951,
-        0.086698204,
-        -0.07202013,
-        0.06474776,
-        -0.06165259,
-        0.037489995,
+        0.14476636,
+        -0.10857988,
+        0.086721875,
+        -0.07200416,
+        0.06459543,
+        -0.06182998,
+        0.038040668,
     ];
     let s2 = s * s;
     let s4 = s2 * s2;
@@ -2306,12 +2324,20 @@ pub fn log10_normal(x: f32, koff: f32) -> f32 {
     let l1 = fma(c[3], s, c[2]);
     let l2 = fma(c[5], s, c[4]);
     let l3 = fma(c[7], s, c[6]);
-    let r0 = fma(l1, s2, l0);
-    let r1 = fma(l3, s2, l2);
-    let r1b = fma(c[8], s4, r1);
-    let p = fma(r1b, s4, r0);
-    let k_hi = k * LOG10_2_HI; // exact, see LN2_HI's comment (same trick)
-    fma(p, s, k_hi) + k * LOG10_2_LO
+    // `k*LOG10_2_LO` rides into the poly's own low group. It depends only on
+    // `k`, so it is ready before the polynomial is, and joining it here
+    // rather than at the end keeps the tail at two fma -- everything before
+    // the closing `fma(k, LOG10_2_HI, .)` then happens at `|s*LOG10_E| <=
+    // 0.18`, far under ulp(result) once `|k| >= 1`, leaving that fma as the
+    // only full-weight rounding in the function.
+    let a = fma(s2, l0, k * LOG10_2_LO);
+    let u = fma(l3, s2, l2);
+    let w = fma(u, s2, l1);
+    let sq = fma(w, s4, a);
+    // `s*LOG10_E` must stay *inside* the closing fma. Forming it early --
+    // folding it into `a` as `fma(s2, l0, s*LOG10_E)` -- puts a second
+    // full-weight rounding back exactly where the peel removed one.
+    fma(k, LOG10_2_HI, fma(s, std::f32::consts::LOG10_E, sq))
 }
 
 /// log10 without domain checks: valid for positive normal finite x only,
