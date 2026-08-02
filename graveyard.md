@@ -9784,3 +9784,43 @@ only when the variable has an algebraic identity that re-admits the
 unrounded input (`1/(a+x) == 1/a - (x/a)*(1/(a+x))`). When the argument
 enters an opaque approximant, compensating it costs a derivative, and the
 EFT that recovers the residual is the cheap half of the job.
+
+## Method: an out-of-tree probe crate is what makes "where does the error live" cheap
+
+Both `erfcx_pos` entries above turn on measurements `accuracy.rs` cannot
+express -- error restricted to one binade, error restricted to one *sign*,
+and error split between a composite's factors -- and on A/B-ing two builds
+of the same function. Adding rows to `accuracy.rs` for that is shared-file
+churn, and adding scratch files to `examples/` has already put one by
+accident into a commit. The alternative used here costs about a minute to
+set up and is worth writing down:
+
+    <scratch>/probe/Cargo.toml     jodiemath-rs = { path = "<worktree>" }
+                                   sleef = "0.3.3"        # same f64 refs
+    <scratch>/probe/.cargo/config.toml
+                                   [build] rustflags = ["-C","target-cpu=native"]
+    <scratch>/probe/rust-toolchain.toml   copied from the worktree
+
+`src/bin/*.rs` then gives one binary per question, and `cargo build
+--release` rebuilds only the probe (~2s) after a `src/lib.rs` edit.
+
+Three things it bought that are hard otherwise:
+
+- **A/B on two builds.** `git show HEAD:src/lib.rs > src/lib.rs`, build the
+  probe, copy the binary aside, restore, build again. Two binaries scoring
+  the *same* ranges with the *same* reference -- the cleanest before/after
+  this crate has, and far cheaper than two `thorough` sweeps under load.
+  (`cargo build --example accuracy` cannot do this at all while a sweep is
+  running: writing a running executable is `ETXTBSY`.)
+- **Per-binade and per-sign tables.** `erfcx`'s worst case turning out to
+  be on the negative arm, and `erfc`'s error being flat across `[1,4]` and
+  falling below `2^-3`, are both invisible in a single avg/max row.
+- **Factor decomposition.** Score the composite against
+  "exact-in-f64 factor A times the *actual* f32 factor B" to get B's share,
+  and the complement for A's. Ten lines, and it is what shows `erfc`'s two
+  halves are 4.19 and 4.19.
+
+The `.cargo/config.toml` is not optional: without `-C target-cpu=native`
+the crate's own `compile_error!` on missing FMA fires, and per the
+RUSTFLAGS entry elsewhere in this file a failed build leaves the previous
+artefact in place, so the probe would silently measure stale code.
