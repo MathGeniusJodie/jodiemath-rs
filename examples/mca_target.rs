@@ -401,6 +401,17 @@ throughput_fn!(thr_logaddexp_checked, "logaddexp_checked_throughput", |x: f32| l
     x, 0.0
 ));
 
+// Same constant-2nd-arg convention, and the same exact identity: this is
+// `softplus` computed in f64. It is the only row in the file whose whole
+// body is f64, so its throughput carries the half-width penalty of that
+// choice as well as the extra work -- which is the point of the row.
+latency_fn!(lat_logaddexp_accurate, "logaddexp_accurate_latency", |x: f32| logaddexp_accurate(
+    x, 0.0
+));
+throughput_fn!(thr_logaddexp_accurate, "logaddexp_accurate_throughput", |x: f32| logaddexp_accurate(
+    x, 0.0
+));
+
 latency_fn!(lat_gelu, "gelu_latency", gelu);
 throughput_fn!(thr_gelu, "gelu_throughput", gelu);
 
@@ -883,6 +894,7 @@ fn main() {
         lat_logsigmoid_checked, thr_logsigmoid_checked;
         lat_logaddexp, thr_logaddexp;
         lat_logaddexp_checked, thr_logaddexp_checked;
+        lat_logaddexp_accurate, thr_logaddexp_accurate;
         lat_gelu, thr_gelu;
         lat_silu, thr_silu;
         lat_silu_checked, thr_silu_checked;

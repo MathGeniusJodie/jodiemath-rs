@@ -253,6 +253,7 @@ fn main() {
     bench!("softplus", softplus);
     bench!("logsigmoid", logsigmoid);
     bench!("logaddexp", |x: f32| logaddexp(x, 0.0));
+    bench!("logaddexp_accurate", |x: f32| logaddexp_accurate(x, 0.0));
     bench!("asinh", asinh);
     bench!("std asinh", |x: f32| x.asinh());
     bench!("acosh", acosh);

@@ -155,6 +155,7 @@ fn main() {
         ("rhypot", rhypot),
         ("logaddexp", logaddexp),
         ("logaddexp_checked", logaddexp_checked),
+        ("logaddexp_accurate", logaddexp_accurate),
         ("xlogy", xlogy),
         ("xlog1py", xlog1py),
         ("compound", compound),

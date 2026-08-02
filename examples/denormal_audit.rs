@@ -144,6 +144,7 @@ fn main() {
         // identically, so the curried sweep is the flush band itself.
         audit("logaddexp(x,0)", |x| logaddexp(x, 0.0), |v| v.exp().ln_1p(), &lin(-110.0, -85.0, 300_000)),
         audit("logaddexp_checked(x,0)", |x| logaddexp_checked(x, 0.0), |v| v.exp().ln_1p(), &lin(-110.0, -85.0, 300_000)),
+        audit("logaddexp_accurate(x,0)", |x| logaddexp_accurate(x, 0.0), |v| v.exp().ln_1p(), &lin(-110.0, -85.0, 300_000)),
         audit("gelu", gelu, |v| v * 0.5 * libm_erfc(-v / std::f64::consts::SQRT_2), &lin(-15.5, -12.0, 300_000)),
         audit("norm_cdf", norm_cdf, |v| 0.5 * libm_erfc(-v / std::f64::consts::SQRT_2), &lin(-15.0, -13.0, 300_000)),
     ];

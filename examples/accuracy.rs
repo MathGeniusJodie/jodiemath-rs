@@ -1335,6 +1335,29 @@ fn main() {
         );
         report("logaddexp_checked", &s, t0);
     }
+    if run("logaddexp_accurate") {
+        // Same reference as the other two tiers, and the caveat it always
+        // carried is load-bearing here: `m + log1p_u10(exp_u10(-d))` is
+        // itself an f64 chain, so its own ~2e-16 absolute error is the
+        // same order this tier reaches, and in the deep-cancellation
+        // region the number below is a sum of the two, not a measurement
+        // of one. What it can honestly show is that the *ordinary* domain
+        // is at the correct-rounding floor. The cancellation region is
+        // validated separately against an 80-digit `decimal` oracle and
+        // pinned in edgecheck.rs -- see logaddexp_accurate's doc comment.
+        let logaddexp_ref = |a: F64xN, b: F64xN| {
+            let m = a.simd_max(b);
+            let d = (a - b).abs();
+            m + log1p_u10(exp_u10(-d))
+        };
+        let s = fuzz2(
+            TWOARG_SAMPLES,
+            |a: f32, b: f32| a.is_finite() && b.is_finite(),
+            logaddexp_accurate,
+            logaddexp_ref,
+        );
+        report("logaddexp_accurate", &s, t0);
+    }
     if run("gelu") {
         // x * Phi(x) via erfc_u15 (see gelu's own doc comment for why not
         // erf_u10 -- 1+erf(z) cancels toward 0 for negative x). Same

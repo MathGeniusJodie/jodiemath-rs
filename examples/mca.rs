@@ -195,6 +195,7 @@ fn main() {
         "logsigmoid_checked",
         "logaddexp",
         "logaddexp_checked",
+        "logaddexp_accurate",
         "gelu",
         "silu",
         "silu_checked",

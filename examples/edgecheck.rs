@@ -1164,6 +1164,58 @@ fn real_main() {
         logaddexp(-80.0, 0.0),
     );
 
+    // logaddexp_accurate: the same special values, plus the thing it
+    // exists for. The three cancellation pins below are the *correctly
+    // rounded* f32 of `ln(e^a+e^b)` from an 80-digit `decimal` oracle, not
+    // from an f64 composition -- an f64 reference is only ~2e-16 absolute
+    // itself, which is the same order as this tier, so it cannot pin it.
+    // Each sits where `max(a,b)` is in `[-ln2,0)` and the correction very
+    // nearly annihilates it; `logaddexp`/`logaddexp_checked` return `0.0`
+    // or the wrong power of two there (~1.5e7 ulp), which is the accepted
+    // cost their own doc comments describe. The blind 2-arg fuzz cannot
+    // gate this: it lands near the zero curve `e^a+e^b = 1` only by luck.
+    check("logaddexp_accurate(0,0)", logaddexp_accurate(0.0, 0.0), std::f32::consts::LN_2);
+    check("logaddexp_accurate(100,1)", logaddexp_accurate(100.0, 1.0), 100.0);
+    check("logaddexp_accurate(inf,5)", logaddexp_accurate(f32::INFINITY, 5.0), f32::INFINITY);
+    check(
+        "logaddexp_accurate(inf,-inf)",
+        logaddexp_accurate(f32::INFINITY, f32::NEG_INFINITY),
+        f32::INFINITY,
+    );
+    check(
+        "logaddexp_accurate(-inf,-inf)",
+        logaddexp_accurate(f32::NEG_INFINITY, f32::NEG_INFINITY),
+        f32::NEG_INFINITY,
+    );
+    check(
+        "logaddexp_accurate(inf,inf)",
+        logaddexp_accurate(f32::INFINITY, f32::INFINITY),
+        f32::INFINITY,
+    );
+    check("logaddexp_accurate(nan,1)", logaddexp_accurate(f32::NAN, 1.0), f32::NAN);
+    check("logaddexp_accurate(1,nan)", logaddexp_accurate(1.0, f32::NAN), f32::NAN);
+    check(
+        "logaddexp_accurate(0,-88) denormal",
+        logaddexp_accurate(0.0, -88.0),
+        6.054601e-39,
+    );
+    check("logaddexp_accurate(-104,0) is 0", logaddexp_accurate(-104.0, 0.0), 0.0);
+    check(
+        "logaddexp_accurate cancel #1",
+        logaddexp_accurate(-0.5124492, -0.91386056),
+        -1.0724729e-07,
+    );
+    check(
+        "logaddexp_accurate cancel #2",
+        logaddexp_accurate(-0.6391307, -0.7502491),
+        -1.0081724e-07,
+    );
+    check(
+        "logaddexp_accurate cancel #3",
+        logaddexp_accurate(-0.60459054, -0.7903146),
+        1.0216357e-07,
+    );
+
     // gelu(x) = x*Phi(x) = x*0.5*erfc(-x/sqrt2) (backlog idea #70). For
     // x >= 0 gelu's tail correction is identically zero, so gelu(3) is
     // still exactly that composition and pins it structurally. For x < 0

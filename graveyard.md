@@ -9154,3 +9154,104 @@ the grid misses the true worst points and the absolute numbers are not
 comparable to the harness's. The *relative* comparison between groupings is
 what it is for, and 0.8% is far enough inside the noise of any grid choice
 that a real-chain measurement would not change the conclusion.
+## `logaddexp_accurate`: the cancellation the other two tiers accept, in f64
+
+`logaddexp`'s `~1e3-1e5` heavy-tailed max ulp was the worst number in the
+crate that is not documented as by-design. It is real: `ln(e^a+e^b) =
+m + log1p(exp(-d))` with `m = max(a,b)`, `d = |a-b|`, and the correction
+confined to `(0, ln2]`, so whenever `m` lands in `[-ln2, 0)` the two very
+nearly annihilate and the answer is set by the correction's **absolute**
+error. An f32 correction carries `2^-24` of it however well it is fitted.
+
+The prior entry ("logaddexp: precision budget for the ~1e4-ulp
+cancellation", analysis only) derived that any real fix needs a `2^-40`-ish
+`exp` and sketched a double-f32 construction with a `2^(j/16)` table. That
+sketch is **not what shipped**, and the reason is worth recording: this
+crate already runs whole chains in f64 (`log2_f64`, `exp2_f64_to_f32`,
+`compound_accurate`), and f64 is both *more* accurate than double-f32
+(`2^-53` against `2^-47` at this scale) and cheaper to write correctly. So
+`logaddexp_accurate` is simply the whole thing in f64, narrowed to f32
+once at the end.
+
+### What it is
+
+```
+log1p_exp_neg_f64(d) = 2*atanh(s),   s = 1/(1 + 2*e^d)
+```
+
+Two things worth keeping:
+
+- **`exp(+d)`, not `exp(-d)`.** The atanh form of `log1p` needs `E = e^-d`
+  only through `s = E/(2+E) = 1/(1+2e^d)`, which is an `fma` and a
+  reciprocal against a multiply, an add and a divide -- one operation
+  shorter, identically conditioned, and `e^128 = 3.9e55` is nowhere near
+  f64's range, so growing the exponential costs nothing.
+- **One polynomial covers `d` in `[0, 128]`.** `s` runs over `(0, 1/3]`,
+  `2s` is the leading term at *both* ends (`ln2` at `d = 0`, `e^-d` as `d`
+  grows), and nothing cancels in between. 15 tail coefficients, `2s`
+  pinned outside them.
+
+`d` is formed in f64 too, and that is not cosmetic: `fl32(a-b)`'s rounding
+enters the answer amplified by `dcorr/dd = -E/(1+E) ~ 0.5` at small `d`,
+which is the *second* item in the old entry's ranked budget. Widening the
+subtraction removes it instead of shrinking it.
+
+### The clamp that is not a domain restriction
+
+`u = (s*s).max(1e-30)`. `s` reaches `1.3e-56`, so the Estrin grouping's
+`u^4`/`u^8` leave f64's normal range from `d ~ 44` -- inside the useful
+domain -- and would drag a denormal assist through the whole vector. The
+floor sits far below where the tail matters: `u <= 1e-30` makes `u*Q(u)` a
+relative `3e-31` of the pinned `2s`, i.e. `2^-101`. Worth checking on any
+Estrin poly whose argument is allowed to get genuinely small; the shape
+that bites is `u2*u2*u2*u2`, not `u` itself.
+
+### Measured
+
+`accuracy.rs`, 9.92M random finite pairs: **avg 0.0000, max 0** -- but the
+harness reference is `m + log1p_u10(exp_u10(-d))`, itself an f64 chain of
+the same `~2e-16` absolute error, so that row proves the ordinary domain
+is at the correct-rounding floor and *cannot* score the cancellation
+region. For that, a corpus of 20000 pairs built **on** the zero curve
+(`a` uniform in `(-ln2, 0)`, `b = ln(1 - e^a)` jittered +-4 ulp) was scored
+against an 80-digit Python `decimal` oracle:
+
+| | avg ulp | max ulp |
+|---|---|---|
+| `logaddexp_accurate` | **0.2675** | **72.2** |
+| `logaddexp` | 16917850 | 34372019720 |
+| `logaddexp_checked` | 16917850 | 34372019720 |
+
+The max-72 sample has `|m| = 0.46` and a true result of `1.065e-11`; the
+absolute error there is `6.3e-17`, i.e. **1.1x half an ulp of f64 at
+`|m|`**. There is no f64 chain that does better, so the remaining tail is
+the format's, not the formula's -- stated in the doc comment as a bound
+(within an ulp while `|result| > ~5e-9`, degrading in proportion below)
+rather than a claim of correct rounding.
+
+Three of those oracle-derived pins are in `edgecheck.rs`, because the
+blind 2-arg fuzz reaches the zero curve only by luck and the f64 reference
+could not adjudicate them anyway.
+
+### Price
+
+| region | instrs | uOps | BlockRT | throughput | latency |
+|---|---|---|---|---|---|
+| `logaddexp` | 100 | 110 | 28.00 | 2.449 | 74.110 |
+| `logaddexp_checked` | 103 | 116 | 30.00 | 2.506 | 73.345 |
+| `logaddexp_accurate` | 152 | 214 | 94.00 | **7.616** | **121.517** |
+
+3.1x throughput, 1.6x latency, all packed `pd` (`codegen_check` clean).
+The `BlockRT` 28 -> 94 is mostly the half vector width, not the extra
+work: 152 instructions is 1.5x, not 3.4x. All three tiers stay --
+`logaddexp` on throughput, `logaddexp_checked` on the denormal tail at
+`logaddexp`'s price, this on accuracy.
+
+### Two reformulations re-confirmed dead, from the other side
+
+The old entry rejected `log1p(expm1(a) + exp(b))` and friends on paper.
+Building the f64 tier confirms the diagnosis constructively: what fixed it
+was *only* the wider format, and every f32 reformulation reduces to making
+two O(0.5) quantities cancel to O(1e-8) while each carries `2^-24`. Do not
+try another algebraic rearrangement of this function -- the requirement is
+on the working format, and nothing else.

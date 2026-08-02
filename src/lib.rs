@@ -3749,6 +3749,189 @@ pub fn logaddexp_checked(a: f32, b: f32) -> f32 {
     if a.is_nan() || b.is_nan() { f32::NAN } else { normal }
 }
 
+// `ln 2` as a two-word f64, split so that `n * LN2_HI64` is *exact* for
+// every `|n| <= 2^20`: the low 21 mantissa bits of `LN2_HI64` are zero, so
+// the product needs 32 + 21 = 53 bits at most. `LN2_LO64` is the f64
+// nearest the remainder, leaving a residual of `1.2e-26` -- times the
+// `|n| <= 185` this file's f64 exp reduction can reach, still `2e-24`,
+// i.e. `2^-79` next to the `f` it corrects.
+const LN2_HI64: f64 = 0.6931471803691238;
+const LN2_LO64: f64 = 1.9082149292705877e-10;
+
+// `(e^f - 1)/f` on `|f| <= ln2/2`, Taylor rather than minimax: this is an
+// accurate tier, and the *rounding* of an f64 evaluation (`2^-53` times
+// the sum of absolute terms, `e^|f| = 1.41`) already sits an order of
+// magnitude above the degree-13 truncation of `4e-18`, so a minimax refit
+// would buy nothing that the evaluation does not immediately spend.
+const EXP_F64_P: [f64; 13] = [
+    1.0,
+    0.5,
+    0.16666666666666666,
+    0.041666666666666664,
+    0.008333333333333333,
+    0.001388888888888889,
+    0.0001984126984126984,
+    2.48015873015873e-05,
+    2.7557319223985893e-06,
+    2.755731922398589e-07,
+    2.505210838544172e-08,
+    2.08767569878681e-09,
+    1.6059043836821613e-10,
+];
+
+// `(atanh(s)/s - 1)/u` in `u = s^2` over `u` in `[0, 1/9]`, i.e. `1/3`,
+// `1/5`, ... -- the atanh series past its own leading term, exactly as
+// `LOG2_ATANH_A64` is for `log2_f64`, one term further out because `|s|`
+// reaches `1/3` here rather than `0.1716`. Truncated where the tail falls
+// under `2^-53`: the next term contributes `1.7e-18`.
+const ATANH_B64: [f64; 15] = [
+    0.3333333333333333,
+    0.2,
+    0.14285714285714285,
+    0.1111111111111111,
+    0.09090909090909091,
+    0.07692307692307693,
+    0.06666666666666667,
+    0.058823529411764705,
+    0.05263157894736842,
+    0.047619047619047616,
+    0.043478260869565216,
+    0.04,
+    0.037037037037037035,
+    0.034482758620689655,
+    0.03225806451612903,
+];
+
+// `log1p(exp(-d))` in f64 for `d` in `[0, 128]`, the correction term of
+// the `logaddexp` family computed to an *absolute* `~2^-52` rather than
+// the `~2^-24` an f32 chain can reach. See [`logaddexp_accurate`] for why
+// absolute is the metric that matters and f32 cannot supply it.
+//
+// Written on `exp(+d)`, not `exp(-d)`: with `s = E/(2+E)` the atanh form
+// of `log1p` needs `E = e^-d` only through `s = 1/(1 + 2*e^d)`, which is
+// one operation shorter (an `fma` and a reciprocal against a multiply, an
+// add and a divide) and identically conditioned -- the relative error of
+// `1 + 2X` is `X`'s own either way. `e^128 = 3.9e55` is nowhere near f64's
+// range, so growing the exponential instead of shrinking it costs nothing.
+//
+// The atanh form is what makes one polynomial cover the whole range: `s`
+// runs over `(0, 1/3]` as `d` runs over `[0, 128]`, `2s` is the answer's
+// leading term at *both* ends (`ln2` at `d = 0`, `e^-d` as `d` grows), and
+// nothing cancels anywhere in between. `2s` is pinned outside the
+// polynomial for the same reason `log1p_unit` peels its own leading `e`.
+#[inline(always)]
+fn log1p_exp_neg_f64(d: f64) -> f64 {
+    // e^d = 2^n * e^f, n = round(d*log2e) in [0, 185], |f| <= ln2/2.
+    // `n * LN2_HI64` is exact and within a factor of two of `d`, so `t` is
+    // exact by Sterbenz and `f` carries a single rounding.
+    let nm = f64::mul_add(d, std::f64::consts::LOG2_E, ROUND_MAGIC64);
+    let n = nm - ROUND_MAGIC64;
+    let t = f64::mul_add(-n, LN2_HI64, d);
+    let f = f64::mul_add(-n, LN2_LO64, t);
+    let c = EXP_F64_P;
+    let f2 = f * f;
+    let f4 = f2 * f2;
+    let e0 = f64::mul_add(c[1], f, c[0]);
+    let e1 = f64::mul_add(c[3], f, c[2]);
+    let e2 = f64::mul_add(c[5], f, c[4]);
+    let e3 = f64::mul_add(c[7], f, c[6]);
+    let e4 = f64::mul_add(c[9], f, c[8]);
+    let e5 = f64::mul_add(c[11], f, c[10]);
+    let r0 = f64::mul_add(e1, f2, e0);
+    let r1 = f64::mul_add(e3, f2, e2);
+    let r2 = f64::mul_add(f64::mul_add(c[12], f2, e5), f2, e4);
+    let p = f64::mul_add(f64::mul_add(r2, f4, r1), f4, r0);
+    // Same exponent-field reconstruction `exp2_f64_to_f32` documents:
+    // `nm`'s low 52 bits already hold `n + 2^51`, and `2^51` is a multiple
+    // of 4096, so the 12 bits the shift keeps are exactly `n + 1023`.
+    let scale = f64::from_bits(nm.to_bits().wrapping_add(1023) << 52);
+    let x = f64::mul_add(f, p, 1.0) * scale;
+    let s = 1.0 / f64::mul_add(2.0, x, 1.0);
+    // `s` runs down to `1/(1+2*e^128) = 1.3e-56`, so `u^4` and `u^8` --
+    // which the Estrin grouping below forms -- would leave f64's normal
+    // range from `d ~ 44` onward, well inside the useful domain, and drag
+    // a denormal assist through the whole vector when they did. The floor
+    // is far below where the tail term matters: `u <= 1e-30` makes
+    // `u*Q(u)` a relative `3e-31` of the pinned `2s`, i.e. `2^-101`, so
+    // clamping there is invisible to the f64 result, let alone the f32.
+    let u = (s * s).max(1e-30);
+    let b = ATANH_B64;
+    let u2 = u * u;
+    let u4 = u2 * u2;
+    let u8 = u4 * u4;
+    let a0 = f64::mul_add(b[1], u, b[0]);
+    let a1 = f64::mul_add(b[3], u, b[2]);
+    let a2 = f64::mul_add(b[5], u, b[4]);
+    let a3 = f64::mul_add(b[7], u, b[6]);
+    let a4 = f64::mul_add(b[9], u, b[8]);
+    let a5 = f64::mul_add(b[11], u, b[10]);
+    let a6 = f64::mul_add(b[13], u, b[12]);
+    let q0 = f64::mul_add(a1, u2, a0);
+    let q1 = f64::mul_add(a3, u2, a2);
+    let q2 = f64::mul_add(a5, u2, a4);
+    let q3 = f64::mul_add(b[14], u2, a6);
+    let q = f64::mul_add(f64::mul_add(q3, u4, q2), u8, f64::mul_add(q1, u4, q0));
+    let s2 = s + s;
+    f64::mul_add(s2 * u, q, s2)
+}
+
+/// Accurate tier of [`logaddexp`], the one that answers the cancellation
+/// both other tiers document and accept.
+///
+/// `ln(e^a+e^b)` is `m + log1p(exp(-d))` with `m = max(a,b)` and
+/// `d = |a-b|`, and the correction is confined to `(0, ln2]` -- so
+/// whenever `m` is itself in `[-ln2, 0)` the two can very nearly annihilate
+/// and the result is a small difference of two O(1) quantities. The
+/// accuracy that survives is then set by the correction's **absolute**
+/// error, not its relative one, and an f32 correction carries `2^-24` of
+/// it however well the polynomial is fitted: max ulp reaches `1e3`-`1e5`
+/// on a blind fuzz, purely as a function of how close the sample lands to
+/// the curve `e^a + e^b = 1`.
+///
+/// There is no f32 reformulation that escapes it. `log1p(expm1(a) +
+/// exp(b))`, `log1p(expm1(a) + expm1(b) + 1)`, `2*atanh` of the same
+/// ratio, and a Newton refinement of the correction were each checked
+/// (see `graveyard.md`) and each lands on the identical budget, for the
+/// same structural reason: `e^a + e^b` is near `1` while neither term is,
+/// so *two* O(0.5) values must cancel, and each carries the working
+/// format's own epsilon. The only fix is a wider working format, which is
+/// what this tier is: the whole correction runs in f64 (`~2^-52`
+/// absolute), and the result rounds to f32 exactly once, at the end.
+///
+/// `d` is formed in f64 too, and that matters as much as the correction
+/// does: `fl32(a-b)`'s own rounding enters the answer amplified by
+/// `d(corr)/d(d) = -E/(1+E)`, which is `~0.5` at small `d`. Widening the
+/// subtraction removes it rather than shrinking it, since the exact
+/// difference of two f32 is an f64 wherever the cancellation is deep
+/// enough to care.
+///
+/// **What is left**, stated as a bound rather than a hope: the absolute
+/// error is `~3e-16`, so the result is within an ulp while `|m + corr| >
+/// ~5e-9` and degrades in proportion below that. Random `f32` pairs
+/// essentially never go deeper -- the nearest f32 `b` to the exact zero
+/// curve for a given `a` typically leaves `|result| ~ 1e-8` -- but the
+/// grid does contain pairs that do, and no f64 chain can round those
+/// correctly. This is a `~1e11`-fold improvement on the region that
+/// exists, not a claim of correct rounding everywhere.
+///
+/// Domain: the whole finite plane, like [`logaddexp_checked`] and unlike
+/// [`logaddexp`]; the correction stays live down to where `ln(1+e^-d)`
+/// genuinely leaves f32 at `d ~ 104`. The `min(128.0)` past that is only
+/// there to keep the exponent field's `n` bounded -- `e^-128` is already
+/// below every f32 denormal, so it changes no result, and it absorbs the
+/// `inf - inf` NaN that `a = b = ±inf` produces (`f64::min` is IEEE
+/// `minNum`), which wants a dead correction exactly as the other tiers'
+/// clamps do.
+#[inline(always)]
+pub fn logaddexp_accurate(a: f32, b: f32) -> f32 {
+    let ad = a as f64;
+    let bd = b as f64;
+    let m = ad.max(bd);
+    let d = (ad - bd).abs().min(128.0);
+    let normal = (m + log1p_exp_neg_f64(d)) as f32;
+    if a.is_nan() || b.is_nan() { f32::NAN } else { normal }
+}
+
 /// `1/sqrt(2)` as a double-`f32` pair, same shape as
 /// `FRAC_1_PI`/`RPI_LO` above: `RSQRT2_HI` is the nearest `f32` and
 /// `RSQRT2_LO` the next
