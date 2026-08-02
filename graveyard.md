@@ -10330,3 +10330,93 @@ ratio at the far end of the branch's domain before writing any code.** Under
 ~0.1 (the tail: 0.033) it removes the entire evaluation chain; over ~1 it is
 an amplifier. That single number would have predicted both results here, and
 it also explains the `erfcx_pos` peel's ~1%: same lever, ratio in between.
+
+## `sinc` is *more* accurate than a correctly-rounded numerator and denominator would make it -- the shared rounding is the mechanism, and improving either operand alone is a regression
+
+**Rejected 2026-08-02**, all four candidate directions, on one measurement.
+`sinc`'s max 4 had been attributed before at three fuzz worst-case points
+(the division ~2 ulp, `sinpi` ~1-2, "a genuine mixed contribution"). A
+systematic per-octave attribution says something the three-point probe could
+not see, and it inverts the conclusion.
+
+### The measurement
+
+Five rows over `|x| in [1e-3, 1e6]`, stride 64, against an f64
+`(-1)^k sin(pi*r)/(pi*x)` reference reduced on the exact `r = x - round(x)`
+so it stays relatively accurate at `sinc`'s own zeros:
+
+| row | what it is | avg | max |
+|---|---|---|---|
+| shipped | `sinpi(x) / (PI*x)` | **0.394** | 3 |
+| exact numerator | correctly-rounded `sin(pi*x)`, shipped denominator | 0.472 | 3 |
+| exact denominator | shipped `sinpi`, correctly-rounded `pi*x` | 0.510 | 3 |
+| both exact | correctly-rounded operands, one division | 0.368 | 2 |
+| full oracle | correctly-rounded `sinc` | 0.000 | 0 |
+
+**Improving either operand on its own makes the function worse** -- by 20%
+and 29% on avg respectively. Exhaustively over the no-reduction region
+`|x| in [1e-3, 0.5)` (every bit pattern, not sampled) the effect is much
+larger and the shipped form beats *all three* alternatives including the
+correctly-rounded one:
+
+| row | avg | max |
+|---|---|---|
+| shipped | **0.3585** | **2** |
+| exact numerator | 0.5959 | 3 |
+| exact denominator | 0.6739 | 3 |
+| both exact | 0.4636 | 2 |
+
+### Why
+
+For `|x| <= 0.5`, `sinpi` does not reduce (`k = round(x) = 0`, `r = x`), so
+the argument it hands its own polynomial is literally the expression
+`PI * x` -- the same one `sinc` writes as its denominator, and the compiler
+CSEs them into a single multiply. The quotient is therefore `sin(t)/t`
+evaluated *self-consistently* at `t = fl(PI*x)`, i.e. it computes
+`sinc(t/PI)` exactly where it should compute `sinc(x)`. The error that
+introduces is `d(ln sinc)/d(ln t) * relerr(t)`, and **that log-derivative
+vanishes at the origin** (it is `-t^2/3 + O(t^4)`, about `-3e-6` at
+`x = 1e-3`). So the entire argument error -- both `PI`'s own `2.78e-8`
+representation bias and the multiply's rounding -- costs nothing at all.
+Two independently correct roundings do not cancel and each spend a half ulp.
+
+### What this closes
+
+- **A two-word `pi` in the denominator** (`fma(PI_LO, x, PI*x)`). This was
+  the obvious next move and it is the "exact denominator" row: worse, on
+  both axes. It also does not even do what it claims -- the fma adds the
+  `PI_LO*x` term but does not remove `fl(PI*x)`'s own rounding, so it trades
+  a `2.78e-8` bias for a fresh `2^-24`.
+- **Any accuracy work inside `sinpi` aimed at `sinc`** -- the "exact
+  numerator" row. It would help `sinpi` and hurt `sinc`.
+- **Double-wording both sides.** The "both exact" row is the ceiling for
+  that whole family and it is *below the shipped function* over the
+  no-reduction region, and worth 0.026 avg / 1 max over the full range --
+  for a compensated division, which is independently closed above on mca
+  cost (+12.3% throughput) and on a real `0*inf -> NaN` at the denormal
+  floor.
+- Above `|x| ~ 1` the sharing is gone (`sinpi` reduces, so its polynomial
+  argument is `PI*r`, not `PI*x`) and the two errors simply add: shipped
+  0.42-0.44 avg / max 3 against a "both exact" floor of 0.34 / max 2 in
+  every octave. **That is where `sinc`'s max lives** (worst sampled point
+  `x = 1.4538369`), and it is ~1 ulp deep against a floor that needs both
+  operands exact. Nothing cheap reaches it.
+
+Documented in `sinc`'s doc comment as a load-bearing invariant rather than
+left implicit: the property is invisible in the source -- it lives in the
+fact that two *textually different* expressions (`sinpi`'s internal
+reduction and `sinc`'s denominator) evaluate to the same rounded value --
+and a refactor to `sinpi(x) * (1.0/(PI*x))`, or a `sinpi` that reduced
+unconditionally, would silently give back 0.24 avg ulp with nothing failing.
+
+### Transferable
+
+**Before trying to make one operand of a ratio more accurate, check whether
+it shares a rounding with the other.** Where it does, correlated error can
+cancel to *below* what correctly-rounded operands would give, and the usual
+instinct -- improve the sloppier-looking side -- is a regression. The tell
+is cheap and it is the one this file already recommends for a different
+reason: score an oracle row per operand *separately*, not just a combined
+one. Here the combined oracle looks like 2 ulp of headroom while the two
+single-operand oracles are both *negative*, and only running all three shows
+which it is.

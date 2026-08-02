@@ -1125,6 +1125,24 @@ pub fn cospi(x: f32) -> f32 {
 /// `x=0` itself. `sinc` is even (`sin(-pi*x)/(-pi*x) = sin(pi*x)/(pi*x)`
 /// algebraically), which falls out for free here with no extra sign
 /// handling needed.
+///
+/// **The division's two operands deliberately share one rounding, and
+/// that sharing is load bearing.** For `|x| <= 0.5` `sinpi` does not
+/// reduce, so the argument it hands its own polynomial is the very same
+/// `fl(PI*x)` this denominator is -- one multiply, which the compiler
+/// CSEs -- and the quotient is therefore `sin(t)/t` evaluated
+/// *self-consistently* at `t = fl(PI*x)`. `d(ln sinc)/d(ln t)` vanishes
+/// at the origin, so a shared argument error cancels in the ratio and
+/// costs nothing, where two independently-rounded operands would each
+/// spend their own half ulp. That is worth more than exactness: over the
+/// whole no-reduction region, exhaustively, this form scores avg 0.358 /
+/// max 2 against avg 0.464 / max 2 for the same division handed *both*
+/// operands correctly rounded. Making either operand alone more accurate
+/// -- a two-word `pi` in the denominator, say -- breaks the cancellation
+/// without replacing it and is worse than either, max 3. Any rewrite
+/// that stops these two from being one multiply gives all of that back.
+/// See graveyard.md; the compensated-division variant is closed
+/// separately, on cost and on a `0*inf` NaN at the denormal floor.
 #[inline(always)]
 pub fn sinc(x: f32) -> f32 {
     let normal = sinpi(x) / (std::f32::consts::PI * x);
