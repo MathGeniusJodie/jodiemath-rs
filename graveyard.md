@@ -9005,3 +9005,90 @@ crossover at all (`0.5 - sqrt(1-a)*P(a)` over the whole domain, trailing
 constant exactly `0.5`), max 3 / avg 0.0438, and there is no small branch
 to hand a window to. `acos` likewise. The family's remaining crossover is
 `asind`'s, and that one is `asin`'s -- already moved.
+
+## `erfcx_pos`: Horner is not the Pareto point the grid simulation said
+
+The entry above ("the reciprocal offset `2 + x` is not the conditioning
+lever") closed with Horner named as "the one real Pareto point in this
+function" -- 5.35 vs Estrin's 6.16 max on a 3M-point log-spaced grid, at
+a latency cost that had never been measured. Both halves are now measured
+in the real chain, and **it is not a Pareto point at all**: it is worse on
+accuracy, worse on latency, and it breaks an edgecheck pin.
+
+Exhaustive, every f32 bit pattern, shipped coefficients, only the
+evaluation order changed (degree-10 `P(v)` as ten dependent fma instead of
+the 4-deep Estrin tree, closing `fma(v, HI, v*P)` untouched):
+
+| function | shipped Estrin | Horner |
+|---|---|---|
+| `erfc` | **0.1948** / 7 | 1.3899 / 7 |
+| `erfcx` | **0.2080** / 6 | 1.4028 / 6 |
+| `erfcx (|x|<=20)` | **0.2078** / 6 | 1.3935 / 6 |
+| `erf` (control, no `erfcx_pos`) | 0.0270 / 3 | 0.0270 / 3 |
+
+**Seven times the average, and not one ulp of max.** The mechanism is
+named in `erfcx_pos`'s own comment and is the thing the grid simulation
+could not see: the coefficients are coordinate-descent polished *against
+the exact Estrin evaluation order*, under a side constraint that `xa = 0`
+reproduce `erfcx(0) = 1.0` bit-exactly, and `c1..c4`/`c10` each sit an ulp
+off the LP's own values to hold that constraint. Reorder the evaluation
+and the polish is not merely wasted, it is actively wrong -- the residual
+it was cancelling is no longer there. `edgecheck` says so directly and
+immediately:
+
+    FAIL erfc(0)      got 1.0000001e0  want 1e0
+    FAIL erfcx(0)     got 1.0000001e0  want 1e0
+    FAIL norm_cdf(0)  got 4.9999994e-1 want 5e-1
+
+A uniform ~1 ulp bias at the pin is exactly the ~1.4 average above.
+
+**mca, and the reason the throughput column cannot be believed here.**
+Horner is genuinely *fewer* instructions -- it drops `v2`/`v4` and two
+combining fma -- and instrs, uOps and `Block RThroughput` fall on every
+one of the eight regions. The cycles column still goes up on three of
+four throughput rows:
+
+| region | instrs | uOps | BlockRT | cyc/unit |
+|---|---|---|---|---|
+| erfc_latency | 4551 -> 4298 | 4721 -> 4423 | 1184 -> 1120 | 62.08 -> 83.33 (+34.2%) |
+| erfc_throughput | 131 -> 123 | 148 -> 139 | 40 -> 38 | 2.885 -> 3.007 (+4.2%) |
+| erfcx_latency | 4129 -> 3745 | 4869 -> 4962 | 1184 -> 1120 | 66.99 -> 79.99 (+19.4%) |
+| erfcx_throughput | 125 -> 118 | 143 -> 135 | 39 -> 37 | 2.827 -> 2.761 (-2.3%) |
+| norm_cdf_latency | 4980 -> 4649 | 5169 -> 4862 | 1280 -> 1216 | 70.22 -> 92.47 (+31.7%) |
+| norm_cdf_throughput | 140 -> 132 | 160 -> 151 | 43 -> 41 | 3.219 -> 3.297 (+2.4%) |
+| gelu_latency | 5773 -> 5619 | 6157 -> 6044 | 1504 -> 1440 | 75.56 -> 98.94 (+30.9%) |
+| gelu_throughput | 156 -> 149 | 184 -> 173 | 50 -> 48 | 3.574 -> 3.577 (+0.1%) |
+
+The latency column is the real one here and it is not an artifact: ten
+dependent fma replacing a 4-deep tree is +6 levels by construction, these
+regions are branchless, and +19-34% is far outside the documented noise.
+So even *with* a fresh Horner-order polish -- which is the only way this
+idea could be revived -- the trade on offer is at best a few percent of
+max for a third of the latency on four public functions.
+
+### Transferable
+
+- **A polished poly's evaluation order is part of the coefficients.**
+  Nine of eleven coefficients here are holding a residual specific to one
+  instruction sequence. Any Estrin/Horner/reassociation experiment on a
+  poly whose comment says "coordinate-descent polished" or "tuned against
+  the real chain" must refit before it measures anything, and a grid
+  simulation that reuses the shipped coefficients will report the
+  reordering as free when it is not.
+- **`cargo build --release` does not rebuild `examples/`.** The first pass
+  of this measurement ran `./target/release/examples/accuracy` against a
+  binary built before the edit and reported the change as bit-identical on
+  `norm_cdf`/`gelu` -- same avg to four places, same max, same worst `x`.
+  That is the tell, and it is the same tell as a byte-identical asm
+  region: if a change that must move numbers moves none, check what you
+  measured before you conclude anything. Use `cargo build --release
+  --example accuracy`, or `cargo run`, and check the binary's mtime.
+
+### Also: `erfc`'s readme max was 6 and is 7
+
+Not a regression -- an exhaustive re-measure of unchanged code. Full
+2^32-pattern figures for the whole `erfcx_pos` family as of this
+session, for the next instance to diff against rather than re-run:
+`erf` 0.0270/3, `erfc` **0.1948/7**, `erfcx` 0.2080/6, `erfcx (|x|<=20)`
+0.2078/6, `erfcx (x>=20)` 0.2683/2, `norm_cdf` 0.0996/8, `norm_pdf`
+0.0269/4, `gelu` 0.2029/9.

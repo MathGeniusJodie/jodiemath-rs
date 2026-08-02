@@ -79,7 +79,7 @@ logaddexp_checked (all f32)| 0.037 |  ~1e3-1e5, heavy-tailed (same cancellation,
                  atanpi |    0.078   |     4     | (no std atanpi)
   tan (|x|<2^22*pi) |    0.118   |     4     |  0.000  |    0
                    erf  |    0.027   |     3     | (no std erf)
-         erfc (|x|<=10) |    0.195   |     6     | (no std erfc)
+         erfc (|x|<=10) |    0.195   |     7     | (no std erfc)
         erfcx (|x|<=20) |    0.208   |     6     | (no std erfcx)
          erfcx (x>=20)  |    0.268   |     2     | (no std erfcx)
        dawson (all f32) |    0.058   |     6     | (no std dawson; exhaustive since the reference stopped being an 800-point quadrature, see accuracy.rs)
