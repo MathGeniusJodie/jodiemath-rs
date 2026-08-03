@@ -124,6 +124,18 @@ fn main() {
         cbrt_accurate_unchecked,
     );
 
+    // sind/cosd/tand's shared contract: `|x| < 4.7e7`, the range over
+    // which their round-to-nearest-180 reduction is still exact (the same
+    // closure accuracy.rs scores them on). All three `_unchecked` cores
+    // drop a guard their own doc comment argues is *provably* a no-op in
+    // that range -- sind/cosd the `POLY_SAFE_BOUND` clamp, tand the
+    // `|d| > 128` substitution -- so "provably" is exactly the claim this
+    // gate should be holding to bits rather than taking on the argument.
+    let deg_domain = |x: f32| x.abs() < 4.7e7;
+    ok &= check1("sind / sind_unchecked", N, deg_domain, sind, sind_unchecked);
+    ok &= check1("cosd / cosd_unchecked", N, deg_domain, cosd, cosd_unchecked);
+    ok &= check1("tand / tand_unchecked", N, deg_domain, tand, tand_unchecked);
+
     let atan2_domain = |x: f32, y: f32| x != 0.0 && !(x.is_infinite() && y.is_infinite());
     ok &= check2("atan2 / atan2_unchecked", N, atan2_domain, atan2, atan2_unchecked);
 

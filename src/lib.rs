@@ -3190,13 +3190,17 @@ pub fn expm1_narrow(x: f32) -> f32 {
 }
 
 /// Full-range sibling of [`expm1`] (backlog idea #111): total over every
-/// `f32`, at *better* throughput than `expm1` rather than the usual
-/// checked-tier surcharge, because clamping the input first is what makes
-/// a single exponent field legal -- so this pays for a clamp but drops the
-/// whole `exp2_field_split` k1/k2 chain plus its `p * t1` multiply.
-/// `expm1_checked(-inf) = -1`, `expm1_checked(inf) = inf`,
+/// `f32`. `expm1_checked(-inf) = -1`, `expm1_checked(inf) = inf`,
 /// `expm1_checked(NaN) = NaN`, versus `expm1`'s garbage/NaN outside
 /// roughly `[-87.3, 88.7)`.
+///
+/// It pays the ordinary checked-tier surcharge for that, and the whole
+/// surcharge is the clamp: `expm1` builds its own single exponent field
+/// (see below), so the two bodies are otherwise the same instructions.
+/// mca: throughput `1.087 -> 1.320` cyc/elem (**+21.4%**, instrs 56 -> 61,
+/// uOps 58 -> 64, Block RThroughput 15 -> 17), latency `47.00 -> 55.00`
+/// (+17.0%). Both tiers stay because the axis they split on is domain,
+/// not speed -- there is no input where this one is cheaper.
 ///
 /// Accuracy is not a tradeoff here: bit-identical to `expm1` everywhere
 /// `expm1` is itself valid (verified over all 2^32 patterns), so max ulp
