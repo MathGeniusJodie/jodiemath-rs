@@ -678,3 +678,53 @@ identically to `atan2` (0.066) and `atan2d` (0.105), not just `atan2pi`.
 Not screened: the cost of a compensated division here is unpriced, and
 `compensated division reciprocal overflow` is a known trap on this exact
 shape (a standalone `1.0/x` can overflow for legitimate small `x`).
+
+## `log1p_exp_neg_f64`'s two polynomials are both over-degreed for the floor they feed
+
+`logaddexp_accurate` is the crate's most expensive region by Block
+RThroughput -- 152 instrs / 214 uOps / **94.00** BlockRT, 3.1x
+`logaddexp`'s throughput and 1.6x its latency (table in graveyard.md).
+Almost all of that is the two f64 polynomials in `log1p_exp_neg_f64`, and
+neither was ever sized against the accuracy the chain actually needs.
+
+Both targets have **exact rational Taylor series**, so the tail can be
+bounded without any function evaluation: expand the Taylor poly in the
+Chebyshev basis on the working interval, drop the tail, convert back.
+50-digit `Decimal`, no fitting tools required. The tails:
+
+| | shipped degree | Chebyshev tail at shipped | degree reaching ~5e-18 |
+|---|---|---|---|
+| `EXP_F64_P`, `p(f) = (e^f-1)/f` on `[-ln2/2, ln2/2]` | 12 (13 coeffs) | 1.4e-21 rel | **10** (8.79e-18 rel) |
+| `ATANH_B64`, `Q(u) = sum u^k/(2k+3)` on `[0, 1/9]` | 14 (15 coeffs) | 7.5e-26 rel | **9** (4.89e-18 rel) |
+
+The chain's own documented floor is `~3e-16` relative, so degree 10 and
+degree 9 would contribute **~3% and ~1.6%** of a budget that is already
+spent elsewhere. The shipped degrees are ~5 and ~13 orders of magnitude
+tighter than anything downstream can observe -- `logaddexp_accurate`
+narrows to f32 at the end, and already measures avg 0.000 / max 0 against
+the f64 reference. This is a **pure throughput/latency lead with no
+accuracy axis to trade**: the win, if it is real, is free.
+
+Dropping 2 + 5 coefficients removes roughly 7 `fma` from a 152-instruction
+region (~5%), and shortens both Estrin trees, which is the part that
+should matter to the 121.5-cycle latency.
+
+**Screened only this far**: the tail bounds above are reproduced and
+correct. What has *not* been done is everything that decides it --
+coefficients not generated, no accuracy sweep, no `edgecheck`, no mca. Two
+specific reasons it may not convert, both of them this crate's own
+repeated lesson:
+
+- A Chebyshev *truncation* bound says nothing about the shorter
+  polynomial's **evaluation rounding**, and evaluation roundings, not fit,
+  are usually what sets the floor here. The margin is enormous (3e-18
+  against 3e-16), so this is unlikely to bind -- but it is the thing to
+  measure, not assume.
+- Both polys are Estrin-grouped and the grouping is hand-written around
+  the current degree (`f2`/`f4`, and `u2`/`u4`/`u8` plus the `1e-30` clamp
+  that exists precisely to keep `u^4`/`u^8` normal). A degree change
+  rewrites those trees, and the clamp's justification is stated in terms
+  of the current tail term -- re-derive it rather than porting it.
+
+The economization script is straightforward enough to rewrite from the
+description above; it needs `Decimal` only.
