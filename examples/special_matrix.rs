@@ -139,7 +139,6 @@ fn main() {
         ("sinh_narrow", sinh_narrow as fn(f32) -> f32),
         ("sinh_throughput", sinh_throughput as fn(f32) -> f32),
         ("sinpi", sinpi as fn(f32) -> f32),
-        ("sinpi_unchecked", sinpi_unchecked as fn(f32) -> f32),
         ("softplus", softplus as fn(f32) -> f32),
         ("softsign", softsign as fn(f32) -> f32),
         ("sqrt1pm1", sqrt1pm1 as fn(f32) -> f32),

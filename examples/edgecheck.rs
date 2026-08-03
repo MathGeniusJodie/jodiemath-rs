@@ -542,21 +542,6 @@ fn real_main() {
         check(&format!("cospi(-{x}) == cospi({x})"), cospi(-x), cospi(x));
     }
 
-    // sinpi_unchecked (backlog idea #98): drops sinpi's `x==0.0` guard,
-    // bit-identical everywhere else (verified via a real exhaustive
-    // 2^32-pattern sweep before adopting). The one documented exception is
-    // pinned explicitly (not silently accepted): -0.0 loses its sign
-    // instead of propagating it, same known-tradeoff-not-bug documentation
-    // convention as cbrt_accurate's own pinned mantissa issue.
-    check("sinpi_unchecked(0)", sinpi_unchecked(0.0), 0.0);
-    check("sinpi_unchecked(-0) [documented exception: wrong sign]", sinpi_unchecked(-0.0), 0.0);
-    check("sinpi_unchecked(0.5)", sinpi_unchecked(0.5), 1.0);
-    check("sinpi_unchecked(1)", sinpi_unchecked(1.0), sinpi(1.0));
-    check("sinpi_unchecked(-0.5)", sinpi_unchecked(-0.5), sinpi(-0.5));
-    check("sinpi_unchecked(nan)", sinpi_unchecked(f32::NAN), f32::NAN);
-    check("sinpi_unchecked(inf)", sinpi_unchecked(f32::INFINITY), f32::NAN);
-    check("sinpi_unchecked(-inf)", sinpi_unchecked(f32::NEG_INFINITY), f32::NAN);
-    check("sinpi_unchecked(f32::MAX)", sinpi_unchecked(f32::MAX), sinpi(f32::MAX));
 
     // tanpi(x): direct poly + cotangent reflection (backlog idea #128,
     // superseding the original sinpi(x)/cospi(x) ratio, idea #29).
@@ -1932,12 +1917,6 @@ fn real_main() {
     // finite-overflow tradeoff.
     check("hypot(inf,nan)", hypot(f32::INFINITY, f32::NAN), f32::INFINITY);
     check("hypot(nan,inf)", hypot(f32::NAN, f32::INFINITY), f32::INFINITY);
-    // hypot_unchecked: contract is x, y both finite -- must match hypot
-    // exactly wherever that contract holds.
-    check("hypot_unchecked(0,0)", hypot_unchecked(0.0, 0.0), 0.0);
-    check("hypot_unchecked(3,4)", hypot_unchecked(3.0, 4.0), 5.0);
-    check("hypot_unchecked(-3,4)", hypot_unchecked(-3.0, 4.0), 5.0);
-    check("hypot_unchecked(nan,1)", hypot_unchecked(f32::NAN, 1.0), f32::NAN);
     // hypot_checked: no overflow/underflow tradeoff (the whole point),
     // full IEEE754/C99 domain including the exact same NaN/inf edge
     // cases hypot itself handles, plus graceful over/underflow hypot's
@@ -1957,9 +1936,9 @@ fn real_main() {
     check("hypot_checked(MAX,MAX)", hypot_checked(f32::MAX, f32::MAX), f32::INFINITY);
     // hypot(x,y) >= max(|x|,|y|) for any finite x,y (a provable
     // mathematical fact) -- checked directly (2026-07-10): holds for
-    // hypot_checked at both these points (unlike plain hypot/
-    // hypot_unchecked, which trade this away for paired denormal inputs,
-    // an already-documented tradeoff -- see hypot's own doc comment).
+    // hypot_checked at both these points (unlike plain hypot, which
+    // trades this away for paired denormal inputs, an already-documented
+    // tradeoff -- see hypot's own doc comment).
     // check_range locks this in rather than only checking finiteness.
     check_range("hypot_checked(MAX/2,MAX/2)", hypot_checked(f32::MAX / 2.0, f32::MAX / 2.0), f32::MAX / 2.0, f32::MAX);
     check_range(

@@ -1094,23 +1094,6 @@ pub fn sinpi(x: f32) -> f32 {
     if x == 0.0 { x } else { normal }
 }
 
-/// sinpi without the `x==0.0` guard (backlog idea #98): bit-identical to
-/// [`sinpi`] everywhere except `x=-0.0`, where dropping the guard lets
-/// the `q=r=-0.0` cancellation described in [`sinpi`]'s own doc comment
-/// go uncorrected, returning `+0.0` instead of the correctly-signed
-/// `-0.0`. Unlike the rejected `erf_unchecked` candidate, this is a pure
-/// sign-of-zero nit at exactly one input (magnitude always correct, and
-/// every other input -- including every other special value -- is
-/// unaffected), not a diverging/wrong-magnitude failure mode; narrowing
-/// the domain to exclude `-0.0` mirrors other `_unchecked` cores that
-/// already exclude zero outright (e.g. `cbrt_unchecked`).
-#[inline(always)]
-pub fn sinpi_unchecked(x: f32) -> f32 {
-    let q = x.round_ties_even();
-    let r = x - q;
-    sinf_poly_raw(std::f32::consts::PI * r) * fma(-2.0, parity(q), 1.0)
-}
-
 /// cos(pi*x), argument in half-turns -- see `sinpi`'s doc comment for why
 /// this reduction is exact and shares `sinf_poly` directly, same
 /// full-range-accurate (no cliff) guarantee, and the same magic-round
@@ -7106,16 +7089,6 @@ pub fn rsqrt(x: f32) -> f32 {
     1.0 / x.sqrt()
 }
 
-/// hypot without the +-inf special case: contract is x, y both finite (or
-/// both NaN-safe, since NaN propagates through fma/sqrt on its own) --
-/// see hypot's own doc comment for the one case this drops (+-inf paired
-/// with a NaN, where IEEE754/C99 defines +inf as the answer regardless).
-/// Bit-identical to hypot whenever neither argument is infinite.
-#[inline(always)]
-pub fn hypot_unchecked(x: f32, y: f32) -> f32 {
-    fma(x, x, y * y).sqrt()
-}
-
 /// Straight port of jodiemath's hypotf: naive sqrt(x^2+y^2), no anti-overflow
 /// rescaling (unlike std's hypot) -- trades the overflow/underflow edge cases
 /// for vectorizability, same tradeoff this crate makes for cbrt/sin/cos vs.
@@ -7197,7 +7170,7 @@ pub fn hypot_checked(x: f32, y: f32) -> f32 {
 /// hypot's single most common real use case, and computing the
 /// reciprocal directly saves the caller their own separate division.
 /// Same "compose already-correctly-rounded hardware ops" reasoning as
-/// `rsqrt` -- `hypot_unchecked`'s `fma(x,x,y*y)` core plus one sqrt and
+/// `rsqrt` -- `hypot`'s own `fma(x,x,y*y)` core plus one sqrt and
 /// one division. The naive composition gets every zero/inf/nan special
 /// case right *except one*, purely from IEEE754 semantics:
 /// `rhypot(0,0)=inf`, `rhypot(x,inf)=0`, `rhypot(NaN,y)=NaN` all fall

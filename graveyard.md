@@ -12327,3 +12327,70 @@ true minimax -- it converged to 5.11 result-ulp when the shipped
 coefficients already measure 0.875. **A "minimax optimum" worse than the
 poly you are trying to beat is a conditioning failure, not a result.**
 Re-screening this one needs a Chebyshev basis.
+
+## `sinpi_unchecked` / `hypot_unchecked`: the guard was already free; deleted
+
+Same pareto check as `cbrt_throughput` above, run across all 32
+`_checked`/`_unchecked` tiers on freshly-built asm (the checked-in `.s`
+was three days stale). Every `_unchecked` variant is a bet that removing
+a domain guard buys enough to be worth a documented wrong answer. Two of
+the fourteen lose that bet outright:
+
+| variant | Δ throughput | Δ latency | BlockRT | gives up |
+|---|---|---|---|---|
+| `sinpi_unchecked` | **-1.4%** (1.133→1.117) | **-0.04%** (42.016→42.000) | 17 → **17** | `sinpi(-0.0)` = `+0.0` |
+| `hypot_unchecked` | **-0.4%** (0.766→0.763) | **-0.5%** (21.111→21.001) | 12 → **12** | `hypot(±inf, NaN)` = NaN |
+
+The instruction counts *do* drop (48→43 and 18→9 in the vector body), and
+that is exactly the trap: **both regions are bound somewhere else**, so
+Block RThroughput does not move a hundredth. `sinpi`'s guard is a
+compare/blend hanging off `sinf_poly_raw`'s chain, `hypot`'s is a
+compare/blend hanging off `vsqrtss`; neither competes for the port that
+sets the block. The escalation ladder earns its keep here in the
+*opposite* direction from usual -- instrs said "real win", BlockRT and
+cyc/elem said "nothing".
+
+Every other member of the family clears them by an order of magnitude:
+`cbrt` -44%, `log_2` -35%, `ln`/`log10` -37%, `sind` -22%, `fmod` -20%,
+`remainder` -18%, `cosd` -15%, `powf` -12%, `tand` -11%, `atan2` -8.3%.
+There is no gradient here to argue about -- the two deleted tiers are
+1-2 orders of magnitude below the weakest survivor.
+
+`hypot_unchecked` had never been mca'd at all; no region existed for it
+or for `atan2_unchecked`. Both are wired up now. The signal had actually
+been sitting in readme's own quickbench for a while (`hypot` 6.0 ns vs
+`hypot_unchecked` 6.2 ns -- the *unchecked* one slower) and was read as
+noise, which it was; the point is that no wall-clock noise floor was ever
+going to resolve a 0.4% question, and mca did it in seconds.
+
+One measurement trap worth recording. `hypot`'s existing region uses a
+literal `1.0` second argument, which folds the `y.is_infinite()` half of
+its guard away, so the table above understates `hypot`'s real cost.
+Re-measuring both sides with a `black_box`'d `y` to recover it produced
+`hypot` at 0.111 cyc/elem against `hypot_unchecked`'s 0.766 -- the
+*checked* function seven times cheaper than its own subset. That is the
+loop-invariant-2nd-arg hoist / branch-specialisation artifact
+`mca_target.rs` already documents for `remainder_throughput`, not a
+result. Discarded. It does not change the verdict either way: the folded
+half is two instructions issuing in parallel with the half that remains,
+into a region whose BlockRT is set entirely by the sqrt.
+
+### Not found: any redundant `_checked` tier
+
+All twelve extend the domain at a real, measured price and every one sits
+on the frontier -- `exp2_checked` +64% throughput, `hypot_checked` +54%,
+`exp_checked` +28%, `cosh_checked` +23%, `sinh_checked` +15%,
+`softplus`/`logaddexp_checked` +2.3%, and `silu_checked` a genuine split
+(latency -6.2%, throughput +4.2%, avg-for-max).
+
+### `expm1_checked`'s doc comment has gone stale in the other direction
+
+It claims to run "at *better* throughput than `expm1`… drops the whole
+`exp2_field_split` k1/k2 chain plus its `p * t1` multiply". True when
+written (`d6ef661`); `expm1` was then rebuilt on the same single exponent
+field in `df1e81d`, so the two bodies now differ *only* by the clamp.
+Measured: 56 → 61 instrs, 1.087 → 1.320 cyc/elem, i.e. **+21%**, the
+opposite sign. The tier still earns its place (correct and saturating at
+±inf/NaN where `expm1` gives garbage) -- only the perf sentence is wrong.
+A cross-function claim like this goes stale when the *other* function
+moves, and nothing re-checks it.

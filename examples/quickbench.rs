@@ -198,7 +198,6 @@ fn main() {
     bench!("sin_prereduced", sin_prereduced);
     bench!("cos_prereduced", cos_prereduced);
     bench!("sinpi", sinpi);
-    bench!("sinpi_unchecked", sinpi_unchecked);
     bench!("cospi", cospi);
     bench!("tanpi", tanpi);
     bench!("sin2pi", sin2pi);
@@ -316,7 +315,6 @@ fn main() {
     let hypot_y = std::hint::black_box(1.0);
     bench!("hypot", move |x: f32| hypot(x, hypot_y));
     bench!("std hypot", move |x: f32| x.hypot(hypot_y));
-    bench!("hypot_unchecked", move |x: f32| hypot_unchecked(x, hypot_y));
     bench!("hypot_checked", move |x: f32| hypot_checked(x, hypot_y));
     bench!("rhypot", move |x: f32| rhypot(x, hypot_y));
     // Complex pack (idea #186): cabs/carg fix the 2nd arg like hypot/

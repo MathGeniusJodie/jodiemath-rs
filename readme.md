@@ -114,7 +114,6 @@ logaddexp_accurate (all f32)| 0.000 |     0     | (no std logaddexp; the cancell
                  atan2d |    0.105   |     4     | (no std atan2d)
                 atan2pi |    0.070   |     3     | (no std atan2pi)
         hypot (bounded) |    0.034   |     1     |  0.000  |    0
-hypot_unchecked (bounded, +) | 0.034 |     1     | (bit-identical to hypot on its domain)
        hypot_checked |    0.015   |     1     | (no std comparison needed, no domain restriction)
                 rhypot |    0.065   |     2     | (no std rhypot)
                   rsqrt |    0.260   |     1     | (no std rsqrt)
@@ -244,7 +243,6 @@ atan2_unchecked | 20.4 ns |    -    |  -
       erfc (!)| 20.2 ns |    -    |  -
      erfcx (!)| 14.0 ns |    -    |  -
       hypot (*) | 6.0 ns  | 11.2 ns | 1.9x
-hypot_unchecked | 6.2 ns  |    -    |  -
   hypot_checked | 18.2 ns | 11.2 ns | 0.6x
        rhypot | 8.9 ns  |    -    |  -
         rsqrt | 7.5 ns  |    -    |  -
@@ -344,7 +342,6 @@ atan2_unchecked | 0.52 ns |    -    |  -
       erfc (!)| 0.94 ns |    -    |  -
      erfcx (!)| 0.88 ns |    -    |  -
   hypot (*) | 0.20 ns | 2.55 ns | 12.9x
-hypot_unchecked | 0.21 ns |    -    |  -
   hypot_checked | 0.38 ns | 2.55 ns | 6.7x
        rhypot | 0.36 ns |    -    |  -
         rsqrt | 0.35 ns |    -    |  -

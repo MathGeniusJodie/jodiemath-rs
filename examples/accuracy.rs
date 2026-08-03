@@ -914,13 +914,6 @@ fn main() {
         // caught it originally.
         let s = measure!(everywhere, sinpi, sinpi_ref);
         report("sinpi (all f32)", &s, t0);
-        // sinpi_unchecked's one documented difference from sinpi (wrong
-        // sign of zero at x=-0.0 only) is invisible to ulp_diff here --
-        // it treats +0.0/-0.0 as equal (see its own `ord` helper) -- so
-        // `everywhere` is safe; edgecheck.rs's exact-bits check is what
-        // actually pins the -0.0 exception.
-        let s = measure!(everywhere, sinpi_unchecked, sinpi_ref);
-        report("sinpi_unchecked (+)", &s, t0);
         let s = measure!(everywhere, cospi, cospi_ref);
         report("cospi (all f32)", &s, t0);
     }
@@ -1877,10 +1870,6 @@ fn main() {
         report("hypot", &s, t0);
         let s = fuzz2(TWOARG_SAMPLES, hypot_domain, |x: f32, y: f32| x.hypot(y), hypot_u35);
         report("std hypot", &s, t0);
-        // hypot_unchecked's documented contract: x, y both finite. Same
-        // overflow/underflow-avoidance domain restriction as hypot itself.
-        let s = fuzz2(TWOARG_SAMPLES, hypot_domain, hypot_unchecked, hypot_u35);
-        report("hypot_unchecked (+)", &s, t0);
         // hypot_checked has no overflow/underflow tradeoff to work around
         // (that's the whole point), so it gets the full domain -- every
         // finite magnitude, zero, inf, and nan.
@@ -1888,8 +1877,8 @@ fn main() {
         report("hypot_checked", &s, t0);
     }
     if run("rhypot") {
-        // Same overflow/underflow tradeoff as hypot/hypot_unchecked (see
-        // hypot's own domain comment above) -- rhypot shares the identical
+        // Same overflow/underflow tradeoff as hypot (see its own domain
+        // comment above) -- rhypot shares the identical
         // fma(x,x,y*y) core.
         let hypot_domain = |x: f32, y: f32| {
             let ok = |v: f32| v == 0.0 || (v.abs() > 1e-15 && v.abs() < 1e18);

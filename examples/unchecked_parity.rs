@@ -146,13 +146,6 @@ fn main() {
     };
     ok &= check2("powf / powf_unchecked", N, pow_domain, powf, powf_unchecked);
 
-    // hypot's own contract: bit-identical to hypot_unchecked whenever
-    // neither argument is infinite (NaN is fine either way -- both share
-    // the same fma/sqrt path for it, only the explicit +-inf override
-    // differs between the two).
-    let hypot_domain = |x: f32, y: f32| !x.is_infinite() && !y.is_infinite();
-    ok &= check2("hypot / hypot_unchecked", N, hypot_domain, hypot, hypot_unchecked);
-
     // remainder_wide's own contract: bit-identical to remainder_checked
     // (not to plain remainder) throughout remainder_checked's own
     // |x/y|<2^24 domain -- a different pair than remainder/

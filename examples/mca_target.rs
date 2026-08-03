@@ -230,9 +230,6 @@ throughput_fn!(thr_cos_prereduced, "cos_prereduced_throughput", cos_prereduced);
 latency_fn!(lat_sinpi, "sinpi_latency", sinpi);
 throughput_fn!(thr_sinpi, "sinpi_throughput", sinpi);
 
-latency_fn!(lat_sinpi_unchecked, "sinpi_unchecked_latency", sinpi_unchecked);
-throughput_fn!(thr_sinpi_unchecked, "sinpi_unchecked_throughput", sinpi_unchecked);
-
 latency_fn!(lat_cospi, "cospi_latency", cospi);
 throughput_fn!(thr_cospi, "cospi_throughput", cospi);
 
@@ -477,6 +474,9 @@ throughput_fn!(thr_atanpi, "atanpi_throughput", atanpi);
 
 latency_fn!(lat_atan2, "atan2_latency", |x: f32| atan2(x, 1.0));
 throughput_fn!(thr_atan2, "atan2_throughput", |x: f32| atan2(x, 1.0));
+
+latency_fn!(lat_atan2_unchecked, "atan2_unchecked_latency", |x: f32| atan2_unchecked(x, 1.0));
+throughput_fn!(thr_atan2_unchecked, "atan2_unchecked_throughput", |x: f32| atan2_unchecked(x, 1.0));
 
 latency_fn!(lat_atan2_latency, "atan2_latency_latency", |x: f32| atan2_latency(x, 1.0));
 throughput_fn!(thr_atan2_latency, "atan2_latency_throughput", |x: f32| atan2_latency(x, 1.0));
@@ -852,7 +852,6 @@ fn main() {
         lat_sin_prereduced, thr_sin_prereduced;
         lat_cos_prereduced, thr_cos_prereduced;
         lat_sinpi, thr_sinpi;
-        lat_sinpi_unchecked, thr_sinpi_unchecked;
         lat_cospi, thr_cospi;
         lat_tanpi, thr_tanpi;
         lat_sin2pi, thr_sin2pi;
@@ -926,6 +925,7 @@ fn main() {
         lat_atand, thr_atand;
         lat_atanpi, thr_atanpi;
         lat_atan2, thr_atan2;
+        lat_atan2_unchecked, thr_atan2_unchecked;
         lat_atan2_latency, thr_atan2_latency;
         lat_atan2_pos, thr_atan2_pos;
         lat_atan2d, thr_atan2d;
