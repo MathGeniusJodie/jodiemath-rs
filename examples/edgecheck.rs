@@ -1217,21 +1217,28 @@ fn real_main() {
         1.0216357e-07,
     );
 
-    // gelu(x) = x*Phi(x) = x*0.5*erfc(-x/sqrt2) (backlog idea #70). For
-    // x >= 0 gelu's tail correction is identically zero, so gelu(3) is
-    // still exactly that composition and pins it structurally. For x < 0
-    // the correction is live and deliberately makes gelu *not* equal the
-    // plain f32 composition (3 ulp off the true -0.0040496940948903 at
-    // x=-3), so gelu(-3) is pinned against the true value instead --
-    // accuracy across the domain stays accuracy.rs's job. The
-    // special-value pins guard the explicit x==-inf override:
-    // 0.0*(-inf) alone is NaN, but the true limit is 0.
+    // gelu(x) = x*Phi(x) = x*0.5*erfc(-x/sqrt2) (backlog idea #70).
+    // gelu does not call erfc -- it reassociates Phi's own two factors so
+    // that the denormal Phi(x) carries over x in ~[-13.4,-13.0] is never
+    // formed (see its doc comment) -- but on the x >= 0 side that
+    // reassociation happens to leave the plain composition bit-identical,
+    // so gelu(3) still pins it structurally. For x < 0 it deliberately
+    // does *not* (the whole point), so gelu(-3) is pinned against the
+    // true -0.0040496940948903 instead; accuracy across the domain stays
+    // accuracy.rs's job.
+    //
+    // gelu(-inf) is -0.0, not +0.0, and that is load-bearing rather than
+    // incidental: the exact `x^2/2` square leaves no `0*inf` to override,
+    // so the sign falls out of the same addend that makes gelu(-0.0)
+    // negative, and it agrees with the whole finite tail below x ~ -14.4,
+    // which underflows to -0.0. (`x*Phi(x)` approaches 0 from below.)
     check("gelu(0)", gelu(0.0), 0.0);
     check("gelu(-0)", gelu(-0.0), -0.0);
     check("gelu(3)==3*.5*erfc(-3/sqrt2)", gelu(3.0), 3.0 * 0.5 * erfc(-3.0 * std::f32::consts::FRAC_1_SQRT_2));
     check_ulp("gelu(-3)==-3*Phi(-3)", gelu(-3.0), -4.0496941e-3, 1);
     check("gelu(inf)", gelu(f32::INFINITY), f32::INFINITY);
-    check("gelu(-inf)", gelu(f32::NEG_INFINITY), 0.0);
+    check("gelu(-inf)", gelu(f32::NEG_INFINITY), -0.0);
+    check("gelu(-14.5) tail sign", gelu(-14.5), -0.0);
     check("gelu(nan)", gelu(f32::NAN), f32::NAN);
 
     // silu(x) = x*sigmoid(x) (backlog idea #70). Same x==-inf 0*(-inf)

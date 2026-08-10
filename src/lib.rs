@@ -4496,56 +4496,80 @@ pub fn logaddexp_accurate(a: f32, b: f32) -> f32 {
     if a.is_nan() || b.is_nan() { f32::NAN } else { normal }
 }
 
-/// `1/sqrt(2)` as a double-`f32` pair, same shape as
-/// `FRAC_1_PI`/`RPI_LO` above: `RSQRT2_HI` is the nearest `f32` and
-/// `RSQRT2_LO` the next
-/// 24 bits of the remainder, together naming the constant to a relative
-/// `2^-49`. Used by [`gelu`] to hand `erfc` an argument that is exact to
-/// far more than `f32`, which its tail needs -- see [`gelu`]'s comment.
-const RSQRT2_HI: f32 = std::f32::consts::FRAC_1_SQRT_2;
-const RSQRT2_LO: f32 = 1.2101617485882343e-8;
-
 /// GELU (Gaussian Error Linear Unit), the exact/erf-based form (as
 /// opposed to the tanh approximation): `x * Phi(x)` where `Phi` is the
 /// standard normal CDF. The de facto default activation in transformer
 /// architectures (backlog idea #70).
 ///
+/// Built from [`norm_cdf`]'s two factors rather than from `Phi` itself,
+/// and the reason is the whole point of the function: `Phi(x)` is
+/// *denormal* over `x` in about `[-13.4, -13.0]` while `x*Phi(x)` is
+/// still a normal `f32` there, so anything of the shape
+/// `x * norm_cdf(x)` -- or `0.5*x*erfc(-x/sqrt2)` -- computes a normal
+/// result through a denormal intermediate and hands back whatever bits
+/// the denormal dropped. Same defect as [`silu`]'s item 2, one level
+/// out. The fix is pure reassociation: `Phi = 0.5*e*t` with
+/// `e = exp(-x^2/2)` and `t` the `erfcx` factor, and `0.5*|x|` is an
+/// exact scaling, so folding it into `e` *before* `t` multiplies keeps
+/// every intermediate normal (`e ~ 1e-38` and `t ~ 0.06` at the worst
+/// point; it is their product that is denormal, not either factor).
+///
 /// `Phi(x) = 0.5*erfc(-x/sqrt2)`, *not* the algebraically-equivalent
 /// `0.5*(1+erf(x/sqrt2))`: for negative `x`, `erf(x/sqrt2)` approaches
 /// `-1`, so `1+erf(x/sqrt2)` cancels toward `0` and inherits `erf`'s own
 /// small *absolute* error as a huge *relative* one (measured: >1e8 ulp
-/// once `x` is a few units negative). `erfc(-x/sqrt2)` computes that
-/// same near-zero tail value directly (its whole reason to exist, see
-/// `erfc`'s own doc comment) instead of via subtractive cancellation, so
-/// this form has no such blowup. `x = -inf` is the one input the
-/// formula alone still mishandles: `erfc` saturates cleanly to `0.0`
-/// there, but `0.0` times the *literal* `x = -inf` is an indeterminate
-/// `0*inf`, even though the true limit (`x*Phi(x)` as `x -> -inf`) is
-/// `0` -- same shape as `sqrt1pm1`'s own `x == inf` override below.
+/// once `x` is a few units negative). [`erfcx_pos`] computes that same
+/// near-zero tail value directly instead of via subtractive
+/// cancellation, so this form has no such blowup.
 ///
-/// The argument `-x/sqrt2` is fed to `erfc` as a double-`f32` pair
-/// rather than a single rounded `f32`, because `erfc` is violently
-/// ill-conditioned in its argument out in the tail: the relative
-/// sensitivity `|z * dln(erfc)/dz|` grows as `2z^2`, so at `x = -13`
-/// (`z = 9.2`) the half-ulp already present in a rounded `z` reappears
-/// as ~170 half-ulps of the result. `RSQRT2_HI + RSQRT2_LO` names
-/// `1/sqrt2` to 2^-49, `dz` recovers the rest of the product exactly via
-/// `fma`, and the first-order term `erfc(z+dz) = erfc(z)*(1 - 2*z*dz)`
-/// (the `2z` asymptotic form of that same log-derivative) puts it back.
-/// `np = max(-x, 0)` clamps the correction off for `x >= 0`, where the
-/// true log-derivative decays like `exp(-z^2)` instead and `2z` would be
-/// badly wrong; the clamp also keeps `dz` finite at `x = +inf`, and the
-/// correction is applied to `erfc`'s own (bounded) result rather than to
-/// `x*Phi(x)` so that `+inf` stays `+inf` instead of hitting `inf*0`.
+/// **The Gaussian's argument is never rounded.** `z = -x/sqrt2` is
+/// irrational in `x`, but the exponential only ever wants `z^2`, and
+/// `z^2 = x^2/2` -- a halving, i.e. exact. So `p + pe` is `x^2/2` to
+/// the bit (identical construction to [`norm_cdf`]'s), and `1/sqrt2`
+/// enters exactly once, in [`erfcx_pos`]'s argument, where
+/// `d(ln erfcx)/d(ln z) -> -1` and a single rounding costs well under
+/// an ulp. This is what makes the function cheap: `erfc` is violently
+/// ill-conditioned in *its* argument out in the tail
+/// (`|z * dln(erfc)/dz|` grows as `2z^2`, so at `x = -13` a half-ulp of
+/// `z` reappears as ~170 half-ulps of result), and routing through it
+/// costs a double-`f32` `1/sqrt2`, an `fma`-recovered residual and a
+/// first-order `erfc(z+dz) = erfc(z)*(1-2z*dz)` repair -- none of which
+/// is needed once the square is exact rather than repaired.
+///
+/// No `x = -inf` override: with the square exact there is no `0*inf`
+/// left to indeterminate, and the natural result is `-0.0` -- the sign
+/// the whole finite tail already underflows to, and the same sign
+/// `gelu(-0.0)` carries.
 #[inline(always)]
 pub fn gelu(x: f32) -> f32 {
-    let nx = -x;
-    let np = nx.max(0.0);
-    let zp = np * RSQRT2_HI;
-    let dz = fma(np, RSQRT2_LO, fma(np, RSQRT2_HI, -zp));
-    let e = erfc(nx * RSQRT2_HI);
-    let normal = x * 0.5 * fma(-e, (zp + zp) * dz, e);
-    if x == f32::NEG_INFINITY { 0.0 } else { normal }
+    let xa = x.abs();
+    // `erfcx_pos`, not `erfcx`: the argument is an absolute value, so
+    // erfcx's own x<0 arm is dead and LLVM does not prove that -- same
+    // note as `norm_cdf`'s, which shares this factor exactly.
+    let r = erfcx_pos(xa * std::f32::consts::FRAC_1_SQRT_2);
+    // `NORM_CDF_XS_CLAMP` does double duty here, on the same two
+    // conditions it is asserted for: `x^2/2` stays inside
+    // `exp_reduce!`'s range, and `e^-p` is already exactly `0.0` at the
+    // clamp -- so a clamped input returns its addend untouched, which is
+    // the exactly-right answer (`x` for `x > 0`, since `x*Phi(-x)` is
+    // then ~2e-46 against a half-ulp of ~5e-7; `-0.0` for `x < 0`, since
+    // `0.5*|x|*Phi(-|x|)` is ~1e-46 against the 7.0e-46 that would round
+    // up to the smallest denormal).
+    let xs = if xa > NORM_CDF_XS_CLAMP { NORM_CDF_XS_CLAMP } else { xa };
+    let h = 0.5 * xs;
+    let p = h * xs;
+    let pe = fma(h, xs, -p);
+    let e = exp_reduce!(-p);
+    // `x` for `x >= 0`, `-0.0` for `x < 0` -- this is `0.5*x*w` with `w`
+    // the reflection addend `erfc`/`norm_cdf` build the same way, except
+    // that the sign bit is kept rather than masked off so `gelu(-0.0)`
+    // comes out of the closing `fma` as `-0.0` and not `+0.0`.
+    let s = (x.to_bits() as i32 >> 31) as u32;
+    let addend = f32::from_bits(x.to_bits() & (!s | 0x8000_0000));
+    // The two `mulsign`s this would otherwise need -- one to sign `0.5*x`
+    // and one for the reflection, off `x` and `-x` -- always disagree, so
+    // they collapse into the constant negation on `h * e`.
+    fma(-(h * e), fma(-r, pe, r), addend)
 }
 
 /// SiLU / Swish: `x * sigmoid(x)` (backlog idea #70). Same `x = -inf`
@@ -6600,7 +6624,7 @@ pub fn probit(p: f32) -> f32 {
 #[inline(always)]
 pub fn norm_pdf(x: f32) -> f32 {
     // `1/sqrt(2*pi)` as a double-`f32` pair, same shape as
-    // `RSQRT2_HI`/`RSQRT2_LO`. The single-word constant is correctly
+    // `FRAC_1_PI`/`RPI_LO`. The single-word constant is correctly
     // rounded and still sits 0.48 ulp above the true value, which the
     // final multiply hands straight to the result as a 0.24-0.48 ulp
     // bias -- there is nothing else in the chain to cancel it, unlike

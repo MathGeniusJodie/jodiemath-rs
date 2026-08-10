@@ -728,3 +728,39 @@ repeated lesson:
 
 The economization script is straightforward enough to rewrite from the
 description above; it needs `Decimal` only.
+
+## Denormal intermediates in `x * f(x)` composites: one found, the class not swept
+
+`gelu` carried a normal-result-through-a-denormal-intermediate defect for
+as long as it has existed (max 9 -> 6 and -13.7% throughput once
+reassociated -- see graveyard.md). `silu`'s was found by audit. Both are
+the same shape and neither was found by looking for the shape:
+
+> any `x * f(x)` whose `f` decays exponentially has a window where `f` is
+> denormal and `x * f(x)` is not, because the extra `|x|` keeps the
+> product representable for `ln|x|`-worth longer.
+
+The window is ~0.4 wide in `x` for `gelu` and ~20 for `silu`, and inside
+it the result keeps only the bits the denormal had left. **The screen is
+cheap and mechanical**: for each candidate, compare where `f` underflows
+against where `x*f(x)` does; if they differ, the product is being formed
+in the wrong order. Where a reassociation exists it costs nothing --
+`gelu`'s was folding an exact `0.5*|x|` into the Gaussian factor rather
+than into the finished product.
+
+Not swept: `norm_pdf`-scaled products, `xlogy`/`xlog1py`, `sinc` near its
+own decay, `dawson`'s tail, and anything else multiplying a decaying
+kernel by a growing factor. `examples/denormal_audit.rs` already reports
+per-function flush fractions, but it audits **outputs**, not
+intermediates, so it cannot see this class -- `gelu` read as "flushes 11%"
+there and the 11% was a *symptom*, not the defect.
+
+## `gelu` is a pass-through *now*
+
+With the denormal band and the argument repair both gone, `gelu`'s
+remaining max 6 sits at `x = -1.32`, inside `erfc`'s own worst region, and
+its avg 0.1309 is `erfc`'s 0.1289 plus composition rounding. The earlier
+closure said this and was right about the arithmetic while being wrong
+about the location; it is now true of the shipped code. What is left moves
+when `erfcx_pos`'s polynomial *evaluation* does, and that entry is
+unchanged.

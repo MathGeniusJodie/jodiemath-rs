@@ -12394,3 +12394,140 @@ opposite sign. The tier still earns its place (correct and saturating at
 ±inf/NaN where `expm1` gives garbage) -- only the perf sentence is wrong.
 A cross-function claim like this goes stale when the *other* function
 moves, and nothing re-checks it.
+
+## `gelu` was never a pass-through: the worst point was a denormal intermediate, and 10% of the domain was NaN
+
+**Shipped.** The entry above ("`gelu`'s remaining max is `erfc`'s, and
+`erfcx_pos`'s is its *evaluation*") closed `gelu` with "nothing inside
+`gelu`'s own domain can move this; it moves when `erfc` does". The oracle
+row it rests on is correct -- substituting a correctly rounded `erfc`
+leaves 2.86 ulp -- but it was read as *`erfc` is the binding term*, and
+it is not. `gelu`'s worst point sat at `x = -13.10` the whole time, which
+is nowhere near `erfc`'s own worst region, and that was the tell.
+
+Exhaustive, both directions measured on this machine on the same harness:
+
+| | avg ulp | max ulp | worst x | denormal flush | premature by |
+|---|---|---|---|---|---|
+| was | 0.1374 | **9** | -13.10 | 11% | 0.1336 in x |
+| now | **0.1309** | **6** | -1.32 | **1%** | **0.0122 in x** |
+
+llvm-mca, and every counter moves the same way -- this is not a tradeoff
+and needed no `_fast` sibling:
+
+| region | instrs | uOps | BlockRT | cyc/unit |
+|---|---|---|---|---|
+| gelu_latency | 6076 -> 5202 | 6523 -> 5473 | 1536 -> 1312 | 76.314 -> **71.877 (-5.8%)** |
+| gelu_throughput | 164 -> 140 | 197 -> 168 | 51.00 -> 43.50 | 3.979 -> **3.434 (-13.7%)** |
+
+Full asm region diff: **311 of 313 byte-identical**, the two that moved
+being exactly `gelu`'s. `erfc`/`erfcx`/`norm_cdf`/`exp_checked` and their
+other callers did not move.
+
+### 1. The denormal intermediate, which is what the 9 was
+
+`Phi(x)` is denormal over `x` in about `[-13.4, -13.0]` while `x*Phi(x)`
+is still a **normal** `f32` there. Any arrangement of the shape
+`x * norm_cdf(x)` or `0.5*x*erfc(-x/sqrt2)` therefore computes a normal
+result through a denormal intermediate and keeps only the bits the
+denormal had left -- `silu`'s item-2 defect exactly, one level out, and
+the same band the `accuracy` sweep had been reporting as `gelu`'s worst
+point for as long as the row has existed.
+
+The fix is **pure reassociation**, no new operation: `Phi = 0.5*e*t` with
+`e = exp(-x^2/2)` and `t` the `erfcx` factor, and `0.5*|x|` is an exact
+scaling, so folding it into `e` *before* `t` multiplies keeps every
+intermediate normal. At the worst point `e ~ 1e-38` and `t ~ 0.06`: it is
+their product that is denormal, neither factor. Measured on its own
+(candidate `A` below, band `[-13.45, -12.95]`, every f32): avg
+1.8218 -> 0.3525, **max 9 -> 4**.
+
+### 2. The Gaussian's argument never had to be rounded
+
+`z = -x/sqrt2` is irrational in `x`, but the exponential only ever wants
+`z^2`, and `z^2 = x^2/2` -- a halving, i.e. **exact**. `gelu` was instead
+rounding `z`, squaring the rounded value inside `erfc`, and then repairing
+the damage with a double-`f32` `1/sqrt2` (`RSQRT2_HI`/`RSQRT2_LO`), an
+`fma`-recovered residual `dz`, a `max(-x,0)` gate and a first-order
+`erfc(z+dz) = erfc(z)*(1-2z*dz)` correction. All of that is deleted by
+using `norm_cdf`'s own exact `p + pe` square; `1/sqrt2` then enters
+exactly once, in `erfcx_pos`'s argument, where `d(ln erfcx)/d(ln z) -> -1`
+and one rounding costs well under an ulp. Measured on its own (candidate
+`B`): `erfc`'s own worst region `[-8,-1]` max 7 -> 6, avg 0.8822 -> 0.8492.
+
+The repair was not *wrong* -- it took `gelu` from 199 max ulp to 10 when
+it landed, and the entry recording that is still correct about why. It
+was **unnecessary**, and the two facts are independent: the correction
+attacks a rounding that a different factorisation never makes.
+
+The two `mulsign`s the reassociation would otherwise need (one to sign
+`0.5*x`, one for the reflection, off `x` and `-x`) always disagree, so
+they collapse into a constant negation. `NORM_CDF_XS_CLAMP` covers `gelu`
+on both of the conditions it is already asserted for.
+
+### 3. `gelu` returned NaN over ~10% of the f32 domain
+
+Found by `worst_corpus`, which had **blessed the NaN as the expected
+value** on three of its ninety `gelu` inputs. `(zp + zp) * dz` grows as
+`1.7e-8 * x^2` and overflows to `+inf` once `|x| > ~1.4e23`; the erfc
+factor there is exactly `0.0`, so the correction `fma(-e, inf, e)` is
+`0*inf` and the whole result is NaN. The explicit `x == NEG_INFINITY`
+override caught only the endpoint, not the 51 binades below it.
+
+Bisected: the first NaN is at `x = -7.850934e22`, and **10.03% of all
+finite f32 inputs** came back NaN where the true value is `0`. The new
+form has no such term and returns `-0.0` throughout.
+
+### Why three gates all missed it
+
+- **`accuracy.rs` swept `gelu` only over `|x| <= 10*sqrt2`**, inherited
+  from `erfc`'s own band on the argument that outside it "gelu still
+  returns a sane saturated value ... just not one this fuzz screen claims
+  ulp accuracy for". The NaN region is 22 orders of magnitude outside
+  that. A second row over every *finite* f32 is added, and it is the
+  cheap kind of gate: run against the old code it reports **NON-FINITE
+  RESULT in 10.03% of samples**, avg 1.85e11, worst `x = -8.74e22`, i.e.
+  it fails loudly on the annotation alone regardless of the ulp column.
+  `gelu` can afford the wider row where `erfc` cannot precisely because
+  it saturates to values the f64 reference still gets right (`-0.0`
+  below `x ~ -14.4`, `x` itself above `+14.4`). Only `+-inf` is excluded,
+  where the *reference* is the indeterminate `-inf * 0`.
+- **`edgecheck` pinned `+-inf` and `+-0` and nothing between.** The bug
+  lived entirely at large finite magnitudes.
+- **`worst_corpus` is a bit-exactness gate, so it froze the bug in.**
+  Three of its `gelu` entries had NaN as the golden value. That is the
+  gate working as designed -- it detects *movement*, not wrongness -- but
+  it means a `--bless` run can silently adopt a defect, and a NaN in a
+  golden file for a function whose range is the reals is worth reading as
+  a finding rather than a value.
+
+### `gelu(-inf)` is now `-0.0`, deliberately
+
+The `x == NEG_INFINITY` override existed only because `0.0 * -inf` was
+indeterminate in the old form. With the square exact there is no such
+product, the override is deleted (two ops), and the sign falls out of the
+same addend that already made `gelu(-0.0)` negative. `-0.0` is also what
+the entire finite tail below `x ~ -14.4` underflows to, and `x*Phi(x)`
+approaches `0` from below, so the old `+0.0` was the odd one out. The
+edgecheck pin is updated and a `gelu(-14.5)` neighbour pinned beside it.
+
+### The transferable part
+
+Three things, in the order they cost time:
+
+- **A composite's worst point sitting outside its kernel's worst region
+  is a diagnosis, not a coincidence.** The oracle screen ("substitute a
+  perfect kernel, see what is left") answers *how much* the kernel is
+  worth and says nothing about *where*; reading it as an attribution is
+  how `gelu` stayed closed. Check the location before believing the
+  handover.
+- **Search for denormal intermediates by comparing where each factor
+  underflows against where the product does.** `silu` found this by
+  audit, `gelu` by having its worst point parked on the band for months.
+  Any `x * f(x)` whose `f` decays exponentially has a window where `f` is
+  denormal and `x*f` is not, and its width is `ln(|x|)`-ish -- wide
+  enough to matter for `gelu`, `silu`, `norm_pdf`-style products.
+- **A domain restriction inherited from a callee is worth re-deriving.**
+  `gelu`'s came from `erfc`'s reference band, but `gelu` saturates where
+  `erfc` does not, so the restriction bought nothing and hid 10% of the
+  domain.

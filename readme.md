@@ -85,6 +85,8 @@ cosh_throughput (in-domain)| 0.049    |     3     |  0.000  |    0
 softplus_checked (all f32)| 0.039   |     3     | (no std softplus)
 logsigmoid_checked (all f32)| 0.039 |     3     | (no std logsigmoid)
     silu_checked (all f32)| 0.045   |     5     | (no std silu; 4.69 on a dense scan -- `silu` is 3.85, the avg/max trade in its doc)
+   gelu (|x|<=10*sqrt2) |    0.131   |     6     | (no std gelu; exhaustive)
+ gelu (all finite f32)  |    0.067   |     6     | (no std gelu; exhaustive. `gelu` saturates cleanly on both tails -- `-0.0` below `x ~ -14.4`, `x` itself above `+14.4` -- so unlike `erfc` it is swept over the whole line rather than a band, and the wider row is the one that would have caught the NaN region this function used to carry past `x ~ -7.9e22`)
 logaddexp (|a|,|b|<80)|    0.141   |  ~1e3-1e5, heavy-tailed (real, narrow cancellation -- see its own doc comment) | (no std logaddexp)
 logaddexp_checked (all f32)| 0.037 |  ~1e3-1e5, heavy-tailed (same cancellation, bit-identical over |a-b|<=87; the lower avg is the wider domain, not a better answer) | (no std logaddexp)
 logaddexp_accurate (all f32)| 0.000 |     0     | (no std logaddexp; the cancellation fixed -- f64 correction, ~3e-16 absolute. 10M-pair fuzz is 0/0 against the f64 reference, and on a corpus built *on* the zero curve `e^a+e^b=1` it is avg 0.27 / max 72 against an 80-digit oracle where the other two tiers are avg 1.7e7 / max 3.4e10)
@@ -439,6 +441,7 @@ logsigmoid          |          75.11 |             2.604
 logsigmoid_checked  |          75.56 |             2.699
 silu                |          65.02 |             1.407
 silu_checked        |          60.97 |             1.466
+gelu                |          71.88 |             3.434
 logaddexp           |          74.11 |             2.449
 logaddexp_checked   |          73.35 |             2.506
 logaddexp_accurate  |         121.52 |             7.616

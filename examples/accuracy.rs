@@ -1380,6 +1380,18 @@ fn main() {
         };
         let s = measure!(gelu_domain, gelu, gelu_ref);
         report("gelu", &s, t0);
+        // Second row over every *finite* f32, not just the band above.
+        // Unlike `erfc`, `gelu` saturates to something the f64 reference
+        // still gets right out there (`0` below x ~ -14.4, `x` itself
+        // above +14.4), so there is no reason to stop -- and there is a
+        // reason not to: a whole NaN region once lived past x ~ -7.9e22,
+        // which a `|x| <= 10*sqrt2` screen cannot see and which shows up
+        // here as `sweep`'s NON-FINITE annotation regardless of what the
+        // ulp column does. +-inf is excluded only because the reference
+        // itself is the indeterminate `-inf * 0` there; edgecheck pins
+        // both infinities.
+        let s = measure!(f32::is_finite, gelu, gelu_ref);
+        report("gelu (all finite f32)", &s, t0);
     }
     if run("silu") {
         // x * sigmoid(x), same sigmoid_ref/domain as sigmoid's own block
