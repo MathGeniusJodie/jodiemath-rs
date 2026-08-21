@@ -12531,3 +12531,51 @@ Three things, in the order they cost time:
   `gelu`'s came from `erfc`'s reference band, but `gelu` saturates where
   `erfc` does not, so the restriction bought nothing and hid 10% of the
   domain.
+
+## `sin_wide`/`cos_wide`/`tan_wide` at VF = 8: the u32-chunk rewrite the first landing left open
+
+2026-08-09. The original entry's own follow-up, taken with
+`tools/mca_region.py` + `accuracy quick` as the iteration loop and the
+exhaustive sweep as the gate. The `[f64; 256]` tables are gone:
+`pitable.rs` now holds four `[u32; 256]` tables of **27-bit chunks at
+fixed bit positions** (bits 2^-1 .. 2^-107 of `beta(e)`, truncated), and
+the chain multiplies the rebuilt 24-bit mantissa integer (`b & 0x007fffff
+| 0x4b000000` -- one AND, one OR; `e = 255` writes `0xff` back so
+inf/NaN still poison the chain into NaN).
+
+Why 27-bit chunks: every product `m*W_i*2^-k` stays exact (24+27 <= 53),
+which deletes the `fma` rounding recovery *and* the `two_sum`; `f0 + p1`
+is exact by construction (disjoint bit ranges, |f0| <= 1/2, p1 < 2^-2),
+and the two remaining adds round only relative to a running sum in
+[-1/2, 9/16] that is small exactly when the low bits matter. Absolute
+truncation error is `m*2^-107 <= 2^-83`, far under the ~2^-55 an f32
+residual can express.
+
+The bypass is the subtle part, and the probe under-measured it: below
+exponent ~67 the fraction `m*beta` never wraps past an integer, so the
+smallest true residual at exponent e is `beta(e)` itself and fixed-position
+truncation is too coarse *relative* to it (22% error at e=45 -- a Python
+exact-rational harness caught this before any Rust fuzz could). The fix is
+one compare-and-select at the `fc` level, not an output special case:
+`e < CUT_PI_WIDE (=76)` selects `|x|*(1/pi)` in f64 and every downstream
+step (half-grid shift, parity, sign) stays shared. Selecting outputs
+instead would have broken `cos_wide` there (it must return ~1, not ~x).
+A first draft also carried the sign bit through the mantissa rebuild
+(`0x807fffff` instead of `0x007fffff`) -- invisible to a positive-only
+harness, caught immediately by `accuracy quick`.
+
+| region | before | after |
+|---|---|---|
+| `sin_wide` throughput | 8.045 | **4.920** |
+| `cos_wide` throughput | 9.299 | **5.434** |
+| `tan_wide` throughput | 13.915 (*L) | **6.982** (*L) |
+| `sin_wide` latency | 91.05 | 94.14 |
+| `cos_wide` latency | 99.06 | **95.16** |
+
+The tier's cost over `sin_checked` drops from 3.2x to **1.97x**, right on
+the old probe's ceiling (~5.5 -> 4.9 now that the fma/two_sum deletion
+shipped too). Gathers: eight `vpgatherdd` per region, zero `vgatherdpd`,
+zero branches, all f64 math on `zmm` (codegen_check clean). Exhaustive
+accuracy is unchanged to the digit: sin_wide avg 0.1269 / max 2,
+cos_wide 0.1501 / 2, tan_wide 0.2495 / 4 over all 2^32 patterns, and
+worst_corpus is bit-identical to its golden file.

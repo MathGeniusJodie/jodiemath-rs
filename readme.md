@@ -39,6 +39,21 @@ cbrt_accurate_unchecked |    0.000   |     1     | (bit-identical to cbrt_accura
           sinc (|x|<1e6)|    0.094   |     4     | (no std sinc)
 ```
 
+`sin_wide`/`cos_wide`/`tan_wide`'s rows are the only trig rows in this
+table measured over the **entire** f32 range, and that is the whole point
+of the tier.
+`sin_checked`/`cos_checked` are accurate to ~1e13 and then degrade, and
+past `2^51*pi` they return a value in `[-1,1]` with no relationship to the
+answer -- `accuracy`'s own `sin_checked (all f32)` row reads **avg
+314265980 / max 2130706432** on a quick fuzz (that max is `2*0x3f800000`,
+the ulp distance from `+1` to `-1`, i.e. the worst a clamped output can
+be). `tan_checked` is worse still, avg 406004054 / max 2324484283, and has no
+row in this table at all. The `_wide` tier reduces against a window of
+`1/pi` selected by `x`'s exponent instead of a fixed two-word constant,
+which costs four 32-bit gathers and ~2x throughput; see `sin_wide`'s doc
+comment and graveyard.md. All three `_wide` rows are exhaustive over all
+2^32 patterns, not sampled.
+
 ```
                          | jodie avg  | jodie max | std avg | std max
 -------------------------|------------|-----------|---------|--------
@@ -282,13 +297,13 @@ log2_unchecked      |          38.06 |             1.021
 sin                 |          64.00 |             1.778
 sin_fast            |          48.00 |             1.151
 sin_checked         |          82.00 |             2.495
-sin_wide            |          91.05 |             8.045
+sin_wide            |          94.14 |             4.920
 cos                 |          61.00 |             1.654
 cos_fast            |          56.00 |             1.406
 cos_checked         |          87.00 |             3.157
-cos_wide            |          99.06 |             9.299
+cos_wide            |          95.16 |             5.434
 tan_checked         |         101.00 |             4.289
-tan_wide            |         116.06 |            13.915 (*L)
+tan_wide            |         109.17 |             6.982 (*L)
 sinpi               |          42.02 |             1.133
 cospi               |          47.00 |             1.226
 tanpi               |          77.05 |             2.155

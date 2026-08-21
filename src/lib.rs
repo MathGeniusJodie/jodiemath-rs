@@ -1773,6 +1773,23 @@ fn reduce_pi64<const HALF: bool>(x: f32) -> (f32, u32) {
     (r as f32, sgn)
 }
 
+/// 1/pi in f64, the small-exponent bypass source of `reduce_pi_wide`'s
+/// fraction: for `e < CUT_PI_WIDE` the fraction of x/pi is just |x|/pi --
+/// no wrap past an integer has happened yet -- and one f64 multiply names
+/// it to a flat relative 2^-53, which no truncated chunk table could.
+const INV_PI_F64: f64 = 0.318309886183790671537767526745028724_f64;
+
+/// Highest raw biased exponent `reduce_pi_wide` serves from its chunk
+/// tables; below this, `m*beta < 1` never wraps past an integer, so the
+/// smallest true residual at exponent `e` is `beta(e)` itself and the
+/// table's absolute 2^-107 truncation would be too coarse relative to it.
+/// Above (and at) the cut, wrapping decorrelates residuals from beta's own
+/// magnitude and the truncation bound is what matters. 76 leaves ~30
+/// relative bits of margin at the seam (truncation/beta <= 2^-30 there,
+/// i.e. hundredths of an ulp) while keeping every bypassed |x| below
+/// 2^-50, where sin(x) = x and cos(x) = 1 to well under half an ulp.
+const CUT_PI_WIDE: usize = 76;
+
 /// `x - q*pi` and the sign the caller owes the result, same contract as
 /// [`reduce_pi64`] -- but with **no magnitude limit at all**. Payne-Hanek:
 /// the bits of `1/pi` are selected by `x`'s own exponent instead of being
@@ -1792,61 +1809,91 @@ fn reduce_pi64<const HALF: bool>(x: f32) -> (f32, u32) {
 /// even/odd integer whose parity `beta`'s own bit 0 already carries, and
 /// everything above bit 0 is discarded exactly by the `mod 2`. So the
 /// only unbounded quantity in the problem, `x/pi`, never has to be
-/// formed. `pitable`'s three words name `beta(e)` to a relative
-/// `2^-135`, and `m * beta` needs at most 24 + 135 bits of which we keep
-/// the low ~110 -- a fixed, exponent-independent budget.
+/// formed. `pitable`'s four `u32` words name `beta(e)`'s low ~108 fraction
+/// bits at fixed positions (see pitable.rs for why fixed and not
+/// significant-bit), so the fraction of `m*beta` carries an absolute
+/// truncation error below `m*2^-107 <= 2^-83` -- far under the ~2^-55 the
+/// f32 residual can ever express.
 ///
-/// Word 0 carries exactly **29** significant bits so that `m * a0` is
-/// exact (24 + 29 = 53), which is what makes `p0 - round(p0)` an exact
-/// peel of the integer part with no error-free transform. `m * a1`'s own
-/// rounding is recovered by an `fma` and `m * a2` is already below the
-/// budget, so the only inexact step in the whole reduction is the final
-/// `fc + ec`, a single relative-`2^-53` rounding of the answer itself.
+/// Every product `m*W_i*2^-k` is exact (24 + 27 <= 53 bits), so there is
+/// no `fma` rounding recovery and no `two_sum`: `f0 + p1` is exact by
+/// construction (`f0` a multiple of `2^-26` with |f0| <= 1/2, `p1` a
+/// non-negative multiple of `2^-53` below `2^-2`, so the sum needs at
+/// most 53 bits), and the two further adds each round only *relative* to
+/// their running sum -- harmless because the sum sits in [-1/2, 9/16]
+/// and the peel's `round_ties_even` keeps the final subtraction
+/// Sterbenz-exact. When the fraction is near an integer -- the case whose
+/// low bits decide a near-`n*pi` answer -- the running sums are small, so
+/// those roundings sit far below the last kept bit.
 ///
-/// The `2^E` that turns `x` into that integer never appears: it is
-/// pre-multiplied into every table word, so the chain multiplies `|x|`
-/// itself and the exactness argument still holds (`|x|` carries the same
-/// 24 bits `m` does, 23 for a denormal). That is also why the table is
-/// indexed by the **raw** biased exponent with the denormal row included
-/// -- a denormal's missing implicit bit needs no separate branch, it just
-/// makes `|x|` a shorter integer. `+-inf`/NaN ride through as `inf`/NaN
-/// and come out NaN, as before.
+/// The `2^E` that turns `x` into that integer is rebuilt, not carried in
+/// the table: one AND plus one OR of constants maps the exponent field to
+/// biased 150, so the chain multiplies the 24-bit mantissa integer `m`
+/// itself. Below `CUT_PI_WIDE` the truncation would dominate `beta` (there
+/// `m*beta < 1` never wraps, so residuals scale with `beta` and chunk
+/// granularity is too coarse *relative* to them), and the chain source is
+/// selected out for `|x|*(1/pi)` in f64 -- exact enough that the returned
+/// residual is `x` itself to well under half an ulp on both grids (the
+/// half grid just shifts it to `x - pi/2`, which is what cos wants). One
+/// compare-and-select; no branch.
 ///
-/// Cost against [`reduce_pi64`]: three `vgatherdpd` (llvm-mca prices one
-/// at 4.0 Block RThroughput per 8 lanes) plus the wider chain. See
-/// `sin_wide`'s doc comment for the measured end-to-end figure.
+/// `+-inf`/NaN ride through: the rewrite maps `e = 255` back to `0xff`, so
+/// `m` is inf/NaN, `f0 = p0 - round(p0)` is NaN exactly as before, and the
+/// select cannot take the bypass because `255 >= CUT_PI_WIDE`. Denormals
+/// sit entirely below the cut, so their row is never selected against.
+///
+/// Cost against [`reduce_pi64`]: four `vpgatherdd` (llvm-mca prices one
+/// at 4.0 Block RThroughput per 8 lanes) plus the wider chain -- but no
+/// `f64` gather anywhere, which is what keeps every surrounding vector
+/// loop at VF = 8 instead of collapsing to 4. See `sin_wide`'s doc
+/// comment for the measured end-to-end figure.
 #[inline(always)]
 fn reduce_pi_wide<const HALF: bool>(x: f32) -> (f32, u32) {
     let b = x.to_bits();
     let e = ((b >> 23) & 0xff) as usize;
     let sgnx = b & SIGN_MASK;
-    let m = f32::from_bits(b & !SIGN_MASK) as f64;
-    let a0 = pitable::REDUCE_PI_C0[e & 0xff];
-    let a1 = pitable::REDUCE_PI_C1[e & 0xff];
-    let a2 = pitable::REDUCE_PI_C2[e & 0xff];
-    // Exact (24 bits x 29 bits), so the integer part peels off exactly.
-    let p0 = m * a0;
+    // Rebuild the 24-bit mantissa integer m: clear sign AND exponent
+    // field, then write biased exponent 150, i.e. value m*2^(150-150) = m.
+    // For e = 255 write 0xff back instead, so inf/NaN stay inf/NaN and
+    // poison the chain into NaN exactly as the old scheme did. (Denormal
+    // rows would need the implicit-bit caveat, but every denormal exponent
+    // is far below the cut and never selects this path's result.)
+    let exp_field = if e == 255 { 0x7f800000 } else { 0x4b00_0000 };
+    let m = f32::from_bits((b & 0x007f_ffff) | exp_field) as f64;
+    let w0 = pitable::REDUCE_PI_W0[e & 0xff] as f64;
+    let w1 = pitable::REDUCE_PI_W1[e & 0xff] as f64;
+    let w2 = pitable::REDUCE_PI_W2[e & 0xff] as f64;
+    let w3 = pitable::REDUCE_PI_W3[e & 0xff] as f64;
+    // mm scales m once; mm1/mm2/mm3 differ from it only by exact powers
+    // of two, matching where each chunk's bits live in beta.
+    let mm = m * 2.0f64.powi(-26);
+    // Exact (24 bits x 27 bits), so the integer part peels off exactly.
+    let p0 = mm * w0;
     let n0 = p0.round_ties_even();
     let f0 = p0 - n0;
-    let p1 = m * a1;
-    let q1 = f64::mul_add(m, a1, -p1);
-    let p2 = m * a2;
-    // two_sum, not quick_two_sum: |f0| >= |p1| fails exactly when f0 is
-    // near zero, which is the case whose low word decides the answer.
-    let s0 = f0 + p1;
-    let v = s0 - f0;
-    let e0 = (f0 - (s0 - v)) + (p1 - v);
-    let ec = e0 + (q1 + p2);
-    let n1 = s0.round_ties_even();
-    // Exact: |s0| <= 0.5625 and |n1| <= 1, so Sterbenz applies.
-    let fc = s0 - n1;
-    // |x|/pi - n, the only rounded step in the reduction.
-    let t = fc + ec;
-    // The half-odd-integer grid, applied to the *exact* word so the
+    let p1 = (mm * 2.0f64.powi(-27)) * w1;
+    let p2 = (mm * 2.0f64.powi(-54)) * w2;
+    let p3 = (mm * 2.0f64.powi(-81)) * w3;
+    // f0 + p1 exact (disjoint bit ranges, see doc comment); the next two
+    // adds each round only relative to a sum already bounded below 9/16,
+    // and stay relatively exact when they matter (sum near 0).
+    let s3 = ((f0 + p1) + p2) + p3;
+    let n1 = s3.round_ties_even();
+    // Exact: |s3| <= 0.5625 and |n1| <= 1, so Sterbenz applies.
+    let fc_chain = s3 - n1;
+    // Small-exponent bypass, decided on the exponent alone so it stays a
+    // select after if-conversion: there the truncated chunks carry too few
+    // *relative* bits of beta (m*beta never wraps past an integer), while
+    // |x*(1/pi)| is the fraction to a flat relative 2^-53. Selecting fc --
+    // before the half-grid shift and parity, both of which read fc -- lets
+    // every downstream step stay shared between the two sources.
+    let xf = f32::from_bits(b & !SIGN_MASK) as f64;
+    let fc = if e < CUT_PI_WIDE { xf * INV_PI_F64 } else { fc_chain };
+    // The half-odd-integer grid, applied to the *selected* word so the
     // shift itself introduces nothing (|fc| <= 0.5 and half = +-0.5, so
     // the difference is exact).
-    let half = 0.5f64.copysign(t);
-    let tt = if HALF { (fc - half) + ec } else { t };
+    let half = 0.5f64.copysign(fc);
+    let tt = if HALF { fc - half } else { fc };
     // One f64 multiply: |tt| <= 0.5, so this is the reduced residual to a
     // relative 2^-52, well past what the f32 narrowing below keeps.
     let r = (tt * std::f64::consts::PI) as f32;
@@ -1856,8 +1903,10 @@ fn reduce_pi_wide<const HALF: bool>(x: f32) -> (f32, u32) {
     // The chain ran on |x|; both the residual and (for the half-odd grid)
     // the extra flip are odd in x, so one xor each restores the sign --
     // and it is also what carries `-0.0` through, which `p0 - n0` would
-    // otherwise have turned into `+0.0`.
-    let sgn = if HALF { par ^ ((!(t.to_bits() >> 32)) as u32 & SIGN_MASK) ^ sgnx } else { par };
+    // otherwise have turned into `+0.0`. The flip reads fc (the selected
+    // word), not tt: the half-grid parity convention is defined on the
+    // un-shifted fraction, exactly as in the old `t` here.
+    let sgn = if HALF { par ^ ((!(fc.to_bits() >> 32)) as u32 & SIGN_MASK) ^ sgnx } else { par };
     (f32::from_bits(r.to_bits() ^ sgnx), sgn)
 }
 
@@ -1950,8 +1999,10 @@ pub fn cos_checked(x: f32) -> f32 {
 /// accurate the two differ only by the last-place rounding of the
 /// residual.
 ///
-/// This is a Pareto point, not a replacement: the table costs three
-/// gathers and the wider chain, so `sin_checked` stays as the cheaper
+/// This is a Pareto point, not a replacement: the table costs four
+/// 32-bit gathers and the wider chain (but no `f64` gather, so the whole
+/// tier vectorizes at VF = 8 -- see `reduce_pi_wide`), so `sin_checked`
+/// stays as the cheaper
 /// tier for callers whose arguments are bounded, and `sin` stays as the
 /// cheapest for `|x| < 2^24*pi`.
 #[inline(always)]
@@ -2181,9 +2232,9 @@ pub fn tan_checked(x: f32) -> f32 {
 ///
 /// The two `reduce_pi_wide` calls do **not** cost two reductions: they
 /// differ only in their last few operations, so the table lookups, the
-/// three products, the integer peel and the two-word residual are common
+/// four products, the integer peel and the fraction chain are common
 /// subexpressions and LLVM's GVN evaluates the **gathers once** -- the
-/// emitted throughput region contains three `vgatherdpd`, not six. That
+/// emitted throughput region contains four `vpgatherdd`, not eight. That
 /// does not make this tier cheaper *relative to* `tan_checked` than
 /// `sin_wide` is to `sin_checked` (both land at ~3.2x), because
 /// `tan_checked`'s two `reduce_pi64` calls share in exactly the same way;
