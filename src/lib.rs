@@ -1782,13 +1782,15 @@ const INV_PI_F64: f64 = 0.318309886183790671537767526745028724_f64;
 /// Highest raw biased exponent `reduce_pi_wide` serves from its chunk
 /// tables; below this, `m*beta < 1` never wraps past an integer, so the
 /// smallest true residual at exponent `e` is `beta(e)` itself and the
-/// table's absolute 2^-107 truncation would be too coarse relative to it.
+/// table's absolute 2^-86 truncation would be too coarse relative to it.
 /// Above (and at) the cut, wrapping decorrelates residuals from beta's own
-/// magnitude and the truncation bound is what matters. 76 leaves ~30
-/// relative bits of margin at the seam (truncation/beta <= 2^-30 there,
-/// i.e. hundredths of an ulp) while keeping every bypassed |x| below
-/// 2^-50, where sin(x) = x and cos(x) = 1 to well under half an ulp.
-const CUT_PI_WIDE: usize = 76;
+/// magnitude and the truncation bound is what matters. 96 leaves the
+/// worst chain error at ~2^-28.7 relative (measured against exact
+/// rationals across the seam, worst at mid-sized mantissas) -- two orders
+/// of magnitude under what an f32 result can express -- while keeping
+/// every bypassed |x| below 2^-54, where sin(x) = x and cos(x) = 1 to
+/// far under half an ulp.
+const CUT_PI_WIDE: usize = 96;
 
 /// `x - q*pi` and the sign the caller owes the result, same contract as
 /// [`reduce_pi64`] -- but with **no magnitude limit at all**. Payne-Hanek:
@@ -1809,22 +1811,20 @@ const CUT_PI_WIDE: usize = 76;
 /// even/odd integer whose parity `beta`'s own bit 0 already carries, and
 /// everything above bit 0 is discarded exactly by the `mod 2`. So the
 /// only unbounded quantity in the problem, `x/pi`, never has to be
-/// formed. `pitable`'s four `u32` words name `beta(e)`'s low ~108 fraction
-/// bits at fixed positions (see pitable.rs for why fixed and not
-/// significant-bit), so the fraction of `m*beta` carries an absolute
-/// truncation error below `m*2^-107 <= 2^-83` -- far under the ~2^-55 the
-/// f32 residual can ever express.
+/// formed. `pitable`'s three `u32` words name `beta(e)`'s low ~86 fraction
+/// bits (parity bit included) at fixed positions (see pitable.rs for why
+/// fixed and not significant-bit), so the fraction of `m*beta` carries an
+/// absolute truncation error below `m*2^-86 <= 2^-62` -- far under the
+/// ~2^-55 the f32 residual can ever express above the cut.
 ///
-/// Every product `m*W_i*2^-k` is exact (24 + 27 <= 53 bits), so there is
-/// no `fma` rounding recovery and no `two_sum`: `f0 + p1` is exact by
-/// construction (`f0` a multiple of `2^-26` with |f0| <= 1/2, `p1` a
-/// non-negative multiple of `2^-53` below `2^-2`, so the sum needs at
-/// most 53 bits), and the two further adds each round only *relative* to
-/// their running sum -- harmless because the sum sits in [-1/2, 9/16]
+/// Every product `m*W_i*2^-k` is exact (24 + 29 = 53 bits), so there is
+/// no `fma` rounding recovery and no `two_sum`: `f0 + p1` rounds only
+/// once against a sum bounded by 9/16 -- relatively harmless when large,
+/// and exactly tiny when near zero, the case whose low bits decide a
+/// near-`n*pi` answer -- while the remaining add rounds only *relative*
+/// to its running sum -- harmless because the sum sits in [-1/2, 9/16]
 /// and the peel's `round_ties_even` keeps the final subtraction
-/// Sterbenz-exact. When the fraction is near an integer -- the case whose
-/// low bits decide a near-`n*pi` answer -- the running sums are small, so
-/// those roundings sit far below the last kept bit.
+/// Sterbenz-exact.
 ///
 /// The `2^E` that turns `x` into that integer is rebuilt, not carried in
 /// the table: one AND plus one OR of constants maps the exponent field to
@@ -1842,11 +1842,14 @@ const CUT_PI_WIDE: usize = 76;
 /// select cannot take the bypass because `255 >= CUT_PI_WIDE`. Denormals
 /// sit entirely below the cut, so their row is never selected against.
 ///
-/// Cost against [`reduce_pi64`]: four `vpgatherdd` (llvm-mca prices one
+/// Cost against [`reduce_pi64`]: three `vpgatherdd` (llvm-mca prices one
 /// at 4.0 Block RThroughput per 8 lanes) plus the wider chain -- but no
-/// `f64` gather anywhere, which is what keeps every surrounding vector
-/// loop at VF = 8 instead of collapsing to 4. See `sin_wide`'s doc
-/// comment for the measured end-to-end figure.
+/// 8-byte-element gather anywhere, which is what keeps every surrounding
+/// vector loop at VF = 8 instead of collapsing to 4 (a packed-qword
+/// variant that halved the gather count was measured and cliffed exactly
+/// like the old `[f64; 256]` tables did -- element width, not gather
+/// count, is the trigger). See `sin_wide`'s doc comment for the measured
+/// end-to-end figure.
 #[inline(always)]
 fn reduce_pi_wide<const HALF: bool>(x: f32) -> (f32, u32) {
     let b = x.to_bits();
@@ -1863,21 +1866,20 @@ fn reduce_pi_wide<const HALF: bool>(x: f32) -> (f32, u32) {
     let w0 = pitable::REDUCE_PI_W0[e & 0xff] as f64;
     let w1 = pitable::REDUCE_PI_W1[e & 0xff] as f64;
     let w2 = pitable::REDUCE_PI_W2[e & 0xff] as f64;
-    let w3 = pitable::REDUCE_PI_W3[e & 0xff] as f64;
-    // mm scales m once; mm1/mm2/mm3 differ from it only by exact powers
-    // of two, matching where each chunk's bits live in beta.
-    let mm = m * 2.0f64.powi(-26);
-    // Exact (24 bits x 27 bits), so the integer part peels off exactly.
+    // mm scales m once; mm1/mm2 differ from it only by exact powers
+    // of two, matching where each chunk's bits live in beta (units
+    // 2^-28, 2^-57, 2^-86; see pitable.rs for the split).
+    let mm = m * 2.0f64.powi(-28);
+    // Exact (24 + 29 = 53 bits), so the integer part peels off exactly.
     let p0 = mm * w0;
     let n0 = p0.round_ties_even();
     let f0 = p0 - n0;
-    let p1 = (mm * 2.0f64.powi(-27)) * w1;
-    let p2 = (mm * 2.0f64.powi(-54)) * w2;
-    let p3 = (mm * 2.0f64.powi(-81)) * w3;
-    // f0 + p1 exact (disjoint bit ranges, see doc comment); the next two
-    // adds each round only relative to a sum already bounded below 9/16,
-    // and stay relatively exact when they matter (sum near 0).
-    let s3 = ((f0 + p1) + p2) + p3;
+    let p1 = (mm * 2.0f64.powi(-29)) * w1;
+    let p2 = (mm * 2.0f64.powi(-58)) * w2;
+    // f0 + p1 rounds once against a sum in [-1/2, 9/16] -- relatively
+    // harmless when large, exactly tiny when near zero -- and the last
+    // add rounds only relative to its running sum.
+    let s3 = (f0 + p1) + p2;
     let n1 = s3.round_ties_even();
     // Exact: |s3| <= 0.5625 and |n1| <= 1, so Sterbenz applies.
     let fc_chain = s3 - n1;
@@ -2232,9 +2234,9 @@ pub fn tan_checked(x: f32) -> f32 {
 ///
 /// The two `reduce_pi_wide` calls do **not** cost two reductions: they
 /// differ only in their last few operations, so the table lookups, the
-/// four products, the integer peel and the fraction chain are common
+/// three products, the integer peel and the fraction chain are common
 /// subexpressions and LLVM's GVN evaluates the **gathers once** -- the
-/// emitted throughput region contains four `vpgatherdd`, not eight. That
+/// emitted throughput region contains three `vpgatherdd`, not six. That
 /// does not make this tier cheaper *relative to* `tan_checked` than
 /// `sin_wide` is to `sin_checked` (both land at ~3.2x), because
 /// `tan_checked`'s two `reduce_pi64` calls share in exactly the same way;

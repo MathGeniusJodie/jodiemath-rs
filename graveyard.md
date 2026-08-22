@@ -12579,3 +12579,62 @@ zero branches, all f64 math on `zmm` (codegen_check clean). Exhaustive
 accuracy is unchanged to the digit: sin_wide avg 0.1269 / max 2,
 cos_wide 0.1501 / 2, tan_wide 0.2495 / 4 over all 2^32 patterns, and
 worst_corpus is bit-identical to its golden file.
+
+## `reduce_pi_wide` at three gathers: qword packing cliffs like `[f64; 256]`, but 29-bit chunks buy the third table back
+
+2026-08-22. Follow-up to the u32-chunk rewrite above. The region's Block
+RThroughput was 52, of which **32 was the eight `vpgatherdd`** and ~9 more
+their per-gather zero/`kxnorb` setup -- the whole f64 chain, bypass,
+parity and poly together were only ~12. So the only lever that matters is
+gather count.
+
+**Rejected first: packing the four 27-bit chunks into two `u64` words**
+(26|27|27|26 re-slice so both packed words stay under 2^53 and convert to
+f64 exactly; unpack is one `vpsrlq` + `vcvtuqq2pd` + exact subtract). The
+arithmetic verified perfectly against Fractions -- and LLVM dropped the
+loop to VF = 4 anyway (sin_wide_throughput went *up* to BlockRT 90). The
+gather was `vpgatherdq`, whose indices are still dwords, so this pins the
+trigger precisely: it is the **8-byte gathered element width**, not the
+index type and not the gather count, that sends the vectorizer over the
+same cliff as the old `[f64; 256]` tables. Any future "fewer, wider"
+table idea here dies on this fact unless the element stays <= 4 bytes.
+
+**Shipped instead: three tables of 29-bit chunks.** The 27-bit chunk size
+was never tight -- product exactness needs only bits(w) + 24 <= 53, so
+29 fits. Re-slicing at units 2^-28 / 2^-57 / 2^-86 (parity bit still in
+W0's top) covers beta's bits 0..-86 in three words instead of four:
+six gathers per 16-element iteration instead of eight, minus their mask
+setup. The cost is truncation moving from bit -107 to -86, paid for by
+raising `CUT_PI_WIDE` from 76 to **96**: the bypass (exact `|x|*(1/pi)`
+in f64) then covers |x| < 2^-54, where sin(x)=x/cos(x)=1 even more
+trivially than before. A Python Fraction-exact harness located the seam
+before any Rust run: worst chain error is ~`2^-28.7` relative at e=96
+with mid-sized mantissas (not m=1 -- m*beta mod 1 can be small for
+particular m), i.e. ~0.03 ulp, invisible next to the poly's own rounding.
+Cut=90 would have been ~0.5 ulp at the seam -- measured, rejected.
+
+One exactness note: with 29-bit chunks, `f0 + p1` no longer has a disjoint
+57-bit span, so it rounds once against a sum bounded by 9/16. That is
+harmless when large and exactly tiny near zero (the near-`n*pi` case),
+and the Fraction harness confirms no measurable effect.
+
+| region | before | after |
+|---|---|---|
+| `sin_wide` throughput | 4.920 | **4.441** |
+| `cos_wide` throughput | 5.434 | **5.134** |
+| `tan_wide` throughput | 6.982 (*L) | **6.424** (*L) |
+| `sin_wide` latency | 94.14 | **90.14** |
+| `cos_wide` latency | 95.16 | **91.16** |
+| `tan_wide` latency | 109.17 | **105.17** |
+
+Block RThroughput 52 -> 42 (sin). The tier's cost over `sin_checked` drops
+from 1.97x to **1.78x**. Six `vpgatherdd` per region, zero branches, all
+f64 math on `zmm`, VF = 8 end to end (codegen_check clean). Exhaustive
+accuracy is unchanged to the digit: sin_wide avg 0.1269 / max 2, cos_wide
+0.1501 / 2, tan_wide 0.2495 / 4 over all 2^32 patterns; worst_corpus
+bit-identical to its golden file; edgecheck and special_matrix pass.
+
+Transferable: when a table's chunk size is set by "product must stay
+exact", check whether the bound is actually tight -- one bit wider per
+chunk converts directly into a whole gather deleted, and the precision
+loss can be refunded by moving an exactness bypass a few exponents up.
