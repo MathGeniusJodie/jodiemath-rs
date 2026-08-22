@@ -46,6 +46,38 @@ moves every function downstream of it, so re-run the accuracy sweep for the
 This prose list goes stale; `./tools/jm core` computes the real one from the
 source. Trust the tool over this paragraph.
 
+### f64 in hot paths: hard rules (measured 2026-08)
+
+This crate computes in f32. f64 appears only inside accuracy tiers
+(`*_checked`, `*_wide`, `*_accurate`, `powf`) whose documented contracts
+require >24-bit intermediates. Perf-stat cycle counts on this machine
+(i5-1145G7) against llvm-mca established:
+
+- Packed/vectorized f64 arithmetic performs **as mca predicts** (real ≈
+  0.93-1.27x simulated across powf, logaddexp_accurate,
+  compound_accurate, remainder_wide, sin_checked). Do not "optimize away"
+  f64 math on the theory that it is secretly slow -- it is not.
+- The hazards that ARE real:
+  1. **f64/qword tables and f64 gathers** collapse surrounding loops from
+     VF=8 to VF=4 and then run ~4.5x worse than simulated (sin_wide;
+     graveyard "the gather: 3.2x throughput"). Dword `u32` chunk tables
+     are the only gather shape allowed.
+  2. **Scalar f64** costs ~15x the packed form (powf measured both ways).
+     Any per-lane branch can cause this; keep f64 paths branchless
+     (selects/blends), and split `_checked`/`_unchecked` tiers rather
+     than branching per call.
+  3. **f64 divides** are effectively unpipelined; use them only where the
+     contract needs exact division (remainder_wide), never as a shortcut
+     reciprocal.
+
+Therefore: (a) never introduce f64 into an f32 hot path unless the
+function's documented contract needs >24-bit intermediates, and say in a
+comment exactly which step needs the width; (b) never widen a table's
+element type past dword; (c) a change touching an f64 path needs a
+perf-stat cycle count against its mca region before landing (recipe in
+IDEAS.md "mca vs reality"; wall-clock ns cannot resolve <10% on this
+machine, and llvm-mca alone cannot be trusted for the wide/gather tiers).
+
 ### Measurement
 
 - **`llvm-mca` needs no lock.** It is static analysis, and each worktree has
