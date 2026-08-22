@@ -1863,9 +1863,9 @@ fn reduce_pi_wide<const HALF: bool>(x: f32) -> (f32, u32) {
     // is far below the cut and never selects this path's result.)
     let exp_field = if e == 255 { 0x7f800000 } else { 0x4b00_0000 };
     let m = f32::from_bits((b & 0x007f_ffff) | exp_field) as f64;
-    let w0 = pitable::REDUCE_PI_W0[e & 0xff] as f64;
-    let w1 = pitable::REDUCE_PI_W1[e & 0xff] as f64;
-    let w2 = pitable::REDUCE_PI_W2[e & 0xff] as f64;
+    // One flat table, one base-pointer load: planes 1/2 ride in the
+    // gathers' displacements (see pitable.rs).
+    let w0 = pitable::REDUCE_PI_W[0][e & 0xff] as f64;
     // mm scales m once; mm1/mm2 differ from it only by exact powers
     // of two, matching where each chunk's bits live in beta (units
     // 2^-28, 2^-57, 2^-86; see pitable.rs for the split).
@@ -1874,7 +1874,15 @@ fn reduce_pi_wide<const HALF: bool>(x: f32) -> (f32, u32) {
     let p0 = mm * w0;
     let n0 = p0.round_ties_even();
     let f0 = p0 - n0;
+    // The two remaining lookups are interleaved with the chain rather
+    // than issued up front: all six gathers of an unrolled iteration
+    // sharing one issue window made llvm-mca's scheduler queue-stall
+    // (~5% on sin_wide's simulated cycles) even though every resource
+    // column improved. Same machine code shape either way -- this only
+    // spreads the long-latency gathers apart.
+    let w1 = pitable::REDUCE_PI_W[1][e & 0xff] as f64;
     let p1 = (mm * 2.0f64.powi(-29)) * w1;
+    let w2 = pitable::REDUCE_PI_W[2][e & 0xff] as f64;
     let p2 = (mm * 2.0f64.powi(-58)) * w2;
     // f0 + p1 rounds once against a sum in [-1/2, 9/16] -- relatively
     // harmless when large, exactly tiny when near zero -- and the last

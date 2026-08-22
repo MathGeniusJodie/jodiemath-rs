@@ -32,11 +32,19 @@
 //! dominates it), and those exponents select `fc = |x|*(1/pi)` instead --
 //! exact enough that the residual is `x` itself to well under half an ulp.
 //!
+//!
+//! One flat `[[u32; 256]; 3]` rather than three separate statics: every
+//! surrounding vector loop is load-port bound (the six gathers' lane loads
+//! dominate), so a single symbol means one GOTPCREL base-pointer reload per
+//! iteration instead of three -- the W1/W2 planes then ride in the gathers'
+//! displacement fields (`+1024`, `+2048`) for free.
 //! Generated, not hand-written: `(2^(e-150)/pi) mod 2` from a 900-bit
 //! Machin-formula `pi` in exact integer arithmetic. See
 //! `reduce_pi_wide` for the chain and the error budget it buys.
 
-pub(super) static REDUCE_PI_W0: [u32; 256] = [
+pub(super) static REDUCE_PI_W: [[u32; 256]; 3] = [
+    [
+        // plane 0: bits 2^0 .. 2^-28 of beta (top bit = parity)
     0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0,
@@ -69,9 +77,9 @@ pub(super) static REDUCE_PI_W0: [u32; 256] = [
     184172198, 368344397, 199817882, 399635764, 262400617, 524801235, 512731558, 488592205,
     440313499, 343756087, 150641262, 301282525, 65694139, 131388279, 262776558, 525553116,
     514235320, 491599728, 446328544, 355786176, 174701441, 349402883, 161934854, 323869709,
-];
-
-pub(super) static REDUCE_PI_W1: [u32; 256] = [
+    ],
+    [
+        // plane 1: bits 2^-29 .. 2^-57 of beta
     0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0,
@@ -104,9 +112,9 @@ pub(super) static REDUCE_PI_W1: [u32; 256] = [
     326566765, 116262619, 232525238, 465050476, 393230040, 249589169, 499178338, 461485765,
     386100618, 235330324, 470660649, 404450386, 272029861, 7188810, 14377621, 28755243,
     57510486, 115020972, 230041945, 460083891, 383296870, 229722828, 459445657, 382020402,
-];
-
-pub(super) static REDUCE_PI_W2: [u32; 256] = [
+    ],
+    [
+        // plane 2: bits 2^-58 .. 2^-86 of beta
     0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0,
@@ -139,4 +147,5 @@ pub(super) static REDUCE_PI_W2: [u32; 256] = [
     290114718, 43358524, 86717048, 173434097, 346868194, 156865476, 313730952, 90590992,
     181181985, 362363971, 187857031, 375714062, 214557212, 429114425, 321357938, 105844964,
     211689928, 423379856, 309888800, 82906689, 165813378, 331626756, 126382600, 252765200,
+    ]
 ];

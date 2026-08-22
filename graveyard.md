@@ -12638,3 +12638,63 @@ Transferable: when a table's chunk size is set by "product must stay
 exact", check whether the bound is actually tight -- one bit wider per
 chunk converts directly into a whole gather deleted, and the precision
 loss can be refunded by moving an exactness bypass a few exponents up.
+## `reduce_pi_wide`: the load-port floor, and two micro-"wins" that were actually regressions
+
+2026-08-22, follow-up to the three-gather landing above. Goal: shave the
+~18 non-gather Block RThroughput. The region turned out to be **not
+resource bound but dependency-slack bound**: busiest single port is ~60
+against ~70 simulated cycles/iteration, so instruction swaps that improve
+RT do nothing and ordering changes move the cycles column by ±5%.
+
+**Negative #1: exponent-field scaling (`vpsubq`/`vpaddq` instead of
+`vmulpd` for `m*2^-28/-57/-86`).** m is always a positive normal f64 with
+biased exponent 1046, so subtracting `k<<52` from the bit pattern is an
+exact multiply by `2^-k` -- verified bit-identical, and BlockRT fell
+42 -> 36. Simulated cycles went *up* (4.441 -> 4.513 on sin_wide): the
+three killed multiplies' constant broadcasts simply reappeared as
+`vpbroadcastq` pool loads, so the true constraint (loads) never moved,
+while the inf/NaN select the trick requires (exponent arithmetic
+un-poisons inf/NaN into finite garbage; needs an explicit NaN select at
+the return) added port-5 pressure. Reverted.
+
+**Negative #2: splitting the parity magic-add per source
+(`bit0(n0+M) ^ bit0(n1+M)`).** Exact (M is even), and it lets n0's half
+compute during the second peel's shadow -- except the parity path was not
+on the critical path, and the extra `pmovqd`+`pslld` land on port 5,
+which has no slack: +433 cycles/100iters. Reverted.
+
+**Negative #3 (measurement trap): "shared gather masks".** Hand-editing
+the asm to one `kxnorb` feeding all six gathers drops BlockRT 42 -> 37 --
+and *raises* simulated cycles to 9841/100iters. Sharing a mask register
+across long-latency gathers serializes them in mca's scheduler; LLVM's
+per-gather `kxnorb` rematerialization is dependency-breaking, not waste.
+Same lesson for constant-pool broadcast deletion: zero cycle effect.
+
+**Shipped: single-symbol table + interleaved lookups (+2 instrs saved).**
+The three chunk statics became one `[[u32; 256]; 3]` (one GOTPCREL reload
+per iteration instead of three; W1/W2 ride in the gathers' displacement
+fields), and the W1/W2 lookups moved out of the prologue into the chain.
+The interleaving matters: with all six gathers issuing back-to-back off
+one base, mca queue-stalls (~5% on sin_wide's cycles) even though every
+resource column improved -- hand-forcing the old order on the new
+instruction mix measures 7098 vs 7105 baseline, proving the concept was
+fine and only the scheduling shape regressed. Spreading the gathers
+restores it:
+
+| region | before | after |
+|---|---|---|
+| `sin_wide` throughput | 4.441 | **4.393** |
+| `cos_wide` throughput | 5.134 | **5.111** |
+| `tan_wide` throughput | 6.424 (*L) | **6.421** (*L) |
+| latencies | 90.14 / 91.16 / 105.17 | unchanged |
+
+-2 instrs and -2 uOps per region; BlockRT unchanged at 42/46/48;
+accuracy bit-identical (worst_corpus golden-clean, quick-fuzz ulps
+identical, edgecheck pins pass).
+
+Transferable: (a) in this tier, check whether a change moves *TotalCycles*
+before believing a BlockRT drop -- the loop has ~10 cycles of scheduling
+slack and ports to burn, so RT deltas from op-swaps are noise; (b) don't
+"fix" LLVM's duplicated `kxnorb`s or constant broadcasts here -- they are
+load-bearing for scheduling; (c) keep long-latency gathers apart in source
+order when they will share a base register.

@@ -297,13 +297,13 @@ log2_unchecked      |          38.06 |             1.021
 sin                 |          64.00 |             1.778
 sin_fast            |          48.00 |             1.151
 sin_checked         |          82.00 |             2.495
-sin_wide            |          90.14 |             4.441
+sin_wide            |          90.14 |             4.393
 cos                 |          61.00 |             1.654
 cos_fast            |          56.00 |             1.406
 cos_checked         |          87.00 |             3.157
-cos_wide            |          91.16 |             5.134
+cos_wide            |          91.16 |             5.111
 tan_checked         |         101.00 |             4.289
-tan_wide            |         105.17 |             6.424 (*L)
+tan_wide            |         105.17 |             6.421 (*L)
 sinpi               |          42.02 |             1.133
 cospi               |          47.00 |             1.226
 tanpi               |          77.05 |             2.155
