@@ -48,11 +48,37 @@ source. Trust the tool over this paragraph.
 
 ### f64 in hot paths: hard rules (measured 2026-08)
 
-This crate computes in f32. f64 appears only inside accuracy tiers
-(`*_checked`, `*_wide`, `*_accurate`, `powf`) whose documented contracts
-require >24-bit intermediates. Perf-stat cycle counts on this machine
-(i5-1145G7) against llvm-mca established:
+This crate computes in f32. Wider intermediates come in two flavors:
+f64, and double-float/`Df32`+fma (error-free transforms built from f32,
+see `src/doublefloat.rs`).
 
+**Default for extra precision is `Df32`/fma, not f64.** Reaching for f64
+requires a recorded head-to-head measurement against a *good* attempt at
+the `Df32`/fma version -- fitted, passing its accuracy gate, not a straw
+man. Every f64 site currently in the crate carries such a test in
+graveyard.md; do not re-run them, and do not add a new f64 site without
+one:
+
+| f64 site | Df32/fma attempt tested | outcome |
+|---|---|---|
+| `reduce_pi64` (sin/cos/tan_checked, reduce_pi_checked, wrap_pi) | yes: double-f32 EFT reduction | Df32 ~2x slower, 3 decades less range |
+| `powf`/`powf_pos`/`powf_unchecked` (`log2_f64`, `exp2_f64_to_f32`) | yes: `log2_df` + `Df32*f32` + `exp2_checked_df` | f64 -5..17% cyc AND max ulp 3 -> 1 |
+| `compound_accurate` (`log2p1_f64`) | yes: `log2p1_df` chain | f64 -33% cyc, -21% latency, max ulp 5 -> 1 |
+| `remainder_wide` | yes: Df32 chain | f64 ~-70% instructions ("Df32 doing f64's job") |
+| `logaddexp_accurate` | yes: Df32 sketch analyzed | f64 more accurate (2^-53 vs ~2^-47) and cheaper to write |
+| `clog` near-unit `v` | yes: f32 predecessor failed; Df32 form priced | f64 fragment kept (same throughput, fewer uops) |
+| `reduce_pi_wide` | n/a | gathers dominate; arithmetic is not the lever |
+
+Why f64 keeps winning here despite costing 2x per lane (measured directly:
+`vfmadd213pd` RT 1.0 vs `vfmadd213ps` RT 0.5, both 8 lanes -- see
+graveyard "powf: the Df32 chain was doing f64's job"): an f64 rewrite only
+wins when it *shortens the algorithm*, and dropping error-free transforms
+does exactly that. `Df32` stays the right default when the wide step is
+short (one or two ops where conversions would dominate), when inputs are
+already split (f32 inputs enter `Df32` for free), or when f64's exponent
+range would mask an overflow that the contract wants caught.
+
+Additional hazards measured on this machine:
 - Packed/vectorized f64 arithmetic performs **as mca predicts** (real ≈
   0.93-1.27x simulated across powf, logaddexp_accurate,
   compound_accurate, remainder_wide, sin_checked). Do not "optimize away"
@@ -70,10 +96,13 @@ require >24-bit intermediates. Perf-stat cycle counts on this machine
      contract needs exact division (remainder_wide), never as a shortcut
      reciprocal.
 
-Therefore: (a) never introduce f64 into an f32 hot path unless the
-function's documented contract needs >24-bit intermediates, and say in a
-comment exactly which step needs the width; (b) never widen a table's
-element type past dword; (c) a change touching an f64 path needs a
+Therefore: (a) new precision extensions default to `Df32`/fma; shipping
+f64 instead requires the head-to-head table above to gain a row with f64
+winning on cycles AND accuracy; (b) never widen a table's element type
+past dword; (c) keep every f64 hot path branchless/select-based so it
+stays packed, splitting `_checked`/`_unchecked` tiers rather than
+branching per lane; (d) f64 divides only where exact division is the
+contract (remainder_wide); (e) any change touching an f64 path needs a
 perf-stat cycle count against its mca region before landing (recipe in
 IDEAS.md "mca vs reality"; wall-clock ns cannot resolve <10% on this
 machine, and llvm-mca alone cannot be trusted for the wide/gather tiers).
