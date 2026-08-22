@@ -1881,13 +1881,19 @@ fn reduce_pi_wide<const HALF: bool>(x: f32) -> (f32, u32) {
     // column improved. Same machine code shape either way -- this only
     // spreads the long-latency gathers apart.
     let w1 = pitable::REDUCE_PI_W[1][e & 0xff] as f64;
-    let p1 = (mm * 2.0f64.powi(-29)) * w1;
     let w2 = pitable::REDUCE_PI_W[2][e & 0xff] as f64;
-    let p2 = (mm * 2.0f64.powi(-58)) * w2;
-    // f0 + p1 rounds once against a sum in [-1/2, 9/16] -- relatively
-    // harmless when large, exactly tiny when near zero -- and the last
-    // add rounds only relative to its running sum.
-    let s3 = (f0 + p1) + p2;
+    // Two fmas, not two mul-then-add pairs: p1/p2's scaled products are
+    // exact (24 + 29 = 53 bits), so `mul_add(acc, w, acc2)` computes
+    // acc + p_exact and rounds ONCE -- at exactly the site `(acc + p)`
+    // rounds here. Bit-identical results, two fewer 512-bit f64 pipe ops,
+    // and one add shorter on the critical path out of the gathers. (Both
+    // matter more than mca says: this tier runs ~3x its simulated cycles
+    // on real silicon, so port pressure is worth relieving even where the
+    // gathers dominate.) The first rounding lands against a sum bounded by
+    // 9/16 -- relatively harmless when large, exactly tiny when near zero,
+    // the case whose low bits decide a near-`n*pi` answer -- and the second
+    // rounds only relative to its running sum.
+    let s3 = (mm * 2.0f64.powi(-58)).mul_add(w2, (mm * 2.0f64.powi(-29)).mul_add(w1, f0));
     let n1 = s3.round_ties_even();
     // Exact: |s3| <= 0.5625 and |n1| <= 1, so Sterbenz applies.
     let fc_chain = s3 - n1;

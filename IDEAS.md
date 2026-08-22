@@ -110,6 +110,25 @@ examples:
   the full costing and why it was not taken with the first landing.
   Reducing the gather *count* does not help: two `f64` gathers measured
   7.539, identical to three.
+- **mca vs reality on the wide tier, measured 2026-08 (perf-stat cycle
+  counts, i5-1145G7):** mca's dynamic cyc/unit understates the tier ~3x
+  (sin_wide 4.4 simulated vs ~19.6 real; sin_checked agrees at ~0.9x),
+  and a gather-only kernel prices the three `vpgatherdd` per 8 lanes at
+  **~10.5 of those ~19.6 cyc/elem** -- mca books them at 1.5. The tier is
+  gather-throughput/latency bound: deleting f64 pipe ops shows up in
+  Block RThroughput (-10%) but not in real cycles for sin/cos, while
+  tan_wide (2x poly + divide competing with the gathers) reliably gains.
+  Landed from this: the chain's two mul+add pairs fused to two exact-
+  product `mul_add`s in `reduce_pi_wide` -- bit-identical rounding sites,
+  tan_wide -3..5% real across five interleaved old/new rounds, sin/cos
+  parity. Screened and rejected the same session: a shared-scale table
+  re-slice (uniform 2^-28 units so one `mm` serves all planes) is
+  arithmetically impossible with u32 chunks -- deep-bit chunks are large
+  integers whose smallness lives only in the per-plane power-of-two
+  scale, so dropping that scale makes planes 1/2 contribute 2^29/2^58x
+  too much (caught by exhaustive sweep: avg 7e8 ulp); selecting the
+  sub-cut bypass residual at the f32 level plus an explicit NaN tail
+  select measured +2% on sin_wide despite -12% instrs, and was reverted.
 
 ## Open: fit and accuracy search
 
