@@ -12698,3 +12698,59 @@ slack and ports to burn, so RT deltas from op-swaps are noise; (b) don't
 "fix" LLVM's duplicated `kxnorb`s or constant broadcasts here -- they are
 load-bearing for scheduling; (c) keep long-latency gathers apart in source
 order when they will share a base register.
+
+## `reduce_pi_wide` gather-free at last: the whole pitable is one 48-byte constant, extracted by register permutes (vpermi2b + vpshrdvq) -- sin_wide/cos_wide x8 tier lands at ~4.6x
+
+2026-08-23. Attacked from first principles: the three `[u32; 256]` planes
+contain almost no information. beta(e) = frac(2^(e-150)/pi), so beta's bit at
+weight 2^p is 1/pi's bit at weight 2^(p-e+150): every table row is a shifted
+window of ONE fixed bit string, and the shift amount is linear in e. The
+entire 3 KB table is ~250 bits of pi plus arithmetic.
+
+**The scheme** (see `REDUCE_PI_WIN` + `reduce_pi_wide_x8` in lib.rs): store
+those bits as one 48-byte constant D, bit-reversed because the tables pack
+each 29-bit chunk MSB-first and the reversal turns every per-lane field back
+into a contiguous right-shift. Per lane: S = 301-e, B = S>>3, rho = S&7;
+fetch 16 bytes of D at offset B with two `vpermi2b` (a register permute --
+no load port, no cache), then `vpshrdvq` by rho and constant shifts 29/58
+give W0/W1/W2 bit-identical to the gathered values for ALL 256 exponents
+(verified exhaustively in Python against pitable.rs via gen_pitable's exact
+arithmetic; out-of-range reads land in a zero second source, reproducing the
+zero rows below CUT_PI_WIDE; e=255 still poisons to NaN through the m
+rebuild). Downstream chain is reduce_pi_wide verbatim, lane-wide.
+
+**Why it wins on silicon while mca shrugs:** region BlockRT moved 38 -> 36
+(mca books vpgatherdd far under its real cost), but wall-clock min-of-200
+serialized reps went **9.69 -> 1.56 ns/elem (4.63x)** for sin_wide and
+**7.29 -> 1.67 (4.37x)** for cos_wide over L1-resident arrays, identical for
+band-two and huge-only inputs (branchless = data-independent timing). This
+is the graveyard's own "~10.5 of ~19.6 cyc/elem is gathers" attribution,
+cashed in.
+
+**Correctness gates:** differential sweep vs the scalar path is BIT-IDENTICAL
+over 2M random patterns + all 256 exponents pinned at m=0/1/max
+(examples/wide_x8.rs); edgecheck, worst_corpus golden, codegen_check all
+pass; scalar accuracy untouched (x8 is additive).
+
+**Costs / gotchas that cost me time:**
+- Intrinsics don't scalarize: an intrinsic-based reduce would have broken
+  the autovectorized-scalar architecture. The variant is therefore explicitly
+  8 lanes wide (`sin_wide_x8_slice`, doc(hidden) experimental API); the
+  portable scalar path stays for autovec callers.
+- LLVM refuses to inline #[target_feature] fns across crates, so the mca
+  throughput wrapper (`thr_sin_wide_x8_region`) must live IN lib.rs -- a
+  wrapper in mca_target.rs measures only call overhead, and stale-.s from a
+  failed build silently shows you the old region. Also: this rustc rejects
+  #[inline(always)] + #[target_feature] outright.
+- Bitcast-vs-convert trap: rebuilding m needs f32::from_bits semantics
+  (_mm256_castsi256_ps), NOT cvtepi32_ps -- the latter converts the integer
+  VALUE and everything downstream poisons into plausible-looking garbage.
+- The HALF grid folds sgnx into sgn as well as r (they cancel through the
+  caller's `r ^ flip`, keeping cos even); missing that fails only negative-x
+  lanes. And `andnot(1, SIGN_MASK)` does NOT clear the sign bit -- ~1 keeps
+  bit 31 set; use xor of the sign-bit field instead.
+
+**Not done here:** tan_wide x8 (calls the reduction twice -- should inherit
+the same win), runtime feature detection for a safe public API, and whether
+an explicitly-vectorized public slice API should become the recommended way
+to consume the wide tier.

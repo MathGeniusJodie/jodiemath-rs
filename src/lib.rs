@@ -1948,6 +1948,293 @@ fn parity(q: f32) -> f32 {
 // so sind/cosd(nan/inf) still correctly come out nan with no extra selects.
 const POLY_SAFE_BOUND: f32 = 1000.0;
 
+// ---------------------------------------------------------------------------
+// Gather-free Payne-Hanek: register-permute window extraction (x8 prototype).
+//
+// The three `pitable::REDUCE_PI_W` planes are redundant data: every entry is
+// a shifted window of one fixed bit string, the binary expansion of 1/pi.
+// Since beta(e) = frac(2^(e-150)/pi), beta's bit at weight 2^p is 1/pi's bit
+// at weight 2^(p-e+150), so the whole 3x256x29-bit table is ~250 bits of pi
+// plus a per-exponent shift that is *linear in e*. Instead of gathering
+// pre-shifted windows from memory, this scheme keeps the window constant in
+// a register and extracts each lane's slice with a byte permute + funnel
+// shifts (vpermi2b + vpshrdvq/vpshrdq), which this tier's AVX-512 baseline
+// provides. See the module docs on `REDUCE_PI_WIN` for the bit layout.
+//
+// NOTE(x8): the scalar `reduce_pi_wide` above must stay portable so LLVM can
+// autovectorize its callers at VF = 8; intrinsics don't scalarize, so this
+// variant is explicitly 8 lanes wide and callers feed it [f32; 8] chunks.
+
+/// The whole `pitable` collapsed into one 48-byte constant (top 2 words
+/// zero). Layout: define C = the 256-bit string whose bit j is 1/pi's bit
+/// at weight 2^(60-j) (so C covers weights 2^60 down to 2^-195 -- exactly
+/// the span the chain's exponent range 96..=254 needs), then store D with
+/// D[x] = C[297 - x] (bit-reversed, zero-padded to 384 bits). The reversal
+/// is forced by the tables' MSB-first chunk packing: chunk k word bit t is
+/// beta weight 2^(t-28-29k), which reads each 29-bit field *backwards*
+/// relative to increasing address; storing D backwards turns every field
+/// back into a plain contiguous right-shift. Per lane, with e the raw
+/// biased exponent, the three 29-bit chunks of beta(e) are then
+///
+/// ```text
+/// S  = 301 - e;  B = S >> 3;  rho = S & 7
+/// Q0,Q1 = 16 bytes of D at byte offset B        (2x vpermi2b)
+/// X     = (Q0:Q1) >> rho                        (vpshrdvq, D bits S..S+63)
+/// X2    =  Q1      >> rho                       (vpshrdvq, D bits S+64..)
+/// W2 =  X                & (2^29-1)
+/// W1 = (X       ) >> 29 & (2^29-1)
+/// W0 = (X:X2    ) >> 58 & (2^29-1)///
+/// ```
+///
+/// -- bit-identical (verified exhaustively over e in 95..255) to the values
+/// the three gathers return. Out-of-chain exponents read past the 48 bytes
+/// into the zero second source, so W0/W1/W2 come out 0 and the parity add
+/// sees n0 = n1 = 0, exactly like the shipped table's zero rows below
+/// `CUT_PI_WIDE`; e = 255 still poisons to NaN through the m rebuild.
+#[repr(align(64))]
+struct WinAlign([u64; 6]);
+static REDUCE_PI_WIN: WinAlign = WinAlign([
+    0x39041c0000000000,
+    0x4ddc0db6295993c4,
+    0x41529fc2757d1f53,
+    0x00000a2f9836e4e4,
+    0,
+    0,
+]);
+
+/// Scalar reference for the x8 prototype's differential tests.
+#[doc(hidden)]
+pub fn reduce_pi_wide_ref<const HALF: bool>(x: f32) -> (f32, u32) {
+    reduce_pi_wide::<HALF>(x)
+}
+
+/// Raw x8 reduction for differential debugging.
+#[doc(hidden)]
+pub unsafe fn reduce_pi_wide_x8_pub<const HALF: bool>(
+    x: std::arch::x86_64::__m256,
+) -> (std::arch::x86_64::__m256, std::arch::x86_64::__m256i) {
+    reduce_pi_wide_x8::<HALF>(x)
+}
+
+/// Gather-free x8 reduction: same contract as [`reduce_pi_wide`] applied
+/// lane-wise to 8 packed f32 inputs. Returns the reduced residuals (packed
+/// 8xf32, already xor'd with each lane's own sign, `-0.0` carried) and the
+/// sign masks (packed 8xu32 in `SIGN_MASK` position) for `sinf_poly`-style
+/// callers. Requires AVX-512 VBMI + VBMI2 (unsafe: no runtime check).
+#[doc(hidden)]
+#[inline]
+#[target_feature(enable = "avx512f,avx512dq,avx512bw,avx512vbmi,avx512vbmi2")]
+unsafe fn reduce_pi_wide_x8<const HALF: bool>(x: std::arch::x86_64::__m256)
+    -> (std::arch::x86_64::__m256, std::arch::x86_64::__m256i)
+{
+    use std::arch::x86_64::*;
+
+    let xi = _mm256_castps_si256(x);
+    let sgnx = _mm256_and_si256(xi, _mm256_set1_epi32(SIGN_MASK as i32));
+    let e = _mm256_and_si256(_mm256_srli_epi32::<23>(xi), _mm256_set1_epi32(0xff));
+
+    // Window position: S = 301 - e, byte offset B = S>>3, bit rho = S&7.
+    let sv = _mm256_sub_epi32(_mm256_set1_epi32(301), e);
+    let bd = _mm256_srli_epi32::<3>(sv);
+    let rho = _mm256_and_si256(sv, _mm256_set1_epi32(7));
+
+    // Byte index vectors for the two vpermi2b: byte p of the destination
+    // qword lane l wants D byte B_l + (p&7), resp. B_l + 8 + (p&7). B is
+    // replicated into all 8 byte slots of its lane by the x0x0101..01 mul
+    // (B <= 37 fits a byte, so the product can't carry across bytes).
+    let b64 = _mm512_cvtepu32_epi64(bd);
+    let brep = _mm512_mullo_epi64(b64, _mm512_set1_epi64(0x0101_0101_0101_0101));
+    let idx0 = _mm512_add_epi8(brep, _mm512_set1_epi64(0x0706_0504_0302_0100));
+    let idx1 = _mm512_add_epi8(brep, _mm512_set1_epi64(0x0f0e_0d0c_0b0a_0908));
+
+    let win = _mm512_load_si512(REDUCE_PI_WIN.0.as_ptr().cast());
+    let zero = _mm512_setzero_si512();
+    let q0 = _mm512_permutex2var_epi8(win, idx0, zero);
+    let q1 = _mm512_permutex2var_epi8(win, idx1, zero);
+
+    let cnt = _mm512_cvtepu32_epi64(rho);
+    let xx = _mm512_shrdv_epi64(q0, q1, cnt); // D bits [S, S+63]
+    let x2 = _mm512_shrdv_epi64(q1, zero, cnt); // D bits [S+64, S+127]
+    let m29 = _mm512_set1_epi64((1 << 29) - 1);
+    let w2i = _mm512_and_si512(xx, m29);
+    let w1i = _mm512_and_si512(_mm512_srli_epi64::<29>(xx), m29);
+    let w0i = _mm512_and_si512(_mm512_shrdi_epi64::<58>(xx, x2), m29);
+    let w0 = _mm512_cvtepu64_pd(w0i);
+    let w1 = _mm512_cvtepu64_pd(w1i);
+    let w2 = _mm512_cvtepu64_pd(w2i);
+
+    // From here the chain is reduce_pi_wide's, lane-wide.
+    let mant = _mm256_and_si256(xi, _mm256_set1_epi32(0x007f_ffff));
+    let isnn = _mm256_cmpeq_epi32_mask(e, _mm256_set1_epi32(255));
+    let expn = _mm256_or_si256(mant, _mm256_set1_epi32(0x4b00_0000));
+    let m_dwords = _mm256_mask_blend_epi32(
+        isnn,
+        expn,
+        _mm256_or_si256(mant, _mm256_set1_epi32(0x7f80_0000)),
+    );
+    // via f32 BITS so inf/NaN payloads poison exactly like the scalar
+    // rebuild -- this is a bitcast, not an int->float conversion: the dword
+    // already holds the desired f32 pattern.
+    let m = _mm512_cvtps_pd(_mm256_castsi256_ps(m_dwords));
+
+    let mm = _mm512_mul_pd(m, _mm512_set1_pd(2.0f64.powi(-28)));
+    // NB: these scale mm (not m), i.e. net m*2^-57 / m*2^-86 like the scalar
+    let mm1 = _mm512_mul_pd(mm, _mm512_set1_pd(2.0f64.powi(-29)));
+    let mm2 = _mm512_mul_pd(mm, _mm512_set1_pd(2.0f64.powi(-58)));
+    let p0 = _mm512_mul_pd(mm, w0);
+    let n0 = _mm512_roundscale_pd::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(p0);
+    let f0 = _mm512_sub_pd(p0, n0);
+    let s3 = _mm512_fmadd_pd(mm2, w2, _mm512_fmadd_pd(mm1, w1, f0));
+    let n1 = _mm512_roundscale_pd::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(s3);
+    let fc_chain = _mm512_sub_pd(s3, n1);
+
+    let xf = _mm512_cvtps_pd(_mm256_and_ps(x, _mm256_set1_ps(f32::from_bits(0x7fff_ffff))));
+    let byp = _mm512_mul_pd(xf, _mm512_set1_pd(INV_PI_F64));
+    let small = _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(
+        _mm256_set1_epi32(CUT_PI_WIDE as i32),
+        e,
+    )));
+    let fc = _mm512_mask_blend_pd(small as u8, fc_chain, byp);
+
+    let tt = if HALF {
+        // copysign(0.5, fc): the AND already produces the sign-bit mask
+        let sb = _mm512_and_si512(_mm512_castpd_si512(fc), _mm512_set1_epi64(1 << 63));
+        _mm512_sub_pd(fc, _mm512_or_pd(_mm512_set1_pd(0.5), _mm512_castsi512_pd(sb)))
+    } else {
+        fc
+    };
+    let r = _mm512_cvtpd_ps(_mm512_mul_pd(tt, _mm512_set1_pd(std::f64::consts::PI)));
+    let par = _mm512_add_pd(_mm512_add_pd(n0, n1), _mm512_set1_pd(ROUND_MAGIC64));
+    let mut sgn = _mm512_srli_epi64::<32>(
+        _mm512_slli_epi64::<63>(
+            _mm512_and_si512(_mm512_castpd_si512(par), _mm512_set1_epi64(1)),
+        ),
+    );
+    if HALF {
+        // scalar: (!(fc.to_bits() >> 32)) as u32 & SIGN_MASK -- i.e. the
+        // complement of fc's sign bit, which is just fc_high XOR SIGN_MASK.
+        let fchi = _mm512_and_si512(
+            _mm512_srli_epi64::<32>(_mm512_castpd_si512(fc)),
+            _mm512_set1_epi64(0x8000_0000),
+        );
+        sgn = _mm512_xor_si512(sgn, _mm512_xor_si512(fchi, _mm512_set1_epi64(0x8000_0000)));
+    }
+    let r_signed = {
+        let rb = _mm256_castps_si256(r);
+        _mm256_castsi256_ps(_mm256_xor_si256(rb, sgnx))
+    };
+    // scalar contract: sgnx is always folded into r; for HALF it is also
+    // folded into sgn -- the two cancel through the caller's `r ^ flip`,
+    // which is what keeps cos even in x.
+    let mut sgn = _mm512_cvtepi64_epi32(sgn);
+    if HALF {
+        sgn = _mm256_xor_si256(sgn, sgnx);
+    }
+    (r_signed, sgn)
+}
+
+/// `sinf_poly` on 8 lanes, plus the `|result| <= 1` clamp (NaN-transparent,
+/// same reasoning as the scalar `sin_wide`/`cos_wide` tails).
+#[doc(hidden)]
+#[inline]
+#[target_feature(enable = "avx512f,avx512dq,avx512bw,avx512vbmi,avx512vbmi2")]
+unsafe fn sinf_poly_x8(r: std::arch::x86_64::__m256) -> std::arch::x86_64::__m256 {
+    use std::arch::x86_64::*;
+    let y = _mm256_mul_ps(r, r);
+    let y2 = _mm256_mul_ps(y, y);
+    let x3 = _mm256_mul_ps(y, r);
+    let a = _mm256_fmadd_ps(_mm256_set1_ps(8.333_066_2e-3), y, _mm256_set1_ps(-0.166_666_60));
+    let b = _mm256_fmadd_ps(_mm256_set1_ps(2.605_780_6e-6), y, _mm256_set1_ps(-1.980_960_3e-4));
+    let p = _mm256_fmadd_ps(b, y2, a);
+    let s = _mm256_fmadd_ps(p, x3, r);
+    // clamp like `.clamp(-1.0, 1.0)`: compare+blend, not min/max, so NaN
+    // lanes survive unchanged (minps/maxps would swallow them)
+    let klt = _mm256_cmp_ps_mask::<{ _CMP_LT_OQ }>(s, _mm256_set1_ps(-1.0));
+    let s = _mm256_mask_blend_ps(klt, s, _mm256_set1_ps(-1.0));
+    let kgt = _mm256_cmp_ps_mask::<{ _CMP_GT_OQ }>(s, _mm256_set1_ps(1.0));
+    _mm256_mask_blend_ps(kgt, s, _mm256_set1_ps(1.0))
+}
+
+/// `sin_wide` on 8 lanes (residual sign flip folded in).
+#[doc(hidden)]
+#[inline]
+#[target_feature(enable = "avx512f,avx512dq,avx512bw,avx512vbmi,avx512vbmi2")]
+unsafe fn sin_wide_lanes_x8(x: std::arch::x86_64::__m256) -> std::arch::x86_64::__m256 {
+    use std::arch::x86_64::*;
+    let (r, flip) = reduce_pi_wide_x8::<false>(x);
+    let r = _mm256_castsi256_ps(_mm256_xor_si256(_mm256_castps_si256(r), flip));
+    sinf_poly_x8(r)
+}
+
+/// `cos_wide` on 8 lanes.
+#[doc(hidden)]
+#[inline]
+#[target_feature(enable = "avx512f,avx512dq,avx512bw,avx512vbmi,avx512vbmi2")]
+unsafe fn cos_wide_lanes_x8(x: std::arch::x86_64::__m256) -> std::arch::x86_64::__m256 {
+    use std::arch::x86_64::*;
+    let (r, flip) = reduce_pi_wide_x8::<true>(x);
+    let r = _mm256_castsi256_ps(_mm256_xor_si256(_mm256_castps_si256(r), flip));
+    sinf_poly_x8(r)
+}
+
+/// Slice driver for the x8 tier: `out[i] = sin_wide(xs[i])` (bit-identical
+/// to the autovectorized scalar path on every input, see the differential
+/// sweep in examples/wide_x8.rs). Tail elements use the scalar path.
+/// Unsafe: requires AVX-512 VBMI+VBMI2 (no runtime check).
+#[doc(hidden)]
+#[inline]
+pub unsafe fn sin_wide_x8_slice(xs: &[f32], out: &mut [f32]) {
+    let n = xs.len().min(out.len());
+    let mut i = 0;
+    while i + 8 <= n {
+        let xv = std::arch::x86_64::_mm256_loadu_ps(xs.as_ptr().add(i));
+        let s = sin_wide_lanes_x8(xv);
+        std::arch::x86_64::_mm256_storeu_ps(out.as_mut_ptr().add(i), s);
+        i += 8;
+    }
+    while i < n {
+        out[i] = sin_wide(xs[i]);
+        i += 1;
+    }
+}
+
+/// Region-marked throughput driver for llvm-mca: must live in-crate because
+/// LLVM refuses to inline `#[target_feature]` functions across crates, and
+/// the markers only capture what's inside them.
+#[doc(hidden)]
+#[inline]
+#[target_feature(enable = "avx512f,avx512dq,avx512bw,avx512vbmi,avx512vbmi2")]
+pub unsafe fn thr_sin_wide_x8_region(input: &[f32; 16], output: &mut [f32; 16]) {
+    use std::arch::x86_64::*;
+    unsafe { core::arch::asm!(concat!("# LLVM-MCA-BEGIN ", "sin_wide_x8_throughput")) };
+    let mut i = 0;
+    while i + 8 <= input.len() {
+        let xv = _mm256_loadu_ps(input.as_ptr().add(i));
+        let s = sin_wide_lanes_x8(xv);
+        _mm256_storeu_ps(output.as_mut_ptr().add(i), s);
+        i += 8;
+    }
+    unsafe { core::arch::asm!("# LLVM-MCA-END") };
+}
+
+/// [`sin_wide_x8_slice`] for the cos grid.
+#[doc(hidden)]
+#[inline]
+pub unsafe fn cos_wide_x8_slice(xs: &[f32], out: &mut [f32]) {
+    let n = xs.len().min(out.len());
+    let mut i = 0;
+    while i + 8 <= n {
+        let xv = std::arch::x86_64::_mm256_loadu_ps(xs.as_ptr().add(i));
+        let s = cos_wide_lanes_x8(xv);
+        std::arch::x86_64::_mm256_storeu_ps(out.as_mut_ptr().add(i), s);
+        i += 8;
+    }
+    while i < n {
+        out[i] = cos_wide(xs[i]);
+        i += 1;
+    }
+}
+
 #[inline(always)]
 pub fn sin_checked(x: f32) -> f32 {
     // sin is odd, so (-1)^q * sin(r) == sin((-1)^q * r): flip r's sign

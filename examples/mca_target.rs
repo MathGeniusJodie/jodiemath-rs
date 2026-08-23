@@ -207,6 +207,7 @@ throughput_fn!(thr_sin_checked, "sin_checked_throughput", sin_checked);
 latency_fn!(lat_sin_wide, "sin_wide_latency", sin_wide);
 throughput_fn!(thr_sin_wide, "sin_wide_throughput", sin_wide);
 
+
 latency_fn!(lat_cos_wide, "cos_wide_latency", cos_wide);
 throughput_fn!(thr_cos_wide, "cos_wide_throughput", cos_wide);
 
@@ -977,6 +978,10 @@ fn main() {
     // remainder/remainder_ieee/fmod: latency-only (see their own
     // throughput_fn! omission comments above for why), same standalone
     // call shape as lat_cbrt_wrapped above.
+    // gather-free x8 variant: standalone (not a lat/thr pair); the wrapper
+    // lives in the library so the target_feature body can inline inside the
+    // region markers (LLVM won't inline these across crates).
+    unsafe { thr_sin_wide_x8_region(black_box(&arr_in), black_box(&mut arr_out)) };
     black_box(lat_remainder(black_box(1.234)));
     black_box(lat_remainder_ieee(black_box(1.234)));
     black_box(lat_fmod(black_box(1.234)));
