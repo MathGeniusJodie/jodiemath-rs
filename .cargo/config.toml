@@ -1,7 +1,13 @@
 [build]
 # mul_add compiles to a libm call (~2x slower) without hardware fma;
 # benchmarks are only meaningful with this enabled
-rustflags = ["-C", "target-cpu=native"]
+# -force-vector-width=16: the loop vectorizer otherwise settles at VF=8
+# (ymm f32 + zmm f64 "balance"), but on this AVX-512 machine 16 lanes
+# wins: the wide tier's gathers halve their per-element uops, giving
+# sin_wide 4.52 -> 2.53 ns/op and broad 10-45% gains across quickbench
+# (125/142 rows improved, worst regression +10% on a few ~0.2ns rows).
+# If a toolchain rejects the llvm-args form, delete it -- it's speed-only.
+rustflags = ["-C", "target-cpu=native", "-C", "llvm-args=-force-vector-width=16"]
 # `cargo doc` invokes rustdoc, which does NOT read `rustflags` above --
 # rustdoc has its own separate flag mechanism, and without this, `cargo
 # doc` hits src/lib.rs's own compile_error! FMA guard even though a plain

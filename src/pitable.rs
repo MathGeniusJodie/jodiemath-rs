@@ -25,6 +25,10 @@
 //! gather: 3.2x throughput"), and a packed-qword `vpgatherdq` variant was
 //! measured (2026-08) to hit the same cliff -- element width 8 bytes is
 //! the trigger, not the gather count. Dword-element gathers keep VF = 8.
+//! (Dword gathers can't widen to qwords; that collapses VF to 4. Both
+//! widths are measured and in `sin_wide`'s own docs.)
+//! (With `.cargo/config.toml`'s `-force-vector-width=16`, the
+//! default build instead runs at 16 lanes/iteration; dword gathers still hold 8.)
 //! The price is the `|x| < 2^-54` bypass in `reduce_pi_wide`: below
 //! exponent `CUT_PI_WIDE` the absolute truncation is too coarse *relative*
 //! to `beta` itself (there `m*beta < 1` never wraps, so the smallest true

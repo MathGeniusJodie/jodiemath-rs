@@ -12754,3 +12754,39 @@ pass; scalar accuracy untouched (x8 is additive).
 the same win), runtime feature detection for a safe public API, and whether
 an explicitly-vectorized public slice API should become the recommended way
 to consume the wide tier.
+
+## The autovec answer: force VF=16 in the default build
+
+2026-08-23. Follow-up to the gather-free x8 experiment. The x8 intrinsics
+path proved the gathers dominate real cycles, but the goal was improving
+the *portable, autovectorized* path. Analysis said the three vpgatherdd
+per 8 lanes were ~10 of ~19.6 cyc/elem, and every gather-free reformulation
+under pure autovec died somewhere (LLVM won't turn even a 32-entry
+constant-table load into vpermi2d; info-theoretically the exhaustive-2-ulp
+gate needs ~87 bits/lane = >= 3 dword loads regardless). The lever was not
+fewer loads but *wider* loads: a 16-lane vpgatherdd costs roughly the same
+uops as an 8-lane one, so per element the gather load-uops halve.
+
+`.cargo/config.toml` now ships `-C llvm-args=-force-vector-width=16`.
+Controlled quickbench before/after (same session, min-of-7, serialized):
+
+  sin_wide 4.520 -> 2.529 ns/op (1.79x)
+  cos_wide 4.730 -> 2.746 (1.72x)
+  tan_wide 5.138 -> 2.824 (1.82x)
+  125/142 throughput rows improved (10-45% typical), 10 rows regress
+  at most +10% (asin/acospi/atan_bounded/dawson at +6-10% of ~0.2ns rows;
+  a couple +1-3%).
+
+Accuracy gate is bit-identical (IEEE ops are elementwise; scalar semantics
+don't change with VF). worst_corpus golden + edgecheck pass under the new
+codegen. mca BlockRT barely moves (gathers mispriced, zmm-vs-ymm invisible
+to it), so the static-analysis workflow misses this -- another data point
+for "check real cycles".
+
+Caveats:
+- llvm-args is not a stable rustc surface; if a toolchain rejects it the
+  build fails loudly, and deleting it is accuracy-neutral.
+- The flag is global: applies to every vectorizable loop (examples +
+  lib). Downstream crates keep their own width for their own loops.
+- Not a replacement for the x8 intrinsics path (1.56 vs 2.53 ns for
+  sin_wide) but closes most of the gap with zero API/caller changes.

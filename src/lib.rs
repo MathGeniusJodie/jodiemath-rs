@@ -1962,8 +1962,10 @@ const POLY_SAFE_BOUND: f32 = 1000.0;
 // provides. See the module docs on `REDUCE_PI_WIN` for the bit layout.
 //
 // NOTE(x8): the scalar `reduce_pi_wide` above must stay portable so LLVM can
-// autovectorize its callers at VF = 8; intrinsics don't scalarize, so this
-// variant is explicitly 8 lanes wide and callers feed it [f32; 8] chunks.
+// autovectorize its callers at VF = 8. (With `.cargo/config.toml`'s
+// `-force-vector-width=16` the default build runs 16 lanes per iteration
+// instead; intrinsics still don't scalarize, so this variant is explicitly
+// 8 lanes wide and callers feed it [f32; 8] chunks.
 
 /// The whole `pitable` collapsed into one 48-byte constant (top 2 words
 /// zero). Layout: define C = the 256-bit string whose bit j is 1/pi's bit
@@ -2304,8 +2306,8 @@ pub fn cos_checked(x: f32) -> f32 {
 ///
 /// This is a Pareto point, not a replacement: the table costs four
 /// 32-bit gathers and the wider chain (but no `f64` gather, so the whole
-/// tier vectorizes at VF = 8 -- see `reduce_pi_wide`), so `sin_checked`
-/// stays as the cheaper
+/// tier stays vectorizable end to end -- see `reduce_pi_wide`), so
+/// `sin_checked` stays as the cheaper
 /// tier for callers whose arguments are bounded, and `sin` stays as the
 /// cheapest for `|x| < 2^24*pi`.
 #[inline(always)]

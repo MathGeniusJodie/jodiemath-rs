@@ -2,7 +2,11 @@
 Attempting to provide faster implementations of common f32 math functions with a similar level of accuracy to the standard library.
 There are also perfectly rounded variants and faster-but-sloppier variants.
 
-All functions auto-vectorize, it's a hard requirement
+All functions auto-vectorize, it's a hard requirement. The default build
+forces `-force-vector-width=16` (see `.cargo/config.toml`): LLVM otherwise
+settles at 8 lanes, and 16 measurably wins on this machine (wide tier
+~1.8x, most of the table 10-45%; a few tiny rows regress by single-digit
+percent).
 
 # precision (see examples/accuracy.rs)
 
@@ -50,7 +54,8 @@ the ulp distance from `+1` to `-1`, i.e. the worst a clamped output can
 be). `tan_checked` is worse still, avg 406004054 / max 2324484283, and has no
 row in this table at all. The `_wide` tier reduces against a window of
 `1/pi` selected by `x`'s exponent instead of a fixed two-word constant,
-which costs three 32-bit gathers and ~1.8x throughput; see `sin_wide`'s doc
+which costs three 32-bit gathers (~1.6x `sin_checked` on mca BlockRT); see
+`sin_wide`'s doc
 comment and graveyard.md. All three `_wide` rows are exhaustive over all
 2^32 patterns, not sampled.
 
