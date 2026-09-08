@@ -2,13 +2,9 @@
 Attempting to provide faster implementations of common f32 math functions with a similar level of accuracy to the standard library.
 There are also perfectly rounded variants and faster-but-sloppier variants.
 
-All functions auto-vectorize, it's a hard requirement. The default build
-forces `-force-vector-width=16` (see `.cargo/config.toml`): LLVM otherwise
-settles at 8 lanes, and 16 measurably wins on this machine (wide tier
-~1.8x, most of the table 10-45%; a few tiny rows regress by single-digit
-percent).
+All functions auto-vectorize, it's a hard requirement.
 
-# precision (see examples/accuracy.rs)
+# precision
 
 ```
                         | jodie avg  | jodie max | std avg | std max
@@ -43,21 +39,6 @@ cbrt_accurate_unchecked |    0.000   |     1     | (bit-identical to cbrt_accura
           sinc (|x|<1e6)|    0.094   |     4     | (no std sinc)
 ```
 
-`sin_wide`/`cos_wide`/`tan_wide`'s rows are the only trig rows in this
-table measured over the **entire** f32 range, and that is the whole point
-of the tier.
-`sin_checked`/`cos_checked` are accurate to ~1e13 and then degrade, and
-past `2^51*pi` they return a value in `[-1,1]` with no relationship to the
-answer -- `accuracy`'s own `sin_checked (all f32)` row reads **avg
-314265980 / max 2130706432** on a quick fuzz (that max is `2*0x3f800000`,
-the ulp distance from `+1` to `-1`, i.e. the worst a clamped output can
-be). `tan_checked` is worse still, avg 406004054 / max 2324484283, and has no
-row in this table at all. The `_wide` tier reduces against a window of
-`1/pi` selected by `x`'s exponent instead of a fixed two-word constant,
-which costs three 32-bit gathers (~1.6x `sin_checked` on mca BlockRT); see
-`sin_wide`'s doc
-comment and graveyard.md. All three `_wide` rows are exhaustive over all
-2^32 patterns, not sampled.
 
 ```
                          | jodie avg  | jodie max | std avg | std max
@@ -285,7 +266,6 @@ fmod_unchecked | 0.16 ns |    -    |  -
 
 ```
 theoretical cost from llvm-mca (-mcpu=native, 100 iterations)
-(*L) region kept its loop; divided by the real step, not ARR_LEN -- see above
                     | latency (cyc)  | throughput (cyc)
 --------------------|----------------|------------------
 cbrt                |          35.06 |             1.629
