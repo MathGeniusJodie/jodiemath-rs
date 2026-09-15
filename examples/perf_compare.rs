@@ -110,21 +110,33 @@ fn main() {
             eprintln!("saved snapshot to {out_path}");
         }
         "compare" => {
-            let before_path = args.get(2).expect("usage: compare <before.json> <after.json>");
-            let after_path = args.get(3).expect("usage: compare <before.json> <after.json>");
+            let before_path = args
+                .get(2)
+                .expect("usage: compare <before.json> <after.json>");
+            let after_path = args
+                .get(3)
+                .expect("usage: compare <before.json> <after.json>");
             let before: serde_json::Value =
                 serde_json::from_str(&std::fs::read_to_string(before_path).unwrap()).unwrap();
             let after: serde_json::Value =
                 serde_json::from_str(&std::fs::read_to_string(after_path).unwrap()).unwrap();
 
             let mca_before: std::collections::BTreeMap<_, _> =
-                parse_mca_throughput(before["mca"].as_str().unwrap()).into_iter().collect();
+                parse_mca_throughput(before["mca"].as_str().unwrap())
+                    .into_iter()
+                    .collect();
             let mca_after: std::collections::BTreeMap<_, _> =
-                parse_mca_throughput(after["mca"].as_str().unwrap()).into_iter().collect();
+                parse_mca_throughput(after["mca"].as_str().unwrap())
+                    .into_iter()
+                    .collect();
             let qb_before: std::collections::BTreeMap<_, _> =
-                parse_quickbench_throughput(before["quickbench"].as_str().unwrap()).into_iter().collect();
+                parse_quickbench_throughput(before["quickbench"].as_str().unwrap())
+                    .into_iter()
+                    .collect();
             let qb_after: std::collections::BTreeMap<_, _> =
-                parse_quickbench_throughput(after["quickbench"].as_str().unwrap()).into_iter().collect();
+                parse_quickbench_throughput(after["quickbench"].as_str().unwrap())
+                    .into_iter()
+                    .collect();
 
             println!(
                 "{:22} | {:>12} | {:>14} | flag",
@@ -147,7 +159,9 @@ fn main() {
                     continue;
                 }
                 let flag = match (mca_pct, qb_pct) {
-                    (Some(m), Some(q)) if m.signum() != q.signum() && m.abs() > 1.0 && q.abs() > 1.0 => {
+                    (Some(m), Some(q))
+                        if m.signum() != q.signum() && m.abs() > 1.0 && q.abs() > 1.0 =>
+                    {
                         "  <-- DISAGREE"
                     }
                     _ => "",
@@ -155,8 +169,12 @@ fn main() {
                 println!(
                     "{:22} | {:>11} | {:>13} |{}",
                     name,
-                    mca_pct.map(|v| format!("{v:+.1}%")).unwrap_or_else(|| "?".into()),
-                    qb_pct.map(|v| format!("{v:+.1}%")).unwrap_or_else(|| "?".into()),
+                    mca_pct
+                        .map(|v| format!("{v:+.1}%"))
+                        .unwrap_or_else(|| "?".into()),
+                    qb_pct
+                        .map(|v| format!("{v:+.1}%"))
+                        .unwrap_or_else(|| "?".into()),
                     flag
                 );
             }

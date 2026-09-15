@@ -21,17 +21,32 @@ use jodiemath_rs::*;
 fn ulp_diff(a: f32, b: f32) -> u64 {
     fn ord(x: f32) -> i64 {
         let b = x.to_bits();
-        if b & 0x8000_0000 != 0 { -((b & 0x7fff_ffff) as i64) } else { b as i64 }
+        if b & 0x8000_0000 != 0 {
+            -((b & 0x7fff_ffff) as i64)
+        } else {
+            b as i64
+        }
     }
     if a.is_nan() || b.is_nan() {
-        return if a.is_nan() == b.is_nan() { 0 } else { u64::MAX };
+        return if a.is_nan() == b.is_nan() {
+            0
+        } else {
+            u64::MAX
+        };
     }
     (ord(a) - ord(b)).unsigned_abs()
 }
 
 /// Sweep `[lo, hi)` by `stride`, choosing `y` per `x` so that
 /// `y*log2(x) ~ target`, and score against the f64 reference.
-fn sweep(name: &str, f: impl Fn(f32, f32) -> f32, target: f64, lo: u32, hi: u32, stride: u32) -> u64 {
+fn sweep(
+    name: &str,
+    f: impl Fn(f32, f32) -> f32,
+    target: f64,
+    lo: u32,
+    hi: u32,
+    stride: u32,
+) -> u64 {
     let (mut max, mut sum, mut n, mut wx, mut wy) = (0u64, 0u64, 0u64, 0f32, 0f32);
     let mut b = lo;
     while b < hi {
@@ -83,5 +98,8 @@ fn main() {
         }
         println!();
     }
-    println!("worst over all sweeps:  powf {}  powf_unchecked {}", worst[0], worst[1]);
+    println!(
+        "worst over all sweeps:  powf {}  powf_unchecked {}",
+        worst[0], worst[1]
+    );
 }

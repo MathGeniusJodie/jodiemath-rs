@@ -58,7 +58,11 @@ fn ulp_diff(got: f32, want: f32) -> u64 {
     }
     let key = |v: f32| {
         let b = v.to_bits() as i64;
-        if b < 0 { i64::MIN.wrapping_sub(b).wrapping_neg() ^ (1i64 << 63) } else { b }
+        if b < 0 {
+            i64::MIN.wrapping_sub(b).wrapping_neg() ^ (1i64 << 63)
+        } else {
+            b
+        }
     };
     let (a, b) = (key(got), key(want));
     a.abs_diff(b)
@@ -91,7 +95,11 @@ fn main() {
             } else {
                 let mut v = im0;
                 for _ in 0..k.abs() {
-                    v = if k > 0 { f32::from_bits(v.to_bits() + 1) } else { f32::from_bits(v.to_bits() - 1) };
+                    v = if k > 0 {
+                        f32::from_bits(v.to_bits() + 1)
+                    } else {
+                        f32::from_bits(v.to_bits() - 1)
+                    };
                 }
                 v
             };
@@ -127,11 +135,23 @@ fn main() {
     }
 
     println!("clog Re, unit-circle manifold ({n} samples)");
-    let names = ["|v| >= 1e-6", "1e-7..1e-6", "1e-8..1e-7", "1e-9..1e-8", "|v| < 1e-9"];
+    let names = [
+        "|v| >= 1e-6",
+        "1e-7..1e-6",
+        "1e-8..1e-7",
+        "1e-9..1e-8",
+        "|v| < 1e-9",
+    ];
     for (b, name) in names.iter().enumerate() {
-        println!("  {name:<14} max ulp {:>12}   ({} samples)", buckets[b].0, buckets[b].1);
+        println!(
+            "  {name:<14} max ulp {:>12}   ({} samples)",
+            buckets[b].0, buckets[b].1
+        );
     }
-    println!("  worst {worst} ulp at re={:e} im={:e}  (|v| = {worst_v:e})", worst_at.0, worst_at.1);
+    println!(
+        "  worst {worst} ulp at re={:e} im={:e}  (|v| = {worst_v:e})",
+        worst_at.0, worst_at.1
+    );
 
     if worst > MAX_ULP_BUDGET {
         eprintln!("FAIL: Re clog max {worst} ulp exceeds budget {MAX_ULP_BUDGET}");

@@ -172,7 +172,16 @@ fn main() {
     // The documented contract is an xor of sign bits, so -0.0 counts as a
     // negative y and the flip is unconditional on y's sign bit alone.
     let mut ms_fail = 0u64;
-    for &y in &[1.0f32, -1.0, 0.0, -0.0, f32::NAN, -f32::NAN, f32::MAX, f32::MIN] {
+    for &y in &[
+        1.0f32,
+        -1.0,
+        0.0,
+        -0.0,
+        f32::NAN,
+        -f32::NAN,
+        f32::MAX,
+        f32::MIN,
+    ] {
         let y_neg = y.to_bits() & 0x8000_0000 != 0;
         for bits in 0..=u32::MAX {
             let want = if y_neg { bits ^ 0x8000_0000 } else { bits };
@@ -198,7 +207,14 @@ fn main() {
     println!("  x<0,y<0 cases where mulsign==copysign (must be 0): {agree_when_should_differ}");
     failures += agree_when_should_differ;
 
-    println!("\n{}", if failures == 0 { "ALL CONTRACTS HOLD" } else { "CONTRACT VIOLATIONS FOUND" });
+    println!(
+        "\n{}",
+        if failures == 0 {
+            "ALL CONTRACTS HOLD"
+        } else {
+            "CONTRACT VIOLATIONS FOUND"
+        }
+    );
     if failures != 0 {
         std::process::exit(1);
     }

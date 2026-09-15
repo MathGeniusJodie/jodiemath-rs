@@ -31,7 +31,16 @@ fn main() {
     eprintln!("compiling examples/mca_target.rs to assembly...");
     let status = Command::new("cargo")
         .current_dir(manifest_dir)
-        .args(["rustc", "--release", "--example", "mca_target", "--", "--emit=asm", "-C", "debuginfo=0"])
+        .args([
+            "rustc",
+            "--release",
+            "--example",
+            "mca_target",
+            "--",
+            "--emit=asm",
+            "-C",
+            "debuginfo=0",
+        ])
         .status()
         .expect("failed to run `cargo rustc` -- is cargo on PATH?");
     if !status.success() {
@@ -45,9 +54,16 @@ fn main() {
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| {
-            p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("mca_target-") && n.ends_with(".s"))
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("mca_target-") && n.ends_with(".s"))
         })
-        .filter_map(|p| std::fs::metadata(&p).and_then(|m| m.modified()).ok().map(|t| (t, p)))
+        .filter_map(|p| {
+            std::fs::metadata(&p)
+                .and_then(|m| m.modified())
+                .ok()
+                .map(|t| (t, p))
+        })
         .max_by_key(|(t, _)| *t)
         .map(|(_, p)| p)
         .expect("no mca_target-*.s found after `cargo rustc --emit=asm` -- did the example build?");
@@ -74,7 +90,10 @@ fn main() {
             body.push(line);
         }
     }
-    assert!(!regions.is_empty(), "found no *_throughput regions -- did the BEGIN/END marker format change?");
+    assert!(
+        !regions.is_empty(),
+        "found no *_throughput regions -- did the BEGIN/END marker format change?"
+    );
 
     let packed_simd = ["ymm", "zmm", "xmm"]; // xmm still packed (128-bit); scalar forms use an "ss"/"sd" mnemonic suffix, not just xmm registers
     let mut failures = Vec::new();
@@ -107,7 +126,10 @@ fn main() {
         // 2026-07-10), but nothing was actually asserting it.
         let has_scalar_sqrt_or_div = body.iter().any(|l| {
             let t = l.trim_start();
-            t.starts_with("vsqrtss") || t.starts_with("vdivss") || t.starts_with("vsqrtsd") || t.starts_with("vdivsd")
+            t.starts_with("vsqrtss")
+                || t.starts_with("vdivss")
+                || t.starts_with("vsqrtsd")
+                || t.starts_with("vdivsd")
         });
         let has_packed_arith = body.iter().any(|l| {
             let t = l.trim_start();
@@ -129,7 +151,9 @@ fn main() {
                 && packed_simd.iter().any(|r| t.contains(r))
         });
         if has_call {
-            failures.push(format!("{name}: contains a `call` instruction (libm fallback / de-vectorized loop)"));
+            failures.push(format!(
+                "{name}: contains a `call` instruction (libm fallback / de-vectorized loop)"
+            ));
         }
         if has_saturating_cast {
             failures.push(format!("{name}: contains a scalar float<->int convert (cvttsd2si/cvttss2si/cvtsi2ss/cvtsi2sd -- de-vectorization)"));

@@ -38,9 +38,17 @@ fn show(v: f32) -> String {
     if v.is_nan() {
         "NaN".into()
     } else if v == 0.0 {
-        if v.is_sign_negative() { "-0".into() } else { "+0".into() }
+        if v.is_sign_negative() {
+            "-0".into()
+        } else {
+            "+0".into()
+        }
     } else if v.is_infinite() {
-        if v < 0.0 { "-inf".into() } else { "+inf".into() }
+        if v < 0.0 {
+            "-inf".into()
+        } else {
+            "+inf".into()
+        }
     } else {
         format!("{v}")
     }

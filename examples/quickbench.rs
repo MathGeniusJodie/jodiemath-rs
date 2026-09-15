@@ -56,7 +56,10 @@ fn bench_latency(name: &str, band: Band, f: impl Fn(f32) -> f32) {
         let ns = start.elapsed().as_nanos() as f64 / LAT_ITERS as f64;
         best = best.min(ns);
     }
-    println!("{:22} latency    {:6.2} ns/op (min of {REPS}, incl chain overhead)", name, best);
+    println!(
+        "{:22} latency    {:6.2} ns/op (min of {REPS}, incl chain overhead)",
+        name, best
+    );
 }
 
 // idea #78: N independent serial dependency chains interleaved in the
@@ -79,7 +82,8 @@ fn bench_latency_n(name: &str, band: Band, f: impl Fn(f32) -> f32) {
             }
         }
         black_box(xs);
-        let ns = start.elapsed().as_nanos() as f64 / (LAT_ITERS / N_STREAMS as u64 * N_STREAMS as u64) as f64;
+        let ns = start.elapsed().as_nanos() as f64
+            / (LAT_ITERS / N_STREAMS as u64 * N_STREAMS as u64) as f64;
         best = best.min(ns);
     }
     println!(
@@ -164,8 +168,16 @@ fn main() {
     bench!("rcbrt", rcbrt);
     bench!("pow_3_2", pow_3_2);
     bench!("pow_2_3", pow_2_3);
-    bench!("smoothstep", move |x: f32| smoothstep(0.0, 1.0, x), Band::Half);
-    bench!("smootherstep", move |x: f32| smootherstep(0.0, 1.0, x), Band::Half);
+    bench!(
+        "smoothstep",
+        move |x: f32| smoothstep(0.0, 1.0, x),
+        Band::Half
+    );
+    bench!(
+        "smootherstep",
+        move |x: f32| smootherstep(0.0, 1.0, x),
+        Band::Half
+    );
     bench!("exp2", exp2);
     bench!("exp2_kf", |f: f32| exp2_kf(3.0, f));
     bench!("exp2_checked", exp2_checked);
@@ -286,7 +298,9 @@ fn main() {
     bench!("atan2", move |x: f32| atan2(x, atan2_x2));
     bench!("atan2_latency", move |x: f32| atan2_latency(x, atan2_x2));
     bench!("std atan2", move |x: f32| x.atan2(atan2_x2));
-    bench!("atan2_unchecked", move |x: f32| atan2_unchecked(x, atan2_x2));
+    bench!("atan2_unchecked", move |x: f32| atan2_unchecked(
+        x, atan2_x2
+    ));
     bench!("atan2_pos", move |x: f32| atan2_pos(x, atan2_x2));
     bench!("atan2d", move |x: f32| atan2d(x, atan2_x2));
     bench!("atan2pi", move |x: f32| atan2pi(x, atan2_x2));
@@ -363,10 +377,25 @@ fn main() {
     // black_box'd 2nd arg, same reasoning as powf just above.
     let remainder_y = std::hint::black_box(3.0);
     bench!("remainder", move |x: f32| remainder(x, remainder_y));
-    bench!("remainder_unchecked", move |x: f32| remainder_unchecked(x, remainder_y));
-    bench!("remainder_checked", move |x: f32| remainder_checked(x, remainder_y));
-    bench!("remainder_ieee", move |x: f32| remainder_ieee(x, remainder_y));
-    bench!("remainder_wide", move |x: f32| remainder_wide(x, remainder_y));
+    bench!("remainder_unchecked", move |x: f32| remainder_unchecked(
+        x,
+        remainder_y
+    ));
+    bench!("remainder_checked", move |x: f32| remainder_checked(
+        x,
+        remainder_y
+    ));
+    bench!("remainder_ieee", move |x: f32| remainder_ieee(
+        x,
+        remainder_y
+    ));
+    bench!("remainder_wide", move |x: f32| remainder_wide(
+        x,
+        remainder_y
+    ));
     bench!("fmod", move |x: f32| fmod(x, remainder_y));
-    bench!("fmod_unchecked", move |x: f32| fmod_unchecked(x, remainder_y));
+    bench!("fmod_unchecked", move |x: f32| fmod_unchecked(
+        x,
+        remainder_y
+    ));
 }

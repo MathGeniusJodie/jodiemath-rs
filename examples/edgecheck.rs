@@ -18,7 +18,14 @@ fn check(name: &str, got: f32, want: f32) {
     if !ok {
         fail();
     }
-    println!("{} {:30} got {:e} (0x{:08x}) want {:e}", if ok { "ok  " } else { "FAIL" }, name, got, got.to_bits(), want);
+    println!(
+        "{} {:30} got {:e} (0x{:08x}) want {:e}",
+        if ok { "ok  " } else { "FAIL" },
+        name,
+        got,
+        got.to_bits(),
+        want
+    );
 }
 
 /// Same as `check`, but for a mismatch that's a known/accepted 1-ulp
@@ -27,14 +34,27 @@ fn check(name: &str, got: f32, want: f32) {
 /// scrollback or get flagged by an unrelated task.
 fn check_known_1ulp(name: &str, got: f32, want: f32) {
     let ok = (got.is_nan() && want.is_nan()) || (got.to_bits() == want.to_bits());
-    println!("{} {:30} got {:e} (0x{:08x}) want {:e}", if ok { "ok  " } else { "known" }, name, got, got.to_bits(), want);
+    println!(
+        "{} {:30} got {:e} (0x{:08x}) want {:e}",
+        if ok { "ok  " } else { "known" },
+        name,
+        got,
+        got.to_bits(),
+        want
+    );
 }
 
 fn check_finite(name: &str, got: f32) {
     if !got.is_finite() {
         fail();
     }
-    println!("{} {:30} got {:e} (0x{:08x}) (finite)", if got.is_finite() { "ok  " } else { "FAIL" }, name, got, got.to_bits());
+    println!(
+        "{} {:30} got {:e} (0x{:08x}) (finite)",
+        if got.is_finite() { "ok  " } else { "FAIL" },
+        name,
+        got,
+        got.to_bits()
+    );
 }
 
 /// Stronger than `check_finite`: also asserts `|got| <= bound`. Added
@@ -80,10 +100,18 @@ fn check_range(name: &str, got: f32, lo: f32, hi: f32) {
 fn ulp_diff(a: f32, b: f32) -> u64 {
     fn ord(x: f32) -> i64 {
         let b = x.to_bits();
-        if b & 0x8000_0000 != 0 { -((b & 0x7fff_ffff) as i64) } else { b as i64 }
+        if b & 0x8000_0000 != 0 {
+            -((b & 0x7fff_ffff) as i64)
+        } else {
+            b as i64
+        }
     }
     if a.is_nan() || b.is_nan() {
-        return if a.is_nan() == b.is_nan() { 0 } else { u64::MAX };
+        return if a.is_nan() == b.is_nan() {
+            0
+        } else {
+            u64::MAX
+        };
     }
     (ord(a) - ord(b)).unsigned_abs()
 }
@@ -163,8 +191,16 @@ fn real_main() {
     let nan_b = f32::from_bits(0xffc0_5678);
     assert_eq!(ulp_diff(nan_a, nan_b), 0, "NaN vs NaN must be 0 ulp");
     assert_eq!(ulp_diff(f32::NAN, f32::NAN), 0, "NaN vs NaN must be 0 ulp");
-    assert_eq!(ulp_diff(nan_a, 1.0), u64::MAX, "one-sided NaN must be maximal");
-    assert_eq!(ulp_diff(1.0, nan_b), u64::MAX, "one-sided NaN must be maximal");
+    assert_eq!(
+        ulp_diff(nan_a, 1.0),
+        u64::MAX,
+        "one-sided NaN must be maximal"
+    );
+    assert_eq!(
+        ulp_diff(1.0, nan_b),
+        u64::MAX,
+        "one-sided NaN must be maximal"
+    );
 
     // log_2
     check("log_2(0)", log_2(0.0), f32::NEG_INFINITY);
@@ -173,18 +209,46 @@ fn real_main() {
     check("log_2(-inf)", log_2(f32::NEG_INFINITY), f32::NAN);
     check("log_2(inf)", log_2(f32::INFINITY), f32::INFINITY);
     check("log_2(nan)", log_2(f32::NAN), f32::NAN);
-    check("log_2(1e-39)", log_2(1e-39), (1e-39f32 as f64).log2() as f32);
-    check("log_2(min_denorm)", log_2(f32::from_bits(1)), (f32::from_bits(1) as f64).log2() as f32);
+    check(
+        "log_2(1e-39)",
+        log_2(1e-39),
+        (1e-39f32 as f64).log2() as f32,
+    );
+    check(
+        "log_2(min_denorm)",
+        log_2(f32::from_bits(1)),
+        (f32::from_bits(1) as f64).log2() as f32,
+    );
     check("log_2(1)", log_2(1.0), 0.0);
     // log_2_unchecked: only test inside its documented domain (positive
     // normal finite) -- must match log_2 exactly there, bit for bit.
     check("log_2_unchecked(1)", log_2_unchecked(1.0), 0.0);
-    check("log_2_unchecked(f32::MAX)", log_2_unchecked(f32::MAX), log_2(f32::MAX));
-    check("log_2_unchecked(f32::MIN_POSITIVE)", log_2_unchecked(f32::MIN_POSITIVE), log_2(f32::MIN_POSITIVE));
+    check(
+        "log_2_unchecked(f32::MAX)",
+        log_2_unchecked(f32::MAX),
+        log_2(f32::MAX),
+    );
+    check(
+        "log_2_unchecked(f32::MIN_POSITIVE)",
+        log_2_unchecked(f32::MIN_POSITIVE),
+        log_2(f32::MIN_POSITIVE),
+    );
     // exp2 (unchecked): only test inside its documented domain [-126, 128)
-    check("exp2(127.9999)", exp2(127.9999), (127.9999f32 as f64).exp2() as f32);
-    check("exp2(-125.9)", exp2(-125.9), ((-125.9f32) as f64).exp2() as f32);
-    check("exp2(-126)", exp2(-126.0), ((-126.0f32) as f64).exp2() as f32);
+    check(
+        "exp2(127.9999)",
+        exp2(127.9999),
+        (127.9999f32 as f64).exp2() as f32,
+    );
+    check(
+        "exp2(-125.9)",
+        exp2(-125.9),
+        ((-125.9f32) as f64).exp2() as f32,
+    );
+    check(
+        "exp2(-126)",
+        exp2(-126.0),
+        ((-126.0f32) as f64).exp2() as f32,
+    );
     check("exp2(0)", exp2(0.0), 1.0);
     // exp2_kf (backlog idea #116): exp2's own combine, k/f supplied
     // directly -- bit-identical to exp2(x) when fed exp2's own
@@ -199,14 +263,34 @@ fn real_main() {
     }
     // exp2_checked: full range
     check("exp2_checked(128)", exp2_checked(128.0), f32::INFINITY);
-    check("exp2_checked(127.9999)", exp2_checked(127.9999), (127.9999f32 as f64).exp2() as f32);
+    check(
+        "exp2_checked(127.9999)",
+        exp2_checked(127.9999),
+        (127.9999f32 as f64).exp2() as f32,
+    );
     check("exp2_checked(1000)", exp2_checked(1000.0), f32::INFINITY);
-    check("exp2_checked(inf)", exp2_checked(f32::INFINITY), f32::INFINITY);
+    check(
+        "exp2_checked(inf)",
+        exp2_checked(f32::INFINITY),
+        f32::INFINITY,
+    );
     check("exp2_checked(-inf)", exp2_checked(f32::NEG_INFINITY), 0.0);
     check("exp2_checked(nan)", exp2_checked(f32::NAN), f32::NAN);
-    check("exp2_checked(-125.9)", exp2_checked(-125.9), ((-125.9f32) as f64).exp2() as f32);
-    check("exp2_checked(-126.5)", exp2_checked(-126.5), ((-126.5f32) as f64).exp2() as f32);
-    check("exp2_checked(-149)", exp2_checked(-149.0), f32::from_bits(1));
+    check(
+        "exp2_checked(-125.9)",
+        exp2_checked(-125.9),
+        ((-125.9f32) as f64).exp2() as f32,
+    );
+    check(
+        "exp2_checked(-126.5)",
+        exp2_checked(-126.5),
+        ((-126.5f32) as f64).exp2() as f32,
+    );
+    check(
+        "exp2_checked(-149)",
+        exp2_checked(-149.0),
+        f32::from_bits(1),
+    );
     check("exp2_checked(-150)", exp2_checked(-150.0), 0.0);
     check("exp2_checked(-1000)", exp2_checked(-1000.0), 0.0);
     check("exp2_checked(0)", exp2_checked(0.0), 1.0);
@@ -220,21 +304,37 @@ fn real_main() {
     check("ldexp(0,5)", ldexp(0.0, 5), 0.0);
     check("ldexp(-0,5)", ldexp(-0.0, 5), -0.0);
     check("ldexp(inf,5)", ldexp(f32::INFINITY, 5), f32::INFINITY);
-    check("ldexp(-inf,5)", ldexp(f32::NEG_INFINITY, 5), f32::NEG_INFINITY);
+    check(
+        "ldexp(-inf,5)",
+        ldexp(f32::NEG_INFINITY, 5),
+        f32::NEG_INFINITY,
+    );
     check("ldexp(nan,5)", ldexp(f32::NAN, 5), f32::NAN);
     check("ldexp(1,0)", ldexp(1.0, 0), 1.0);
     check("ldexp(1,3)", ldexp(1.0, 3), 8.0);
     check("ldexp(1,-3)", ldexp(1.0, -3), 0.125);
     check("ldexp(f32::MAX,0)", ldexp(f32::MAX, 0), f32::MAX);
     check("ldexp(f32::MAX,1)", ldexp(f32::MAX, 1), f32::INFINITY);
-    check("ldexp(f32::MIN_POSITIVE,-1000)", ldexp(f32::MIN_POSITIVE, -1000), 0.0);
+    check(
+        "ldexp(f32::MIN_POSITIVE,-1000)",
+        ldexp(f32::MIN_POSITIVE, -1000),
+        0.0,
+    );
     // real bug #1 (premature overflow: x's own magnitude should have
     // compensated for n past exp2_checked's own clamp, but didn't).
-    check("ldexp(7.26589e-9,148)", ldexp(7.26589e-9, 148), 2.5925562e36);
+    check(
+        "ldexp(7.26589e-9,148)",
+        ldexp(7.26589e-9, 148),
+        2.5925562e36,
+    );
     // real bug #2 (grossly-out-of-range clamped down to the reconstruction
     // boundary instead of saturating -- true answer overflows regardless
     // of mantissa).
-    check("ldexp(-224910930000000,148)", ldexp(-224910930000000.0, 148), f32::NEG_INFINITY);
+    check(
+        "ldexp(-224910930000000,148)",
+        ldexp(-224910930000000.0, 148),
+        f32::NEG_INFINITY,
+    );
     check("frexp(0).0", frexp(0.0).0, 0.0);
     check("frexp(0).1", frexp(0.0).1 as f32, 0.0);
     check("frexp(-0).0", frexp(-0.0).0, -0.0);
@@ -247,23 +347,51 @@ fn real_main() {
 
     // cbrt
     for f in [cbrt as fn(f32) -> f32, cbrt_accurate as fn(f32) -> f32] {
-        let n = if std::ptr::fn_addr_eq(f, cbrt as fn(f32) -> f32) { "cbrt" } else { "cbrt_acc" };
+        let n = if std::ptr::fn_addr_eq(f, cbrt as fn(f32) -> f32) {
+            "cbrt"
+        } else {
+            "cbrt_acc"
+        };
         check(&format!("{n}(0)"), f(0.0), 0.0);
         check(&format!("{n}(-0)"), f(-0.0), -0.0);
         check(&format!("{n}(inf)"), f(f32::INFINITY), f32::INFINITY);
-        check(&format!("{n}(-inf)"), f(f32::NEG_INFINITY), f32::NEG_INFINITY);
+        check(
+            &format!("{n}(-inf)"),
+            f(f32::NEG_INFINITY),
+            f32::NEG_INFINITY,
+        );
         check(&format!("{n}(nan)"), f(f32::NAN), f32::NAN);
         check(&format!("{n}(8)"), f(8.0), 2.0);
         check(&format!("{n}(-8)"), f(-8.0), -2.0);
-        check(&format!("{n}(1e-39)"), f(1e-39), ((1e-39f32 as f64).cbrt()) as f32);
-        check(&format!("{n}(-1e-39)"), f(-1e-39), ((-1e-39f32 as f64).cbrt()) as f32);
+        check(
+            &format!("{n}(1e-39)"),
+            f(1e-39),
+            ((1e-39f32 as f64).cbrt()) as f32,
+        );
+        check(
+            &format!("{n}(-1e-39)"),
+            f(-1e-39),
+            ((-1e-39f32 as f64).cbrt()) as f32,
+        );
         // plain cbrt (not cbrt_accurate) is 1 ulp off at these two points --
         // a known, accepted cost of the degree5->degree3 seed-correction
         // cut (see readme.md's cbrt section); not a regression, won't fix.
         let check_min_max = if n == "cbrt" { check_known_1ulp } else { check };
-        check_min_max(&format!("{n}(min_denorm)"), f(f32::from_bits(1)), ((f32::from_bits(1) as f64).cbrt()) as f32);
-        check_min_max(&format!("{n}(max)"), f(f32::MAX), ((f32::MAX as f64).cbrt()) as f32);
-        check(&format!("{n}(2^-57)"), f(f32::from_bits(0x2300_0000)), ((f32::from_bits(0x2300_0000) as f64).cbrt()) as f32);
+        check_min_max(
+            &format!("{n}(min_denorm)"),
+            f(f32::from_bits(1)),
+            ((f32::from_bits(1) as f64).cbrt()) as f32,
+        );
+        check_min_max(
+            &format!("{n}(max)"),
+            f(f32::MAX),
+            ((f32::MAX as f64).cbrt()) as f32,
+        );
+        check(
+            &format!("{n}(2^-57)"),
+            f(f32::from_bits(0x2300_0000)),
+            ((f32::from_bits(0x2300_0000) as f64).cbrt()) as f32,
+        );
     }
     // cbrt/cbrt_accurate's own zero/inf/nan special cases (2026-07-10):
     // neither had ever had a direct pin -- only exercised indirectly via
@@ -278,8 +406,16 @@ fn real_main() {
     check("cbrt(nan)", cbrt(f32::NAN), f32::NAN);
     check("cbrt_accurate(0)", cbrt_accurate(0.0), 0.0);
     check("cbrt_accurate(-0)", cbrt_accurate(-0.0), -0.0);
-    check("cbrt_accurate(inf)", cbrt_accurate(f32::INFINITY), f32::INFINITY);
-    check("cbrt_accurate(-inf)", cbrt_accurate(f32::NEG_INFINITY), f32::NEG_INFINITY);
+    check(
+        "cbrt_accurate(inf)",
+        cbrt_accurate(f32::INFINITY),
+        f32::INFINITY,
+    );
+    check(
+        "cbrt_accurate(-inf)",
+        cbrt_accurate(f32::NEG_INFINITY),
+        f32::NEG_INFINITY,
+    );
     check("cbrt_accurate(nan)", cbrt_accurate(f32::NAN), f32::NAN);
     check("cbrt_accurate(-8)", cbrt_accurate(-8.0), -2.0);
     check("cbrt_accurate(27)", cbrt_accurate(27.0), 3.0);
@@ -288,16 +424,40 @@ fn real_main() {
     // ~200M-sample fuzz, not preserved in-repo; permanent regression guard).
     check("cbrt_unchecked(8)", cbrt_unchecked(8.0), cbrt(8.0));
     check("cbrt_unchecked(-8)", cbrt_unchecked(-8.0), cbrt(-8.0));
-    check("cbrt_unchecked(max)", cbrt_unchecked(f32::MAX), cbrt(f32::MAX));
-    check("cbrt_unchecked(min_normal)", cbrt_unchecked(f32::MIN_POSITIVE), cbrt(f32::MIN_POSITIVE));
+    check(
+        "cbrt_unchecked(max)",
+        cbrt_unchecked(f32::MAX),
+        cbrt(f32::MAX),
+    );
+    check(
+        "cbrt_unchecked(min_normal)",
+        cbrt_unchecked(f32::MIN_POSITIVE),
+        cbrt(f32::MIN_POSITIVE),
+    );
     // cbrt_accurate_unchecked: contract is x already inside cbrt_accurate's
     // own safe rescale range (roughly 2^-56 to 2^127) -- must match
     // cbrt_accurate inside that domain (verified more thoroughly via a
     // ~143M-sample fuzz, not preserved in-repo; permanent regression guard).
-    check("cbrt_accurate_unchecked(8)", cbrt_accurate_unchecked(8.0), cbrt_accurate(8.0));
-    check("cbrt_accurate_unchecked(-8)", cbrt_accurate_unchecked(-8.0), cbrt_accurate(-8.0));
-    check("cbrt_accurate_unchecked(1e30)", cbrt_accurate_unchecked(1e30), cbrt_accurate(1e30));
-    check("cbrt_accurate_unchecked(1e-16)", cbrt_accurate_unchecked(1e-16), cbrt_accurate(1e-16));
+    check(
+        "cbrt_accurate_unchecked(8)",
+        cbrt_accurate_unchecked(8.0),
+        cbrt_accurate(8.0),
+    );
+    check(
+        "cbrt_accurate_unchecked(-8)",
+        cbrt_accurate_unchecked(-8.0),
+        cbrt_accurate(-8.0),
+    );
+    check(
+        "cbrt_accurate_unchecked(1e30)",
+        cbrt_accurate_unchecked(1e30),
+        cbrt_accurate(1e30),
+    );
+    check(
+        "cbrt_accurate_unchecked(1e-16)",
+        cbrt_accurate_unchecked(1e-16),
+        cbrt_accurate(1e-16),
+    );
 
     // rcbrt has its own inverse-cbrt seed rather than composing cbrt with a
     // division, so these no longer fall out of IEEE754 semantics for free:
@@ -350,10 +510,15 @@ fn real_main() {
         sin_wide as fn(f32) -> f32,
         cos_wide as fn(f32) -> f32,
     ] {
-        let n = if std::ptr::fn_addr_eq(f, sin_checked as fn(f32) -> f32) { "sin_checked" }
-            else if std::ptr::fn_addr_eq(f, cos_checked as fn(f32) -> f32) { "cos_checked" }
-            else if std::ptr::fn_addr_eq(f, sin_wide as fn(f32) -> f32) { "sin_wide" }
-            else { "cos_wide" };
+        let n = if std::ptr::fn_addr_eq(f, sin_checked as fn(f32) -> f32) {
+            "sin_checked"
+        } else if std::ptr::fn_addr_eq(f, cos_checked as fn(f32) -> f32) {
+            "cos_checked"
+        } else if std::ptr::fn_addr_eq(f, sin_wide as fn(f32) -> f32) {
+            "sin_wide"
+        } else {
+            "cos_wide"
+        };
         check(&format!("{n}(nan)"), f(f32::NAN), f32::NAN);
         check(&format!("{n}(inf)"), f(f32::INFINITY), f32::NAN);
         check(&format!("{n}(-inf)"), f(f32::NEG_INFINITY), f32::NAN);
@@ -386,9 +551,17 @@ fn real_main() {
     // sin as the reference poly, not this crate's own private sinf_poly.
     for &x in &[0.0f32, 1.0, 3.0, 100.0, -7.5, 1e6, -1e9] {
         let (r, sign) = reduce_pi_checked(x);
-        check_bounded(&format!("reduce_pi_checked({x})"), sign * r.sin() - sin_checked(x), 1e-4);
+        check_bounded(
+            &format!("reduce_pi_checked({x})"),
+            sign * r.sin() - sin_checked(x),
+            1e-4,
+        );
         let (rc, signc) = reduce_pi_half_checked(x);
-        check_bounded(&format!("reduce_pi_half_checked({x})"), signc * rc.sin() - cos_checked(x), 1e-4);
+        check_bounded(
+            &format!("reduce_pi_half_checked({x})"),
+            signc * rc.sin() - cos_checked(x),
+            1e-4,
+        );
     }
 
     // wrap_pi (backlog idea #126): wraps to (-pi, pi], riding
@@ -407,7 +580,11 @@ fn real_main() {
     // for the property the -0.0 case is the boundary of.
     check("wrap_pi(0.5)", wrap_pi(0.5), 0.5);
     check("wrap_pi(-0.5)", wrap_pi(-0.5), -0.5);
-    check("wrap_pi(min_denorm)", wrap_pi(f32::from_bits(1)), f32::from_bits(1));
+    check(
+        "wrap_pi(min_denorm)",
+        wrap_pi(f32::from_bits(1)),
+        f32::from_bits(1),
+    );
     check(
         "wrap_pi(-min_denorm)",
         wrap_pi(-f32::from_bits(1)),
@@ -420,8 +597,16 @@ fn real_main() {
     check("wrap_pi(-pi)", wrap_pi(-std::f32::consts::PI), WRAP_PI_MAX);
     for &x in &[1.0f32, 3.0, 4.0, -4.0, 100.0, -1e9, 1e6] {
         let w = wrap_pi(x);
-        check_bounded(&format!("sin(wrap_pi({x}))-sin_checked({x})"), w.sin() - sin_checked(x), 1e-4);
-        check_bounded(&format!("cos(wrap_pi({x}))-cos_checked({x})"), w.cos() - cos_checked(x), 1e-4);
+        check_bounded(
+            &format!("sin(wrap_pi({x}))-sin_checked({x})"),
+            w.sin() - sin_checked(x),
+            1e-4,
+        );
+        check_bounded(
+            &format!("cos(wrap_pi({x}))-cos_checked({x})"),
+            w.cos() - cos_checked(x),
+            1e-4,
+        );
     }
     // The range invariant itself, at every magnitude -- including the
     // regime where the reduction has lost all its precision. wrap_pi rode
@@ -452,7 +637,11 @@ fn real_main() {
         // and the input whose old result was worst, |w| = 1.1e24
         f32::from_bits(0x7f7ff72f),
     ] {
-        check_bounded(&format!("wrap_pi({x:e}) in (-pi,pi]"), wrap_pi(x), WRAP_PI_MAX);
+        check_bounded(
+            &format!("wrap_pi({x:e}) in (-pi,pi]"),
+            wrap_pi(x),
+            WRAP_PI_MAX,
+        );
     }
     check("wrap_pi(nan)", wrap_pi(f32::NAN), f32::NAN);
     // the clamp must not turn an infinite input into +-WRAP_PI_MAX: both
@@ -469,12 +658,24 @@ fn real_main() {
     // level primitive's contract).
     check("sin_prereduced(0)", sin_prereduced(0.0), 0.0);
     check("cos_prereduced(0)", cos_prereduced(0.0), 0.0);
-    check("sin_prereduced(cos_prereduced same fn)", sin_prereduced(0.7), cos_prereduced(0.7));
+    check(
+        "sin_prereduced(cos_prereduced same fn)",
+        sin_prereduced(0.7),
+        cos_prereduced(0.7),
+    );
     for &x in &[0.3f32, -0.9, 1.5, -1.5, 100.0, -1e6] {
         let (r, sign) = reduce_pi_checked(x);
-        check_bounded(&format!("sin_prereduced reconstructs sin_checked({x})"), sign * sin_prereduced(r) - sin_checked(x), 1e-6);
+        check_bounded(
+            &format!("sin_prereduced reconstructs sin_checked({x})"),
+            sign * sin_prereduced(r) - sin_checked(x),
+            1e-6,
+        );
         let (rc, signc) = reduce_pi_half_checked(x);
-        check_bounded(&format!("cos_prereduced reconstructs cos_checked({x})"), signc * cos_prereduced(rc) - cos_checked(x), 1e-6);
+        check_bounded(
+            &format!("cos_prereduced reconstructs cos_checked({x})"),
+            signc * cos_prereduced(rc) - cos_checked(x),
+            1e-6,
+        );
     }
 
     // sinpi/cospi: argument in half-turns, q=round(x)/r=x-q both exact in
@@ -542,7 +743,6 @@ fn real_main() {
         check(&format!("cospi(-{x}) == cospi({x})"), cospi(-x), cospi(x));
     }
 
-
     // tanpi(x): direct poly + cotangent reflection (backlog idea #128,
     // superseding the original sinpi(x)/cospi(x) ratio, idea #29).
     // Poles at half-integer x are real (an exact `1.0/0.0` in
@@ -607,15 +807,31 @@ fn real_main() {
         sinc_unnormalized(std::f32::consts::FRAC_PI_2),
         std::f32::consts::FRAC_2_PI,
     );
-    check("sinc_unnormalized(nan)", sinc_unnormalized(f32::NAN), f32::NAN);
-    check("sinc_unnormalized(inf)", sinc_unnormalized(f32::INFINITY), f32::NAN);
-    check("sinc_unnormalized(-inf)", sinc_unnormalized(f32::NEG_INFINITY), f32::NAN);
+    check(
+        "sinc_unnormalized(nan)",
+        sinc_unnormalized(f32::NAN),
+        f32::NAN,
+    );
+    check(
+        "sinc_unnormalized(inf)",
+        sinc_unnormalized(f32::INFINITY),
+        f32::NAN,
+    );
+    check(
+        "sinc_unnormalized(-inf)",
+        sinc_unnormalized(f32::NEG_INFINITY),
+        f32::NAN,
+    );
     check(
         "sinc_unnormalized(-1)==sinc_unnormalized(1)",
         sinc_unnormalized(-1.0),
         sinc_unnormalized(1.0),
     );
-    check_bounded("sinc_unnormalized(f32::MAX)", sinc_unnormalized(f32::MAX), 1.0);
+    check_bounded(
+        "sinc_unnormalized(f32::MAX)",
+        sinc_unnormalized(f32::MAX),
+        1.0,
+    );
 
     // sind/cosd: argument in degrees. Exact reduction only up to ~4.7e7
     // (180.0's own trailing-zero-bit limit, see sind's doc comment) --
@@ -654,9 +870,21 @@ fn real_main() {
     check("sind_unchecked(-90)", sind_unchecked(-90.0), sind(-90.0));
     check("sind_unchecked(nan)", sind_unchecked(f32::NAN), f32::NAN);
     check("cosd_unchecked(nan)", cosd_unchecked(f32::NAN), f32::NAN);
-    check("sind_unchecked(inf)", sind_unchecked(f32::INFINITY), f32::NAN);
-    check("sind_unchecked(-inf)", sind_unchecked(f32::NEG_INFINITY), f32::NAN);
-    check("cosd_unchecked(inf)", cosd_unchecked(f32::INFINITY), f32::NAN);
+    check(
+        "sind_unchecked(inf)",
+        sind_unchecked(f32::INFINITY),
+        f32::NAN,
+    );
+    check(
+        "sind_unchecked(-inf)",
+        sind_unchecked(f32::NEG_INFINITY),
+        f32::NAN,
+    );
+    check(
+        "cosd_unchecked(inf)",
+        cosd_unchecked(f32::INFINITY),
+        f32::NAN,
+    );
 
     // tand(x) = sind(x)/cosd(x): new function (backlog idea #29), same
     // "poles are real, IEEE754 division handles them for free" reasoning
@@ -680,9 +908,17 @@ fn real_main() {
     check("tand_unchecked(-0)", tand_unchecked(-0.0), -0.0);
     check("tand_unchecked(45)", tand_unchecked(45.0), 1.0);
     check("tand_unchecked(180)", tand_unchecked(180.0), tand(180.0));
-    check("tand_unchecked(90)", tand_unchecked(90.0), f32::NEG_INFINITY);
+    check(
+        "tand_unchecked(90)",
+        tand_unchecked(90.0),
+        f32::NEG_INFINITY,
+    );
     check("tand_unchecked(nan)", tand_unchecked(f32::NAN), f32::NAN);
-    check("tand_unchecked(inf)", tand_unchecked(f32::INFINITY), f32::NAN);
+    check(
+        "tand_unchecked(inf)",
+        tand_unchecked(f32::INFINITY),
+        f32::NAN,
+    );
 
     // ln/log10/log1p: same zero/negative/inf edges as log_2 (they're all
     // log_2 rescaled or composed with it).
@@ -692,13 +928,29 @@ fn real_main() {
     // ln_unchecked/log10_unchecked: same contract as log_2_unchecked, must
     // match ln/log10 exactly on positive normal finite input.
     check("ln_unchecked(1)", ln_unchecked(1.0), 0.0);
-    check("ln_unchecked(f32::MAX)", ln_unchecked(f32::MAX), ln(f32::MAX));
-    check("ln_unchecked(f32::MIN_POSITIVE)", ln_unchecked(f32::MIN_POSITIVE), ln(f32::MIN_POSITIVE));
+    check(
+        "ln_unchecked(f32::MAX)",
+        ln_unchecked(f32::MAX),
+        ln(f32::MAX),
+    );
+    check(
+        "ln_unchecked(f32::MIN_POSITIVE)",
+        ln_unchecked(f32::MIN_POSITIVE),
+        ln(f32::MIN_POSITIVE),
+    );
     check("log10(0)", log10(0.0), f32::NEG_INFINITY);
     check("log10(100)", log10(100.0), 2.0);
     check("log10_unchecked(100)", log10_unchecked(100.0), 2.0);
-    check("log10_unchecked(f32::MAX)", log10_unchecked(f32::MAX), log10(f32::MAX));
-    check("log10_unchecked(f32::MIN_POSITIVE)", log10_unchecked(f32::MIN_POSITIVE), log10(f32::MIN_POSITIVE));
+    check(
+        "log10_unchecked(f32::MAX)",
+        log10_unchecked(f32::MAX),
+        log10(f32::MAX),
+    );
+    check(
+        "log10_unchecked(f32::MIN_POSITIVE)",
+        log10_unchecked(f32::MIN_POSITIVE),
+        log10(f32::MIN_POSITIVE),
+    );
     check("log1p(0)", log1p(0.0), 0.0);
     check("log1p(-1)", log1p(-1.0), f32::NEG_INFINITY);
     check("log1p(-2)", log1p(-2.0), f32::NAN);
@@ -763,9 +1015,21 @@ fn real_main() {
     check("exp_scaled(0,0)", exp_scaled(0.0, 0), 1.0);
     check("exp_scaled(0,1)", exp_scaled(0.0, 1), 2.0);
     check("exp_scaled(0,-1)", exp_scaled(0.0, -1), 0.5);
-    check_bounded("exp_scaled(1,0)-exp(1)", exp_scaled(1.0, 0) - exp(1.0), 1e-6);
-    check_bounded("exp_scaled(10,5)-1", exp_scaled(10.0, 5) / (exp(10.0) * 32.0) - 1.0, 1e-5);
-    check_bounded("exp_scaled(-10,-5)-1", exp_scaled(-10.0, -5) / (exp(-10.0) / 32.0) - 1.0, 1e-5);
+    check_bounded(
+        "exp_scaled(1,0)-exp(1)",
+        exp_scaled(1.0, 0) - exp(1.0),
+        1e-6,
+    );
+    check_bounded(
+        "exp_scaled(10,5)-1",
+        exp_scaled(10.0, 5) / (exp(10.0) * 32.0) - 1.0,
+        1e-5,
+    );
+    check_bounded(
+        "exp_scaled(-10,-5)-1",
+        exp_scaled(-10.0, -5) / (exp(-10.0) / 32.0) - 1.0,
+        1e-5,
+    );
     check("exp_scaled(nan,0)", exp_scaled(f32::NAN, 0), f32::NAN);
 
     // exp_narrow (backlog ideas #23/#112): same reduction/poly as exp,
@@ -785,7 +1049,11 @@ fn real_main() {
     check_finite("exp_checked(88.37628)", exp_checked(88.37628));
     check("exp_checked(1000)", exp_checked(1000.0), f32::INFINITY);
     check("exp_checked(-1000)", exp_checked(-1000.0), 0.0);
-    check("exp_checked(inf)", exp_checked(f32::INFINITY), f32::INFINITY);
+    check(
+        "exp_checked(inf)",
+        exp_checked(f32::INFINITY),
+        f32::INFINITY,
+    );
     check("exp_checked(-inf)", exp_checked(f32::NEG_INFINITY), 0.0);
     check("exp_checked(nan)", exp_checked(f32::NAN), f32::NAN);
 
@@ -794,7 +1062,11 @@ fn real_main() {
     check("exp10(2)", exp10(2.0), 100.0);
     check("exp10_checked(0)", exp10_checked(0.0), 1.0);
     check("exp10_checked(1)", exp10_checked(1.0), 10.0);
-    check("exp10_checked(inf)", exp10_checked(f32::INFINITY), f32::INFINITY);
+    check(
+        "exp10_checked(inf)",
+        exp10_checked(f32::INFINITY),
+        f32::INFINITY,
+    );
     check("exp10_checked(-inf)", exp10_checked(f32::NEG_INFINITY), 0.0);
     check("exp10_checked(nan)", exp10_checked(f32::NAN), f32::NAN);
     check_finite("exp10_checked(38.5)", exp10_checked(38.5));
@@ -808,7 +1080,11 @@ fn real_main() {
     check_finite("expm1_narrow(88.37627)", expm1_narrow(88.37627));
     check_finite("expm1_narrow(-87.68311)", expm1_narrow(-87.68311));
     check("expm1_narrow(1)==expm1(1)", expm1_narrow(1.0), expm1(1.0));
-    check("expm1_narrow(60)==expm1(60)", expm1_narrow(60.0), expm1(60.0));
+    check(
+        "expm1_narrow(60)==expm1(60)",
+        expm1_narrow(60.0),
+        expm1(60.0),
+    );
 
     // expm1_checked (backlog idea #111): single exponent field like
     // expm1_narrow, but total, because the field is emitted at k-1 so k can
@@ -818,20 +1094,40 @@ fn real_main() {
     // the inf/-1 pairs below are the regression gate for it.
     check("expm1_checked(0)", expm1_checked(0.0), 0.0);
     check("expm1_checked(-0)", expm1_checked(-0.0), -0.0);
-    check("expm1_checked(inf)", expm1_checked(f32::INFINITY), f32::INFINITY);
-    check("expm1_checked(-inf)", expm1_checked(f32::NEG_INFINITY), -1.0);
+    check(
+        "expm1_checked(inf)",
+        expm1_checked(f32::INFINITY),
+        f32::INFINITY,
+    );
+    check(
+        "expm1_checked(-inf)",
+        expm1_checked(f32::NEG_INFINITY),
+        -1.0,
+    );
     check("expm1_checked(nan)", expm1_checked(f32::NAN), f32::NAN);
-    check("expm1_checked(f32::MAX)", expm1_checked(f32::MAX), f32::INFINITY);
+    check(
+        "expm1_checked(f32::MAX)",
+        expm1_checked(f32::MAX),
+        f32::INFINITY,
+    );
     check("expm1_checked(f32::MIN)", expm1_checked(f32::MIN), -1.0);
     check("expm1_checked(-100)", expm1_checked(-100.0), -1.0);
     // Saturation boundary, +-1 ulp around it (idea #165's pattern): just
     // below ln(f32::MAX) must stay finite, at/above must be inf.
     check_finite("expm1_checked(88.72283)", expm1_checked(88.72283));
-    check("expm1_checked(88.72284)", expm1_checked(88.72284), f32::INFINITY);
+    check(
+        "expm1_checked(88.72284)",
+        expm1_checked(88.72284),
+        f32::INFINITY,
+    );
     check("expm1_checked(1e10)", expm1_checked(1e10), f32::INFINITY);
     // Bit-identical to expm1 everywhere expm1 is itself valid.
     check("expm1_checked(1)==expm1(1)", expm1_checked(1.0), expm1(1.0));
-    check("expm1_checked(60)==expm1(60)", expm1_checked(60.0), expm1(60.0));
+    check(
+        "expm1_checked(60)==expm1(60)",
+        expm1_checked(60.0),
+        expm1(60.0),
+    );
     check(
         "expm1_checked(-20)==expm1(-20)",
         expm1_checked(-20.0),
@@ -849,14 +1145,24 @@ fn real_main() {
     // select needed, unlike sinc's own removable-singularity handling.
     check("exp_m1_over_x(0)", exp_m1_over_x(0.0), 1.0);
     check("exp_m1_over_x(-0)", exp_m1_over_x(-0.0), 1.0);
-    check_known_1ulp("exp_m1_over_x(1)", exp_m1_over_x(1.0), (1.0f64.exp_m1()) as f32);
+    check_known_1ulp(
+        "exp_m1_over_x(1)",
+        exp_m1_over_x(1.0),
+        (1.0f64.exp_m1()) as f32,
+    );
     check_finite("exp_m1_over_x(80)", exp_m1_over_x(80.0));
 
     // exp_m1_over_x_narrow (backlog idea #201): same single-field
     // mechanism/domain as exp_narrow/expm1_narrow.
     check("exp_m1_over_x_narrow(0)", exp_m1_over_x_narrow(0.0), 1.0);
-    check_finite("exp_m1_over_x_narrow(88.37627)", exp_m1_over_x_narrow(88.37627));
-    check_finite("exp_m1_over_x_narrow(-87.68311)", exp_m1_over_x_narrow(-87.68311));
+    check_finite(
+        "exp_m1_over_x_narrow(88.37627)",
+        exp_m1_over_x_narrow(88.37627),
+    );
+    check_finite(
+        "exp_m1_over_x_narrow(-87.68311)",
+        exp_m1_over_x_narrow(-87.68311),
+    );
     check(
         "exp_m1_over_x_narrow(1)==exp_m1_over_x(1)",
         exp_m1_over_x_narrow(1.0),
@@ -932,13 +1238,33 @@ fn real_main() {
     check("sinh_checked(0)", sinh_checked(0.0), 0.0);
     check("cosh_checked(0)", cosh_checked(0.0), 1.0);
     check("sinh_checked(1000)", sinh_checked(1000.0), f32::INFINITY);
-    check("sinh_checked(-1000)", sinh_checked(-1000.0), f32::NEG_INFINITY);
+    check(
+        "sinh_checked(-1000)",
+        sinh_checked(-1000.0),
+        f32::NEG_INFINITY,
+    );
     check("cosh_checked(1000)", cosh_checked(1000.0), f32::INFINITY);
     check("cosh_checked(-1000)", cosh_checked(-1000.0), f32::INFINITY);
-    check("sinh_checked(inf)", sinh_checked(f32::INFINITY), f32::INFINITY);
-    check("sinh_checked(-inf)", sinh_checked(f32::NEG_INFINITY), f32::NEG_INFINITY);
-    check("cosh_checked(inf)", cosh_checked(f32::INFINITY), f32::INFINITY);
-    check("cosh_checked(-inf)", cosh_checked(f32::NEG_INFINITY), f32::INFINITY);
+    check(
+        "sinh_checked(inf)",
+        sinh_checked(f32::INFINITY),
+        f32::INFINITY,
+    );
+    check(
+        "sinh_checked(-inf)",
+        sinh_checked(f32::NEG_INFINITY),
+        f32::NEG_INFINITY,
+    );
+    check(
+        "cosh_checked(inf)",
+        cosh_checked(f32::INFINITY),
+        f32::INFINITY,
+    );
+    check(
+        "cosh_checked(-inf)",
+        cosh_checked(f32::NEG_INFINITY),
+        f32::INFINITY,
+    );
     check("sinh_checked(nan)", sinh_checked(f32::NAN), f32::NAN);
     check("cosh_checked(nan)", cosh_checked(f32::NAN), f32::NAN);
 
@@ -988,12 +1314,20 @@ fn real_main() {
     // that correctly instead of prematurely saturating, so pin the real
     // (denormal) output, not a rounder-looking but wrong 0.0.
     check("tanh_grad(50)", tanh_grad(50.0), f32::from_bits(0x0000006c));
-    check("tanh_grad(-50)", tanh_grad(-50.0), f32::from_bits(0x0000006c));
+    check(
+        "tanh_grad(-50)",
+        tanh_grad(-50.0),
+        f32::from_bits(0x0000006c),
+    );
     check("tanh_grad(f32::MAX)", tanh_grad(f32::MAX), 0.0);
     check("tanh_grad(-f32::MAX)", tanh_grad(-f32::MAX), 0.0);
     check("tanh_grad(inf)", tanh_grad(f32::INFINITY), 0.0);
     check("tanh_grad(-inf)", tanh_grad(f32::NEG_INFINITY), 0.0);
-    check("tanh_grad(8.66)==tanh_grad(-8.66)", tanh_grad(8.66), tanh_grad(-8.66));
+    check(
+        "tanh_grad(8.66)==tanh_grad(-8.66)",
+        tanh_grad(8.66),
+        tanh_grad(-8.66),
+    );
     check("tanh_grad(nan)", tanh_grad(f32::NAN), f32::NAN);
 
     check("sigmoid(0)", sigmoid(0.0), 0.5);
@@ -1025,14 +1359,34 @@ fn real_main() {
     // never NaN/inf/wrong-side.
     check("sigmoid_fast(0)", sigmoid_fast(0.0), 0.5);
     check("sigmoid_fast(-0)", sigmoid_fast(-0.0), 0.5);
-    check_bounded("sigmoid_fast(1)-sigmoid(1)", sigmoid_fast(1.0) - sigmoid(1.0), 0.03);
-    check_bounded("sigmoid_fast(-1)-sigmoid(-1)", sigmoid_fast(-1.0) - sigmoid(-1.0), 0.03);
-    check_bounded("sigmoid_fast(inf)-1", sigmoid_fast(f32::INFINITY) - 1.0, 0.03);
+    check_bounded(
+        "sigmoid_fast(1)-sigmoid(1)",
+        sigmoid_fast(1.0) - sigmoid(1.0),
+        0.03,
+    );
+    check_bounded(
+        "sigmoid_fast(-1)-sigmoid(-1)",
+        sigmoid_fast(-1.0) - sigmoid(-1.0),
+        0.03,
+    );
+    check_bounded(
+        "sigmoid_fast(inf)-1",
+        sigmoid_fast(f32::INFINITY) - 1.0,
+        0.03,
+    );
     check_bounded("sigmoid_fast(-inf)", sigmoid_fast(f32::NEG_INFINITY), 0.03);
-    check_bounded("sigmoid_fast(f32::MAX)-1", sigmoid_fast(f32::MAX) - 1.0, 0.03);
+    check_bounded(
+        "sigmoid_fast(f32::MAX)-1",
+        sigmoid_fast(f32::MAX) - 1.0,
+        0.03,
+    );
     check_bounded("sigmoid_fast(-f32::MAX)", sigmoid_fast(-f32::MAX), 0.03);
     check("sigmoid_fast(nan)", sigmoid_fast(f32::NAN), f32::NAN);
-    check_bounded("sigmoid_fast(100)-sigmoid_fast(inf)", sigmoid_fast(100.0) - sigmoid_fast(f32::INFINITY), 1e-6);
+    check_bounded(
+        "sigmoid_fast(100)-sigmoid_fast(inf)",
+        sigmoid_fast(100.0) - sigmoid_fast(f32::INFINITY),
+        1e-6,
+    );
     check("sigmoid(-89)", sigmoid(-89.0), 0.0);
     // just below the fixed clamp boundary: still the same (correct, real)
     // value the old code also gave here, confirming no regression at the
@@ -1054,7 +1408,11 @@ fn real_main() {
     check("sigmoid_grad(-f32::MAX)", sigmoid_grad(-f32::MAX), 0.0);
     check("sigmoid_grad(inf)", sigmoid_grad(f32::INFINITY), 0.0);
     check("sigmoid_grad(-inf)", sigmoid_grad(f32::NEG_INFINITY), 0.0);
-    check("sigmoid_grad(44.36)==sigmoid_grad(-44.36)", sigmoid_grad(44.36), sigmoid_grad(-44.36));
+    check(
+        "sigmoid_grad(44.36)==sigmoid_grad(-44.36)",
+        sigmoid_grad(44.36),
+        sigmoid_grad(-44.36),
+    );
     check("sigmoid_grad(nan)", sigmoid_grad(f32::NAN), f32::NAN);
 
     // softplus(x) = ln(1+e^x). ln(2) at 0 (ln(1+e^0)=ln(2)); saturates to
@@ -1077,20 +1435,64 @@ fn real_main() {
     // both ends and one point inside, since "returns exactly 0.0 where a
     // normal f32 is owed" is precisely the defect this tier fixes and is
     // invisible to any pin that only looks at +-inf.
-    check("softplus_checked(0)", softplus_checked(0.0), std::f32::consts::LN_2);
-    check("softplus_checked(-0)", softplus_checked(-0.0), std::f32::consts::LN_2);
+    check(
+        "softplus_checked(0)",
+        softplus_checked(0.0),
+        std::f32::consts::LN_2,
+    );
+    check(
+        "softplus_checked(-0)",
+        softplus_checked(-0.0),
+        std::f32::consts::LN_2,
+    );
     check("softplus_checked(1000)", softplus_checked(1000.0), 1000.0);
-    check("softplus_checked(f32::MAX)", softplus_checked(f32::MAX), f32::MAX);
-    check("softplus_checked(inf)", softplus_checked(f32::INFINITY), f32::INFINITY);
-    check("softplus_checked(-inf)", softplus_checked(f32::NEG_INFINITY), 0.0);
+    check(
+        "softplus_checked(f32::MAX)",
+        softplus_checked(f32::MAX),
+        f32::MAX,
+    );
+    check(
+        "softplus_checked(inf)",
+        softplus_checked(f32::INFINITY),
+        f32::INFINITY,
+    );
+    check(
+        "softplus_checked(-inf)",
+        softplus_checked(f32::NEG_INFINITY),
+        0.0,
+    );
     check("softplus_checked(-1000)", softplus_checked(-1000.0), 0.0);
-    check("softplus_checked(-f32::MAX)", softplus_checked(-f32::MAX), 0.0);
-    check("softplus_checked(nan)", softplus_checked(f32::NAN), f32::NAN);
-    check("softplus_checked(-87.3) normal", softplus_checked(-87.3), 1.2192433e-38);
-    check("softplus_checked(-95) denormal", softplus_checked(-95.0), 5.521e-42);
+    check(
+        "softplus_checked(-f32::MAX)",
+        softplus_checked(-f32::MAX),
+        0.0,
+    );
+    check(
+        "softplus_checked(nan)",
+        softplus_checked(f32::NAN),
+        f32::NAN,
+    );
+    check(
+        "softplus_checked(-87.3) normal",
+        softplus_checked(-87.3),
+        1.2192433e-38,
+    );
+    check(
+        "softplus_checked(-95) denormal",
+        softplus_checked(-95.0),
+        5.521e-42,
+    );
     check("softplus_checked(-104) is 0", softplus_checked(-104.0), 0.0);
-    check("softplus_checked(-80)==softplus(-80)", softplus_checked(-80.0), softplus(-80.0));
-    check("softplus_checked(3)==softplus(3)", softplus_checked(3.0), softplus(3.0));
+    check(
+        "softplus_checked(-80)==softplus(-80)",
+        softplus_checked(-80.0),
+        softplus(-80.0),
+    );
+    check(
+        "softplus_checked(3)==softplus(3)",
+        softplus_checked(3.0),
+        softplus(3.0),
+    );
 
     // logsigmoid = -softplus(-x) (backlog idea #118): each pin here is
     // softplus's own pin above, mirrored through that identity.
@@ -1099,29 +1501,85 @@ fn real_main() {
     check("logsigmoid(1000)", logsigmoid(1000.0), -0.0);
     check("logsigmoid(f32::MAX)", logsigmoid(f32::MAX), -0.0);
     check("logsigmoid(inf)", logsigmoid(f32::INFINITY), -0.0);
-    check("logsigmoid(-inf)", logsigmoid(f32::NEG_INFINITY), f32::NEG_INFINITY);
+    check(
+        "logsigmoid(-inf)",
+        logsigmoid(f32::NEG_INFINITY),
+        f32::NEG_INFINITY,
+    );
     check("logsigmoid(-1000)", logsigmoid(-1000.0), -1000.0);
     check("logsigmoid(-f32::MAX)", logsigmoid(-f32::MAX), -f32::MAX);
     check("logsigmoid(nan)", logsigmoid(f32::NAN), f32::NAN);
 
     // logsigmoid_checked = -softplus_checked(-x), same mirroring.
-    check("logsigmoid_checked(0)", logsigmoid_checked(0.0), -std::f32::consts::LN_2);
-    check("logsigmoid_checked(inf)", logsigmoid_checked(f32::INFINITY), -0.0);
-    check("logsigmoid_checked(-inf)", logsigmoid_checked(f32::NEG_INFINITY), f32::NEG_INFINITY);
+    check(
+        "logsigmoid_checked(0)",
+        logsigmoid_checked(0.0),
+        -std::f32::consts::LN_2,
+    );
+    check(
+        "logsigmoid_checked(inf)",
+        logsigmoid_checked(f32::INFINITY),
+        -0.0,
+    );
+    check(
+        "logsigmoid_checked(-inf)",
+        logsigmoid_checked(f32::NEG_INFINITY),
+        f32::NEG_INFINITY,
+    );
     check("logsigmoid_checked(1000)", logsigmoid_checked(1000.0), -0.0);
-    check("logsigmoid_checked(-1000)", logsigmoid_checked(-1000.0), -1000.0);
-    check("logsigmoid_checked(nan)", logsigmoid_checked(f32::NAN), f32::NAN);
-    check("logsigmoid_checked(87.3) normal", logsigmoid_checked(87.3), -1.2192433e-38);
-    check("logsigmoid_checked(-3)==logsigmoid(-3)", logsigmoid_checked(-3.0), logsigmoid(-3.0));
+    check(
+        "logsigmoid_checked(-1000)",
+        logsigmoid_checked(-1000.0),
+        -1000.0,
+    );
+    check(
+        "logsigmoid_checked(nan)",
+        logsigmoid_checked(f32::NAN),
+        f32::NAN,
+    );
+    check(
+        "logsigmoid_checked(87.3) normal",
+        logsigmoid_checked(87.3),
+        -1.2192433e-38,
+    );
+    check(
+        "logsigmoid_checked(-3)==logsigmoid(-3)",
+        logsigmoid_checked(-3.0),
+        logsigmoid(-3.0),
+    );
 
     // logaddexp(a,b) = ln(e^a+e^b); softplus(x) == logaddexp(x,0.0).
-    check("logaddexp(0,0)", logaddexp(0.0, 0.0), std::f32::consts::LN_2);
-    check("logaddexp(x,0)==softplus(x)", logaddexp(3.0, 0.0), softplus(3.0));
+    check(
+        "logaddexp(0,0)",
+        logaddexp(0.0, 0.0),
+        std::f32::consts::LN_2,
+    );
+    check(
+        "logaddexp(x,0)==softplus(x)",
+        logaddexp(3.0, 0.0),
+        softplus(3.0),
+    );
     check("logaddexp(100,1)", logaddexp(100.0, 1.0), 100.0);
-    check("logaddexp(inf,5)", logaddexp(f32::INFINITY, 5.0), f32::INFINITY);
-    check("logaddexp(inf,-inf)", logaddexp(f32::INFINITY, f32::NEG_INFINITY), f32::INFINITY);
-    check("logaddexp(-inf,-inf)", logaddexp(f32::NEG_INFINITY, f32::NEG_INFINITY), f32::NEG_INFINITY);
-    check("logaddexp(inf,inf)", logaddexp(f32::INFINITY, f32::INFINITY), f32::INFINITY);
+    check(
+        "logaddexp(inf,5)",
+        logaddexp(f32::INFINITY, 5.0),
+        f32::INFINITY,
+    );
+    check(
+        "logaddexp(inf,-inf)",
+        logaddexp(f32::INFINITY, f32::NEG_INFINITY),
+        f32::INFINITY,
+    );
+    check(
+        "logaddexp(-inf,-inf)",
+        logaddexp(f32::NEG_INFINITY, f32::NEG_INFINITY),
+        f32::NEG_INFINITY,
+    );
+    check(
+        "logaddexp(inf,inf)",
+        logaddexp(f32::INFINITY, f32::INFINITY),
+        f32::INFINITY,
+    );
     check("logaddexp(nan,1)", logaddexp(f32::NAN, 1.0), f32::NAN);
     check("logaddexp(1,nan)", logaddexp(1.0, f32::NAN), f32::NAN);
 
@@ -1130,9 +1588,21 @@ fn real_main() {
     // itself -- |a-b| past logaddexp's 87 cutoff with max(a,b) at zero,
     // where the correction term *is* the whole answer. Values are
     // softplus_checked's own, through logaddexp(x,0) == softplus(x).
-    check("logaddexp_checked(0,0)", logaddexp_checked(0.0, 0.0), std::f32::consts::LN_2);
-    check("logaddexp_checked(100,1)", logaddexp_checked(100.0, 1.0), 100.0);
-    check("logaddexp_checked(inf,5)", logaddexp_checked(f32::INFINITY, 5.0), f32::INFINITY);
+    check(
+        "logaddexp_checked(0,0)",
+        logaddexp_checked(0.0, 0.0),
+        std::f32::consts::LN_2,
+    );
+    check(
+        "logaddexp_checked(100,1)",
+        logaddexp_checked(100.0, 1.0),
+        100.0,
+    );
+    check(
+        "logaddexp_checked(inf,5)",
+        logaddexp_checked(f32::INFINITY, 5.0),
+        f32::INFINITY,
+    );
     check(
         "logaddexp_checked(inf,-inf)",
         logaddexp_checked(f32::INFINITY, f32::NEG_INFINITY),
@@ -1143,9 +1613,21 @@ fn real_main() {
         logaddexp_checked(f32::NEG_INFINITY, f32::NEG_INFINITY),
         f32::NEG_INFINITY,
     );
-    check("logaddexp_checked(inf,inf)", logaddexp_checked(f32::INFINITY, f32::INFINITY), f32::INFINITY);
-    check("logaddexp_checked(nan,1)", logaddexp_checked(f32::NAN, 1.0), f32::NAN);
-    check("logaddexp_checked(1,nan)", logaddexp_checked(1.0, f32::NAN), f32::NAN);
+    check(
+        "logaddexp_checked(inf,inf)",
+        logaddexp_checked(f32::INFINITY, f32::INFINITY),
+        f32::INFINITY,
+    );
+    check(
+        "logaddexp_checked(nan,1)",
+        logaddexp_checked(f32::NAN, 1.0),
+        f32::NAN,
+    );
+    check(
+        "logaddexp_checked(1,nan)",
+        logaddexp_checked(1.0, f32::NAN),
+        f32::NAN,
+    );
     check(
         "logaddexp_checked(x,0)==softplus_checked(x)",
         logaddexp_checked(3.0, 0.0),
@@ -1156,9 +1638,21 @@ fn real_main() {
         logaddexp_checked(-87.3, 0.0),
         1.2192433e-38,
     );
-    check("logaddexp_checked(-95,0) denormal", logaddexp_checked(-95.0, 0.0), 5.521e-42);
-    check("logaddexp_checked(-104,0) is 0", logaddexp_checked(-104.0, 0.0), 0.0);
-    check("logaddexp_checked(0,-88) denormal", logaddexp_checked(0.0, -88.0), 6.054601e-39);
+    check(
+        "logaddexp_checked(-95,0) denormal",
+        logaddexp_checked(-95.0, 0.0),
+        5.521e-42,
+    );
+    check(
+        "logaddexp_checked(-104,0) is 0",
+        logaddexp_checked(-104.0, 0.0),
+        0.0,
+    );
+    check(
+        "logaddexp_checked(0,-88) denormal",
+        logaddexp_checked(0.0, -88.0),
+        6.054601e-39,
+    );
     check(
         "logaddexp_checked(-80,0)==logaddexp(-80,0)",
         logaddexp_checked(-80.0, 0.0),
@@ -1175,9 +1669,21 @@ fn real_main() {
     // or the wrong power of two there (~1.5e7 ulp), which is the accepted
     // cost their own doc comments describe. The blind 2-arg fuzz cannot
     // gate this: it lands near the zero curve `e^a+e^b = 1` only by luck.
-    check("logaddexp_accurate(0,0)", logaddexp_accurate(0.0, 0.0), std::f32::consts::LN_2);
-    check("logaddexp_accurate(100,1)", logaddexp_accurate(100.0, 1.0), 100.0);
-    check("logaddexp_accurate(inf,5)", logaddexp_accurate(f32::INFINITY, 5.0), f32::INFINITY);
+    check(
+        "logaddexp_accurate(0,0)",
+        logaddexp_accurate(0.0, 0.0),
+        std::f32::consts::LN_2,
+    );
+    check(
+        "logaddexp_accurate(100,1)",
+        logaddexp_accurate(100.0, 1.0),
+        100.0,
+    );
+    check(
+        "logaddexp_accurate(inf,5)",
+        logaddexp_accurate(f32::INFINITY, 5.0),
+        f32::INFINITY,
+    );
     check(
         "logaddexp_accurate(inf,-inf)",
         logaddexp_accurate(f32::INFINITY, f32::NEG_INFINITY),
@@ -1193,14 +1699,26 @@ fn real_main() {
         logaddexp_accurate(f32::INFINITY, f32::INFINITY),
         f32::INFINITY,
     );
-    check("logaddexp_accurate(nan,1)", logaddexp_accurate(f32::NAN, 1.0), f32::NAN);
-    check("logaddexp_accurate(1,nan)", logaddexp_accurate(1.0, f32::NAN), f32::NAN);
+    check(
+        "logaddexp_accurate(nan,1)",
+        logaddexp_accurate(f32::NAN, 1.0),
+        f32::NAN,
+    );
+    check(
+        "logaddexp_accurate(1,nan)",
+        logaddexp_accurate(1.0, f32::NAN),
+        f32::NAN,
+    );
     check(
         "logaddexp_accurate(0,-88) denormal",
         logaddexp_accurate(0.0, -88.0),
         6.054601e-39,
     );
-    check("logaddexp_accurate(-104,0) is 0", logaddexp_accurate(-104.0, 0.0), 0.0);
+    check(
+        "logaddexp_accurate(-104,0) is 0",
+        logaddexp_accurate(-104.0, 0.0),
+        0.0,
+    );
     check(
         "logaddexp_accurate cancel #1",
         logaddexp_accurate(-0.5124492, -0.91386056),
@@ -1234,7 +1752,11 @@ fn real_main() {
     // which underflows to -0.0. (`x*Phi(x)` approaches 0 from below.)
     check("gelu(0)", gelu(0.0), 0.0);
     check("gelu(-0)", gelu(-0.0), -0.0);
-    check("gelu(3)==3*.5*erfc(-3/sqrt2)", gelu(3.0), 3.0 * 0.5 * erfc(-3.0 * std::f32::consts::FRAC_1_SQRT_2));
+    check(
+        "gelu(3)==3*.5*erfc(-3/sqrt2)",
+        gelu(3.0),
+        3.0 * 0.5 * erfc(-3.0 * std::f32::consts::FRAC_1_SQRT_2),
+    );
     check_ulp("gelu(-3)==-3*Phi(-3)", gelu(-3.0), -4.0496941e-3, 1);
     check("gelu(inf)", gelu(f32::INFINITY), f32::INFINITY);
     check("gelu(-inf)", gelu(f32::NEG_INFINITY), -0.0);
@@ -1258,13 +1780,25 @@ fn real_main() {
     // *normal* f32 at -90, denormal below, zero only past -108.6.
     check("silu_checked(0)", silu_checked(0.0), 0.0);
     check("silu_checked(-0)", silu_checked(-0.0), -0.0);
-    check("silu_checked(inf)", silu_checked(f32::INFINITY), f32::INFINITY);
+    check(
+        "silu_checked(inf)",
+        silu_checked(f32::INFINITY),
+        f32::INFINITY,
+    );
     check("silu_checked(-inf)", silu_checked(f32::NEG_INFINITY), -0.0);
     check("silu_checked(nan)", silu_checked(f32::NAN), f32::NAN);
     check("silu_checked(-1000)", silu_checked(-1000.0), -0.0);
     check("silu_checked(f32::MAX)", silu_checked(f32::MAX), f32::MAX);
-    check("silu_checked(-90) normal", silu_checked(-90.0), -7.374611e-38);
-    check("silu_checked(-100) denormal", silu_checked(-100.0), -3.72e-42);
+    check(
+        "silu_checked(-90) normal",
+        silu_checked(-90.0),
+        -7.374611e-38,
+    );
+    check(
+        "silu_checked(-100) denormal",
+        silu_checked(-100.0),
+        -3.72e-42,
+    );
     check("silu_checked(-109) is -0", silu_checked(-109.0), -0.0);
     check("silu_checked(2)==silu(2)", silu_checked(2.0), silu(2.0));
 
@@ -1327,7 +1861,11 @@ fn real_main() {
     check("rootn(0,-2)", rootn(0.0, -2), f32::INFINITY);
     check("rootn(inf,3)", rootn(f32::INFINITY, 3), f32::INFINITY);
     check("rootn(inf,-3)", rootn(f32::INFINITY, -3), 0.0);
-    check("rootn(-inf,3)", rootn(f32::NEG_INFINITY, 3), f32::NEG_INFINITY);
+    check(
+        "rootn(-inf,3)",
+        rootn(f32::NEG_INFINITY, 3),
+        f32::NEG_INFINITY,
+    );
     check("rootn(-inf,-3)", rootn(f32::NEG_INFINITY, -3), -0.0);
     check("rootn(-inf,2)", rootn(f32::NEG_INFINITY, 2), f32::NAN);
     check("rootn(nan,3)", rootn(f32::NAN, 3), f32::NAN);
@@ -1339,7 +1877,11 @@ fn real_main() {
     check("rootn(0,-1)", rootn(0.0, -1), f32::INFINITY);
     check("rootn(-0,-1)", rootn(-0.0, -1), f32::NEG_INFINITY);
     check("rootn(inf,-1)", rootn(f32::INFINITY, -1), 0.0);
-    check("rootn(denormal_min,-1)", rootn(f32::from_bits(1), -1), f32::INFINITY);
+    check(
+        "rootn(denormal_min,-1)",
+        rootn(f32::from_bits(1), -1),
+        f32::INFINITY,
+    );
     check("rootn(max,-1)", rootn(f32::MAX, -1), 1.0 / f32::MAX);
     check("rootn(nan,-1)", rootn(f32::NAN, -1), f32::NAN);
 
@@ -1353,15 +1895,35 @@ fn real_main() {
     check("fast_round_int(-0)", fast_round_int(-0.0), -0.0);
     check("fast_round_int(0.5)", fast_round_int(0.5), 0.0);
     check("fast_round_int(-0.5)", fast_round_int(-0.5), -0.0);
-    check("fast_round_int(-0.4999999)", fast_round_int(-0.4999999), -0.0);
+    check(
+        "fast_round_int(-0.4999999)",
+        fast_round_int(-0.4999999),
+        -0.0,
+    );
     check("fast_round_int(1.5)", fast_round_int(1.5), 2.0);
     check("fast_round_int(2.5)", fast_round_int(2.5), 2.0);
     check("fast_round_int(-3.7)", fast_round_int(-3.7), -4.0);
-    check("fast_round_int(2^22)", fast_round_int(4_194_304.0), 4_194_304.0);
-    check("fast_round_int(-2^22)", fast_round_int(-4_194_304.0), -4_194_304.0);
+    check(
+        "fast_round_int(2^22)",
+        fast_round_int(4_194_304.0),
+        4_194_304.0,
+    );
+    check(
+        "fast_round_int(-2^22)",
+        fast_round_int(-4_194_304.0),
+        -4_194_304.0,
+    );
     check("fast_round_int(nan)", fast_round_int(f32::NAN), f32::NAN);
-    check("fast_round_int(inf)", fast_round_int(f32::INFINITY), f32::INFINITY);
-    check("fast_round_int(-inf)", fast_round_int(f32::NEG_INFINITY), f32::NEG_INFINITY);
+    check(
+        "fast_round_int(inf)",
+        fast_round_int(f32::INFINITY),
+        f32::INFINITY,
+    );
+    check(
+        "fast_round_int(-inf)",
+        fast_round_int(f32::NEG_INFINITY),
+        f32::NEG_INFINITY,
+    );
 
     // smoothstep/smootherstep (backlog idea #147): exact endpoints,
     // clamped outside [edge0,edge1].
@@ -1371,13 +1933,21 @@ fn real_main() {
     check("smoothstep(0,1,-1)", smoothstep(0.0, 1.0, -1.0), 0.0);
     check("smoothstep(0,1,2)", smoothstep(0.0, 1.0, 2.0), 1.0);
     check("smoothstep(2,4,3)", smoothstep(2.0, 4.0, 3.0), 0.5);
-    check("smoothstep(0,1,nan)", smoothstep(0.0, 1.0, f32::NAN), f32::NAN);
+    check(
+        "smoothstep(0,1,nan)",
+        smoothstep(0.0, 1.0, f32::NAN),
+        f32::NAN,
+    );
     check("smootherstep(0,1,0)", smootherstep(0.0, 1.0, 0.0), 0.0);
     check("smootherstep(0,1,1)", smootherstep(0.0, 1.0, 1.0), 1.0);
     check("smootherstep(0,1,0.5)", smootherstep(0.0, 1.0, 0.5), 0.5);
     check("smootherstep(0,1,-1)", smootherstep(0.0, 1.0, -1.0), 0.0);
     check("smootherstep(0,1,2)", smootherstep(0.0, 1.0, 2.0), 1.0);
-    check("smootherstep(0,1,nan)", smootherstep(0.0, 1.0, f32::NAN), f32::NAN);
+    check(
+        "smootherstep(0,1,nan)",
+        smootherstep(0.0, 1.0, f32::NAN),
+        f32::NAN,
+    );
 
     check("asinh(0)", asinh(0.0), 0.0);
     // small-x cancellation (see asinh's doc comment) is fixed: asinh(x) ~ x
@@ -1482,8 +2052,16 @@ fn real_main() {
     check("acos(0)", acos(0.0), std::f32::consts::FRAC_PI_2);
     check("acos(-0)", acos(-0.0), std::f32::consts::FRAC_PI_2);
     check("atan(0)", atan(0.0), 0.0);
-    check("atan(inf)", atan(f32::INFINITY), std::f32::consts::FRAC_PI_2);
-    check("atan(-inf)", atan(f32::NEG_INFINITY), -std::f32::consts::FRAC_PI_2);
+    check(
+        "atan(inf)",
+        atan(f32::INFINITY),
+        std::f32::consts::FRAC_PI_2,
+    );
+    check(
+        "atan(-inf)",
+        atan(f32::NEG_INFINITY),
+        -std::f32::consts::FRAC_PI_2,
+    );
 
     // atan_bounded (backlog idea #61): |x|<=1 contract, atan_poly alone.
     check("atan_bounded(0)", atan_bounded(0.0), 0.0);
@@ -1494,8 +2072,16 @@ fn real_main() {
     check("atan_bounded(0.5)==atan(0.5)", atan_bounded(0.5), atan(0.5));
     check("atan_latency(0)", atan_latency(0.0), 0.0);
     check("atan_latency(-0)", atan_latency(-0.0), -0.0);
-    check("atan_latency(inf)", atan_latency(f32::INFINITY), std::f32::consts::FRAC_PI_2);
-    check("atan_latency(-inf)", atan_latency(f32::NEG_INFINITY), -std::f32::consts::FRAC_PI_2);
+    check(
+        "atan_latency(inf)",
+        atan_latency(f32::INFINITY),
+        std::f32::consts::FRAC_PI_2,
+    );
+    check(
+        "atan_latency(-inf)",
+        atan_latency(f32::NEG_INFINITY),
+        -std::f32::consts::FRAC_PI_2,
+    );
     check("atan_latency(nan)", atan_latency(f32::NAN), f32::NAN);
     check("atan_latency(1)", atan_latency(1.0), atan(1.0));
 
@@ -1515,7 +2101,11 @@ fn real_main() {
     check("atanpi(nan)", atanpi(f32::NAN), f32::NAN);
 
     check("atan2(1,0)", atan2(1.0, 0.0), std::f32::consts::FRAC_PI_2);
-    check("atan2(-1,0)", atan2(-1.0, 0.0), -std::f32::consts::FRAC_PI_2);
+    check(
+        "atan2(-1,0)",
+        atan2(-1.0, 0.0),
+        -std::f32::consts::FRAC_PI_2,
+    );
     // atan2(-0.0, +0.0) used to lose its sign (IEEE754's "+0 + -0 = +0"
     // addition rule silently flipped the correctly-signed -0.0 back to
     // +0.0) -- IEEE754/C99 specify this exactly, so all 12 zero/sign
@@ -1529,32 +2119,89 @@ fn real_main() {
     check("atan2(0,-1)", atan2(0.0, -1.0), std::f32::consts::PI);
     check("atan2(-0,-1)", atan2(-0.0, -1.0), -std::f32::consts::PI);
     check("atan2(1,-0)", atan2(1.0, -0.0), std::f32::consts::FRAC_PI_2);
-    check("atan2(-1,-0)", atan2(-1.0, -0.0), -std::f32::consts::FRAC_PI_2);
+    check(
+        "atan2(-1,-0)",
+        atan2(-1.0, -0.0),
+        -std::f32::consts::FRAC_PI_2,
+    );
     // atan2(+-inf, +-inf): y/x is inf/inf = NaN, so the general formula
     // can't produce an answer -- IEEE754/C99 define a canonical result by
     // quadrant regardless (+-pi/4 or +-3pi/4), used to come out NaN here.
-    check("atan2(inf,inf)", atan2(f32::INFINITY, f32::INFINITY), std::f32::consts::FRAC_PI_4);
-    check("atan2(inf,-inf)", atan2(f32::INFINITY, f32::NEG_INFINITY), 3.0 * std::f32::consts::FRAC_PI_4);
-    check("atan2(-inf,inf)", atan2(f32::NEG_INFINITY, f32::INFINITY), -std::f32::consts::FRAC_PI_4);
-    check("atan2(-inf,-inf)", atan2(f32::NEG_INFINITY, f32::NEG_INFINITY), -3.0 * std::f32::consts::FRAC_PI_4);
+    check(
+        "atan2(inf,inf)",
+        atan2(f32::INFINITY, f32::INFINITY),
+        std::f32::consts::FRAC_PI_4,
+    );
+    check(
+        "atan2(inf,-inf)",
+        atan2(f32::INFINITY, f32::NEG_INFINITY),
+        3.0 * std::f32::consts::FRAC_PI_4,
+    );
+    check(
+        "atan2(-inf,inf)",
+        atan2(f32::NEG_INFINITY, f32::INFINITY),
+        -std::f32::consts::FRAC_PI_4,
+    );
+    check(
+        "atan2(-inf,-inf)",
+        atan2(f32::NEG_INFINITY, f32::NEG_INFINITY),
+        -3.0 * std::f32::consts::FRAC_PI_4,
+    );
 
     // atan2_pos: single-positive-turn fold (backlog idea #143).
     check("atan2_pos(0,1)", atan2_pos(0.0, 1.0), 0.0);
-    check("atan2_pos(1,0)", atan2_pos(1.0, 0.0), std::f32::consts::FRAC_PI_2);
-    check("atan2_pos(0,-1)", atan2_pos(0.0, -1.0), std::f32::consts::PI);
-    check("atan2_pos(-1,0)", atan2_pos(-1.0, 0.0), 3.0 * std::f32::consts::FRAC_PI_2);
-    check("atan2_pos(-1,-1)", atan2_pos(-1.0, -1.0), 5.0 * std::f32::consts::FRAC_PI_4);
+    check(
+        "atan2_pos(1,0)",
+        atan2_pos(1.0, 0.0),
+        std::f32::consts::FRAC_PI_2,
+    );
+    check(
+        "atan2_pos(0,-1)",
+        atan2_pos(0.0, -1.0),
+        std::f32::consts::PI,
+    );
+    check(
+        "atan2_pos(-1,0)",
+        atan2_pos(-1.0, 0.0),
+        3.0 * std::f32::consts::FRAC_PI_2,
+    );
+    check(
+        "atan2_pos(-1,-1)",
+        atan2_pos(-1.0, -1.0),
+        5.0 * std::f32::consts::FRAC_PI_4,
+    );
     check("atan2_pos(nan,1)", atan2_pos(f32::NAN, 1.0), f32::NAN);
-    check_range("atan2_pos(1,1)", atan2_pos(1.0, 1.0), 0.0, std::f32::consts::TAU);
+    check_range(
+        "atan2_pos(1,1)",
+        atan2_pos(1.0, 1.0),
+        0.0,
+        std::f32::consts::TAU,
+    );
     // y/x underflowing to -0.0 must still fold: the angle is a hair under
     // a full turn, not a hair over zero. Keying the fold on atan2's own
     // sign gets this wrong over ~2% of the f32 plane.
-    check("atan2_pos(-1e-30,1e30)", atan2_pos(-1e-30, 1e30), std::f32::consts::TAU);
-    check("atan2_pos(-min,max)", atan2_pos(-f32::MIN_POSITIVE, f32::MAX), std::f32::consts::TAU);
+    check(
+        "atan2_pos(-1e-30,1e30)",
+        atan2_pos(-1e-30, 1e30),
+        std::f32::consts::TAU,
+    );
+    check(
+        "atan2_pos(-min,max)",
+        atan2_pos(-f32::MIN_POSITIVE, f32::MAX),
+        std::f32::consts::TAU,
+    );
     // -0.0 reads as "approached from below" and folds, same as the slab
     // above; atan2_pos never returns -0.0.
-    check("atan2_pos(-0,1)", atan2_pos(-0.0, 1.0), std::f32::consts::TAU);
-    check("atan2_pos(-0,-1)", atan2_pos(-0.0, -1.0), std::f32::consts::PI);
+    check(
+        "atan2_pos(-0,1)",
+        atan2_pos(-0.0, 1.0),
+        std::f32::consts::TAU,
+    );
+    check(
+        "atan2_pos(-0,-1)",
+        atan2_pos(-0.0, -1.0),
+        std::f32::consts::PI,
+    );
 
     // atan2d (backlog idea #123): composite plus a scaled-quotient
     // branch for a denormal atan2 (180/pi > 1, so the plain multiply
@@ -1605,10 +2252,26 @@ fn real_main() {
     check("atan2pi(nan,nan)", atan2pi(f32::NAN, f32::NAN), f32::NAN);
     check("atan2pi(1,nan)", atan2pi(1.0, f32::NAN), f32::NAN);
     // the both-infinite quadrant convention, exact in half-turns.
-    check("atan2pi(inf,inf)", atan2pi(f32::INFINITY, f32::INFINITY), 0.25);
-    check("atan2pi(-inf,inf)", atan2pi(f32::NEG_INFINITY, f32::INFINITY), -0.25);
-    check("atan2pi(inf,-inf)", atan2pi(f32::INFINITY, f32::NEG_INFINITY), 0.75);
-    check("atan2pi(-inf,-inf)", atan2pi(f32::NEG_INFINITY, f32::NEG_INFINITY), -0.75);
+    check(
+        "atan2pi(inf,inf)",
+        atan2pi(f32::INFINITY, f32::INFINITY),
+        0.25,
+    );
+    check(
+        "atan2pi(-inf,inf)",
+        atan2pi(f32::NEG_INFINITY, f32::INFINITY),
+        -0.25,
+    );
+    check(
+        "atan2pi(inf,-inf)",
+        atan2pi(f32::INFINITY, f32::NEG_INFINITY),
+        0.75,
+    );
+    check(
+        "atan2pi(-inf,-inf)",
+        atan2pi(f32::NEG_INFINITY, f32::NEG_INFINITY),
+        -0.75,
+    );
     // atan2(NaN, 0.0)/atan2(NaN, -0.0) used to come out +-FRAC_PI_2 instead
     // of NaN (backlog idea #85, found building a systematic C99
     // special-case matrix against std): the x==0 branch bypasses
@@ -1627,38 +2290,106 @@ fn real_main() {
     // atan2_latency (backlog idea #60): identical wrapper to atan2, just a
     // different atan-core, so every zero/inf/nan edge case above (none of
     // which touch that core) transfers unchanged.
-    check("atan2_latency(1,0)", atan2_latency(1.0, 0.0), std::f32::consts::FRAC_PI_2);
-    check("atan2_latency(-1,0)", atan2_latency(-1.0, 0.0), -std::f32::consts::FRAC_PI_2);
+    check(
+        "atan2_latency(1,0)",
+        atan2_latency(1.0, 0.0),
+        std::f32::consts::FRAC_PI_2,
+    );
+    check(
+        "atan2_latency(-1,0)",
+        atan2_latency(-1.0, 0.0),
+        -std::f32::consts::FRAC_PI_2,
+    );
     check("atan2_latency(0,0)", atan2_latency(0.0, 0.0), 0.0);
     check("atan2_latency(-0,0)", atan2_latency(-0.0, 0.0), -0.0);
-    check("atan2_latency(0,-0)", atan2_latency(0.0, -0.0), std::f32::consts::PI);
-    check("atan2_latency(-0,-0)", atan2_latency(-0.0, -0.0), -std::f32::consts::PI);
-    check("atan2_latency(inf,inf)", atan2_latency(f32::INFINITY, f32::INFINITY), std::f32::consts::FRAC_PI_4);
+    check(
+        "atan2_latency(0,-0)",
+        atan2_latency(0.0, -0.0),
+        std::f32::consts::PI,
+    );
+    check(
+        "atan2_latency(-0,-0)",
+        atan2_latency(-0.0, -0.0),
+        -std::f32::consts::PI,
+    );
+    check(
+        "atan2_latency(inf,inf)",
+        atan2_latency(f32::INFINITY, f32::INFINITY),
+        std::f32::consts::FRAC_PI_4,
+    );
     check(
         "atan2_latency(inf,-inf)",
         atan2_latency(f32::INFINITY, f32::NEG_INFINITY),
         3.0 * std::f32::consts::FRAC_PI_4,
     );
-    check("atan2_latency(nan,0)", atan2_latency(f32::NAN, 0.0), f32::NAN);
-    check("atan2_latency(nan,-0)", atan2_latency(f32::NAN, -0.0), f32::NAN);
-    check("atan2_latency(nan,1)", atan2_latency(f32::NAN, 1.0), f32::NAN);
-    check("atan2_latency(0,nan)", atan2_latency(0.0, f32::NAN), f32::NAN);
+    check(
+        "atan2_latency(nan,0)",
+        atan2_latency(f32::NAN, 0.0),
+        f32::NAN,
+    );
+    check(
+        "atan2_latency(nan,-0)",
+        atan2_latency(f32::NAN, -0.0),
+        f32::NAN,
+    );
+    check(
+        "atan2_latency(nan,1)",
+        atan2_latency(f32::NAN, 1.0),
+        f32::NAN,
+    );
+    check(
+        "atan2_latency(0,nan)",
+        atan2_latency(0.0, f32::NAN),
+        f32::NAN,
+    );
     // Ordinary values: not bit-identical to atan2 (atan_latency's own poly
     // differs from atan_poly's), but both correctly-rounded-ish and close
     // -- pin against the exact 45-degree case, exact by construction for
     // any reasonable atan-core (atan(1)==pi/4 to within its own ulp
     // budget), not a fitted-poly-dependent value.
-    check("atan2_latency(1,1)", atan2_latency(1.0, 1.0), atan2(1.0, 1.0));
+    check(
+        "atan2_latency(1,1)",
+        atan2_latency(1.0, 1.0),
+        atan2(1.0, 1.0),
+    );
 
     // atan2_unchecked: contract is x != 0.0, not both infinite -- must
     // match atan2 exactly wherever that contract holds.
-    check("atan2_unchecked(1,2)", atan2_unchecked(1.0, 2.0), atan2(1.0, 2.0));
-    check("atan2_unchecked(-1,2)", atan2_unchecked(-1.0, 2.0), atan2(-1.0, 2.0));
-    check("atan2_unchecked(1,-2)", atan2_unchecked(1.0, -2.0), atan2(1.0, -2.0));
-    check("atan2_unchecked(-1,-2)", atan2_unchecked(-1.0, -2.0), atan2(-1.0, -2.0));
-    check("atan2_unchecked(0,1)", atan2_unchecked(0.0, 1.0), atan2(0.0, 1.0));
-    check("atan2_unchecked(-0,1)", atan2_unchecked(-0.0, 1.0), atan2(-0.0, 1.0));
-    check("atan2_unchecked(inf,1)", atan2_unchecked(f32::INFINITY, 1.0), atan2(f32::INFINITY, 1.0));
+    check(
+        "atan2_unchecked(1,2)",
+        atan2_unchecked(1.0, 2.0),
+        atan2(1.0, 2.0),
+    );
+    check(
+        "atan2_unchecked(-1,2)",
+        atan2_unchecked(-1.0, 2.0),
+        atan2(-1.0, 2.0),
+    );
+    check(
+        "atan2_unchecked(1,-2)",
+        atan2_unchecked(1.0, -2.0),
+        atan2(1.0, -2.0),
+    );
+    check(
+        "atan2_unchecked(-1,-2)",
+        atan2_unchecked(-1.0, -2.0),
+        atan2(-1.0, -2.0),
+    );
+    check(
+        "atan2_unchecked(0,1)",
+        atan2_unchecked(0.0, 1.0),
+        atan2(0.0, 1.0),
+    );
+    check(
+        "atan2_unchecked(-0,1)",
+        atan2_unchecked(-0.0, 1.0),
+        atan2(-0.0, 1.0),
+    );
+    check(
+        "atan2_unchecked(inf,1)",
+        atan2_unchecked(f32::INFINITY, 1.0),
+        atan2(f32::INFINITY, 1.0),
+    );
     check("tan(0)", tan(0.0), 0.0);
 
     // tan_checked (idea #48): plain sin_checked(x)/cos_checked(x)
@@ -1667,7 +2398,11 @@ fn real_main() {
     check("tan_checked(-0)", tan_checked(-0.0), -0.0);
     check("tan_checked(nan)", tan_checked(f32::NAN), f32::NAN);
     check("tan_checked(inf)", tan_checked(f32::INFINITY), f32::NAN);
-    check("tan_checked(-inf)", tan_checked(f32::NEG_INFINITY), f32::NAN);
+    check(
+        "tan_checked(-inf)",
+        tan_checked(f32::NEG_INFINITY),
+        f32::NAN,
+    );
     check_finite("tan_checked(1e15)", tan_checked(1.0e15));
 
     check("erf(0)", erf(0.0), 0.0);
@@ -1743,9 +2478,19 @@ fn real_main() {
     // one of these is finite and ~-100, and the exhaustive sweep alone
     // did catch this one -- but only as a single number in an average,
     // so these pin the shape of the failure too.
-    check_ulp("logit(f32::MIN_POSITIVE)", logit(f32::MIN_POSITIVE), -87.33655, 2);
+    check_ulp(
+        "logit(f32::MIN_POSITIVE)",
+        logit(f32::MIN_POSITIVE),
+        -87.33655,
+        2,
+    );
     check_ulp("logit(2^-149)", logit(f32::from_bits(1)), -103.27893, 2);
-    check_ulp("logit(2.938736e-39)", logit(f32::from_bits(0x0020_0000)), -88.72284, 2);
+    check_ulp(
+        "logit(2.938736e-39)",
+        logit(f32::from_bits(0x0020_0000)),
+        -88.72284,
+        2,
+    );
     check_ulp("logit(1e-40)", logit(1e-40), -92.10341, 2);
     check("logit(-1e-40) [out of domain]", logit(-1e-40), f32::NAN);
 
@@ -1779,24 +2524,56 @@ fn real_main() {
     check("compound(x,0)", compound(0.05, 0.0), 1.0);
     check("compound(nan,1)", compound(f32::NAN, 1.0), f32::NAN);
     check("compound(0,nan)", compound(0.0, f32::NAN), f32::NAN);
-    check("compound(inf,1)", compound(f32::INFINITY, 1.0), f32::INFINITY);
+    check(
+        "compound(inf,1)",
+        compound(f32::INFINITY, 1.0),
+        f32::INFINITY,
+    );
     // (1+1/n)^n -> e as n grows; the whole point of routing through
     // log1p is keeping this precise even for tiny x (1 ulp off the
     // exact constant here, not a real discrepancy).
-    check_known_1ulp("compound(1e-8,1e8)", compound(1.0e-8, 1.0e8), std::f32::consts::E);
+    check_known_1ulp(
+        "compound(1e-8,1e8)",
+        compound(1.0e-8, 1.0e8),
+        std::f32::consts::E,
+    );
     // compound_accurate: same contract at every edge, double-float exponent.
     check("compound_accurate(0,5)", compound_accurate(0.0, 5.0), 1.0);
     check("compound_accurate(-1,5)", compound_accurate(-1.0, 5.0), 0.0);
-    check("compound_accurate(-1,-5)", compound_accurate(-1.0, -5.0), f32::INFINITY);
-    check("compound_accurate(-2,5)", compound_accurate(-2.0, 5.0), f32::NAN);
+    check(
+        "compound_accurate(-1,-5)",
+        compound_accurate(-1.0, -5.0),
+        f32::INFINITY,
+    );
+    check(
+        "compound_accurate(-2,5)",
+        compound_accurate(-2.0, 5.0),
+        f32::NAN,
+    );
     check("compound_accurate(x,0)", compound_accurate(0.05, 0.0), 1.0);
-    check("compound_accurate(nan,1)", compound_accurate(f32::NAN, 1.0), f32::NAN);
-    check("compound_accurate(0,nan)", compound_accurate(0.0, f32::NAN), f32::NAN);
-    check("compound_accurate(inf,1)", compound_accurate(f32::INFINITY, 1.0), f32::INFINITY);
+    check(
+        "compound_accurate(nan,1)",
+        compound_accurate(f32::NAN, 1.0),
+        f32::NAN,
+    );
+    check(
+        "compound_accurate(0,nan)",
+        compound_accurate(0.0, f32::NAN),
+        f32::NAN,
+    );
+    check(
+        "compound_accurate(inf,1)",
+        compound_accurate(f32::INFINITY, 1.0),
+        f32::INFINITY,
+    );
     check("compound_accurate(1,5)", compound_accurate(1.0, 5.0), 32.0);
     // the (1+1/n)^n -> e limit the whole family exists for: exact here,
     // where the single-f32 exponent tier is a ulp off.
-    check("compound_accurate(1e-8,1e8)", compound_accurate(1.0e-8, 1.0e8), std::f32::consts::E);
+    check(
+        "compound_accurate(1e-8,1e8)",
+        compound_accurate(1.0e-8, 1.0e8),
+        std::f32::consts::E,
+    );
 
     // erfcx(x) = e^(x^2)*erfc(x), backlog idea #51. For x>=0 the
     // exponentials cancel exactly (see its doc comment), so erfcx(0)
@@ -1852,7 +2629,9 @@ fn real_main() {
     check("erfinv(nan)", erfinv(f32::NAN), f32::NAN);
     check("erfinv(inf)", erfinv(f32::INFINITY), f32::NAN);
     check("erfinv(-inf)", erfinv(f32::NEG_INFINITY), f32::NAN);
-    for &x in &[0.3f32, -0.3, 0.5, -0.5, 0.7, -0.7, 0.9, -0.9, 0.9999, -0.9999] {
+    for &x in &[
+        0.3f32, -0.3, 0.5, -0.5, 0.7, -0.7, 0.9, -0.9, 0.9999, -0.9999,
+    ] {
         let y = erfinv(x);
         check_bounded(&format!("erf(erfinv({x}))-{x}"), erf(y) - x, 1e-4);
     }
@@ -1885,7 +2664,11 @@ fn real_main() {
     for &(y, want) in &[(1e-7f32, 3.766563), (1e-20, 6.601581), (1e-45, 10.019834)] {
         check_bounded(&format!("erfc_inv({y})"), erfc_inv(y) - want, 1e-4);
     }
-    for &(p, want) in &[(1e-8f32, -5.612001), (1e-20, -9.262340), (1e-45, -14.121427)] {
+    for &(p, want) in &[
+        (1e-8f32, -5.612001),
+        (1e-20, -9.262340),
+        (1e-45, -14.121427),
+    ] {
         check_bounded(&format!("probit({p})"), probit(p) - want, 1e-4);
     }
     for &y in &[0.001f32, 0.5, 1.0, 1.5, 1.999] {
@@ -1907,13 +2690,25 @@ fn real_main() {
     check("dawson(inf)", dawson(f32::INFINITY), 0.0);
     check("dawson(-inf)", dawson(f32::NEG_INFINITY), -0.0);
     check("dawson(nan)", dawson(f32::NAN), f32::NAN);
-    check_bounded("dawson(0.9241389)-0.5410442", dawson(0.9241389) - 0.5410442, 1e-4);
-    check_bounded("dawson(-0.9241389)+0.5410442", dawson(-0.9241389) + 0.5410442, 1e-4);
+    check_bounded(
+        "dawson(0.9241389)-0.5410442",
+        dawson(0.9241389) - 0.5410442,
+        1e-4,
+    );
+    check_bounded(
+        "dawson(-0.9241389)+0.5410442",
+        dawson(-0.9241389) + 0.5410442,
+        1e-4,
+    );
     check_bounded("dawson(4)-0.1293480", dawson(4.0) - 0.1293480, 1e-4);
     check_bounded("dawson(-4)+0.1293480", dawson(-4.0) + 0.1293480, 1e-4);
     check_finite("dawson(f32::MAX)", dawson(f32::MAX));
     check_finite("dawson(f32::MIN)", dawson(f32::MIN));
-    check_bounded("dawson(f32::MAX)-1.469e-39", dawson(f32::MAX) - 1.4693680e-39, 1e-40);
+    check_bounded(
+        "dawson(f32::MAX)-1.469e-39",
+        dawson(f32::MAX) - 1.4693680e-39,
+        1e-40,
+    );
 
     check("hypot(0,0)", hypot(0.0, 0.0), 0.0);
     check("hypot(3,4)", hypot(3.0, 4.0), 5.0);
@@ -1922,8 +2717,16 @@ fn real_main() {
     // naive x*x+y*y formula can't reach this alone (inf*inf + NaN*NaN
     // degrades to NaN); distinct from this function's already-documented
     // finite-overflow tradeoff.
-    check("hypot(inf,nan)", hypot(f32::INFINITY, f32::NAN), f32::INFINITY);
-    check("hypot(nan,inf)", hypot(f32::NAN, f32::INFINITY), f32::INFINITY);
+    check(
+        "hypot(inf,nan)",
+        hypot(f32::INFINITY, f32::NAN),
+        f32::INFINITY,
+    );
+    check(
+        "hypot(nan,inf)",
+        hypot(f32::NAN, f32::INFINITY),
+        f32::INFINITY,
+    );
     // hypot_checked: no overflow/underflow tradeoff (the whole point),
     // full IEEE754/C99 domain including the exact same NaN/inf edge
     // cases hypot itself handles, plus graceful over/underflow hypot's
@@ -1931,23 +2734,60 @@ fn real_main() {
     check("hypot_checked(0,0)", hypot_checked(0.0, 0.0), 0.0);
     check("hypot_checked(-0,0)", hypot_checked(-0.0, 0.0), 0.0);
     check("hypot_checked(3,4)", hypot_checked(3.0, 4.0), 5.0);
-    check("hypot_checked(inf,nan)", hypot_checked(f32::INFINITY, f32::NAN), f32::INFINITY);
-    check("hypot_checked(nan,inf)", hypot_checked(f32::NAN, f32::INFINITY), f32::INFINITY);
-    check("hypot_checked(nan,0)", hypot_checked(f32::NAN, 0.0), f32::NAN);
-    check("hypot_checked(0,nan)", hypot_checked(0.0, f32::NAN), f32::NAN);
-    check("hypot_checked(nan,nan)", hypot_checked(f32::NAN, f32::NAN), f32::NAN);
-    check("hypot_checked(inf,inf)", hypot_checked(f32::INFINITY, f32::INFINITY), f32::INFINITY);
-    check("hypot_checked(-inf,3)", hypot_checked(f32::NEG_INFINITY, 3.0), f32::INFINITY);
+    check(
+        "hypot_checked(inf,nan)",
+        hypot_checked(f32::INFINITY, f32::NAN),
+        f32::INFINITY,
+    );
+    check(
+        "hypot_checked(nan,inf)",
+        hypot_checked(f32::NAN, f32::INFINITY),
+        f32::INFINITY,
+    );
+    check(
+        "hypot_checked(nan,0)",
+        hypot_checked(f32::NAN, 0.0),
+        f32::NAN,
+    );
+    check(
+        "hypot_checked(0,nan)",
+        hypot_checked(0.0, f32::NAN),
+        f32::NAN,
+    );
+    check(
+        "hypot_checked(nan,nan)",
+        hypot_checked(f32::NAN, f32::NAN),
+        f32::NAN,
+    );
+    check(
+        "hypot_checked(inf,inf)",
+        hypot_checked(f32::INFINITY, f32::INFINITY),
+        f32::INFINITY,
+    );
+    check(
+        "hypot_checked(-inf,3)",
+        hypot_checked(f32::NEG_INFINITY, 3.0),
+        f32::INFINITY,
+    );
     // f32::MAX,f32::MAX overflows the naive x*x+y*y (already inf before
     // sqrt even runs); hypot_checked's whole point is getting this right.
-    check("hypot_checked(MAX,MAX)", hypot_checked(f32::MAX, f32::MAX), f32::INFINITY);
+    check(
+        "hypot_checked(MAX,MAX)",
+        hypot_checked(f32::MAX, f32::MAX),
+        f32::INFINITY,
+    );
     // hypot(x,y) >= max(|x|,|y|) for any finite x,y (a provable
     // mathematical fact) -- checked directly (2026-07-10): holds for
     // hypot_checked at both these points (unlike plain hypot, which
     // trades this away for paired denormal inputs, an already-documented
     // tradeoff -- see hypot's own doc comment).
     // check_range locks this in rather than only checking finiteness.
-    check_range("hypot_checked(MAX/2,MAX/2)", hypot_checked(f32::MAX / 2.0, f32::MAX / 2.0), f32::MAX / 2.0, f32::MAX);
+    check_range(
+        "hypot_checked(MAX/2,MAX/2)",
+        hypot_checked(f32::MAX / 2.0, f32::MAX / 2.0),
+        f32::MAX / 2.0,
+        f32::MAX,
+    );
     check_range(
         "hypot_checked(min_denorm,min_denorm)",
         hypot_checked(f32::from_bits(1), f32::from_bits(1)),
@@ -1987,13 +2827,33 @@ fn real_main() {
     // inf-wins-over-NaN override as hypot/rhypot, one arg wider.
     check("hypot3(0,0,0)", hypot3(0.0, 0.0, 0.0), 0.0);
     check("hypot3(2,3,6)", hypot3(2.0, 3.0, 6.0), 7.0);
-    check("hypot3(inf,nan,1)", hypot3(f32::INFINITY, f32::NAN, 1.0), f32::INFINITY);
-    check("hypot3(1,inf,nan)", hypot3(1.0, f32::INFINITY, f32::NAN), f32::INFINITY);
-    check("hypot3(nan,1,inf)", hypot3(f32::NAN, 1.0, f32::INFINITY), f32::INFINITY);
+    check(
+        "hypot3(inf,nan,1)",
+        hypot3(f32::INFINITY, f32::NAN, 1.0),
+        f32::INFINITY,
+    );
+    check(
+        "hypot3(1,inf,nan)",
+        hypot3(1.0, f32::INFINITY, f32::NAN),
+        f32::INFINITY,
+    );
+    check(
+        "hypot3(nan,1,inf)",
+        hypot3(f32::NAN, 1.0, f32::INFINITY),
+        f32::INFINITY,
+    );
     check("rnorm3(0,0,0)", rnorm3(0.0, 0.0, 0.0), f32::INFINITY);
     check("rnorm3(2,3,6)", rnorm3(2.0, 3.0, 6.0), 1.0 / 7.0);
-    check("rnorm3(inf,nan,1)", rnorm3(f32::INFINITY, f32::NAN, 1.0), 0.0);
-    check("rnorm3(nan,nan,nan)", rnorm3(f32::NAN, f32::NAN, f32::NAN), f32::NAN);
+    check(
+        "rnorm3(inf,nan,1)",
+        rnorm3(f32::INFINITY, f32::NAN, 1.0),
+        0.0,
+    );
+    check(
+        "rnorm3(nan,nan,nan)",
+        rnorm3(f32::NAN, f32::NAN, f32::NAN),
+        f32::NAN,
+    );
 
     // normalize3 (backlog idea #136). Magnitude check, not exact-value:
     // normalize3(x,y,z) multiplies by rnorm3's own reciprocal-norm
@@ -2003,7 +2863,11 @@ fn real_main() {
     // number -- found by a real FAIL here first, not assumed.
     {
         let (nx, ny, nz) = normalize3(2.0, 3.0, 6.0);
-        check_bounded("normalize3(2,3,6) magnitude deviation", (hypot3(nx, ny, nz) - 1.0).abs(), 1e-6);
+        check_bounded(
+            "normalize3(2,3,6) magnitude deviation",
+            (hypot3(nx, ny, nz) - 1.0).abs(),
+            1e-6,
+        );
         let (zx, zy, zz) = normalize3(0.0, 0.0, 0.0);
         check("normalize3(0,0,0).0", zx, f32::NAN);
         check("normalize3(0,0,0).1", zy, f32::NAN);
@@ -2014,10 +2878,18 @@ fn real_main() {
     // hypot3/rnorm3, one arg wider (quaternion case).
     check("hypot4(0,0,0,0)", hypot4(0.0, 0.0, 0.0, 0.0), 0.0);
     check("hypot4(1,2,2,4)", hypot4(1.0, 2.0, 2.0, 4.0), 5.0);
-    check("hypot4(inf,nan,1,1)", hypot4(f32::INFINITY, f32::NAN, 1.0, 1.0), f32::INFINITY);
+    check(
+        "hypot4(inf,nan,1,1)",
+        hypot4(f32::INFINITY, f32::NAN, 1.0, 1.0),
+        f32::INFINITY,
+    );
     check("rnorm4(0,0,0,0)", rnorm4(0.0, 0.0, 0.0, 0.0), f32::INFINITY);
     check("rnorm4(1,2,2,4)", rnorm4(1.0, 2.0, 2.0, 4.0), 0.2);
-    check("rnorm4(inf,nan,1,1)", rnorm4(f32::INFINITY, f32::NAN, 1.0, 1.0), 0.0);
+    check(
+        "rnorm4(inf,nan,1,1)",
+        rnorm4(f32::INFINITY, f32::NAN, 1.0, 1.0),
+        0.0,
+    );
     {
         let (w, x, y, z) = normalize4(1.0, 2.0, 2.0, 4.0);
         check("normalize4(1,2,2,4).0", w, 0.2);
@@ -2034,12 +2906,36 @@ fn real_main() {
     // diff_of_products(a,b,c,d) = a*b - c*d via Kahan's compensated
     // two-product (backlog idea #135). NaN/inf propagate through the
     // ordinary fma/mul chain with no special-cased override needed.
-    check("diff_of_products(2,3,1,1)", diff_of_products(2.0, 3.0, 1.0, 1.0), 5.0);
-    check("diff_of_products(0,0,0,0)", diff_of_products(0.0, 0.0, 0.0, 0.0), 0.0);
-    check("diff_of_products(1,1,1,1)", diff_of_products(1.0, 1.0, 1.0, 1.0), 0.0);
-    check("diff_of_products(inf,1,0,0)", diff_of_products(f32::INFINITY, 1.0, 0.0, 0.0), f32::INFINITY);
-    check("diff_of_products(nan,1,0,0)", diff_of_products(f32::NAN, 1.0, 0.0, 0.0), f32::NAN);
-    check("diff_of_products(1,0,0,nan)", diff_of_products(1.0, 0.0, 0.0, f32::NAN), f32::NAN);
+    check(
+        "diff_of_products(2,3,1,1)",
+        diff_of_products(2.0, 3.0, 1.0, 1.0),
+        5.0,
+    );
+    check(
+        "diff_of_products(0,0,0,0)",
+        diff_of_products(0.0, 0.0, 0.0, 0.0),
+        0.0,
+    );
+    check(
+        "diff_of_products(1,1,1,1)",
+        diff_of_products(1.0, 1.0, 1.0, 1.0),
+        0.0,
+    );
+    check(
+        "diff_of_products(inf,1,0,0)",
+        diff_of_products(f32::INFINITY, 1.0, 0.0, 0.0),
+        f32::INFINITY,
+    );
+    check(
+        "diff_of_products(nan,1,0,0)",
+        diff_of_products(f32::NAN, 1.0, 0.0, 0.0),
+        f32::NAN,
+    );
+    check(
+        "diff_of_products(1,0,0,nan)",
+        diff_of_products(1.0, 0.0, 0.0, f32::NAN),
+        f32::NAN,
+    );
     // cross2 is diff_of_products(ax,by,ay,bx): parallel/perpendicular sanity.
     check("cross2(1,0,0,1)", cross2(1.0, 0.0, 0.0, 1.0), 1.0);
     check("cross2(1,0,1,0)", cross2(1.0, 0.0, 1.0, 0.0), 0.0);
@@ -2055,8 +2951,16 @@ fn real_main() {
     check("cabs(nan,0)", cabs(f32::NAN, 0.0), f32::NAN);
     check("carg(1,0)", carg(1.0, 0.0), 0.0);
     check("carg(0,0)", carg(0.0, 0.0), 0.0);
-    check_bounded("carg(0,1)-FRAC_PI_2", carg(0.0, 1.0) - std::f32::consts::FRAC_PI_2, 1e-6);
-    check_bounded("carg(-1,0)-PI", carg(-1.0, 0.0) - std::f32::consts::PI, 1e-6);
+    check_bounded(
+        "carg(0,1)-FRAC_PI_2",
+        carg(0.0, 1.0) - std::f32::consts::FRAC_PI_2,
+        1e-6,
+    );
+    check_bounded(
+        "carg(-1,0)-PI",
+        carg(-1.0, 0.0) - std::f32::consts::PI,
+        1e-6,
+    );
     let (cer, cei) = cexp(0.0, 0.0);
     check_bounded("cexp(0,0).re-1", cer - 1.0, 1e-6);
     check_bounded("cexp(0,0).im", cei, 1e-6);
@@ -2087,11 +2991,31 @@ fn real_main() {
     // must match powf inside that domain (verified more thoroughly via a
     // 50M-sample fuzz, not preserved in-repo; these are a permanent
     // regression guard).
-    check("powf_unchecked(2,3)", powf_unchecked(2.0, 3.0), powf(2.0, 3.0));
-    check("powf_unchecked(1,5)", powf_unchecked(1.0, 5.0), powf(1.0, 5.0));
-    check("powf_unchecked(2,1000)", powf_unchecked(2.0, 1000.0), powf(2.0, 1000.0));
-    check("powf_unchecked(2,-1000)", powf_unchecked(2.0, -1000.0), powf(2.0, -1000.0));
-    check("powf_unchecked(0.86967933,576.48004)", powf_unchecked(0.86967933, 576.48004), powf(0.86967933, 576.48004));
+    check(
+        "powf_unchecked(2,3)",
+        powf_unchecked(2.0, 3.0),
+        powf(2.0, 3.0),
+    );
+    check(
+        "powf_unchecked(1,5)",
+        powf_unchecked(1.0, 5.0),
+        powf(1.0, 5.0),
+    );
+    check(
+        "powf_unchecked(2,1000)",
+        powf_unchecked(2.0, 1000.0),
+        powf(2.0, 1000.0),
+    );
+    check(
+        "powf_unchecked(2,-1000)",
+        powf_unchecked(2.0, -1000.0),
+        powf(2.0, -1000.0),
+    );
+    check(
+        "powf_unchecked(0.86967933,576.48004)",
+        powf_unchecked(0.86967933, 576.48004),
+        powf(0.86967933, 576.48004),
+    );
     // powf used to return plausible-looking finite garbage instead of
     // inf/0 once log2(x)*y left the unchecked exp2's domain (see doc
     // comment) -- now correctly saturates.
@@ -2128,15 +3052,31 @@ fn real_main() {
     // magnitude instead of NaN.
     check("powf(-0,0.5)", powf(-0.0, 0.5), 0.0);
     check("powf(-0,-0.5)", powf(-0.0, -0.5), f32::INFINITY);
-    check("powf(-0,-inf)", powf(-0.0, f32::NEG_INFINITY), f32::INFINITY);
-    check("powf(-inf,0.5)", powf(f32::NEG_INFINITY, 0.5), f32::INFINITY);
+    check(
+        "powf(-0,-inf)",
+        powf(-0.0, f32::NEG_INFINITY),
+        f32::INFINITY,
+    );
+    check(
+        "powf(-inf,0.5)",
+        powf(f32::NEG_INFINITY, 0.5),
+        f32::INFINITY,
+    );
     check("powf(-inf,-0.5)", powf(f32::NEG_INFINITY, -0.5), 0.0);
     // y infinite: sign never depends on x, only |x| relative to 1 --
     // a negative base to an infinite power has no well-defined sign in
     // the limit, only a magnitude.
     check("powf(-2,inf)", powf(-2.0, f32::INFINITY), f32::INFINITY);
-    check("powf(-0.5,-inf)", powf(-0.5, f32::NEG_INFINITY), f32::INFINITY);
-    check("powf(-inf,inf)", powf(f32::NEG_INFINITY, f32::INFINITY), f32::INFINITY);
+    check(
+        "powf(-0.5,-inf)",
+        powf(-0.5, f32::NEG_INFINITY),
+        f32::INFINITY,
+    );
+    check(
+        "powf(-inf,inf)",
+        powf(f32::NEG_INFINITY, f32::INFINITY),
+        f32::INFINITY,
+    );
     // pow(1, y) = 1 for *any* y, even inf/-inf/nan -- another dedicated
     // C99 special case the log/exp2 formula can't derive on its own
     // (log_2(1)=0, so 0*inf/0*nan degrade to NaN instead of the correct
@@ -2158,14 +3098,30 @@ fn real_main() {
     check("powf_pos(0,0)", powf_pos(0.0, 0.0), 1.0);
     check("powf_pos(-0,0)", powf_pos(-0.0, 0.0), 1.0);
     check("powf_pos(nan,0)", powf_pos(f32::NAN, 0.0), 1.0);
-    check_known_1ulp("powf_pos(-0,3) [-0.0 sign not preserved, see doc comment]", powf_pos(-0.0, 3.0), -0.0);
-    check_known_1ulp("powf_pos(-0,-1) [-0.0 sign not preserved, see doc comment]", powf_pos(-0.0, -1.0), f32::NEG_INFINITY);
+    check_known_1ulp(
+        "powf_pos(-0,3) [-0.0 sign not preserved, see doc comment]",
+        powf_pos(-0.0, 3.0),
+        -0.0,
+    );
+    check_known_1ulp(
+        "powf_pos(-0,-1) [-0.0 sign not preserved, see doc comment]",
+        powf_pos(-0.0, -1.0),
+        f32::NEG_INFINITY,
+    );
     check("powf_pos(1,inf)", powf_pos(1.0, f32::INFINITY), 1.0);
     check("powf_pos(1,-inf)", powf_pos(1.0, f32::NEG_INFINITY), 1.0);
     check("powf_pos(1,nan)", powf_pos(1.0, f32::NAN), 1.0);
-    check("powf_pos(inf,5)", powf_pos(f32::INFINITY, 5.0), f32::INFINITY);
+    check(
+        "powf_pos(inf,5)",
+        powf_pos(f32::INFINITY, 5.0),
+        f32::INFINITY,
+    );
     check("powf_pos(inf,-5)", powf_pos(f32::INFINITY, -5.0), 0.0);
-    check("powf_pos(2,inf)", powf_pos(2.0, f32::INFINITY), f32::INFINITY);
+    check(
+        "powf_pos(2,inf)",
+        powf_pos(2.0, f32::INFINITY),
+        f32::INFINITY,
+    );
     check("powf_pos(0.5,inf)", powf_pos(0.5, f32::INFINITY), 0.0);
 
     // srgb_to_linear/linear_to_srgb (backlog idea #146).
@@ -2195,7 +3151,11 @@ fn real_main() {
     // reapplication on top of powf_pos(1,inf)=1.0, no special-casing).
     check("signed_pow(2,3)", signed_pow(2.0, 3.0), 8.0);
     check("signed_pow(-2,3)", signed_pow(-2.0, 3.0), -8.0);
-    check("signed_pow(-2,0.5)", signed_pow(-2.0, 0.5), -std::f32::consts::SQRT_2);
+    check(
+        "signed_pow(-2,0.5)",
+        signed_pow(-2.0, 0.5),
+        -std::f32::consts::SQRT_2,
+    );
     check("signed_pow(-2,2)", signed_pow(-2.0, 2.0), -4.0);
     check("signed_pow(0,3)", signed_pow(0.0, 3.0), 0.0);
     check("signed_pow(-0,3)", signed_pow(-0.0, 3.0), -0.0);
@@ -2210,12 +3170,24 @@ fn real_main() {
     // value ~1.1009300443688705e-35), not against whatever this crate
     // happened to return: the pin is the correctly-rounded f32, which
     // powf hits to within 0.25 ulp.
-    check("powf(0.86967933,576.48004)", powf(0.86967933, 576.48004), 1.10093e-35);
+    check(
+        "powf(0.86967933,576.48004)",
+        powf(0.86967933, 576.48004),
+        1.10093e-35,
+    );
     // powf_unchecked: contract is x positive/normal/finite, y != 0.0 --
     // must match powf inside that domain (verified more thoroughly via
     // examples/unchecked_parity.rs; permanent regression guard).
-    check("powf_unchecked(2,3)", powf_unchecked(2.0, 3.0), powf(2.0, 3.0));
-    check("powf_unchecked(2,1000)", powf_unchecked(2.0, 1000.0), powf(2.0, 1000.0));
+    check(
+        "powf_unchecked(2,3)",
+        powf_unchecked(2.0, 3.0),
+        powf(2.0, 3.0),
+    );
+    check(
+        "powf_unchecked(2,1000)",
+        powf_unchecked(2.0, 1000.0),
+        powf(2.0, 1000.0),
+    );
     check(
         "powf_unchecked(0.86967933,576.48004)",
         powf_unchecked(0.86967933, 576.48004),
@@ -2226,9 +3198,21 @@ fn real_main() {
     // remainder_unchecked: contract is x != 0.0, y finite -- must match
     // remainder inside that domain (verified more thoroughly via a
     // 100M-sample fuzz, not preserved in-repo; permanent regression guard).
-    check("remainder_unchecked(5,3)", remainder_unchecked(5.0, 3.0), remainder(5.0, 3.0));
-    check("remainder_unchecked(4,2)", remainder_unchecked(4.0, 2.0), remainder(4.0, 2.0));
-    check("remainder_unchecked(-5,3)", remainder_unchecked(-5.0, 3.0), remainder(-5.0, 3.0));
+    check(
+        "remainder_unchecked(5,3)",
+        remainder_unchecked(5.0, 3.0),
+        remainder(5.0, 3.0),
+    );
+    check(
+        "remainder_unchecked(4,2)",
+        remainder_unchecked(4.0, 2.0),
+        remainder(4.0, 2.0),
+    );
+    check(
+        "remainder_unchecked(-5,3)",
+        remainder_unchecked(-5.0, 3.0),
+        remainder(-5.0, 3.0),
+    );
     // remainder(-0.0, y) used to lose its sign: q is +-0.0 matching x/y's
     // sign, so `-q*y` ends up the opposite sign to x, and `fma(-q,y,x)`
     // adds two exactly-zero values of opposite sign (same IEEE754
@@ -2283,15 +3267,43 @@ fn real_main() {
     check("remainder_checked(4,2)", remainder_checked(4.0, 2.0), 0.0);
     // Exact-cancellation sign fix, same as remainder's own -- see its pin
     // comment above for the mechanism.
-    check("remainder_checked(-6,3)", remainder_checked(-6.0, 3.0), -0.0);
+    check(
+        "remainder_checked(-6,3)",
+        remainder_checked(-6.0, 3.0),
+        -0.0,
+    );
     check("remainder_checked(6,3)", remainder_checked(6.0, 3.0), 0.0);
-    check("remainder_checked(-0,3)", remainder_checked(-0.0, 3.0), -0.0);
+    check(
+        "remainder_checked(-0,3)",
+        remainder_checked(-0.0, 3.0),
+        -0.0,
+    );
     check("remainder_checked(0,3)", remainder_checked(0.0, 3.0), 0.0);
-    check("remainder_checked(0,0)", remainder_checked(0.0, 0.0), f32::NAN);
-    check("remainder_checked(0,nan)", remainder_checked(0.0, f32::NAN), f32::NAN);
-    check("remainder_checked(3,inf)", remainder_checked(3.0, f32::INFINITY), 3.0);
-    check("remainder_checked(-3,inf)", remainder_checked(-3.0, f32::INFINITY), -3.0);
-    check("remainder_checked(inf,3)", remainder_checked(f32::INFINITY, 3.0), f32::NAN);
+    check(
+        "remainder_checked(0,0)",
+        remainder_checked(0.0, 0.0),
+        f32::NAN,
+    );
+    check(
+        "remainder_checked(0,nan)",
+        remainder_checked(0.0, f32::NAN),
+        f32::NAN,
+    );
+    check(
+        "remainder_checked(3,inf)",
+        remainder_checked(3.0, f32::INFINITY),
+        3.0,
+    );
+    check(
+        "remainder_checked(-3,inf)",
+        remainder_checked(-3.0, f32::INFINITY),
+        -3.0,
+    );
+    check(
+        "remainder_checked(inf,3)",
+        remainder_checked(f32::INFINITY, 3.0),
+        f32::NAN,
+    );
     // the actual point of remainder_checked: a case where q's own division
     // rounding would land on the wrong integer for the plain formula.
     check(
@@ -2311,13 +3323,33 @@ fn real_main() {
     check("remainder_ieee(-0,3)", remainder_ieee(-0.0, 3.0), -0.0);
     check("remainder_ieee(0,3)", remainder_ieee(0.0, 3.0), 0.0);
     check("remainder_ieee(0,0)", remainder_ieee(0.0, 0.0), f32::NAN);
-    check("remainder_ieee(0,nan)", remainder_ieee(0.0, f32::NAN), f32::NAN);
-    check("remainder_ieee(3,inf)", remainder_ieee(3.0, f32::INFINITY), 3.0);
-    check("remainder_ieee(inf,3)", remainder_ieee(f32::INFINITY, 3.0), f32::NAN);
+    check(
+        "remainder_ieee(0,nan)",
+        remainder_ieee(0.0, f32::NAN),
+        f32::NAN,
+    );
+    check(
+        "remainder_ieee(3,inf)",
+        remainder_ieee(3.0, f32::INFINITY),
+        3.0,
+    );
+    check(
+        "remainder_ieee(inf,3)",
+        remainder_ieee(f32::INFINITY, 3.0),
+        f32::NAN,
+    );
     // x/y=2.5: ties-away rounds q to 3 (remainder -1); ties-to-even rounds
     // q to 2 (the even neighbor), remainder +1 -- must actually differ.
-    check("remainder_ieee(5,2) ties-even", remainder_ieee(5.0, 2.0), 1.0);
-    check("remainder(5,2) ties-away (contrast)", remainder(5.0, 2.0), -1.0);
+    check(
+        "remainder_ieee(5,2) ties-even",
+        remainder_ieee(5.0, 2.0),
+        1.0,
+    );
+    check(
+        "remainder(5,2) ties-away (contrast)",
+        remainder(5.0, 2.0),
+        -1.0,
+    );
     // x/y=1.5: ties-to-even rounds q to 2 (even), remainder -0.5; matches
     // remainder's own ties-away answer here since ties-away *also* picks
     // the higher magnitude 2 for a positive 1.5 (both conventions agree
@@ -2335,10 +3367,26 @@ fn real_main() {
     check("remainder_wide(-0,3)", remainder_wide(-0.0, 3.0), -0.0);
     check("remainder_wide(0,3)", remainder_wide(0.0, 3.0), 0.0);
     check("remainder_wide(0,0)", remainder_wide(0.0, 0.0), f32::NAN);
-    check("remainder_wide(0,nan)", remainder_wide(0.0, f32::NAN), f32::NAN);
-    check("remainder_wide(3,inf)", remainder_wide(3.0, f32::INFINITY), 3.0);
-    check("remainder_wide(-3,inf)", remainder_wide(-3.0, f32::INFINITY), -3.0);
-    check("remainder_wide(inf,3)", remainder_wide(f32::INFINITY, 3.0), f32::NAN);
+    check(
+        "remainder_wide(0,nan)",
+        remainder_wide(0.0, f32::NAN),
+        f32::NAN,
+    );
+    check(
+        "remainder_wide(3,inf)",
+        remainder_wide(3.0, f32::INFINITY),
+        3.0,
+    );
+    check(
+        "remainder_wide(-3,inf)",
+        remainder_wide(-3.0, f32::INFINITY),
+        -3.0,
+    );
+    check(
+        "remainder_wide(inf,3)",
+        remainder_wide(f32::INFINITY, 3.0),
+        f32::NAN,
+    );
     check(
         "remainder_wide(1e7,3) matches remainder_checked",
         remainder_wide(1.0e7, 3.0),
@@ -2374,8 +3422,16 @@ fn real_main() {
         remainder_wide(-3.2603515e38, 1.8878502e38),
         remainder_ref_exact(-3.2603515e38, 1.8878502e38),
     );
-    check("remainder_wide(f32::MAX,f32::MAX)", remainder_wide(f32::MAX, f32::MAX), 0.0);
-    check("remainder_wide(nan,3)", remainder_wide(f32::NAN, 3.0), f32::NAN);
+    check(
+        "remainder_wide(f32::MAX,f32::MAX)",
+        remainder_wide(f32::MAX, f32::MAX),
+        0.0,
+    );
+    check(
+        "remainder_wide(nan,3)",
+        remainder_wide(f32::NAN, 3.0),
+        f32::NAN,
+    );
 
     // fmod: C fmod semantics (truncated division, sign always matches x)
     // -- verified directly against Rust's own `%` operator, which already
@@ -2403,8 +3459,16 @@ fn real_main() {
     check("fmod(0,0)", fmod(0.0, 0.0), 0.0f32 % 0.0f32);
     check("fmod(-0,0)", fmod(-0.0, 0.0), (-0.0f32) % 0.0f32);
     check("fmod(0,nan)", fmod(0.0, f32::NAN), 0.0f32 % f32::NAN);
-    check("fmod_unchecked(5,3)", fmod_unchecked(5.0, 3.0), fmod(5.0, 3.0));
-    check("fmod_unchecked(-5,3)", fmod_unchecked(-5.0, 3.0), fmod(-5.0, 3.0));
+    check(
+        "fmod_unchecked(5,3)",
+        fmod_unchecked(5.0, 3.0),
+        fmod(5.0, 3.0),
+    );
+    check(
+        "fmod_unchecked(-5,3)",
+        fmod_unchecked(-5.0, 3.0),
+        fmod(-5.0, 3.0),
+    );
 
     // fmod_checked: same representative cases as fmod above, plus the
     // specific off-by-a-whole-y cases found while testing idea #79 (one
@@ -2412,7 +3476,11 @@ fn real_main() {
     check("fmod_checked(5,3)", fmod_checked(5.0, 3.0), 5.0f32 % 3.0);
     check("fmod_checked(-5,3)", fmod_checked(-5.0, 3.0), -5.0f32 % 3.0);
     check("fmod_checked(5,-3)", fmod_checked(5.0, -3.0), 5.0f32 % -3.0);
-    check("fmod_checked(-5,-3)", fmod_checked(-5.0, -3.0), -5.0f32 % -3.0);
+    check(
+        "fmod_checked(-5,-3)",
+        fmod_checked(-5.0, -3.0),
+        -5.0f32 % -3.0,
+    );
     check("fmod_checked(0,3)", fmod_checked(0.0, 3.0), 0.0);
     check("fmod_checked(-0,3)", fmod_checked(-0.0, 3.0), -0.0);
     // Exact-cancellation sign fix, same as fmod's own -- see its pin
@@ -2420,8 +3488,16 @@ fn real_main() {
     check("fmod_checked(-6,3)", fmod_checked(-6.0, 3.0), -6.0f32 % 3.0);
     check("fmod_checked(6,3)", fmod_checked(6.0, 3.0), 6.0f32 % 3.0);
     check("fmod_checked(3,inf)", fmod_checked(3.0, f32::INFINITY), 3.0);
-    check("fmod_checked(-3,inf)", fmod_checked(-3.0, f32::INFINITY), -3.0);
-    check("fmod_checked(inf,3)", fmod_checked(f32::INFINITY, 3.0), f32::NAN);
+    check(
+        "fmod_checked(-3,inf)",
+        fmod_checked(-3.0, f32::INFINITY),
+        -3.0,
+    );
+    check(
+        "fmod_checked(inf,3)",
+        fmod_checked(f32::INFINITY, 3.0),
+        f32::NAN,
+    );
     check("fmod_checked(3,0)", fmod_checked(3.0, 0.0), f32::NAN);
     check("fmod_checked(nan,3)", fmod_checked(f32::NAN, 3.0), f32::NAN);
     check("fmod_checked(0,0)", fmod_checked(0.0, 0.0), 0.0f32 % 0.0f32);
@@ -2429,32 +3505,124 @@ fn real_main() {
     // adj-sign derivation these each pin one branch of): all four
     // sign(x)/sign(y) combinations, values confirmed against
     // (x as f64) % (y as f64) before pinning.
-    check("fmod_checked(-6.055322e9,-2.0952672e7)", fmod_checked(-6.055322e9, -2.0952672e7), -2.0952576e7);
-    check("fmod_checked(-7.871735e-1,1.574347e-3)", fmod_checked(-7.871735e-1, 1.574347e-3), -1.5743424e-3);
-    check("fmod_checked(2.4304448e2,-9.241235e-1)", fmod_checked(2.4304448e2, -9.241235e-1), 9.2411566e-1);
-    check("fmod_checked(9.885632e-22,2.4062233e-23)", fmod_checked(9.885632e-22, 2.4062233e-23), 2.0116773e-24);
+    check(
+        "fmod_checked(-6.055322e9,-2.0952672e7)",
+        fmod_checked(-6.055322e9, -2.0952672e7),
+        -2.0952576e7,
+    );
+    check(
+        "fmod_checked(-7.871735e-1,1.574347e-3)",
+        fmod_checked(-7.871735e-1, 1.574347e-3),
+        -1.5743424e-3,
+    );
+    check(
+        "fmod_checked(2.4304448e2,-9.241235e-1)",
+        fmod_checked(2.4304448e2, -9.241235e-1),
+        9.2411566e-1,
+    );
+    check(
+        "fmod_checked(9.885632e-22,2.4062233e-23)",
+        fmod_checked(9.885632e-22, 2.4062233e-23),
+        2.0116773e-24,
+    );
 
     // rem_euclid/div_euclid: Rust-native std semantics, verified against
     // f32::rem_euclid/f32::div_euclid directly (idea #152).
-    check("rem_euclid(5,3)", rem_euclid(5.0, 3.0), 5.0f32.rem_euclid(3.0));
-    check("rem_euclid(-5,3)", rem_euclid(-5.0, 3.0), (-5.0f32).rem_euclid(3.0));
-    check("rem_euclid(5,-3)", rem_euclid(5.0, -3.0), 5.0f32.rem_euclid(-3.0));
-    check("rem_euclid(-5,-3)", rem_euclid(-5.0, -3.0), (-5.0f32).rem_euclid(-3.0));
-    check("rem_euclid(0,3)", rem_euclid(0.0, 3.0), 0.0f32.rem_euclid(3.0));
-    check("rem_euclid(-0,3)", rem_euclid(-0.0, 3.0), (-0.0f32).rem_euclid(3.0));
-    check("rem_euclid(-6,3)", rem_euclid(-6.0, 3.0), (-6.0f32).rem_euclid(3.0));
-    check("rem_euclid(5,0)", rem_euclid(5.0, 0.0), 5.0f32.rem_euclid(0.0));
-    check("rem_euclid(inf,3)", rem_euclid(f32::INFINITY, 3.0), f32::INFINITY.rem_euclid(3.0));
-    check("rem_euclid(5,inf)", rem_euclid(5.0, f32::INFINITY), 5.0f32.rem_euclid(f32::INFINITY));
-    check("rem_euclid(nan,3)", rem_euclid(f32::NAN, 3.0), f32::NAN.rem_euclid(3.0));
-    check("div_euclid(5,3)", div_euclid(5.0, 3.0), 5.0f32.div_euclid(3.0));
-    check("div_euclid(-5,3)", div_euclid(-5.0, 3.0), (-5.0f32).div_euclid(3.0));
-    check("div_euclid(5,-3)", div_euclid(5.0, -3.0), 5.0f32.div_euclid(-3.0));
-    check("div_euclid(-5,-3)", div_euclid(-5.0, -3.0), (-5.0f32).div_euclid(-3.0));
-    check("div_euclid(5,0)", div_euclid(5.0, 0.0), 5.0f32.div_euclid(0.0));
-    check("div_euclid(inf,3)", div_euclid(f32::INFINITY, 3.0), f32::INFINITY.div_euclid(3.0));
-    check("div_euclid(5,inf)", div_euclid(5.0, f32::INFINITY), 5.0f32.div_euclid(f32::INFINITY));
-    check("div_euclid(nan,3)", div_euclid(f32::NAN, 3.0), f32::NAN.div_euclid(3.0));
+    check(
+        "rem_euclid(5,3)",
+        rem_euclid(5.0, 3.0),
+        5.0f32.rem_euclid(3.0),
+    );
+    check(
+        "rem_euclid(-5,3)",
+        rem_euclid(-5.0, 3.0),
+        (-5.0f32).rem_euclid(3.0),
+    );
+    check(
+        "rem_euclid(5,-3)",
+        rem_euclid(5.0, -3.0),
+        5.0f32.rem_euclid(-3.0),
+    );
+    check(
+        "rem_euclid(-5,-3)",
+        rem_euclid(-5.0, -3.0),
+        (-5.0f32).rem_euclid(-3.0),
+    );
+    check(
+        "rem_euclid(0,3)",
+        rem_euclid(0.0, 3.0),
+        0.0f32.rem_euclid(3.0),
+    );
+    check(
+        "rem_euclid(-0,3)",
+        rem_euclid(-0.0, 3.0),
+        (-0.0f32).rem_euclid(3.0),
+    );
+    check(
+        "rem_euclid(-6,3)",
+        rem_euclid(-6.0, 3.0),
+        (-6.0f32).rem_euclid(3.0),
+    );
+    check(
+        "rem_euclid(5,0)",
+        rem_euclid(5.0, 0.0),
+        5.0f32.rem_euclid(0.0),
+    );
+    check(
+        "rem_euclid(inf,3)",
+        rem_euclid(f32::INFINITY, 3.0),
+        f32::INFINITY.rem_euclid(3.0),
+    );
+    check(
+        "rem_euclid(5,inf)",
+        rem_euclid(5.0, f32::INFINITY),
+        5.0f32.rem_euclid(f32::INFINITY),
+    );
+    check(
+        "rem_euclid(nan,3)",
+        rem_euclid(f32::NAN, 3.0),
+        f32::NAN.rem_euclid(3.0),
+    );
+    check(
+        "div_euclid(5,3)",
+        div_euclid(5.0, 3.0),
+        5.0f32.div_euclid(3.0),
+    );
+    check(
+        "div_euclid(-5,3)",
+        div_euclid(-5.0, 3.0),
+        (-5.0f32).div_euclid(3.0),
+    );
+    check(
+        "div_euclid(5,-3)",
+        div_euclid(5.0, -3.0),
+        5.0f32.div_euclid(-3.0),
+    );
+    check(
+        "div_euclid(-5,-3)",
+        div_euclid(-5.0, -3.0),
+        (-5.0f32).div_euclid(-3.0),
+    );
+    check(
+        "div_euclid(5,0)",
+        div_euclid(5.0, 0.0),
+        5.0f32.div_euclid(0.0),
+    );
+    check(
+        "div_euclid(inf,3)",
+        div_euclid(f32::INFINITY, 3.0),
+        f32::INFINITY.div_euclid(3.0),
+    );
+    check(
+        "div_euclid(5,inf)",
+        div_euclid(5.0, f32::INFINITY),
+        5.0f32.div_euclid(f32::INFINITY),
+    );
+    check(
+        "div_euclid(nan,3)",
+        div_euclid(f32::NAN, 3.0),
+        f32::NAN.div_euclid(3.0),
+    );
 
     // idea #197: seam continuity standing test, informational regression
     // detector for future coefficient/threshold refits (see check_seam's

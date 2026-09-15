@@ -167,7 +167,11 @@ fn report(name: &str, xs: &[f32], a: &[f32], b: &[f32]) {
             let j = i;
             println!(
                 "{name}: {} DIFFS, first at {j}: x={:e} ({:#x}) scalar={:e} x8={:e}",
-                cnt, xs[j], xs[j].to_bits(), a[j], b[j]
+                cnt,
+                xs[j],
+                xs[j].to_bits(),
+                a[j],
+                b[j]
             );
         }
     }

@@ -26,7 +26,13 @@ impl Rng {
 }
 
 #[must_use]
-fn check1(name: &str, n: u64, domain: impl Fn(f32) -> bool, checked: impl Fn(f32) -> f32, unchecked: impl Fn(f32) -> f32) -> bool {
+fn check1(
+    name: &str,
+    n: u64,
+    domain: impl Fn(f32) -> bool,
+    checked: impl Fn(f32) -> f32,
+    unchecked: impl Fn(f32) -> f32,
+) -> bool {
     let mut rng = Rng(0x9E3779B97F4A7C15 ^ (name.len() as u64 + 1));
     let mut checked_count = 0u64;
     let mut mismatches = 0u64;
@@ -105,12 +111,30 @@ fn main() {
     let mut ok = true;
 
     let positive_normal = |x: f32| x >= f32::MIN_POSITIVE && x.is_finite();
-    ok &= check1("log_2 / log_2_unchecked", N, positive_normal, log_2, log_2_unchecked);
+    ok &= check1(
+        "log_2 / log_2_unchecked",
+        N,
+        positive_normal,
+        log_2,
+        log_2_unchecked,
+    );
     ok &= check1("ln / ln_unchecked", N, positive_normal, ln, ln_unchecked);
-    ok &= check1("log10 / log10_unchecked", N, positive_normal, log10, log10_unchecked);
+    ok &= check1(
+        "log10 / log10_unchecked",
+        N,
+        positive_normal,
+        log10,
+        log10_unchecked,
+    );
 
     let normal_finite = |x: f32| x.abs() >= f32::MIN_POSITIVE && x.is_finite();
-    ok &= check1("cbrt / cbrt_unchecked", N, normal_finite, cbrt, cbrt_unchecked);
+    ok &= check1(
+        "cbrt / cbrt_unchecked",
+        N,
+        normal_finite,
+        cbrt,
+        cbrt_unchecked,
+    );
 
     let accurate_safe_range = |x: f32| {
         let ax = x.to_bits() & 0x7fff_ffff;
@@ -137,7 +161,13 @@ fn main() {
     ok &= check1("tand / tand_unchecked", N, deg_domain, tand, tand_unchecked);
 
     let atan2_domain = |x: f32, y: f32| x != 0.0 && !(x.is_infinite() && y.is_infinite());
-    ok &= check2("atan2 / atan2_unchecked", N, atan2_domain, atan2, atan2_unchecked);
+    ok &= check2(
+        "atan2 / atan2_unchecked",
+        N,
+        atan2_domain,
+        atan2,
+        atan2_unchecked,
+    );
 
     // fmod/remainder correct an exact-cancellation sign bug their own
     // _unchecked twins don't (see remainder_style_combine!'s own
@@ -151,10 +181,19 @@ fn main() {
     let exact_multiple = |x: f32, y: f32| (-(x / y).round()).mul_add(y, x) == 0.0;
     let rem_domain = |x: f32, y: f32| x != 0.0 && y.is_finite() && !exact_multiple(x, y);
     ok &= check2("fmod / fmod_unchecked", N, rem_domain, fmod, fmod_unchecked);
-    ok &= check2("remainder / remainder_unchecked", N, rem_domain, remainder, remainder_unchecked);
+    ok &= check2(
+        "remainder / remainder_unchecked",
+        N,
+        rem_domain,
+        remainder,
+        remainder_unchecked,
+    );
 
     let pow_domain = |x: f32, y: f32| {
-        x >= f32::MIN_POSITIVE && x.is_finite() && y != 0.0 && (-126.0..128.0).contains(&(x.log2() * y))
+        x >= f32::MIN_POSITIVE
+            && x.is_finite()
+            && y != 0.0
+            && (-126.0..128.0).contains(&(x.log2() * y))
     };
     ok &= check2("powf / powf_unchecked", N, pow_domain, powf, powf_unchecked);
 

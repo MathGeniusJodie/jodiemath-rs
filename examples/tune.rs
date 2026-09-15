@@ -22,10 +22,18 @@ fn fma(a: f32, b: f32, c: f32) -> f32 {
 fn ulp_diff(a: f32, b: f32) -> u64 {
     fn ord(x: f32) -> i64 {
         let b = x.to_bits();
-        if b & 0x8000_0000 != 0 { -((b & 0x7fff_ffff) as i64) } else { b as i64 }
+        if b & 0x8000_0000 != 0 {
+            -((b & 0x7fff_ffff) as i64)
+        } else {
+            b as i64
+        }
     }
     if a.is_nan() || b.is_nan() {
-        return if a.is_nan() == b.is_nan() { 0 } else { u64::MAX };
+        return if a.is_nan() == b.is_nan() {
+            0
+        } else {
+            u64::MAX
+        };
     }
     (ord(a) - ord(b)).unsigned_abs()
 }
@@ -164,14 +172,22 @@ fn exp2_lut8_c(x: f32, c: &[f32]) -> f32 {
     // select" branchless idiom, just nested three deep instead of one.
     let b0 = if f < 4.0 / 8.0 {
         if f < 2.0 / 8.0 {
-            if f < 1.0 / 8.0 { EXP2_LUT8[0] } else { EXP2_LUT8[1] }
+            if f < 1.0 / 8.0 {
+                EXP2_LUT8[0]
+            } else {
+                EXP2_LUT8[1]
+            }
         } else if f < 3.0 / 8.0 {
             EXP2_LUT8[2]
         } else {
             EXP2_LUT8[3]
         }
     } else if f < 6.0 / 8.0 {
-        if f < 5.0 / 8.0 { EXP2_LUT8[4] } else { EXP2_LUT8[5] }
+        if f < 5.0 / 8.0 {
+            EXP2_LUT8[4]
+        } else {
+            EXP2_LUT8[5]
+        }
     } else if f < 7.0 / 8.0 {
         EXP2_LUT8[6]
     } else {
@@ -393,7 +409,11 @@ fn atan_three_c(x: f32, c: &[f32]) -> f32 {
     let numer = fma(fma(c[0], arg2, c[1]), arg2, 1.0) * arg;
     let denom = fma(fma(arg2, c[2], c[3]), arg2, 1.0);
     let p = numer / denom;
-    if below { p } else { std::f32::consts::FRAC_PI_8 + p }
+    if below {
+        p
+    } else {
+        std::f32::consts::FRAC_PI_8 + p
+    }
 }
 
 // Degree bump on atan_poly: 3/3 instead of 2/2 (one more term each in
@@ -743,7 +763,11 @@ const ERFCX_C0_HI: f32 = f32::from_bits(0x3f106ebb);
 #[inline(always)]
 fn erfcx_pos_c(xa: f32, c: &[f32]) -> f32 {
     let v0 = 1.0 / (2.0 + xa);
-    let v = if xa <= 2.0 { fma(-0.5 * xa, v0, 0.5) } else { v0 };
+    let v = if xa <= 2.0 {
+        fma(-0.5 * xa, v0, 0.5)
+    } else {
+        v0
+    };
     let v2 = v * v;
     let v4 = v2 * v2;
     let p01 = fma(c[1], v, c[0]);
@@ -811,7 +835,11 @@ fn tune(
 ) {
     let mut c: Vec<f32> = init.to_vec();
     let mut best = score(f, reference, grid, &c);
-    println!("{name}: start max {} avg {:.5}", best.0, best.1 as f64 / grid.len() as f64);
+    println!(
+        "{name}: start max {} avg {:.5}",
+        best.0,
+        best.1 as f64 / grid.len() as f64
+    );
     let mut improved = true;
     while improved {
         improved = false;
@@ -987,7 +1015,11 @@ fn tune_basin_hop_avg_first(
     let start = score(f, reference, grid, &c);
     let cap = start.0; // basin-hopping may never regress max beyond the un-hopped starting point
     let mut best = start;
-    println!("{name}: start max {} avg {:.5}", best.0, best.1 as f64 / grid.len() as f64);
+    println!(
+        "{name}: start max {} avg {:.5}",
+        best.0,
+        best.1 as f64 / grid.len() as f64
+    );
 
     use rand::RngExt;
     let mut rng = rand::rng();
@@ -1025,7 +1057,11 @@ fn tune_fixed0(
 ) {
     let mut c: Vec<f32> = init.to_vec();
     let mut best = score(f, reference, grid, &c);
-    println!("{name}: start max {} avg {:.5}", best.0, best.1 as f64 / grid.len() as f64);
+    println!(
+        "{name}: start max {} avg {:.5}",
+        best.0,
+        best.1 as f64 / grid.len() as f64
+    );
     let mut improved = true;
     while improved {
         improved = false;
@@ -1123,7 +1159,14 @@ fn main() {
         // current shipped coefficients (src/lib.rs's exp2), not the
         // pre-tuning starting point this init array used to be -- check
         // for headroom from where the crate actually is now.
-        let init = [2.1702237e-4, 1.2439679e-3, 9.678826e-3, 5.548333e-2, 2.4022985e-1, 6.93147e-1];
+        let init = [
+            2.1702237e-4,
+            1.2439679e-3,
+            9.678826e-3,
+            5.548333e-2,
+            2.4022985e-1,
+            6.93147e-1,
+        ];
         tune("exp2", &exp2_c, &|x| x.exp2(), &grid, &init);
     }
     if which.contains("exp2direct") {
@@ -1166,10 +1209,24 @@ fn main() {
         let q3 = q2 * q0 / 4.0;
         let q4 = q3 * q0 / 5.0;
         let q5 = q4 * q0 / 6.0;
-        let init5 = [q5 as f32, q4 as f32, q3 as f32, q2 as f32, q1 as f32, q0 as f32];
-        tune("exp2_round (degree 5)", &exp2_round_c, &|x| x.exp2(), &grid, &init5);
+        let init5 = [
+            q5 as f32, q4 as f32, q3 as f32, q2 as f32, q1 as f32, q0 as f32,
+        ];
+        tune(
+            "exp2_round (degree 5)",
+            &exp2_round_c,
+            &|x| x.exp2(),
+            &grid,
+            &init5,
+        );
         let init4 = [q4 as f32, q2 as f32, q3 as f32, q0 as f32, q1 as f32];
-        tune("exp2_round4 (degree 4)", &exp2_round4_c, &|x| x.exp2(), &grid, &init4);
+        tune(
+            "exp2_round4 (degree 4)",
+            &exp2_round4_c,
+            &|x| x.exp2(),
+            &grid,
+            &init4,
+        );
     }
     if which.contains("exp2lut") {
         let mut grid = vec![];
@@ -1196,8 +1253,16 @@ fn main() {
         // the poly's mathematically-required leading term, log2(1+s)'s
         // derivative at s=0), so it's excluded from tuning below.
         let init = [
-            std::f32::consts::LOG2_E, -0.72134733, 0.4808985, -0.36069715, 0.288568,
-            -0.23961738, 0.20460059, -0.19106273, 0.18617496, -0.10994955,
+            std::f32::consts::LOG2_E,
+            -0.72134733,
+            0.4808985,
+            -0.36069715,
+            0.288568,
+            -0.23961738,
+            0.20460059,
+            -0.19106273,
+            0.18617496,
+            -0.10994955,
         ];
         tune_fixed0("log2", &log2_c, &|x| x.log2(), &grid, &init);
     }
@@ -1227,13 +1292,29 @@ fn main() {
         // rounded to f32 -- never refit directly against ln/log10 as
         // their own objective until now.
         let init = [
-            1.0, -0.49999988, 0.33333343, -0.25001621, 0.20002009, -0.16609012, 0.14181833,
-            -0.13243459, 0.12904665, -0.07621122,
+            1.0,
+            -0.49999988,
+            0.33333343,
+            -0.25001621,
+            0.20002009,
+            -0.16609012,
+            0.14181833,
+            -0.13243459,
+            0.12904665,
+            -0.07621122,
         ];
         tune_fixed0("ln", &ln_poly_c, &|x| x.ln(), &grid, &init);
         let init = [
-            0.4342945, -0.2171472, 0.14476489, -0.10858066, 0.08686763, -0.07213202, 0.06159092,
-            -0.05751561, 0.05604425, -0.03309811,
+            0.4342945,
+            -0.2171472,
+            0.14476489,
+            -0.10858066,
+            0.08686763,
+            -0.07213202,
+            0.06159092,
+            -0.05751561,
+            0.05604425,
+            -0.03309811,
         ];
         tune_fixed0("log10", &log10_poly_c, &|x| x.log10(), &grid, &init);
     }
@@ -1294,8 +1375,16 @@ fn main() {
         // `ln` unmodified) -- same seed as the "lnlog10" block's own ln
         // init, since log1p_via_ln_c calls ln_poly_c directly.
         let init = [
-            1.0, -0.49999988, 0.33333343, -0.25001621, 0.20002009, -0.16609012, 0.14181833,
-            -0.13243459, 0.12904665, -0.07621122,
+            1.0,
+            -0.49999988,
+            0.33333343,
+            -0.25001621,
+            0.20002009,
+            -0.16609012,
+            0.14181833,
+            -0.13243459,
+            0.12904665,
+            -0.07621122,
         ];
         tune_joint_fixed0(
             "log1p_joint",
@@ -1344,13 +1433,27 @@ fn main() {
         // the greedy per-coordinate search never recovered, converging to
         // max ulp 565).
         let init7 = [0.0, 0.040634338, 0.65748954, 0.0, 0.17133473, 0.9907859];
-        tune("atan_poly7 (3/3)", &atan_poly7_c, &|x| x.atan(), &grid, &init7);
+        tune(
+            "atan_poly7 (3/3)",
+            &atan_poly7_c,
+            &|x| x.atan(),
+            &grid,
+            &init7,
+        );
         // What actually works: a real least-squares Pade fit (scipy, not
         // a guess) of the 3/3 shape against atan(x) directly over [0,1] --
         // found max abs error 1.3e-9 vs the 2/2 form's 7.8e-7 (~600x).
         // Fed as the coordinate-descent starting point instead of 0.0.
-        let init7d = [0.00883003, 0.28497791, 1.12717105, 0.05016619, 0.57181574, 1.46050425];
-        tune("atan_poly7 (3/3, scipy seed)", &atan_poly7_c, &|x| x.atan(), &grid, &init7d);
+        let init7d = [
+            0.00883003, 0.28497791, 1.12717105, 0.05016619, 0.57181574, 1.46050425,
+        ];
+        tune(
+            "atan_poly7 (3/3, scipy seed)",
+            &atan_poly7_c,
+            &|x| x.atan(),
+            &grid,
+            &init7d,
+        );
 
         // Three-interval reduction: scipy-derived degree-2/2 seed (fit
         // over u in [-tan(pi/8), tan(pi/8)] against atan(u) directly, not
@@ -1370,7 +1473,13 @@ fn main() {
             -0.01687014,
             0.0030569030,
         ];
-        tune("atan_pure_poly", &atan_pure_poly_c, &|x| x.atan(), &grid, &init_pure);
+        tune(
+            "atan_pure_poly",
+            &atan_pure_poly_c,
+            &|x| x.atan(),
+            &grid,
+            &init_pure,
+        );
     }
     if which.contains("acos") {
         // acos/asin's near-1 branch both evaluate this for x = |input| in
@@ -1386,7 +1495,15 @@ fn main() {
         // 2026-07-10 -- this init array previously held the stale
         // pre-fix 1.5707963, an 8-significant-digit transcription that
         // rounds 1 ulp short of the true nearest f32).
-        let init = [2.2960256e-3, -1.1146317e-2, 2.6900213e-2, -4.8802543e-2, 8.8755615e-2, -2.1458544e-1, 1.5707964];
+        let init = [
+            2.2960256e-3,
+            -1.1146317e-2,
+            2.6900213e-2,
+            -4.8802543e-2,
+            8.8755615e-2,
+            -2.1458544e-1,
+            1.5707964,
+        ];
         tune("acos_poly", &acos_poly_c, &|x| x.acos(), &grid, &init);
         // Coarser grid (100x fewer points) specifically for the basin-hop
         // phase, so each of many restarts' full re-descent stays fast --
@@ -1399,13 +1516,27 @@ fn main() {
             coarse_grid.push(f32::from_bits(b));
             b += 1_000_000;
         }
-        tune_basin_hop("acos_poly_bh", &acos_poly_c, &|x| x.acos(), &coarse_grid, &init, 50);
+        tune_basin_hop(
+            "acos_poly_bh",
+            &acos_poly_c,
+            &|x| x.acos(),
+            &coarse_grid,
+            &init,
+            50,
+        );
         // idea #101: same coarse grid and restart count, but avg-first
         // max-capped instead of the default max-first tuple ordering --
         // re-checks whether the documented bias (not the annealing
         // mechanism itself) was really the reason the plain basin-hop
         // result reversed on the real fuzz.
-        tune_basin_hop_avg_first("acos_poly_bh_avgfirst", &acos_poly_c, &|x| x.acos(), &coarse_grid, &init, 50);
+        tune_basin_hop_avg_first(
+            "acos_poly_bh_avgfirst",
+            &acos_poly_c,
+            &|x| x.acos(),
+            &coarse_grid,
+            &init,
+            50,
+        );
     }
     if which.contains("asinpoly") {
         // Decoupled asin-only fit (backlog idea #34) -- grid restricted to
@@ -1425,7 +1556,15 @@ fn main() {
         // ULP in c[0]; not a real bug like this session's other stale
         // seeds, but coordinate descent was spending its first move just
         // recovering the true value instead of starting there).
-        let seed = [1.3137129e-3, -7.664533e-3, 2.2003133e-2, -4.5330178e-2, 8.745548e-2, -2.1434246e-1, 1.5707785];
+        let seed = [
+            1.3137129e-3,
+            -7.664533e-3,
+            2.2003133e-2,
+            -4.5330178e-2,
+            8.745548e-2,
+            -2.1434246e-1,
+            1.5707785,
+        ];
         tune("asin_poly", &asin_poly_c, &|x| x.asin(), &grid, &seed);
     }
     if which.contains("asinacos") {
@@ -1449,7 +1588,15 @@ fn main() {
         // 2026-07-10 -- this init array previously held the stale
         // pre-fix 1.5707963, an 8-significant-digit transcription that
         // rounds 1 ulp short of the true nearest f32).
-        let init = [2.2960256e-3, -1.1146317e-2, 2.6900213e-2, -4.8802543e-2, 8.8755615e-2, -2.1458544e-1, 1.5707964];
+        let init = [
+            2.2960256e-3,
+            -1.1146317e-2,
+            2.6900213e-2,
+            -4.8802543e-2,
+            8.8755615e-2,
+            -2.1458544e-1,
+            1.5707964,
+        ];
         let joint_score = |c: &[f32]| -> (u64, u64) {
             let mut sum = 0u64;
             let mut max = 0u64;
@@ -1470,7 +1617,11 @@ fn main() {
         };
         let mut c: Vec<f32> = init.to_vec();
         let mut best = joint_score(&c);
-        println!("acos_asin_joint: start max {} avg {:.5}", best.0, best.1 as f64 / grid.len() as f64);
+        println!(
+            "acos_asin_joint: start max {} avg {:.5}",
+            best.0,
+            best.1 as f64 / grid.len() as f64
+        );
         let mut improved = true;
         while improved {
             improved = false;
@@ -1519,11 +1670,20 @@ fn main() {
                     max = max.max(d);
                 }
             }
-            if acos_max > acos_cap { None } else { Some((max, sum)) }
+            if acos_max > acos_cap {
+                None
+            } else {
+                Some((max, sum))
+            }
         };
         let mut c: Vec<f32> = init.to_vec();
         let mut best = asin_only_score(&c).expect("init must satisfy its own cap");
-        println!("acos_capped_asin: start max {} avg {:.5} (acos cap {})", best.0, best.1 as f64 / grid.len() as f64, acos_cap);
+        println!(
+            "acos_capped_asin: start max {} avg {:.5} (acos cap {})",
+            best.0,
+            best.1 as f64 / grid.len() as f64,
+            acos_cap
+        );
         let mut improved = true;
         while improved {
             improved = false;
@@ -1590,7 +1750,11 @@ fn main() {
         };
         let mut c: Vec<f32> = init.to_vec();
         let mut best = joint_score(&c);
-        println!("acos8_asin_joint: start max {} avg {:.5}", best.0, best.1 as f64 / grid.len() as f64);
+        println!(
+            "acos8_asin_joint: start max {} avg {:.5}",
+            best.0,
+            best.1 as f64 / grid.len() as f64
+        );
         let mut improved = true;
         while improved {
             improved = false;
@@ -1624,7 +1788,15 @@ fn main() {
             grid.push(-f32::from_bits(b));
             b += 3000;
         }
-        let init = [3.118769e-4, -4.67225e-3, 3.3162573e-2, -1.5214339e-1, -9.1684705e-1, -1.6282598, 3.1332566e-5];
+        let init = [
+            3.118769e-4,
+            -4.67225e-3,
+            3.3162573e-2,
+            -1.5214339e-1,
+            -9.1684705e-1,
+            -1.6282598,
+            3.1332566e-5,
+        ];
         tune("erf_tail", &erf_tail_c, &erf_ref, &grid, &init);
 
         // erf's near-zero Pade branch, |x| < 0.28.
@@ -1635,7 +1807,12 @@ fn main() {
             grid.push(-f32::from_bits(b));
             b += 2000;
         }
-        let init = [0.5910557508468628, 1.128379225730896, 0.18571428954601288, 0.8571428656578064];
+        let init = [
+            0.5910557508468628,
+            1.128379225730896,
+            0.18571428954601288,
+            0.8571428656578064,
+        ];
         tune("erf_near0", &erf_near0_c, &erf_ref, &grid, &init);
     }
     if which == "erfcx" {
@@ -1680,8 +1857,17 @@ fn main() {
         // `init[0]` is the two-word constant's *low* word, not `c0` -- see
         // erfcx_pos_c above.
         let init = [
-            f32::from_bits(0xb2fbd649), 1.1283773, 1.974964, 2.8070478, 2.9756768, -3.7488432,
-            17.02367, -117.490135, 255.59447, -243.95302, 90.238,
+            f32::from_bits(0xb2fbd649),
+            1.1283773,
+            1.974964,
+            2.8070478,
+            2.9756768,
+            -3.7488432,
+            17.02367,
+            -117.490135,
+            255.59447,
+            -243.95302,
+            90.238,
         ];
         tune("erfcx_pos", &erfcx_pos_c, &erfcx_ref, &grid, &init);
     }
@@ -1701,7 +1887,12 @@ fn main() {
         // previously held a stale pre-2026-07-09-refit value, the same
         // class of staleness already found for exp_pos_neg/erf_tail_c/
         // acos_poly's own seeds).
-        let init = [-0.3333314061164856, 0.22221335768699646, -0.1739402711391449, 0.14720453321933746];
+        let init = [
+            -0.3333314061164856,
+            0.22221335768699646,
+            -0.1739402711391449,
+            0.14720453321933746,
+        ];
         tune("cbrt_normal", &cbrt_normal_c, &|x| x.cbrt(), &grid, &init);
 
         // seed offset (c[0], bits used directly) jointly with the same
@@ -1721,7 +1912,13 @@ fn main() {
             -0.17394388,
             0.14823665,
         ];
-        tune("cbrt_normal_joint", &cbrt_normal_joint_c, &|x| x.cbrt(), &grid2, &init_joint);
+        tune(
+            "cbrt_normal_joint",
+            &cbrt_normal_joint_c,
+            &|x| x.cbrt(),
+            &grid2,
+            &init_joint,
+        );
 
         // idea #52: degree-4 correction poly (5 coeffs), seeded from a
         // real scipy/HiGHS minimax LP fit of p(r) = ((1+r)^(-1/3)-1)/r
@@ -1734,8 +1931,20 @@ fn main() {
             grid5.push(-f32::from_bits(b));
             b += 5;
         }
-        let init5 = [-0.33333338, 0.22221859, -0.17280712, 0.14543792, -0.12951847];
-        tune("cbrt_normal_c5", &cbrt_normal_c5, &|x| x.cbrt(), &grid5, &init5);
+        let init5 = [
+            -0.33333338,
+            0.22221859,
+            -0.17280712,
+            0.14543792,
+            -0.12951847,
+        ];
+        tune(
+            "cbrt_normal_c5",
+            &cbrt_normal_c5,
+            &|x| x.cbrt(),
+            &grid5,
+            &init5,
+        );
     }
     if which.contains("cbrtshift") {
         // coarser grid for a fast first-pass screen of the shift-multiply
@@ -1748,7 +1957,13 @@ fn main() {
             b += 500;
         }
         let init = [-0.33333147, 0.22220612, -0.17394388, 0.14823665];
-        tune("cbrt_shiftmul", &cbrt_shiftmul_c, &|x| x.cbrt(), &grid, &init);
+        tune(
+            "cbrt_shiftmul",
+            &cbrt_shiftmul_c,
+            &|x| x.cbrt(),
+            &grid,
+            &init,
+        );
     }
     if which.contains("cbrtthroughput") {
         // Unlike cbrt_normal, cbrt_throughput's error does NOT repeat
@@ -1772,7 +1987,13 @@ fn main() {
             f32::from_bits(0x3fb6e3d7),
             f32::from_bits(0x3fe09c2a),
         ];
-        tune("cbrt_throughput", &cbrt_throughput_c, &|x| x.cbrt(), &grid, &init);
+        tune(
+            "cbrt_throughput",
+            &cbrt_throughput_c,
+            &|x| x.cbrt(),
+            &grid,
+            &init,
+        );
     }
     if which.contains("sinf") {
         // sinf_poly's fitted domain, [-pi/2, pi/2].
@@ -1800,8 +2021,19 @@ fn main() {
             grid.push(-f32::from_bits(b));
             b += 150;
         }
-        let init = [-5.167724609375, 2.550321102142334, -0.5996360778808594, 0.0800275132060051];
-        tune("sinpi_poly", &sinpi_poly_c, &|r| (std::f64::consts::PI * r).sin(), &grid, &init);
+        let init = [
+            -5.167724609375,
+            2.550321102142334,
+            -0.5996360778808594,
+            0.0800275132060051,
+        ];
+        tune(
+            "sinpi_poly",
+            &sinpi_poly_c,
+            &|r| (std::f64::consts::PI * r).sin(),
+            &grid,
+            &init,
+        );
     }
     if which.contains("sindpoly") {
         // idea #44: sind/cosd's own reduction always lands d in [-90,90]
@@ -1817,8 +2049,19 @@ fn main() {
             grid.push(-f32::from_bits(b));
             b += 27000;
         }
-        let init = [-8.860945968081069e-7, 1.3494975102668061e-11, -9.762676095181961e-17, 3.8616159998020477e-22];
-        tune("sind_poly", &sind_poly_c, &|d| (std::f64::consts::PI / 180.0 * d).sin(), &grid, &init);
+        let init = [
+            -8.860945968081069e-7,
+            1.3494975102668061e-11,
+            -9.762676095181961e-17,
+            3.8616159998020477e-22,
+        ];
+        tune(
+            "sind_poly",
+            &sind_poly_c,
+            &|d| (std::f64::consts::PI / 180.0 * d).sin(),
+            &grid,
+            &init,
+        );
     }
     if which.contains("expm1") {
         // expm1's Pade branch domain, |x| < 0.5.
@@ -1834,7 +2077,13 @@ fn main() {
         // degree-5-numerator bump: c[0] (the new x^5 term) starts at 0.0
         // so this starts bit-identical to the shipped degree-3 form.
         let init = [0.0, -1.9999927, -120.0, -12.000030, 59.999996, -120.0];
-        tune("expm1_near0_deg5", &expm1_near0_deg5_c, &|x| x.exp_m1(), &grid, &init);
+        tune(
+            "expm1_near0_deg5",
+            &expm1_near0_deg5_c,
+            &|x| x.exp_m1(),
+            &grid,
+            &init,
+        );
     }
     if which.contains("exp_r") {
         // exp's reduced-argument domain, r in [-ln2/2, ln2/2].
@@ -1850,7 +2099,13 @@ fn main() {
         // previously held the pre-2026-07-09-LP-refit coordinate-descent
         // values exp's own doc comment says were superseded).
         let init = [4.9999300e-1, 1.6667245e-1, 4.1883811e-2, 8.3009899e-3];
-        tune("exp_r (c0=c1=1 forced)", &exp_r_c, &|x| x.exp(), &grid, &init);
+        tune(
+            "exp_r (c0=c1=1 forced)",
+            &exp_r_c,
+            &|x| x.exp(),
+            &grid,
+            &init,
+        );
         // idea #25: degree 5->6 bump, seeded from a real scipy/HiGHS
         // minimax LP fit (idealized margin ~33x over an f32-emulated
         // reconstruction of the shipped degree-5 form -- much stronger
@@ -1863,7 +2118,13 @@ fn main() {
             0.00837147980928421,
             0.0013992299791425467,
         ];
-        tune("exp_r6 (c0=c1=1 forced)", &exp_r_c6, &|x| x.exp(), &grid, &init6);
+        tune(
+            "exp_r6 (c0=c1=1 forced)",
+            &exp_r_c6,
+            &|x| x.exp(),
+            &grid,
+            &init6,
+        );
         // current shipped exp_pos_neg coefficients (src/lib.rs), not the
         // pre-retuning starting point above -- check for headroom from
         // where the crate actually is now (idea #7's sinh/cosh round-off
@@ -1871,8 +2132,20 @@ fn main() {
         // ceiling, so worth checking whether coordinate descent can do
         // better than what's shipped before assuming it's already optimal).
         let shipped = [4.999897e-1, 1.6666329e-1, 4.1917525e-2, 8.3811125e-3];
-        tune("exp_r_pair (even/odd split)", &exp_r_pair_c, &|x| x.exp(), &grid, &init);
-        tune("exp_r_pair (from shipped)", &exp_r_pair_c, &|x| x.exp(), &grid, &shipped);
+        tune(
+            "exp_r_pair (even/odd split)",
+            &exp_r_pair_c,
+            &|x| x.exp(),
+            &grid,
+            &init,
+        );
+        tune(
+            "exp_r_pair (from shipped)",
+            &exp_r_pair_c,
+            &|x| x.exp(),
+            &grid,
+            &shipped,
+        );
         tune_basin_hop(
             "exp_r_pair (basin hop, from shipped)",
             &exp_r_pair_c,

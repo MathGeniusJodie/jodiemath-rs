@@ -90,7 +90,13 @@ macro_rules! exp_reduce {
         // fold is why the extra degree costs no arithmetic; it pays for it by
         // serialising the top pair behind the bottom one, which is one more
         // level of fma latency.
-        let c: [f32; 5] = [0.50000006, 0.16666451, 0.041665636, 0.0083748708, 0.0013946877];
+        let c: [f32; 5] = [
+            0.50000006,
+            0.16666451,
+            0.041665636,
+            0.0083748708,
+            0.0013946877,
+        ];
         let r2 = r * r;
         let l1 = fma(c[1], r, c[0]);
         let l2 = fma(c[3], r, c[2]);
@@ -184,7 +190,11 @@ macro_rules! exp_pos_neg_core {
 macro_rules! log_family_edges {
     ($x:expr, $r:expr) => {{
         let r = $r;
-        let spec = if $x == 0.0 { f32::NEG_INFINITY } else { f32::NAN };
+        let spec = if $x == 0.0 {
+            f32::NEG_INFINITY
+        } else {
+            f32::NAN
+        };
         let r = if $x <= 0.0 { spec } else { r };
         if !($x < f32::INFINITY) {
             $x * $x
@@ -387,7 +397,11 @@ pub fn ldexp(x: f32, n: i32) -> f32 {
     } else {
         reconstructed
     };
-    if x == 0.0 || !x.is_finite() { x } else { saturated }
+    if x == 0.0 || !x.is_finite() {
+        x
+    } else {
+        saturated
+    }
 }
 
 /// Decomposes `x` into `(mantissa, exponent)` such that `x == mantissa * 2^exponent`,
@@ -402,7 +416,10 @@ pub fn frexp(x: f32) -> (f32, i32) {
     let mantissa = f32::from_bits(mantissa_bits).copysign(x);
     let exponent = raw_exp as i32 - 126 + koff as i32;
     let is_special = x == 0.0 || !x.is_finite();
-    (if is_special { x } else { mantissa }, if is_special { 0 } else { exponent })
+    (
+        if is_special { x } else { mantissa },
+        if is_special { 0 } else { exponent },
+    )
 }
 
 /// 10^x. Naively rounding `x*LOG2_10` once before `exp2_checked` even starts
@@ -619,7 +636,11 @@ pub fn sinpi(x: f32) -> f32 {
     // compute the normal path unconditionally, select x itself only at the
     // singular zero point.
     let normal = sinf_poly_raw(std::f32::consts::PI * r) * fma(-2.0, parity(q), 1.0);
-    if x == 0.0 { x } else { normal }
+    if x == 0.0 {
+        x
+    } else {
+        normal
+    }
 }
 
 /// Computes `cos(pi * x)`, argument in half-turns. Exact at half-integers and total over all finite f32.
@@ -635,14 +656,22 @@ pub fn cospi(x: f32) -> f32 {
 #[inline(always)]
 pub fn sinc(x: f32) -> f32 {
     let normal = sinpi(x) / (std::f32::consts::PI * x);
-    if x == 0.0 { 1.0 } else { normal }
+    if x == 0.0 {
+        1.0
+    } else {
+        normal
+    }
 }
 
 /// Unnormalized sinc function: `sin(x) / x` in radians, with `sinc(0) = 1.0`.
 #[inline(always)]
 pub fn sinc_unnormalized(x: f32) -> f32 {
     let normal = sin_checked(x) / x;
-    if x == 0.0 { 1.0 } else { normal }
+    if x == 0.0 {
+        1.0
+    } else {
+        normal
+    }
 }
 
 // The *remainder* of tan(pi*w) after its leading term: with `u = w*w` and `w`
@@ -652,7 +681,13 @@ pub fn sinc_unnormalized(x: f32) -> f32 {
 #[inline(always)]
 fn tan_poly(u: f32) -> f32 {
     let c: [f32; 7] = [
-        -8.742278e-8, 10.335385, 40.82169, 160.9828, 741.58649, 701.91418, 28496.229,
+        -8.742278e-8,
+        10.335385,
+        40.82169,
+        160.9828,
+        741.58649,
+        701.91418,
+        28496.229,
     ];
     let u2 = u * u;
     let u4 = u2 * u2;
@@ -670,7 +705,11 @@ fn tan_core(r: f32, s: f32) -> f32 {
     let direct = fma(r, std::f32::consts::PI, r * tan_poly(r * r));
     let reflected = mulsign(1.0 / fma(s, std::f32::consts::PI, s * tan_poly(s * s)), r);
     let normal = if ar <= 0.25 { direct } else { reflected };
-    if s == 0.0 { f32::NEG_INFINITY } else { normal }
+    if s == 0.0 {
+        f32::NEG_INFINITY
+    } else {
+        normal
+    }
 }
 
 /// Computes `tan(pi * x)`, argument in half-turns. Total over all finite f32.
@@ -680,7 +719,11 @@ pub fn tanpi(x: f32) -> f32 {
     let r = x - q;
     let ar = r.abs();
     let normal = tan_core(r, 0.5 - ar);
-    if x == 0.0 { x } else { normal }
+    if x == 0.0 {
+        x
+    } else {
+        normal
+    }
 }
 
 /// Computes `sin(2 * pi * x)`, argument in full turns.
@@ -764,7 +807,11 @@ fn tand_core(d: f32) -> f32 {
     let direct = fma(d, DEG_TO_RAD_SMALL, d * tand_poly(d * d));
     let reflected = 1.0 / fma(s, DEG_TO_RAD_SMALL, s * tand_poly(s * s));
     let normal = if ad <= 45.0 { direct } else { reflected };
-    if s == 0.0 { f32::NEG_INFINITY } else { normal }
+    if s == 0.0 {
+        f32::NEG_INFINITY
+    } else {
+        normal
+    }
 }
 
 /// Computes `tan(x)` for `x` in degrees. Accurate for `|x| < 4.7e7`.
@@ -880,7 +927,11 @@ fn reduce_pi64<const HALF: bool>(x: f32) -> (f32, u32) {
     // sin: (-1)^n. cos: (-1)^(k+1) for k = round(x/pi - 0.5), which is
     // `n` when fc >= 0 and `n - 1` when fc < 0 -- so the half-turn adds
     // one more flip exactly when fc's sign bit is clear.
-    let sgn = if HALF { par ^ ((!(fc.to_bits() >> 32)) as u32 & SIGN_MASK) } else { par };
+    let sgn = if HALF {
+        par ^ ((!(fc.to_bits() >> 32)) as u32 & SIGN_MASK)
+    } else {
+        par
+    };
     (r as f32, sgn)
 }
 
@@ -941,7 +992,11 @@ fn reduce_pi_wide<const HALF: bool>(x: f32) -> (f32, u32) {
     let tt = if HALF { fc - half } else { fc };
     let r_chain = (tt * std::f64::consts::PI) as f32;
     let par = ((n0 + n1 + ROUND_MAGIC64).to_bits() as u32) << 31;
-    let sgn_chain = if HALF { par ^ ((!(fc.to_bits() >> 32)) as u32 & SIGN_MASK) ^ sgnx } else { par };
+    let sgn_chain = if HALF {
+        par ^ ((!(fc.to_bits() >> 32)) as u32 & SIGN_MASK) ^ sgnx
+    } else {
+        par
+    };
 
     let (r, sgn) = if e < CUT_PI_WIDE {
         if HALF {
@@ -1011,9 +1066,9 @@ pub unsafe fn reduce_pi_wide_x8_pub<const HALF: bool>(
 #[doc(hidden)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512dq,avx512bw,avx512vbmi,avx512vbmi2")]
-unsafe fn reduce_pi_wide_x8<const HALF: bool>(x: std::arch::x86_64::__m256)
-    -> (std::arch::x86_64::__m256, std::arch::x86_64::__m256i)
-{
+unsafe fn reduce_pi_wide_x8<const HALF: bool>(
+    x: std::arch::x86_64::__m256,
+) -> (std::arch::x86_64::__m256, std::arch::x86_64::__m256i) {
     use std::arch::x86_64::*;
 
     let xi = _mm256_castps_si256(x);
@@ -1073,7 +1128,10 @@ unsafe fn reduce_pi_wide_x8<const HALF: bool>(x: std::arch::x86_64::__m256)
     let n1 = _mm512_roundscale_pd::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(s3);
     let fc_chain = _mm512_sub_pd(s3, n1);
 
-    let xf = _mm512_cvtps_pd(_mm256_and_ps(x, _mm256_set1_ps(f32::from_bits(0x7fff_ffff))));
+    let xf = _mm512_cvtps_pd(_mm256_and_ps(
+        x,
+        _mm256_set1_ps(f32::from_bits(0x7fff_ffff)),
+    ));
     let byp = _mm512_mul_pd(xf, _mm512_set1_pd(INV_PI_F64));
     let small = _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(
         _mm256_set1_epi32(CUT_PI_WIDE as i32),
@@ -1084,17 +1142,19 @@ unsafe fn reduce_pi_wide_x8<const HALF: bool>(x: std::arch::x86_64::__m256)
     let tt = if HALF {
         // copysign(0.5, fc): the AND already produces the sign-bit mask
         let sb = _mm512_and_si512(_mm512_castpd_si512(fc), _mm512_set1_epi64(1 << 63));
-        _mm512_sub_pd(fc, _mm512_or_pd(_mm512_set1_pd(0.5), _mm512_castsi512_pd(sb)))
+        _mm512_sub_pd(
+            fc,
+            _mm512_or_pd(_mm512_set1_pd(0.5), _mm512_castsi512_pd(sb)),
+        )
     } else {
         fc
     };
     let r = _mm512_cvtpd_ps(_mm512_mul_pd(tt, _mm512_set1_pd(std::f64::consts::PI)));
     let par = _mm512_add_pd(_mm512_add_pd(n0, n1), _mm512_set1_pd(ROUND_MAGIC64));
-    let mut sgn = _mm512_srli_epi64::<32>(
-        _mm512_slli_epi64::<63>(
-            _mm512_and_si512(_mm512_castpd_si512(par), _mm512_set1_epi64(1)),
-        ),
-    );
+    let mut sgn = _mm512_srli_epi64::<32>(_mm512_slli_epi64::<63>(_mm512_and_si512(
+        _mm512_castpd_si512(par),
+        _mm512_set1_epi64(1),
+    )));
     if HALF {
         // scalar: (!(fc.to_bits() >> 32)) as u32 & SIGN_MASK -- i.e. the
         // complement of fc's sign bit, which is just fc_high XOR SIGN_MASK.
@@ -1128,8 +1188,16 @@ unsafe fn sinf_poly_x8(r: std::arch::x86_64::__m256) -> std::arch::x86_64::__m25
     let y = _mm256_mul_ps(r, r);
     let y2 = _mm256_mul_ps(y, y);
     let x3 = _mm256_mul_ps(y, r);
-    let a = _mm256_fmadd_ps(_mm256_set1_ps(8.333_066_2e-3), y, _mm256_set1_ps(-0.166_666_60));
-    let b = _mm256_fmadd_ps(_mm256_set1_ps(2.605_780_6e-6), y, _mm256_set1_ps(-1.980_960_3e-4));
+    let a = _mm256_fmadd_ps(
+        _mm256_set1_ps(8.333_066_2e-3),
+        y,
+        _mm256_set1_ps(-0.166_666_60),
+    );
+    let b = _mm256_fmadd_ps(
+        _mm256_set1_ps(2.605_780_6e-6),
+        y,
+        _mm256_set1_ps(-1.980_960_3e-4),
+    );
     let p = _mm256_fmadd_ps(b, y2, a);
     let s = _mm256_fmadd_ps(p, x3, r);
     // clamp like `.clamp(-1.0, 1.0)`: compare+blend, not min/max, so NaN
@@ -1313,7 +1381,11 @@ pub fn wrap_pi(x: f32) -> f32 {
     // `reduce_pi_checked` the residual is formed by subtracting equal signed
     // zeros, which IEEE754 resolves to +0.0, so `r` arrives with the sign
     // already erased and there is nothing left downstream to recover it from.
-    if x == 0.0 { x } else { normal }
+    if x == 0.0 {
+        x
+    } else {
+        normal
+    }
 }
 
 /// Computes `sin(r)` for `r` already reduced to `[-pi/2, pi/2]`.
@@ -1387,7 +1459,11 @@ pub fn cbrt(x: f32) -> f32 {
     // LLVM duplicate the whole function per branch)
     let r = cbrt_normal(xs) * scale;
     // +-0, +-inf, nan propagate (also kills the rcp=inf NaN for x == +-0)
-    if ax == 0 || ax >= EXPONENT_MASK { x + x } else { r }
+    if ax == 0 || ax >= EXPONENT_MASK {
+        x + x
+    } else {
+        r
+    }
 }
 
 /// `cbrt` without domain checks: valid for normal finite `x`.
@@ -1443,11 +1519,27 @@ pub fn cbrt_accurate(x: f32) -> f32 {
     const SCALE_DN_OUT: f32 = f32::from_bits(0x5480_0000); // 2^42
     let small = ax < 0x2380_0000;
     let big = ax >= 0x7f00_0000; // 2^127; inf/nan land here too, fixed up below
-    let xs = if small { x * SCALE_UP } else if big { x * SCALE_DN } else { x };
-    let scale = if small { SCALE_UP_OUT } else if big { SCALE_DN_OUT } else { 1.0 };
+    let xs = if small {
+        x * SCALE_UP
+    } else if big {
+        x * SCALE_DN
+    } else {
+        x
+    };
+    let scale = if small {
+        SCALE_UP_OUT
+    } else if big {
+        SCALE_DN_OUT
+    } else {
+        1.0
+    };
     let r = cbrt_accurate_normal(xs, scale);
     // +-0, +-inf, nan propagate (also kills the rcp=inf NaN for x == +-0)
-    if ax == 0 || ax >= EXPONENT_MASK { x + x } else { r }
+    if ax == 0 || ax >= EXPONENT_MASK {
+        x + x
+    } else {
+        r
+    }
 }
 
 /// `cbrt_accurate` without domain checks: valid for normal finite `x`.
@@ -1494,14 +1586,18 @@ pub fn rcbrt(x: f32) -> f32 {
     let scale = if tiny { 256.0 } else { 1.0 };
     let r = rcbrt_normal(xs) * scale;
     let spec = f32::from_bits(EXPONENT_MASK.wrapping_sub(ax) | (x.to_bits() & SIGN_MASK));
-    if ax == 0 || ax >= EXPONENT_MASK { spec } else { r }
+    if ax == 0 || ax >= EXPONENT_MASK {
+        spec
+    } else {
+        r
+    }
 }
 
 /// Bit-trick approximation of `cbrt(x)` with two rational refinement steps.
 pub fn cbrt_approx(x: f32) -> f32 {
-	let y = f32::from_bits(0x2a509849u32 + (x.to_bits() / 3));
-	let y = (x + 2.*(y*y)*y) / (3.*(y*y));
-    (2.*x*y + (y*y)*(y*y))/(x + 2.*(y*y)*y)
+    let y = f32::from_bits(0x2a509849u32 + (x.to_bits() / 3));
+    let y = (x + 2. * (y * y) * y) / (3. * (y * y));
+    (2. * x * y + (y * y) * (y * y)) / (x + 2. * (y * y) * y)
 }
 /// Single-bit-trick seed for `sqrt(x)`.
 pub fn sqrt_approx(x: f32) -> f32 {
@@ -1721,7 +1817,11 @@ macro_rules! log1p_nonzero {
 #[inline(always)]
 pub fn log1p(x: f32) -> f32 {
     let normal = log1p_nonzero!(x);
-    if x == 0.0 { x } else { normal }
+    if x == 0.0 {
+        x
+    } else {
+        normal
+    }
 }
 
 /// Computes `ln(1 + x) - x`, accurate for small `|x|`.
@@ -1788,7 +1888,11 @@ pub fn log1pmx(x: f32) -> f32 {
         t + (p + fma(k, LN2_LO, corr))
     });
     let normal = if x.abs() < 0.5 { p } else { big };
-    if x == f32::INFINITY { f32::NEG_INFINITY } else { normal }
+    if x == f32::INFINITY {
+        f32::NEG_INFINITY
+    } else {
+        normal
+    }
 }
 
 /// Computes `log2(1 + x)` (C23 `log2p1`).
@@ -1805,7 +1909,11 @@ pub fn log2p1(x: f32) -> f32 {
     let corr = fma(cu, LOG2_E, cu * LOG2_E_LO);
     let corr = if corr.is_finite() { corr } else { 0.0 };
     let normal = log_family_wrapper_no_denormal!(u, log_2_normal) + corr;
-    if x == 0.0 { x } else { normal }
+    if x == 0.0 {
+        x
+    } else {
+        normal
+    }
 }
 
 /// Computes `log10(1 + x)` (C23 `log10p1`).
@@ -1821,7 +1929,11 @@ pub fn log10p1(x: f32) -> f32 {
     let corr = fma(cu, std::f32::consts::LOG10_E, cu * LOG10_E_LO);
     let corr = if corr.is_finite() { corr } else { 0.0 };
     let normal = log_family_wrapper_no_denormal!(u, log10_normal) + corr;
-    if x == 0.0 { x } else { normal }
+    if x == 0.0 {
+        x
+    } else {
+        normal
+    }
 }
 
 /// Computes `e^x` via Cody-Waite range reduction.
@@ -1920,7 +2032,11 @@ pub fn expm1(x: f32) -> f32 {
     let t = f32::from_bits((k + EXPM1_HALF_MAGIC).to_bits() << 23);
     let b = fma(e, t, t - 0.5);
     let b = b + b;
-    if x.abs() < EXPM1_LINEAR { x } else { b }
+    if x.abs() < EXPM1_LINEAR {
+        x
+    } else {
+        b
+    }
 }
 
 /// `expm1` via a single exponent field. Valid for `x` in `[-87.3, 88.7]`.
@@ -1949,7 +2065,11 @@ pub fn expm1_checked(x: f32) -> f32 {
     let t = f32::from_bits((k + EXPM1_HALF_MAGIC).to_bits() << 23);
     let b = fma(e, t, t - 0.5);
     let b = b + b;
-    if x.abs() < EXPM1_LINEAR { x } else { b }
+    if x.abs() < EXPM1_LINEAR {
+        x
+    } else {
+        b
+    }
 }
 
 /// Computes `(e^x - 1) / x`, avoiding cancellation near zero.
@@ -1966,7 +2086,11 @@ pub fn exp_m1_over_x(x: f32) -> f32 {
     let t = f32::from_bits((k + EXPM1_HALF_MAGIC).to_bits() << 23);
     let b = fma(e, t, t - 0.5);
     let b = b + b;
-    if k == 0.0 { q } else { b / x }
+    if k == 0.0 {
+        q
+    } else {
+        b / x
+    }
 }
 
 /// `exp_m1_over_x` via a single exponent field. Valid for `x` in `[-87.3, 88.7]`.
@@ -1983,7 +2107,11 @@ pub fn exp_m1_over_x_narrow(x: f32) -> f32 {
     let e = fma(r2, p, r);
     let t = exp2int_field!(k);
     let b = fma(e, t, t - 1.0);
-    if k == 0.0 { q } else { b / x }
+    if k == 0.0 {
+        q
+    } else {
+        b / x
+    }
 }
 
 // `2^f - 1` for the round-based reduction's own `|f| <= 0.5`, as `f*ln2 +
@@ -1994,7 +2122,13 @@ pub fn exp_m1_over_x_narrow(x: f32) -> f32 {
 // = x*LN_2`.
 macro_rules! exp2m1_f_poly {
     ($f:expr, $f2:expr) => {{
-        let c: [f32; 5] = [2.402265e-1, 5.55035e-2, 9.618533e-3, 1.3395752e-3, 1.526698e-4];
+        let c: [f32; 5] = [
+            2.402265e-1,
+            5.55035e-2,
+            9.618533e-3,
+            1.3395752e-3,
+            1.526698e-4,
+        ];
         let l1 = fma(c[1], $f, c[0]);
         let l2 = fma(c[3], $f, c[2]);
         let m = fma(c[4], $f2, l2);
@@ -2019,7 +2153,11 @@ pub fn exp2m1(x: f32) -> f32 {
     let t = f32::from_bits((k + EXPM1_HALF_MAGIC).to_bits() << 23);
     let b = fma(big, t, t - 0.5);
     let b = b + b;
-    if x.abs() < EXP2M1_LINEAR { fl } else { b }
+    if x.abs() < EXP2M1_LINEAR {
+        fl
+    } else {
+        b
+    }
 }
 
 // `(10^d - 1 - d*LN_10) / d^2` over `|d| <= 0.5*log10(2)`, degree 4,
@@ -2056,7 +2194,11 @@ pub fn exp10m1(x: f32) -> f32 {
     let t = f32::from_bits((k + EXPM1_HALF_MAGIC).to_bits() << 23);
     let b = fma(big, t, t - 0.5);
     let b = b + b;
-    if x.abs() < EXP10M1_LINEAR { dl } else { b }
+    if x.abs() < EXP10M1_LINEAR {
+        dl
+    } else {
+        b
+    }
 }
 
 // exp2_checked's k1/k2 exponent-field split, factored out for
@@ -2139,7 +2281,11 @@ pub fn sinh(x: f32) -> f32 {
     let a = sinh_small(x);
     let (ep, en) = exp_pos_neg_half(x);
     let b = ep - en;
-    if x.abs() < 0.5 { a } else { b }
+    if x.abs() < 0.5 {
+        a
+    } else {
+        b
+    }
 }
 
 /// Computes the hyperbolic cosine `cosh(x)`.
@@ -2157,7 +2303,11 @@ pub fn sinh_narrow(x: f32) -> f32 {
     let a = sinh_small(x);
     let (ep, en) = exp_pos_neg_narrow_half(x);
     let b = ep - en;
-    if x.abs() < 0.5 { a } else { b }
+    if x.abs() < 0.5 {
+        a
+    } else {
+        b
+    }
 }
 
 /// `cosh` via a single exponent field. Valid for `|x| <= 88.7`.
@@ -2185,7 +2335,11 @@ pub fn sinh_checked(x: f32) -> f32 {
     let a = sinh_small(x);
     let (ep, en) = exp_pos_neg_checked_half(x);
     let b = ep - en;
-    if x.abs() < 0.5 { a } else { b }
+    if x.abs() < 0.5 {
+        a
+    } else {
+        b
+    }
 }
 
 /// `cosh` across the full f32 domain with saturation.
@@ -2226,7 +2380,11 @@ pub fn sinh_throughput(x: f32) -> f32 {
     let a = sinh_small(x);
     let e = exp(x);
     let b = 0.5 * (e - 1.0 / e);
-    if x.abs() < 0.5 { a } else { b }
+    if x.abs() < 0.5 {
+        a
+    } else {
+        b
+    }
 }
 
 /// Throughput-optimized `cosh(x)`.
@@ -2382,7 +2540,11 @@ pub fn softplus(x: f32) -> f32 {
     let e = exp_narrow(-ax.min(87.0));
     let corr = if ax > 87.0 { 0.0 } else { log1p_unit(e) };
     let normal = x.max(0.0) + corr;
-    if x.is_nan() { f32::NAN } else { normal }
+    if x.is_nan() {
+        f32::NAN
+    } else {
+        normal
+    }
 }
 
 // `exp(-a) * 2^64` for `a` in `[0, 105]`, the reduction the `_checked` tiers of
@@ -2410,7 +2572,11 @@ pub fn softplus_checked(x: f32) -> f32 {
     const P64: f32 = 5.421010862427522e-20; // 2^-64, exact
     let e = exp_neg_scaled64!(x.abs().min(105.0)) * P64;
     let normal = x.max(0.0) + log1p_unit(e);
-    if x.is_nan() { f32::NAN } else { normal }
+    if x.is_nan() {
+        f32::NAN
+    } else {
+        normal
+    }
 }
 
 /// Log-sigmoid: `ln(sigmoid(x)) = -softplus(-x)`.
@@ -2434,7 +2600,11 @@ pub fn logaddexp(a: f32, b: f32) -> f32 {
     let e = exp_narrow(-d.min(87.0));
     let corr = if d > 87.0 { 0.0 } else { log1p_unit(e) };
     let normal = m + corr;
-    if a.is_nan() || b.is_nan() { f32::NAN } else { normal }
+    if a.is_nan() || b.is_nan() {
+        f32::NAN
+    } else {
+        normal
+    }
 }
 
 /// Numerically stable `ln(exp(a) + exp(b))` across the full f32 domain.
@@ -2449,7 +2619,11 @@ pub fn logaddexp_checked(a: f32, b: f32) -> f32 {
     let d = (a - b).abs().min(105.0);
     let e = exp_neg_scaled64!(d) * P64;
     let normal = m + log1p_unit(e);
-    if a.is_nan() || b.is_nan() { f32::NAN } else { normal }
+    if a.is_nan() || b.is_nan() {
+        f32::NAN
+    } else {
+        normal
+    }
 }
 
 // `ln 2` as a two-word f64, split so that `n * LN2_HI64` is *exact* for every
@@ -2568,7 +2742,11 @@ pub fn logaddexp_accurate(a: f32, b: f32) -> f32 {
     let m = ad.max(bd);
     let d = (ad - bd).abs().min(128.0);
     let normal = (m + log1p_exp_neg_f64(d)) as f32;
-    if a.is_nan() || b.is_nan() { f32::NAN } else { normal }
+    if a.is_nan() || b.is_nan() {
+        f32::NAN
+    } else {
+        normal
+    }
 }
 
 /// Gaussian Error Linear Unit (GELU): `x * Phi(x)`.
@@ -2586,7 +2764,11 @@ pub fn gelu(x: f32) -> f32 {
     // since `x*Phi(-x)` is then ~2e-46 against a half-ulp of ~5e-7; `-0.0` for
     // `x < 0`, since `0.5*|x|*Phi(-|x|)` is ~1e-46 against the 7.0e-46 that
     // would round up to the smallest denormal).
-    let xs = if xa > NORM_CDF_XS_CLAMP { NORM_CDF_XS_CLAMP } else { xa };
+    let xs = if xa > NORM_CDF_XS_CLAMP {
+        NORM_CDF_XS_CLAMP
+    } else {
+        xa
+    };
     let h = 0.5 * xs;
     let p = h * xs;
     let pe = fma(h, xs, -p);
@@ -2607,7 +2789,11 @@ pub fn gelu(x: f32) -> f32 {
 #[inline(always)]
 pub fn silu(x: f32) -> f32 {
     let normal = x * sigmoid(x);
-    if x == f32::NEG_INFINITY { 0.0 } else { normal }
+    if x == f32::NEG_INFINITY {
+        0.0
+    } else {
+        normal
+    }
 }
 
 /// SiLU across the full f32 domain.
@@ -2624,14 +2810,22 @@ pub fn silu_checked(x: f32) -> f32 {
     let e2 = p * exp2int_field!(k + 64.0); // exp(-|x|) * 2^64
     let num = x * if x < 0.0 { e2 } else { TWO64 };
     let normal = num / (TWO64 + e2);
-    if ax > 110.0 { x.max(-0.0) } else { normal }
+    if ax > 110.0 {
+        x.max(-0.0)
+    } else {
+        normal
+    }
 }
 
 /// Softsign: `x / (1 + |x|)`.
 #[inline(always)]
 pub fn softsign(x: f32) -> f32 {
     let normal = x / (1.0 + x.abs());
-    if x.is_infinite() { x.signum() } else { normal }
+    if x.is_infinite() {
+        x.signum()
+    } else {
+        normal
+    }
 }
 
 /// Computes `sqrt(1 + x) - 1`, avoiding catastrophic cancellation near zero.
@@ -2639,7 +2833,11 @@ pub fn softsign(x: f32) -> f32 {
 #[inline(always)]
 pub fn sqrt1pm1(x: f32) -> f32 {
     let normal = x / ((1.0 + x).sqrt() + 1.0);
-    if x.is_infinite() { x } else { normal }
+    if x.is_infinite() {
+        x
+    } else {
+        normal
+    }
 }
 
 /// Computes `x^(3/2) = x * sqrt(x)` for `x >= 0`.
@@ -2692,7 +2890,11 @@ pub fn pow_2_3(x: f32) -> f32 {
     let scale3 = if tiny { OUT3 } else { 1.0 / 3.0 };
     let r = pow_2_3_normal(ascaled, scale, scale3);
     // +-0, +-inf, nan propagate (also kills the rcp=inf NaN for x == +-0)
-    if ax == 0 || ax >= EXPONENT_MASK { a + a } else { r }
+    if ax == 0 || ax >= EXPONENT_MASK {
+        a + a
+    } else {
+        r
+    }
 }
 
 /// Hermite smoothstep on `[edge0, edge1]`.
@@ -2798,7 +3000,11 @@ pub fn acosh(x: f32) -> f32 {
     // `x` is already `+inf` for `x = +inf` and `NaN` for `x = NaN`, and
     // `-inf` is discarded by the domain check below.
     let combined = if x.is_finite() { combined } else { x };
-    if x < 1.0 { f32::NAN } else { combined }
+    if x < 1.0 {
+        f32::NAN
+    } else {
+        combined
+    }
 }
 
 // atanh(x) ~ x*(1 + x^2/3 + x^4/5 + x^6/7 + ...), a degree-7 minimax refit of
@@ -2836,7 +3042,11 @@ pub fn atanh(x: f32) -> f32 {
     let l = if u <= 0.0 { f32::NAN } else { l };
     let l = if !(u < f32::INFINITY) { u * u } else { l };
     let big = mulsign(0.5 * l, x);
-    if a < 0.25 { small } else { big }
+    if a < 0.25 {
+        small
+    } else {
+        big
+    }
 }
 
 // `asin(sqrt(t))/sqrt(t)` on `t` in `[0, 1/4]`, degree 5, ulp-weighted minimax
@@ -2879,7 +3089,13 @@ pub fn acos(x: f32) -> f32 {
     let t = if small { x * x } else { fma(na, 0.5, 0.5) };
     let y = t.sqrt();
     let m = mulsign(if small { na } else { y + y }, x);
-    let c = if small { FRAC_PI_2 } else if x < 0.0 { PI } else { 0.0 };
+    let c = if small {
+        FRAC_PI_2
+    } else if x < 0.0 {
+        PI
+    } else {
+        0.0
+    };
     fma(m, acos_poly(t), c * LO_RATIO) + c
 }
 
@@ -2925,7 +3141,11 @@ fn asin_small(x: f32) -> f32 {
     let c3 = 0.04547038f32;
     let c4 = 0.02417949f32;
     let c5 = 0.042166352f32;
-    let p = fma(fma(fma(fma(fma(c5, x2, c4), x2, c3), x2, c2), x2, c1), x2, c0);
+    let p = fma(
+        fma(fma(fma(fma(c5, x2, c4), x2, c3), x2, c2), x2, c1),
+        x2,
+        c0,
+    );
     x * p
 }
 
@@ -2936,7 +3156,11 @@ pub fn asin(x: f32) -> f32 {
     let a = x.abs();
     let small = asin_small(x);
     let big = mulsign(fma(-(1.0 - a).sqrt(), asin_poly(a), FRAC_PI_2), x);
-    if a < 0.5 { small } else { big }
+    if a < 0.5 {
+        small
+    } else {
+        big
+    }
 }
 
 // 180/pi as a double-f32, for the radians-to-degrees composites: HI+LO
@@ -2979,7 +3203,11 @@ fn asinpi_small(x: f32) -> f32 {
     // crossover sits there and `asin_small` for the same sizing argument (a
     // minimax needs degree 5 to reach 0.5, not the ~12 terms the Taylor series
     // would).
-    let t = fma(fma(fma(fma(fma(c5, x2, c4), x2, c3), x2, c2), x2, c1), x2, FRAC_1_PI_LO);
+    let t = fma(
+        fma(fma(fma(fma(c5, x2, c4), x2, c3), x2, c2), x2, c1),
+        x2,
+        FRAC_1_PI_LO,
+    );
     fma(x, FRAC_1_PI, x * t)
 }
 
@@ -3003,7 +3231,11 @@ pub fn asinpi(x: f32) -> f32 {
     let a = x.abs();
     let small = asinpi_small(x);
     let big = mulsign(fma(-(1.0 - a).sqrt(), asinpi_poly(a), 0.5), x);
-    if a < 0.5 { small } else { big }
+    if a < 0.5 {
+        small
+    } else {
+        big
+    }
 }
 
 // 3/3 Pade-style rational approximation of atan on [0,1], seeded from a
@@ -3093,7 +3325,11 @@ pub fn atan_latency(x: f32) -> f32 {
     let p = fma(hi, r4 * r4, lo) * r;
     let sp = mulsign(p, x);
     let hpisignx = mulsign(FRAC_PI_2, x);
-    if a < 1.0 { sp } else { hpisignx - sp }
+    if a < 1.0 {
+        sp
+    } else {
+        hpisignx - sp
+    }
 }
 
 /// Computes the four-quadrant arctangent `atan2(y, x)` in radians.
@@ -3103,9 +3339,17 @@ pub fn atan2(y: f32, x: f32) -> f32 {
     let nonzerox = x != 0.0;
     let nonzeroy = y != 0.0;
     let bothzero = !nonzerox && !nonzeroy;
-    let hpisignx = if nonzerox || bothzero { mulsign(FRAC_PI_2, x) } else { 0.0 };
+    let hpisignx = if nonzerox || bothzero {
+        mulsign(FRAC_PI_2, x)
+    } else {
+        0.0
+    };
     let correction = mulsign(FRAC_PI_2 - hpisignx, y);
-    let r = if nonzerox { atan(y / x) + correction } else { correction };
+    let r = if nonzerox {
+        atan(y / x) + correction
+    } else {
+        correction
+    };
     let r = if y.is_nan() { f32::NAN } else { r };
     // atan2(+-inf, +-inf): y/x is inf/inf, which is NaN, so the general formula
     // above can't produce an answer here at all. IEEE754/C99 define a canonical
@@ -3113,8 +3357,19 @@ pub fn atan2(y: f32, x: f32) -> f32 {
     // real ratio, since there isn't one at true infinity, just a fixed
     // convention.
     let bothinf = x.is_infinite() && y.is_infinite();
-    let inf_result = mulsign(if x.is_sign_negative() { 3.0 * FRAC_PI_4 } else { FRAC_PI_4 }, y);
-    if bothinf { inf_result } else { r }
+    let inf_result = mulsign(
+        if x.is_sign_negative() {
+            3.0 * FRAC_PI_4
+        } else {
+            FRAC_PI_4
+        },
+        y,
+    );
+    if bothinf {
+        inf_result
+    } else {
+        r
+    }
 }
 
 /// Latency-optimized `atan2(y, x)`.
@@ -3123,13 +3378,32 @@ pub fn atan2_latency(y: f32, x: f32) -> f32 {
     let nonzerox = x != 0.0;
     let nonzeroy = y != 0.0;
     let bothzero = !nonzerox && !nonzeroy;
-    let hpisignx = if nonzerox || bothzero { mulsign(FRAC_PI_2, x) } else { 0.0 };
+    let hpisignx = if nonzerox || bothzero {
+        mulsign(FRAC_PI_2, x)
+    } else {
+        0.0
+    };
     let correction = mulsign(FRAC_PI_2 - hpisignx, y);
-    let r = if nonzerox { atan_latency(y / x) + correction } else { correction };
+    let r = if nonzerox {
+        atan_latency(y / x) + correction
+    } else {
+        correction
+    };
     let r = if y.is_nan() { f32::NAN } else { r };
     let bothinf = x.is_infinite() && y.is_infinite();
-    let inf_result = mulsign(if x.is_sign_negative() { 3.0 * FRAC_PI_4 } else { FRAC_PI_4 }, y);
-    if bothinf { inf_result } else { r }
+    let inf_result = mulsign(
+        if x.is_sign_negative() {
+            3.0 * FRAC_PI_4
+        } else {
+            FRAC_PI_4
+        },
+        y,
+    );
+    if bothinf {
+        inf_result
+    } else {
+        r
+    }
 }
 
 /// Computes `atan2(y, x)` in degrees in `[-180, 180]`.
@@ -3143,7 +3417,11 @@ pub fn atan2d(y: f32, x: f32) -> f32 {
     // does measure better on this branch's average -- costs a 1-ulp regression
     // at a pinned denormal edge case that is currently correctly rounded.
     let tiny = y * (RAD_TO_DEG_HI / x);
-    if r.abs() < f32::MIN_POSITIVE && x != 0.0 { tiny } else { normal }
+    if r.abs() < f32::MIN_POSITIVE && x != 0.0 {
+        tiny
+    } else {
+        normal
+    }
 }
 
 /// Computes `atan2(y, x) / pi` in half-turns in `[-1, 1]`.
@@ -3155,13 +3433,25 @@ pub fn atan2pi(y: f32, x: f32) -> f32 {
     // Exactly `atan2`'s shape with `FRAC_PI_2` replaced by `0.5`. Every
     // value this can take -- `0.5 - 0.5`, `0.5 - -0.5`, `0.5 - 0.0` -- is
     // exact, so the quadrant fold contributes no rounding of its own.
-    let hsignx = if nonzerox || bothzero { mulsign(0.5, x) } else { 0.0 };
+    let hsignx = if nonzerox || bothzero {
+        mulsign(0.5, x)
+    } else {
+        0.0
+    };
     let correction = mulsign(0.5 - hsignx, y);
-    let r = if nonzerox { atanpi(y / x) + correction } else { correction };
+    let r = if nonzerox {
+        atanpi(y / x) + correction
+    } else {
+        correction
+    };
     let r = if y.is_nan() { f32::NAN } else { r };
     let bothinf = x.is_infinite() && y.is_infinite();
     let inf_result = mulsign(if x.is_sign_negative() { 0.75 } else { 0.25 }, y);
-    if bothinf { inf_result } else { r }
+    if bothinf {
+        inf_result
+    } else {
+        r
+    }
 }
 
 /// `atan2` without special zero/infinite case handling.
@@ -3176,7 +3466,11 @@ pub fn atan2_unchecked(y: f32, x: f32) -> f32 {
 #[inline(always)]
 pub fn atan2_pos(y: f32, x: f32) -> f32 {
     let r = atan2(y, x);
-    if y.is_sign_negative() { r + std::f32::consts::TAU } else { r }
+    if y.is_sign_negative() {
+        r + std::f32::consts::TAU
+    } else {
+        r
+    }
 }
 
 /// Computes `tan(x)` in radians for `|x| < 2^22 * pi`.
@@ -3246,11 +3540,23 @@ pub fn erf(x: f32) -> f32 {
     // result small enough that `A*x2` has vanished beneath it: `x *
     // fl(2/sqrt(pi))` is systematically one ulp high over roughly half the f32
     // domain by bit pattern.
-    let numer = fma(x, f32::from_bits(0x3f906ebb), x * fma(f32::from_bits(0x3f174f6e), x2, f32::from_bits(0xb37bd649)));
-    let denom = fma(fma(f32::from_bits(0x3e3e2be3), x2, f32::from_bits(0x3f5b6db7)), x2, 1.0);
+    let numer = fma(
+        x,
+        f32::from_bits(0x3f906ebb),
+        x * fma(f32::from_bits(0x3f174f6e), x2, f32::from_bits(0xb37bd649)),
+    );
+    let denom = fma(
+        fma(f32::from_bits(0x3e3e2be3), x2, f32::from_bits(0x3f5b6db7)),
+        x2,
+        1.0,
+    );
     let a = numer / denom;
     let b = mulsign(1.0 - exp2(erf_poly(xa_bounded, x2)), x);
-    if xa < 0.28 { a } else { b }
+    if xa < 0.28 {
+        a
+    } else {
+        b
+    }
 }
 
 // The `|x|` clamps `erfc` and `erfcx` feed their `x*x` through. Both are set by
@@ -3275,12 +3581,25 @@ const _: () = assert!((ERFCX_XS_CLAMP as f64) * (ERFCX_XS_CLAMP as f64) > 88.029
 #[inline(always)]
 fn erfcx_pos(xa: f32) -> f32 {
     let v0 = 1.0 / (2.0 + xa);
-    let v = if xa <= 2.0 { fma(-0.5 * xa, v0, 0.5) } else { v0 };
+    let v = if xa <= 2.0 {
+        fma(-0.5 * xa, v0, 0.5)
+    } else {
+        v0
+    };
     // c[0] is the *low* word of a two-word `1/sqrt(pi)`; the high word is
     // peeled out of the polynomial and applied in the final fma below.
     let c: [f32; 11] = [
-        f32::from_bits(0xb2fbd649), 1.1283773, 1.974964, 2.8070478, 2.9756768, -3.7488432, 17.02367,
-        -117.490135, 255.59447, -243.95302, 90.238,
+        f32::from_bits(0xb2fbd649),
+        1.1283773,
+        1.974964,
+        2.8070478,
+        2.9756768,
+        -3.7488432,
+        17.02367,
+        -117.490135,
+        255.59447,
+        -243.95302,
+        90.238,
     ];
     let v2 = v * v;
     let v4 = v2 * v2;
@@ -3298,7 +3617,11 @@ fn erfcx_pos(xa: f32) -> f32 {
     // f32 (a near-tie: the other side is 0.51 ulp below), so *either*
     // single-word choice leaves ~0.5 ulp of the constant as pure bias -- ~0.63
     // ulp of it in the result, in one direction, for every x past ~10.
-    fma(v, f32::from_bits(0x3f106ebb), v * fma(fma(t8, v4, hi), v4, lo))
+    fma(
+        v,
+        f32::from_bits(0x3f106ebb),
+        v * fma(fma(t8, v4, hi), v4, lo),
+    )
 }
 
 /// Complementary error function `erfc(x) = 1 - erf(x)`.
@@ -3312,7 +3635,11 @@ pub fn erfc(x: f32) -> f32 {
     // contending for.
     let w = f32::from_bits((x.to_bits() >> 1) & 0x4000_0000);
     let xa = x.abs();
-    let xs = if xa > ERFC_XS_CLAMP { ERFC_XS_CLAMP } else { xa };
+    let xs = if xa > ERFC_XS_CLAMP {
+        ERFC_XS_CLAMP
+    } else {
+        xa
+    };
     let p = xs * xs;
     let pe = fma(xs, xs, -p);
     let r = erfcx_pos(xa);
@@ -3450,7 +3777,11 @@ fn erfc_inv_half(n: f32) -> f32 {
     // its own positive-normal contract, and it returns a large finite number
     // there instead of the `+inf` the pole needs.
     let edge = if n == 0.0 { f32::INFINITY } else { f32::NAN };
-    if n > 0.0 { mag } else { edge }
+    if n > 0.0 {
+        mag
+    } else {
+        edge
+    }
 }
 
 /// Inverse error function for `x` in `(-1, 1)`.
@@ -3476,7 +3807,11 @@ pub fn erfinv(x: f32) -> f32 {
     let v = w.sqrt();
     let tail = fma(v, erfinv_tail_poly_m1(v - 1.0), v);
     let normal = mulsign(if ax <= 0.7 { central } else { tail }, x);
-    if ax == 1.0 { f32::INFINITY.copysign(x) } else { normal }
+    if ax == 1.0 {
+        f32::INFINITY.copysign(x)
+    } else {
+        normal
+    }
 }
 
 // `norm_cdf`'s counterpart to `ERFC_XS_CLAMP`, in `x`'s units rather than
@@ -3485,8 +3820,9 @@ pub fn erfinv(x: f32) -> f32 {
 // enough below zero that `e^-x^2/2` rounds to exactly 0 -- the true `norm_cdf`
 // has reached exactly 0.0f32 by `x ~ -14.2`.
 const NORM_CDF_XS_CLAMP: f32 = 14.44;
-const _: () =
-    assert!((NORM_CDF_XS_CLAMP as f64) * (NORM_CDF_XS_CLAMP as f64) * 0.5 <= -(EXP_CLAMP_LO as f64));
+const _: () = assert!(
+    (NORM_CDF_XS_CLAMP as f64) * (NORM_CDF_XS_CLAMP as f64) * 0.5 <= -(EXP_CLAMP_LO as f64)
+);
 const _: () =
     assert!((NORM_CDF_XS_CLAMP as f64) * (NORM_CDF_XS_CLAMP as f64) * 0.5 > 103.97207708399179);
 
@@ -3500,7 +3836,11 @@ pub fn norm_cdf(x: f32) -> f32 {
     // asm) in the region. x/sqrt(2) is formed here and nowhere else, and erfcx
     // is well-conditioned in it.
     let r = erfcx_pos(xa * std::f32::consts::FRAC_1_SQRT_2);
-    let xs = if xa > NORM_CDF_XS_CLAMP { NORM_CDF_XS_CLAMP } else { xa };
+    let xs = if xa > NORM_CDF_XS_CLAMP {
+        NORM_CDF_XS_CLAMP
+    } else {
+        xa
+    };
     // p + pe == xs^2/2 exactly: the halving is exact, so this is just
     // `two_prod`'s error term on a single multiply. The clamp above is
     // what keeps `pe` from becoming `inf*inf - inf == NaN` at x = +-inf.
@@ -3542,7 +3882,11 @@ pub fn norm_pdf(x: f32) -> f32 {
     const INV_SQRT_2PI_HI: f32 = 0.3989423;
     const INV_SQRT_2PI_LO: f32 = -1.133517e-8;
     let xa = x.abs();
-    let xs = if xa > NORM_CDF_XS_CLAMP { NORM_CDF_XS_CLAMP } else { xa };
+    let xs = if xa > NORM_CDF_XS_CLAMP {
+        NORM_CDF_XS_CLAMP
+    } else {
+        xa
+    };
     let h = 0.5 * xs;
     let p = h * xs;
     let pe = fma(h, xs, -p);
@@ -3561,10 +3905,22 @@ fn dawson_central_ratio(u: f32) -> f32 {
     // `1.0` constant terms *removed*, so `P = 1 + u*A` and `Q = 1 + u*B`. Same
     // polynomial and same coefficient values as an unpeeled `pc`/`qc` pair;
     // only where the `1.0` enters the evaluation changes.
-    let ac: [f32; 6] =
-        [-0.085751414, 0.037434783, -0.0004054072, 0.00019858626, 5.6392253e-8, 2.8313497e-8];
-    let bc: [f32; 6] =
-        [0.5809171, 0.15803601, 0.026255792, 0.002856104, 0.00021274923, 5.002549e-6];
+    let ac: [f32; 6] = [
+        -0.085751414,
+        0.037434783,
+        -0.0004054072,
+        0.00019858626,
+        5.6392253e-8,
+        2.8313497e-8,
+    ];
+    let bc: [f32; 6] = [
+        0.5809171,
+        0.15803601,
+        0.026255792,
+        0.002856104,
+        0.00021274923,
+        5.002549e-6,
+    ];
     let u2 = u * u;
     // Each side's top coefficient (degree 6 in `u` overall) rides into the
     // existing `u^2` group rather than needing a `u^6` of its own -- the
@@ -3605,7 +3961,11 @@ pub fn dawson(x: f32) -> f32 {
     let central = x * dawson_central_ratio(u);
     let w = 0.5 / x;
     let tail = dawson_tail(w);
-    if x.abs() <= 4.0 { central } else { tail }
+    if x.abs() <= 4.0 {
+        central
+    } else {
+        tail
+    }
 }
 
 /// Logit function: `ln(p / (1 - p))` for `p` in `(0, 1)`.
@@ -3630,24 +3990,44 @@ pub fn logit(p: f32) -> f32 {
     // 1` (`t == 0`, which takes the `spec` arm) and `p == -inf` (where `ln(p)`
     // is already `NaN`, so the subtraction below is `NaN` either way).
     let corr = c / t;
-    let spec = if t == 0.0 { f32::NEG_INFINITY } else { f32::NAN };
-    let l = if t > 0.0 { ln_normal(t, 0.0) + corr } else { spec };
+    let spec = if t == 0.0 {
+        f32::NEG_INFINITY
+    } else {
+        f32::NAN
+    };
+    let l = if t > 0.0 {
+        ln_normal(t, 0.0) + corr
+    } else {
+        spec
+    };
     let outer = ln(p) - l;
-    if a.abs() < 0.25 { central } else { outer }
+    if a.abs() < 0.25 {
+        central
+    } else {
+        outer
+    }
 }
 
 /// Computes `x * ln(y)`, with `0 * ln(y) = 0`.
 #[inline(always)]
 pub fn xlogy(x: f32, y: f32) -> f32 {
     let normal = x * ln(y);
-    if x == 0.0 { 0.0 } else { normal }
+    if x == 0.0 {
+        0.0
+    } else {
+        normal
+    }
 }
 
 /// Computes `x * ln(1 + y)`, with `0 * ln(1 + y) = 0`.
 #[inline(always)]
 pub fn xlog1py(x: f32, y: f32) -> f32 {
     let normal = x * log1p(y);
-    if x == 0.0 { 0.0 } else { normal }
+    if x == 0.0 {
+        0.0
+    } else {
+        normal
+    }
 }
 
 /// Computes `(1 + x)^n`.
@@ -3697,7 +4077,11 @@ fn log2p1_f64(x: f32) -> f64 {
     // saturation.
     let deg = if d == 0.0 { f64::NEG_INFINITY } else { d };
     let deg = if d < 0.0 { f64::NAN } else { deg };
-    if d > 0.0 && d < f64::INFINITY { q } else { deg }
+    if d > 0.0 && d < f64::INFINITY {
+        q
+    } else {
+        deg
+    }
 }
 
 /// Accurate `(1 + x)^n` using f64 intermediate computation.
@@ -3711,11 +4095,19 @@ pub fn compound_accurate(x: f32, n: f32) -> f32 {
 pub fn erfcx(x: f32) -> f32 {
     let xa = x.abs();
     let r = erfcx_pos(xa);
-    let xs = if xa > ERFCX_XS_CLAMP { ERFCX_XS_CLAMP } else { xa };
+    let xs = if xa > ERFCX_XS_CLAMP {
+        ERFCX_XS_CLAMP
+    } else {
+        xa
+    };
     let p = xs * xs;
     let pe = fma(xs, xs, -p);
     let g = exp_reduce!(p);
-    if x >= 0.0 { r } else { fma(g, fma(pe, 2.0, 2.0), -r) }
+    if x >= 0.0 {
+        r
+    } else {
+        fma(g, fma(pe, 2.0, 2.0), -r)
+    }
 }
 
 /// Computes `1 / sqrt(x)`.
@@ -3734,7 +4126,11 @@ pub fn hypot(x: f32, y: f32) -> f32 {
     // NaN here (unlike almost every other function). The naive formula can't
     // reach this on its own: once either argument actually is NaN, `inf*inf +
     // NaN*NaN` degrades to NaN instead.
-    if x.is_infinite() || y.is_infinite() { f32::INFINITY } else { normal }
+    if x.is_infinite() || y.is_infinite() {
+        f32::INFINITY
+    } else {
+        normal
+    }
 }
 
 /// `hypot` with anti-overflow/underflow scaling.
@@ -3759,28 +4155,44 @@ pub fn hypot_checked(x: f32, y: f32) -> f32 {
     let ys = ay * scale;
     let normal = fma(xs, xs, ys * ys).sqrt() * descale * post;
     let normal = if is_zero { 0.0 } else { normal };
-    if x.is_infinite() || y.is_infinite() { f32::INFINITY } else { normal }
+    if x.is_infinite() || y.is_infinite() {
+        f32::INFINITY
+    } else {
+        normal
+    }
 }
 
 /// Computes `1 / hypot(x, y)`.
 #[inline(always)]
 pub fn rhypot(x: f32, y: f32) -> f32 {
     let normal = 1.0 / fma(x, x, y * y).sqrt();
-    if x.is_infinite() || y.is_infinite() { 0.0 } else { normal }
+    if x.is_infinite() || y.is_infinite() {
+        0.0
+    } else {
+        normal
+    }
 }
 
 /// Computes `sqrt(x^2 + y^2 + z^2)`.
 #[inline(always)]
 pub fn hypot3(x: f32, y: f32, z: f32) -> f32 {
     let normal = fma(x, x, fma(y, y, z * z)).sqrt();
-    if x.is_infinite() || y.is_infinite() || z.is_infinite() { f32::INFINITY } else { normal }
+    if x.is_infinite() || y.is_infinite() || z.is_infinite() {
+        f32::INFINITY
+    } else {
+        normal
+    }
 }
 
 /// Computes `1 / sqrt(x^2 + y^2 + z^2)`.
 #[inline(always)]
 pub fn rnorm3(x: f32, y: f32, z: f32) -> f32 {
     let normal = 1.0 / fma(x, x, fma(y, y, z * z)).sqrt();
-    if x.is_infinite() || y.is_infinite() || z.is_infinite() { 0.0 } else { normal }
+    if x.is_infinite() || y.is_infinite() || z.is_infinite() {
+        0.0
+    } else {
+        normal
+    }
 }
 
 /// Normalizes a 2D vector `(x, y)`.
@@ -3802,7 +4214,11 @@ pub fn normalize3(x: f32, y: f32, z: f32) -> (f32, f32, f32) {
 pub fn hypot4(w: f32, x: f32, y: f32, z: f32) -> f32 {
     let normal = fma(w, w, fma(x, x, fma(y, y, z * z))).sqrt();
     let any_inf = w.is_infinite() || x.is_infinite() || y.is_infinite() || z.is_infinite();
-    if any_inf { f32::INFINITY } else { normal }
+    if any_inf {
+        f32::INFINITY
+    } else {
+        normal
+    }
 }
 
 /// Computes `1 / sqrt(w^2 + x^2 + y^2 + z^2)`.
@@ -3810,7 +4226,11 @@ pub fn hypot4(w: f32, x: f32, y: f32, z: f32) -> f32 {
 pub fn rnorm4(w: f32, x: f32, y: f32, z: f32) -> f32 {
     let normal = 1.0 / fma(w, w, fma(x, x, fma(y, y, z * z))).sqrt();
     let any_inf = w.is_infinite() || x.is_infinite() || y.is_infinite() || z.is_infinite();
-    if any_inf { 0.0 } else { normal }
+    if any_inf {
+        0.0
+    } else {
+        normal
+    }
 }
 
 /// Normalizes a 4D quaternion/vector `(w, x, y, z)`.
@@ -3919,8 +4339,12 @@ const LOG2_ATANH_RCP64: [f64; 6] = [
 /// the atanh series past its own leading term, with the leading `1` pinned
 /// rather than fitted: that makes `log2(1)` come out exactly `0`, which
 /// `powf_unchecked` (which has no `x == 1` override) relies on.
-const LOG2_ATANH_A64: [f64; 4] =
-    [0.33333332824327616, 0.20000167265984317, 0.14268673572031404, 0.117907343543545];
+const LOG2_ATANH_A64: [f64; 4] = [
+    0.33333332824327616,
+    0.20000167265984317,
+    0.14268673572031404,
+    0.117907343543545,
+];
 
 /// `(2^f - 1)/f` over `f` in `[-0.5, 0.5]`, leading `1` pinned so `2^0` is
 /// exactly `1`. Idealized relative error `2^-28.9`, against the `2^-25` needed
@@ -4005,7 +4429,11 @@ macro_rules! powf_f64_mag {
         let ax = $ax;
         let l = log2_f64(ax);
         let l = if ax == 0.0 { f64::NEG_INFINITY } else { l };
-        let l = if !(ax < f32::INFINITY) { (ax * ax) as f64 } else { l };
+        let l = if !(ax < f32::INFINITY) {
+            (ax * ax) as f64
+        } else {
+            l
+        };
         exp2_f64_to_f32(l * ($y as f64))
     }};
 }
@@ -4036,7 +4464,11 @@ macro_rules! powf_sign_combine {
         let sm = if par == 0.0 { 1.0 } else { spec };
         let sm = if par == 1.0 { -1.0 } else { sm };
         let r = mag * sm;
-        if y == 0.0 { 1.0 } else { r }
+        if y == 0.0 {
+            1.0
+        } else {
+            r
+        }
     }};
 }
 
@@ -4056,7 +4488,11 @@ pub fn powf(x: f32, y: f32) -> f32 {
 pub fn powf_pos(x: f32, y: f32) -> f32 {
     let mag = powf_f64_mag!(x, y);
     let r = if x == 1.0 { 1.0 } else { mag };
-    if y == 0.0 { 1.0 } else { r }
+    if y == 0.0 {
+        1.0
+    } else {
+        r
+    }
 }
 
 /// Signed power: `copysign(|x|^y, x)`.
@@ -4118,8 +4554,16 @@ pub fn rootn(x: f32, n: i32) -> f32 {
     let n_odd = n % 2 != 0;
     let signed = if n_odd { mulsign(mag, x) } else { mag };
     let neg_even_domain_error = x < 0.0 && !n_odd;
-    let r = if neg_even_domain_error { f32::NAN } else { signed };
-    if n == 0 { f32::NAN } else { r }
+    let r = if neg_even_domain_error {
+        f32::NAN
+    } else {
+        signed
+    };
+    if n == 0 {
+        f32::NAN
+    } else {
+        r
+    }
 }
 
 // `1/1.055` and `0.055/1.055` as the nearest `f32` to each *exact* value, so `b
@@ -4139,7 +4583,11 @@ pub fn srgb_to_linear(c: f32) -> f32 {
     let b = fma(c, SRGB_INV_1055, SRGB_OFF_1055);
     let p = exp2_checked(log_family_wrapper_discarded_unless_normal!(b, log_2_normal) * 0.4);
     let high = b * b * p;
-    if c <= 0.04045 { low } else { high }
+    if c <= 0.04045 {
+        low
+    } else {
+        high
+    }
 }
 
 /// Converts a linear color component in `[0, 1]` to sRGB.
@@ -4147,9 +4595,14 @@ pub fn srgb_to_linear(c: f32) -> f32 {
 #[allow(clippy::neg_cmp_op_on_partial_ord)]
 pub fn linear_to_srgb(l: f32) -> f32 {
     let low = l * 12.92;
-    let p = exp2_checked(log_family_wrapper_discarded_unless_normal!(l, log_2_normal) * (1.0 / 2.4));
+    let p =
+        exp2_checked(log_family_wrapper_discarded_unless_normal!(l, log_2_normal) * (1.0 / 2.4));
     let high = fma(1.055, p, -0.055);
-    if l <= 0.0031308 { low } else { high }
+    if l <= 0.0031308 {
+        low
+    } else {
+        high
+    }
 }
 
 /// Straight port of jodiemath's remainderf: x - round(x/y)*y (ties away from
@@ -4170,9 +4623,21 @@ macro_rules! remainder_style_combine {
         // Confirmed against libm (Python's math.remainder/math.fmod, a real C
         // library, not a hand-derived assumption) for every exact-multiple case
         // checked.
-        let normal = if normal == 0.0 { normal.copysign($x) } else { normal };
-        let r = if $x == 0.0 && !normal.is_nan() { $x } else { normal };
-        if $y.is_infinite() && $x.is_finite() { $x } else { r }
+        let normal = if normal == 0.0 {
+            normal.copysign($x)
+        } else {
+            normal
+        };
+        let r = if $x == 0.0 && !normal.is_nan() {
+            $x
+        } else {
+            normal
+        };
+        if $y.is_infinite() && $x.is_finite() {
+            $x
+        } else {
+            r
+        }
     }};
 }
 
@@ -4212,9 +4677,21 @@ pub fn remainder_checked(x: f32, y: f32) -> f32 {
     // Same exact-cancellation sign bug as remainder_style_combine! (see its own
     // comment): a nonzero x that's an exact multiple of y exactly cancels to
     // +0.0 regardless of x's sign, silently dropping it.
-    let normal = if normal == 0.0 { normal.copysign(x) } else { normal };
-    let r = if x == 0.0 && !normal.is_nan() { x } else { normal };
-    if y.is_infinite() && x.is_finite() { x } else { r }
+    let normal = if normal == 0.0 {
+        normal.copysign(x)
+    } else {
+        normal
+    };
+    let r = if x == 0.0 && !normal.is_nan() {
+        x
+    } else {
+        normal
+    };
+    if y.is_infinite() && x.is_finite() {
+        x
+    } else {
+        r
+    }
 }
 
 /// `remainder` using f64 for `|x/y| <= 2^53`.
@@ -4247,9 +4724,21 @@ pub fn remainder_wide(x: f32, y: f32) -> f32 {
     // Same exact-cancellation sign bug as remainder_style_combine! (see its own
     // comment): a nonzero x that's an exact multiple of y exactly cancels to
     // +0.0 regardless of x's sign, silently dropping it.
-    let normal = if normal == 0.0 { normal.copysign(x) } else { normal };
-    let r = if x == 0.0 && !normal.is_nan() { x } else { normal };
-    if y.is_infinite() && x.is_finite() { x } else { r }
+    let normal = if normal == 0.0 {
+        normal.copysign(x)
+    } else {
+        normal
+    };
+    let r = if x == 0.0 && !normal.is_nan() {
+        x
+    } else {
+        normal
+    };
+    if y.is_infinite() && x.is_finite() {
+        x
+    } else {
+        r
+    }
 }
 
 /// Truncated floating-point remainder `x - trunc(x/y) * y`.
@@ -4280,9 +4769,21 @@ pub fn fmod_checked(x: f32, y: f32) -> f32 {
     // Same exact-cancellation sign bug as remainder_style_combine! (see its own
     // comment): a nonzero x that's an exact multiple of y exactly cancels to
     // +0.0 regardless of x's sign, silently dropping it.
-    let normal = if normal == 0.0 { normal.copysign(x) } else { normal };
-    let r = if x == 0.0 && !normal.is_nan() { x } else { normal };
-    if y.is_infinite() && x.is_finite() { x } else { r }
+    let normal = if normal == 0.0 {
+        normal.copysign(x)
+    } else {
+        normal
+    };
+    let r = if x == 0.0 && !normal.is_nan() {
+        x
+    } else {
+        normal
+    };
+    if y.is_infinite() && x.is_finite() {
+        x
+    } else {
+        r
+    }
 }
 
 /// `fmod` without domain checks.
@@ -4296,7 +4797,11 @@ pub fn fmod_unchecked(x: f32, y: f32) -> f32 {
 #[inline(always)]
 pub fn rem_euclid(x: f32, y: f32) -> f32 {
     let r = fmod(x, y);
-    if r < 0.0 { r + y.abs() } else { r }
+    if r < 0.0 {
+        r + y.abs()
+    } else {
+        r
+    }
 }
 
 /// Computes the Euclidean quotient `floor(x / y)`.
@@ -4305,7 +4810,11 @@ pub fn div_euclid(x: f32, y: f32) -> f32 {
     let q = (x / y).trunc();
     let r = fmod(x, y);
     if r < 0.0 {
-        if y > 0.0 { q - 1.0 } else { q + 1.0 }
+        if y > 0.0 {
+            q - 1.0
+        } else {
+            q + 1.0
+        }
     } else {
         q
     }

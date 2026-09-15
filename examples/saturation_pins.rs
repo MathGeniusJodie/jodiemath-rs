@@ -158,8 +158,7 @@ fn main() {
                 // large x where exp(x^2) overflows f64.
                 if x > 30.0 {
                     let t = 1.0 / (x * x);
-                    1.0 / (x * std::f64::consts::PI.sqrt())
-                        * (1.0 - 0.5 * t + 0.75 * t * t)
+                    1.0 / (x * std::f64::consts::PI.sqrt()) * (1.0 - 0.5 * t + 0.75 * t * t)
                 } else {
                     f64::NAN // not asserted below 30
                 }
@@ -195,10 +194,7 @@ fn main() {
                 if want64.is_nan() {
                     continue;
                 }
-                if t.skip_denormal_out
-                    && want64.abs() < f32::MIN_POSITIVE as f64
-                    && want64 != 0.0
-                {
+                if t.skip_denormal_out && want64.abs() < f32::MIN_POSITIVE as f64 && want64 != 0.0 {
                     denorm_skipped += 1;
                     continue;
                 }

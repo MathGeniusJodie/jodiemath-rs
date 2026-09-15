@@ -37,7 +37,10 @@ fn main() {
         ("atanpi", atanpi as fn(f32) -> f32),
         ("cbrt", cbrt as fn(f32) -> f32),
         ("cbrt_accurate", cbrt_accurate as fn(f32) -> f32),
-        ("cbrt_accurate_unchecked", cbrt_accurate_unchecked as fn(f32) -> f32),
+        (
+            "cbrt_accurate_unchecked",
+            cbrt_accurate_unchecked as fn(f32) -> f32,
+        ),
         ("cbrt_approx", cbrt_approx as fn(f32) -> f32),
         ("cbrt_fast", cbrt_fast as fn(f32) -> f32),
         ("cbrt_normal", cbrt_normal as fn(f32) -> f32),
@@ -71,7 +74,10 @@ fn main() {
         ("expm1_checked", expm1_checked as fn(f32) -> f32),
         ("expm1_narrow", expm1_narrow as fn(f32) -> f32),
         ("exp_m1_over_x", exp_m1_over_x as fn(f32) -> f32),
-        ("exp_m1_over_x_narrow", exp_m1_over_x_narrow as fn(f32) -> f32),
+        (
+            "exp_m1_over_x_narrow",
+            exp_m1_over_x_narrow as fn(f32) -> f32,
+        ),
         ("exp_narrow", exp_narrow as fn(f32) -> f32),
         ("fast_round_int", fast_round_int as fn(f32) -> f32),
         ("gelu", gelu as fn(f32) -> f32),
@@ -183,7 +189,10 @@ fn main() {
     }
 
     println!("{} public 1-arg functions\n", fns.len());
-    println!("{:<26} {:<24} {}", "function", "class", "per-input verdicts");
+    println!(
+        "{:<26} {:<24} {}",
+        "function", "class", "per-input verdicts"
+    );
     println!("{}", "-".repeat(100));
     for r in &rows {
         println!("{r}");
@@ -193,5 +202,7 @@ fn main() {
 {other} keep the payload but vary the sign, {off_domain} are off-domain tiers returning no NaN at all"
     );
     println!("\nNeither behaviour is an IEEE754 violation -- this is a record, not a gate.");
-    println!("`special_matrix.rs` is what asserts the part that IS required: NaN in -> quiet NaN out.");
+    println!(
+        "`special_matrix.rs` is what asserts the part that IS required: NaN in -> quiet NaN out."
+    );
 }

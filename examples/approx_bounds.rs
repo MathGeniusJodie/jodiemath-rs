@@ -35,7 +35,11 @@ fn sweep_positive_normals(
         let want = r(x as f64);
         if want.is_finite() && got.is_finite() {
             let e = if relative {
-                if want != 0.0 { ((got - want) / want).abs() } else { 0.0 }
+                if want != 0.0 {
+                    ((got - want) / want).abs()
+                } else {
+                    0.0
+                }
             } else {
                 (got - want).abs()
             };
@@ -85,12 +89,7 @@ fn main() {
     let log2_ok = l2 <= 0.09;
 
     // rsqrt_approx: doc claims max relative error ~4.8% over positive normals.
-    let (rs, _) = sweep_positive_normals(
-        "rsqrt_approx",
-        rsqrt_approx,
-        |v| 1.0 / v.sqrt(),
-        true,
-    );
+    let (rs, _) = sweep_positive_normals("rsqrt_approx", rsqrt_approx, |v| 1.0 / v.sqrt(), true);
     println!("                 [doc: max relative error ~4.8% over positive normal x]");
     let rsqrt_ok = rs <= 0.049;
 
@@ -107,7 +106,11 @@ fn main() {
     // so a usable bound can actually be written down for each.
     println!("\n  restricted to |x| in [1e-30, 1e30] (mid-range, where a bound is meaningful):");
     for (name, f, r) in [
-        ("sqrt_approx", sqrt_approx as fn(f32) -> f32, f64::sqrt as fn(f64) -> f64),
+        (
+            "sqrt_approx",
+            sqrt_approx as fn(f32) -> f32,
+            f64::sqrt as fn(f64) -> f64,
+        ),
         ("rcp_approx", rcp_approx, |v: f64| 1.0 / v),
         ("cbrt_approx", cbrt_approx, f64::cbrt),
     ] {
@@ -140,7 +143,10 @@ fn main() {
         ("log2_approx", log2_ok, "~0.086 absolute"),
         ("rsqrt_approx", rsqrt_ok, "~4.8% relative"),
     ] {
-        println!("  {name:<14} documented {claim:<18} {}", if ok { "HOLDS" } else { "VIOLATED" });
+        println!(
+            "  {name:<14} documented {claim:<18} {}",
+            if ok { "HOLDS" } else { "VIOLATED" }
+        );
     }
     if !(exp2_ok && log2_ok && rsqrt_ok) {
         println!("\nFAIL: a documented bound does not hold");

@@ -17,7 +17,6 @@ use std::process::Command;
 include!("support/mca_common.rs");
 const MCA_ITERATIONS: u32 = 100;
 
-
 /// Elements one simulated pass through each `*_throughput` region really
 /// covers, keyed by region name; absent means the region is straight-line
 /// and `ARR_LEN` is right.
@@ -143,7 +142,12 @@ fn main() {
                 .and_then(|n| n.to_str())
                 .is_some_and(|n| n.starts_with("mca_target-") && n.ends_with(".s"))
         })
-        .filter_map(|p| std::fs::metadata(&p).and_then(|m| m.modified()).ok().map(|t| (t, p)))
+        .filter_map(|p| {
+            std::fs::metadata(&p)
+                .and_then(|m| m.modified())
+                .ok()
+                .map(|t| (t, p))
+        })
         .max_by_key(|(t, _)| *t)
         .map(|(_, p)| p)
         .expect("no mca_target-*.s found after `cargo rustc --emit=asm` -- did the example build?");
@@ -157,9 +161,14 @@ fn main() {
         .arg("--json")
         .arg(&asm_path)
         .output()
-        .expect("failed to run llvm-mca -- is it installed and on PATH? (Debian/Arch: `llvm` package)");
+        .expect(
+            "failed to run llvm-mca -- is it installed and on PATH? (Debian/Arch: `llvm` package)",
+        );
     if !output.status.success() {
-        eprintln!("llvm-mca failed:\n{}", String::from_utf8_lossy(&output.stderr));
+        eprintln!(
+            "llvm-mca failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         std::process::exit(1);
     }
 
@@ -184,10 +193,15 @@ fn main() {
     for region in regions {
         let name = region["Name"].as_str().unwrap_or("");
         let summary = &region["SummaryView"];
-        let total_cycles = summary["TotalCycles"].as_f64().expect("missing TotalCycles");
+        let total_cycles = summary["TotalCycles"]
+            .as_f64()
+            .expect("missing TotalCycles");
         let iterations = summary["Iterations"].as_f64().expect("missing Iterations");
         if let Some(key) = name.strip_suffix("_latency") {
-            latency.insert(key.to_string(), total_cycles / (iterations * CHAIN_LEN as f64));
+            latency.insert(
+                key.to_string(),
+                total_cycles / (iterations * CHAIN_LEN as f64),
+            );
         } else if let Some(key) = name.strip_suffix("_throughput") {
             let n = steps.get(name).copied().unwrap_or(ARR_LEN);
             if n != ARR_LEN {
@@ -197,7 +211,10 @@ fn main() {
         }
     }
     if !looped.is_empty() {
-        eprintln!("note: loop kept (divided by the real step, not {ARR_LEN}): {}", looped.join(", "));
+        eprintln!(
+            "note: loop kept (divided by the real step, not {ARR_LEN}): {}",
+            looped.join(", ")
+        );
     }
 
     let order = [

@@ -37,9 +37,17 @@ fn cls(v: f32) -> String {
         let quiet = v.to_bits() & 0x0040_0000 != 0;
         format!("NaN{}", if quiet { "" } else { "(SIGNALING)" })
     } else if v == 0.0 {
-        if v.is_sign_negative() { "-0".to_string() } else { "+0".to_string() }
+        if v.is_sign_negative() {
+            "-0".to_string()
+        } else {
+            "+0".to_string()
+        }
     } else if v.is_infinite() {
-        if v < 0.0 { "-inf".to_string() } else { "+inf".to_string() }
+        if v < 0.0 {
+            "-inf".to_string()
+        } else {
+            "+inf".to_string()
+        }
     } else {
         format!("{v:.6e}")
     }
@@ -63,7 +71,10 @@ fn main() {
         ("atanpi", atanpi as fn(f32) -> f32),
         ("cbrt", cbrt as fn(f32) -> f32),
         ("cbrt_accurate", cbrt_accurate as fn(f32) -> f32),
-        ("cbrt_accurate_unchecked", cbrt_accurate_unchecked as fn(f32) -> f32),
+        (
+            "cbrt_accurate_unchecked",
+            cbrt_accurate_unchecked as fn(f32) -> f32,
+        ),
         ("cbrt_approx", cbrt_approx as fn(f32) -> f32),
         ("cbrt_fast", cbrt_fast as fn(f32) -> f32),
         ("cbrt_normal", cbrt_normal as fn(f32) -> f32),
@@ -98,7 +109,10 @@ fn main() {
         ("expm1_checked", expm1_checked as fn(f32) -> f32),
         ("expm1_narrow", expm1_narrow as fn(f32) -> f32),
         ("exp_m1_over_x", exp_m1_over_x as fn(f32) -> f32),
-        ("exp_m1_over_x_narrow", exp_m1_over_x_narrow as fn(f32) -> f32),
+        (
+            "exp_m1_over_x_narrow",
+            exp_m1_over_x_narrow as fn(f32) -> f32,
+        ),
         ("exp_narrow", exp_narrow as fn(f32) -> f32),
         ("fast_round_int", fast_round_int as fn(f32) -> f32),
         ("gelu", gelu as fn(f32) -> f32),
@@ -188,13 +202,26 @@ fn main() {
 
         println!(
             "{:<26} {:>14} {:>14} {:>14} {:>14} {:>14}",
-            name, cls(p0), cls(n0), cls(pi), cls(ni), cls(nn)
+            name,
+            cls(p0),
+            cls(n0),
+            cls(pi),
+            cls(ni),
+            cls(nn)
         );
     }
 
     println!("\n=== automatic checks ===");
-    println!("NaN not propagated ({}): {:?}", nan_broken.len(), nan_broken);
-    println!("signaling NaN returned ({}): {:?}", signaling.len(), signaling);
+    println!(
+        "NaN not propagated ({}): {:?}",
+        nan_broken.len(),
+        nan_broken
+    );
+    println!(
+        "signaling NaN returned ({}): {:?}",
+        signaling.len(),
+        signaling
+    );
     println!(
         "\nf(+0) and f(-0) differ in bits ({}) -- expected for odd fns, review for even ones:\n  {:?}",
         zero_sign_differs.len(),

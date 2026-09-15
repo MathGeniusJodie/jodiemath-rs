@@ -84,7 +84,10 @@ fn report(title: &str, rows: &[Row]) {
     );
     for r in rows {
         if r.n_denorm == 0 {
-            println!("{:<16} {:>9} {:>9} {:>12} {:>14}  no denormal outputs in range", r.name, 0, "-", "-", "-");
+            println!(
+                "{:<16} {:>9} {:>9} {:>12} {:>14}  no denormal outputs in range",
+                r.name, 0, "-", "-", "-"
+            );
             continue;
         }
         let note = if r.n_flushed == 0 {
@@ -109,44 +112,142 @@ fn main() {
     // (A) normal inputs whose true result is denormal: dense sweeps over the
     // far tails where each function's output collapses toward zero.
     let lin = |lo: f32, hi: f32, n: usize| -> Vec<f32> {
-        (0..=n).map(|i| lo + (hi - lo) * (i as f32) / (n as f32)).collect()
+        (0..=n)
+            .map(|i| lo + (hi - lo) * (i as f32) / (n as f32))
+            .collect()
     };
 
     let a_rows = vec![
-        audit("exp2_checked", exp2_checked, f64::exp2, &lin(-150.0, -125.0, 300_000)),
-        audit("exp_checked", exp_checked, f64::exp, &lin(-104.0, -87.0, 300_000)),
-        audit("exp10_checked", exp10_checked, |v| 10f64.powf(v), &lin(-45.2, -37.8, 300_000)),
+        audit(
+            "exp2_checked",
+            exp2_checked,
+            f64::exp2,
+            &lin(-150.0, -125.0, 300_000),
+        ),
+        audit(
+            "exp_checked",
+            exp_checked,
+            f64::exp,
+            &lin(-104.0, -87.0, 300_000),
+        ),
+        audit(
+            "exp10_checked",
+            exp10_checked,
+            |v| 10f64.powf(v),
+            &lin(-45.2, -37.8, 300_000),
+        ),
         // NOTE: unchecked `exp2` is deliberately absent. Its doc scopes it to
         // "(non-denormal, finite, nonzero) results only", so it has no
         // denormal outputs *within its own domain* -- sweeping it past -126
         // measures documented garbage (an early version of this audit did,
         // and reported a meaningless 5.8e76 relative error).
-        audit("sigmoid", sigmoid, |v| 1.0 / (1.0 + (-v).exp()), &lin(-105.0, -87.0, 300_000)),
+        audit(
+            "sigmoid",
+            sigmoid,
+            |v| 1.0 / (1.0 + (-v).exp()),
+            &lin(-105.0, -87.0, 300_000),
+        ),
         audit("erfc", erfc, |v| libm_erfc(v), &lin(9.0, 10.6, 300_000)),
-        audit("norm_pdf", norm_pdf, |v| (-0.5 * v * v).exp() / (2.0 * std::f64::consts::PI).sqrt(), &lin(12.0, 14.5, 300_000)),
-        audit("tanh_grad", tanh_grad, |v| { let t = v.tanh(); 1.0 - t * t }, &lin(20.0, 45.0, 300_000)),
-        audit("sigmoid_grad", sigmoid_grad, |v| { let s = 1.0 / (1.0 + (-v).exp()); s * (1.0 - s) }, &lin(60.0, 92.0, 300_000)),
+        audit(
+            "norm_pdf",
+            norm_pdf,
+            |v| (-0.5 * v * v).exp() / (2.0 * std::f64::consts::PI).sqrt(),
+            &lin(12.0, 14.5, 300_000),
+        ),
+        audit(
+            "tanh_grad",
+            tanh_grad,
+            |v| {
+                let t = v.tanh();
+                1.0 - t * t
+            },
+            &lin(20.0, 45.0, 300_000),
+        ),
+        audit(
+            "sigmoid_grad",
+            sigmoid_grad,
+            |v| {
+                let s = 1.0 / (1.0 + (-v).exp());
+                s * (1.0 - s)
+            },
+            &lin(60.0, 92.0, 300_000),
+        ),
         // The list above was hand-picked and had never been checked for
         // completeness; these five are the rest of the crate's
         // exponential-tailed 1-arg functions, added after `softplus` turned
         // out to flush 17 units of `x` early with nothing reporting it.
-        audit("softplus", softplus, |v| v.exp().ln_1p(), &lin(-110.0, -85.0, 300_000)),
-        audit("softplus_checked", softplus_checked, |v| v.exp().ln_1p(), &lin(-110.0, -85.0, 300_000)),
-        audit("logsigmoid", logsigmoid, |v| -((-v).exp().ln_1p()), &lin(85.0, 110.0, 300_000)),
-        audit("logsigmoid_checked", logsigmoid_checked, |v| -((-v).exp().ln_1p()), &lin(85.0, 110.0, 300_000)),
-        audit("silu", silu, |v| v / (1.0 + (-v).exp()), &lin(-110.0, -85.0, 300_000)),
-        audit("silu_checked", silu_checked, |v| v / (1.0 + (-v).exp()), &lin(-110.0, -85.0, 300_000)),
+        audit(
+            "softplus",
+            softplus,
+            |v| v.exp().ln_1p(),
+            &lin(-110.0, -85.0, 300_000),
+        ),
+        audit(
+            "softplus_checked",
+            softplus_checked,
+            |v| v.exp().ln_1p(),
+            &lin(-110.0, -85.0, 300_000),
+        ),
+        audit(
+            "logsigmoid",
+            logsigmoid,
+            |v| -((-v).exp().ln_1p()),
+            &lin(85.0, 110.0, 300_000),
+        ),
+        audit(
+            "logsigmoid_checked",
+            logsigmoid_checked,
+            |v| -((-v).exp().ln_1p()),
+            &lin(85.0, 110.0, 300_000),
+        ),
+        audit(
+            "silu",
+            silu,
+            |v| v / (1.0 + (-v).exp()),
+            &lin(-110.0, -85.0, 300_000),
+        ),
+        audit(
+            "silu_checked",
+            silu_checked,
+            |v| v / (1.0 + (-v).exp()),
+            &lin(-110.0, -85.0, 300_000),
+        ),
         // First 2-arg coverage in this file. Both lists here take
         // `fn(f32) -> f32`, so `logaddexp` and every other 2-arg function
         // were simply absent -- and `logaddexp` carries `softplus`'s exact
         // cutoff, just on `|a-b|` instead of `|x|`. Currying `b = 0` is
         // not an approximation of that: `logaddexp(x, 0) == softplus(x)`
         // identically, so the curried sweep is the flush band itself.
-        audit("logaddexp(x,0)", |x| logaddexp(x, 0.0), |v| v.exp().ln_1p(), &lin(-110.0, -85.0, 300_000)),
-        audit("logaddexp_checked(x,0)", |x| logaddexp_checked(x, 0.0), |v| v.exp().ln_1p(), &lin(-110.0, -85.0, 300_000)),
-        audit("logaddexp_accurate(x,0)", |x| logaddexp_accurate(x, 0.0), |v| v.exp().ln_1p(), &lin(-110.0, -85.0, 300_000)),
-        audit("gelu", gelu, |v| v * 0.5 * libm_erfc(-v / std::f64::consts::SQRT_2), &lin(-15.5, -12.0, 300_000)),
-        audit("norm_cdf", norm_cdf, |v| 0.5 * libm_erfc(-v / std::f64::consts::SQRT_2), &lin(-15.0, -13.0, 300_000)),
+        audit(
+            "logaddexp(x,0)",
+            |x| logaddexp(x, 0.0),
+            |v| v.exp().ln_1p(),
+            &lin(-110.0, -85.0, 300_000),
+        ),
+        audit(
+            "logaddexp_checked(x,0)",
+            |x| logaddexp_checked(x, 0.0),
+            |v| v.exp().ln_1p(),
+            &lin(-110.0, -85.0, 300_000),
+        ),
+        audit(
+            "logaddexp_accurate(x,0)",
+            |x| logaddexp_accurate(x, 0.0),
+            |v| v.exp().ln_1p(),
+            &lin(-110.0, -85.0, 300_000),
+        ),
+        audit(
+            "gelu",
+            gelu,
+            |v| v * 0.5 * libm_erfc(-v / std::f64::consts::SQRT_2),
+            &lin(-15.5, -12.0, 300_000),
+        ),
+        audit(
+            "norm_cdf",
+            norm_cdf,
+            |v| 0.5 * libm_erfc(-v / std::f64::consts::SQRT_2),
+            &lin(-15.0, -13.0, 300_000),
+        ),
     ];
     report("(A) normal input -> denormal output", &a_rows);
 
@@ -176,9 +277,19 @@ fn main() {
         audit("dawson", dawson, |v| v - v * v * v * 2.0 / 3.0, &dn),
         audit("sinpi", sinpi, |v| (v * std::f64::consts::PI).sin(), &dn),
         audit("sqrt1pm1", sqrt1pm1, |v| v / ((1.0 + v).sqrt() + 1.0), &dn),
-        audit("gelu", gelu, |v| 0.5 * v * (1.0 + libm_erf(v / 2f64.sqrt())), &dn),
+        audit(
+            "gelu",
+            gelu,
+            |v| 0.5 * v * (1.0 + libm_erf(v / 2f64.sqrt())),
+            &dn,
+        ),
         audit("silu", silu, |v| v / (1.0 + (-v).exp()), &dn),
-        audit("silu_checked", silu_checked, |v| v / (1.0 + (-v).exp()), &dn),
+        audit(
+            "silu_checked",
+            silu_checked,
+            |v| v / (1.0 + (-v).exp()),
+            &dn,
+        ),
         audit("softsign", softsign, |v| v / (1.0 + v.abs()), &dn),
         audit("wrap_pi", wrap_pi, |v| v, &dn),
     ];
@@ -211,18 +322,29 @@ fn main() {
             }
         }
         match (first_flush, true_zero) {
-            (Some(a), Some(b)) => println!(
-                "{name:<16} {a:>16e} {b:>16e} {:>11.4} in x",
-                (b - a).abs()
-            ),
+            (Some(a), Some(b)) => {
+                println!("{name:<16} {a:>16e} {b:>16e} {:>11.4} in x", (b - a).abs())
+            }
             (Some(a), None) => println!("{name:<16} {a:>16e} {:>16} {:>12}", "(beyond range)", "-"),
             (None, _) => println!("{name:<16} {:>16} {:>16} {:>12}", "never", "-", "none"),
         }
     };
     width("exp2_checked", &exp2_checked, &f64::exp2, -125.0, -152.0);
     width("exp_checked", &exp_checked, &f64::exp, -87.0, -105.0);
-    width("exp10_checked", &exp10_checked, &|v: f64| 10f64.powf(v), -37.8, -45.5);
-    width("sigmoid", &sigmoid, &|v: f64| 1.0 / (1.0 + (-v).exp()), -87.0, -106.0);
+    width(
+        "exp10_checked",
+        &exp10_checked,
+        &|v: f64| 10f64.powf(v),
+        -37.8,
+        -45.5,
+    );
+    width(
+        "sigmoid",
+        &sigmoid,
+        &|v: f64| 1.0 / (1.0 + (-v).exp()),
+        -87.0,
+        -106.0,
+    );
     width("erfc", &erfc, &libm_erfc, 9.0, 10.8);
     width(
         "norm_pdf",
@@ -238,14 +360,62 @@ fn main() {
     // denormal range, which is exactly the set worth looking at. Each scan
     // has to *start* where the function is still correct, so these ranges
     // begin outside the denormal band and walk into it.
-    width("softplus", &softplus, &|v: f64| v.exp().ln_1p(), -80.0, -110.0);
-    width("softplus_checked", &softplus_checked, &|v: f64| v.exp().ln_1p(), -80.0, -110.0);
-    width("logsigmoid", &logsigmoid, &|v: f64| -((-v).exp().ln_1p()), 80.0, 110.0);
-    width("logsigmoid_checked", &logsigmoid_checked, &|v: f64| -((-v).exp().ln_1p()), 80.0, 110.0);
-    width("silu", &silu, &|v: f64| v / (1.0 + (-v).exp()), -80.0, -112.0);
-    width("silu_checked", &silu_checked, &|v: f64| v / (1.0 + (-v).exp()), -80.0, -112.0);
-    width("gelu", &gelu, &|v: f64| v * 0.5 * libm_erfc(-v / std::f64::consts::SQRT_2), -12.0, -16.0);
-    width("norm_cdf", &norm_cdf, &|v: f64| 0.5 * libm_erfc(-v / std::f64::consts::SQRT_2), -13.0, -15.5);
+    width(
+        "softplus",
+        &softplus,
+        &|v: f64| v.exp().ln_1p(),
+        -80.0,
+        -110.0,
+    );
+    width(
+        "softplus_checked",
+        &softplus_checked,
+        &|v: f64| v.exp().ln_1p(),
+        -80.0,
+        -110.0,
+    );
+    width(
+        "logsigmoid",
+        &logsigmoid,
+        &|v: f64| -((-v).exp().ln_1p()),
+        80.0,
+        110.0,
+    );
+    width(
+        "logsigmoid_checked",
+        &logsigmoid_checked,
+        &|v: f64| -((-v).exp().ln_1p()),
+        80.0,
+        110.0,
+    );
+    width(
+        "silu",
+        &silu,
+        &|v: f64| v / (1.0 + (-v).exp()),
+        -80.0,
+        -112.0,
+    );
+    width(
+        "silu_checked",
+        &silu_checked,
+        &|v: f64| v / (1.0 + (-v).exp()),
+        -80.0,
+        -112.0,
+    );
+    width(
+        "gelu",
+        &gelu,
+        &|v: f64| v * 0.5 * libm_erfc(-v / std::f64::consts::SQRT_2),
+        -12.0,
+        -16.0,
+    );
+    width(
+        "norm_cdf",
+        &norm_cdf,
+        &|v: f64| 0.5 * libm_erfc(-v / std::f64::consts::SQRT_2),
+        -13.0,
+        -15.5,
+    );
 
     let flushers: Vec<&str> = a_rows
         .iter()

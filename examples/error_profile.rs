@@ -99,7 +99,11 @@ fn profile(
     for (i, c) in hist.iter().enumerate() {
         if *c > 0 {
             let pct = 100.0 * *c as f64 / total as f64;
-            let lbl = if i == 11 { ">10".to_string() } else { format!("<={i}") };
+            let lbl = if i == 11 {
+                ">10".to_string()
+            } else {
+                format!("<={i}")
+            };
             print!("{lbl}:{pct:.2}%  ");
         }
     }
@@ -113,7 +117,11 @@ fn profile(
         }
         let bl = 10f64.powf(l_lo + (l_hi - l_lo) * i as f64 / NB as f64);
         let bh = 10f64.powf(l_lo + (l_hi - l_lo) * (i + 1) as f64 / NB as f64);
-        let mark = if b_max[i] >= gmax - 0.001 { "  <-- carries the max" } else { "" };
+        let mark = if b_max[i] >= gmax - 0.001 {
+            "  <-- carries the max"
+        } else {
+            ""
+        };
         let side = if bh <= seam as f64 {
             "below seam"
         } else if bl >= seam as f64 {

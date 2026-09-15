@@ -60,29 +60,102 @@ const GOLDEN: &str = "examples/support/worst_corpus.golden";
 fn corpus() -> Vec<f32> {
     let mut v: Vec<f32> = vec![
         // specials
-        0.0, -0.0, f32::INFINITY, f32::NEG_INFINITY, f32::NAN,
-        f32::MIN_POSITIVE, -f32::MIN_POSITIVE,
-        f32::from_bits(1), -f32::from_bits(1),
-        f32::from_bits(0x007f_ffff), f32::MAX, f32::MIN,
+        0.0,
+        -0.0,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NAN,
+        f32::MIN_POSITIVE,
+        -f32::MIN_POSITIVE,
+        f32::from_bits(1),
+        -f32::from_bits(1),
+        f32::from_bits(0x007f_ffff),
+        f32::MAX,
+        f32::MIN,
         // branch seams present in this crate
-        0.25, -0.25, 0.27, -0.27, 0.28, -0.28, 0.5, -0.5, 0.65, -0.65,
-        0.2, -0.2, 1.0, -1.0, 2048.0, -2048.0, 3.288051, -3.288051,
+        0.25,
+        -0.25,
+        0.27,
+        -0.27,
+        0.28,
+        -0.28,
+        0.5,
+        -0.5,
+        0.65,
+        -0.65,
+        0.2,
+        -0.2,
+        1.0,
+        -1.0,
+        2048.0,
+        -2048.0,
+        3.288051,
+        -3.288051,
         // clamp boundaries
-        88.72283911167308, -104.66522426455174, -86.0, 128.0, -151.0,
-        38.53184, -45.154503, 44.0, -43.5, 87.0, -88.722839111673,
-        170.0, -170.0, 89.4, -89.4,
+        88.72283911167308,
+        -104.66522426455174,
+        -86.0,
+        128.0,
+        -151.0,
+        38.53184,
+        -45.154503,
+        44.0,
+        -43.5,
+        87.0,
+        -88.722839111673,
+        170.0,
+        -170.0,
+        89.4,
+        -89.4,
         // recorded worst-x values (IDEAS.md / readme / this session)
-        0.9652361, -0.39914432, -0.057932023, 4.1295314e-7, 8953.539,
-        0.25323957, 0.1505, 2.480704e-1, 9.184352e5, -1.3169037e7,
-        1.031, 0.0155, 0.111, 0.965, -2.3,
+        0.9652361,
+        -0.39914432,
+        -0.057932023,
+        4.1295314e-7,
+        8953.539,
+        0.25323957,
+        0.1505,
+        2.480704e-1,
+        9.184352e5,
+        -1.3169037e7,
+        1.031,
+        0.0155,
+        0.111,
+        0.965,
+        -2.3,
         // magnitude spread across the exponent range
-        1e-38, 1e-30, 1e-20, 1e-10, 1e-5, 1e-2, 3.0, 10.0, 100.0,
-        1e5, 1e10, 1e20, 1e30, 1e38,
-        -1e-38, -1e-30, -1e-10, -1e-2, -3.0, -100.0, -1e10, -1e30, -1e38,
+        1e-38,
+        1e-30,
+        1e-20,
+        1e-10,
+        1e-5,
+        1e-2,
+        3.0,
+        10.0,
+        100.0,
+        1e5,
+        1e10,
+        1e20,
+        1e30,
+        1e38,
+        -1e-38,
+        -1e-30,
+        -1e-10,
+        -1e-2,
+        -3.0,
+        -100.0,
+        -1e10,
+        -1e30,
+        -1e38,
         // pi-related, where the trig reductions are hardest
-        std::f32::consts::PI, -std::f32::consts::PI,
-        std::f32::consts::FRAC_PI_2, -std::f32::consts::FRAC_PI_2,
-        std::f32::consts::TAU, 1e6, 1.3176794e7, 2.6e7,
+        std::f32::consts::PI,
+        -std::f32::consts::PI,
+        std::f32::consts::FRAC_PI_2,
+        -std::f32::consts::FRAC_PI_2,
+        std::f32::consts::TAU,
+        1e6,
+        1.3176794e7,
+        2.6e7,
     ];
     v.dedup();
     v
@@ -107,7 +180,10 @@ fn main() {
         ("atanpi", atanpi as fn(f32) -> f32),
         ("cbrt", cbrt as fn(f32) -> f32),
         ("cbrt_accurate", cbrt_accurate as fn(f32) -> f32),
-        ("cbrt_accurate_unchecked", cbrt_accurate_unchecked as fn(f32) -> f32),
+        (
+            "cbrt_accurate_unchecked",
+            cbrt_accurate_unchecked as fn(f32) -> f32,
+        ),
         ("cbrt_approx", cbrt_approx as fn(f32) -> f32),
         ("cbrt_fast", cbrt_fast as fn(f32) -> f32),
         ("cbrt_normal", cbrt_normal as fn(f32) -> f32),
@@ -142,7 +218,10 @@ fn main() {
         ("expm1_checked", expm1_checked as fn(f32) -> f32),
         ("expm1_narrow", expm1_narrow as fn(f32) -> f32),
         ("exp_m1_over_x", exp_m1_over_x as fn(f32) -> f32),
-        ("exp_m1_over_x_narrow", exp_m1_over_x_narrow as fn(f32) -> f32),
+        (
+            "exp_m1_over_x_narrow",
+            exp_m1_over_x_narrow as fn(f32) -> f32,
+        ),
         ("exp_narrow", exp_narrow as fn(f32) -> f32),
         ("fast_round_int", fast_round_int as fn(f32) -> f32),
         ("gelu", gelu as fn(f32) -> f32),
@@ -203,19 +282,33 @@ fn main() {
     let mut lines: Vec<String> = Vec::new();
     for (name, f) in &fns {
         for &x in &xs {
-            lines.push(format!("{} {:08x} {:08x}", name, x.to_bits(), f(x).to_bits()));
+            lines.push(format!(
+                "{} {:08x} {:08x}",
+                name,
+                x.to_bits(),
+                f(x).to_bits()
+            ));
         }
     }
 
     if bless {
         std::fs::create_dir_all("examples/support").ok();
         let mut out = std::fs::File::create(GOLDEN).expect("couldn't write golden file");
-        writeln!(out, "# worst_corpus golden values: <fn> <x_bits> <result_bits>").unwrap();
+        writeln!(
+            out,
+            "# worst_corpus golden values: <fn> <x_bits> <result_bits>"
+        )
+        .unwrap();
         writeln!(out, "# {} functions x {} inputs", fns.len(), xs.len()).unwrap();
         for l in &lines {
             writeln!(out, "{l}").unwrap();
         }
-        println!("blessed {} entries ({} functions x {} inputs) -> {GOLDEN}", lines.len(), fns.len(), xs.len());
+        println!(
+            "blessed {} entries ({} functions x {} inputs) -> {GOLDEN}",
+            lines.len(),
+            fns.len(),
+            xs.len()
+        );
         return;
     }
 
@@ -255,7 +348,9 @@ fn main() {
             && ap[0] == bp[0]
             && ap[1] == bp[1]
             && [ap[2], bp[2]].iter().all(|h| {
-                u32::from_str_radix(h, 16).map(|b| f32::from_bits(b).is_nan()).unwrap_or(false)
+                u32::from_str_radix(h, 16)
+                    .map(|b| f32::from_bits(b).is_nan())
+                    .unwrap_or(false)
             })
     }
 
@@ -266,7 +361,10 @@ fn main() {
             let wp: Vec<&str> = want.split(' ').collect();
             diffs.push(format!(
                 "  {} at x={} : {} -> {}   ({:e} -> {:e})",
-                gp[0], gp[1], wp[2], gp[2],
+                gp[0],
+                gp[1],
+                wp[2],
+                gp[2],
                 f32::from_bits(u32::from_str_radix(wp[2], 16).unwrap()),
                 f32::from_bits(u32::from_str_radix(gp[2], 16).unwrap()),
             ));

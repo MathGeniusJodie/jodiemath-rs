@@ -237,7 +237,11 @@ fn ulp_diff(a: f32, b: f32) -> u64 {
         }
     }
     if a.is_nan() || b.is_nan() {
-        return if a.is_nan() == b.is_nan() { 0 } else { u64::MAX };
+        return if a.is_nan() == b.is_nan() {
+            0
+        } else {
+            u64::MAX
+        };
     }
     (ord(a) - ord(b)).unsigned_abs()
 }
@@ -258,13 +262,23 @@ struct Stats {
 
 impl Stats {
     fn zero() -> Stats {
-        Stats { sum: 0, max: 0, worst_x: 0.0, n: 0, nonfinite: 0 }
+        Stats {
+            sum: 0,
+            max: 0,
+            worst_x: 0.0,
+            n: 0,
+            nonfinite: 0,
+        }
     }
     fn combine(self, other: Stats) -> Stats {
         Stats {
             sum: self.sum + other.sum,
             max: self.max.max(other.max),
-            worst_x: if self.max >= other.max { self.worst_x } else { other.worst_x },
+            worst_x: if self.max >= other.max {
+                self.worst_x
+            } else {
+                other.worst_x
+            },
             n: self.n + other.n,
             nonfinite: self.nonfinite + other.nonfinite,
         }
@@ -313,7 +327,9 @@ fn nice_self() {}
 /// other half free for whatever else is running, alongside `nice_self`, to
 /// keep the machine responsive while a sweep runs.
 fn worker_threads() -> u64 {
-    let total = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2);
+    let total = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2);
     (total / 2).max(1) as u64
 }
 
@@ -572,7 +588,13 @@ fn fuzz(
     f: impl Fn(f32) -> f32 + Sync,
     reference: impl Fn(F64xN) -> F64xN + Sync,
 ) -> Stats {
-    sweep(samples, |_| rand::rng().random::<u32>(), in_domain, f, reference)
+    sweep(
+        samples,
+        |_| rand::rng().random::<u32>(),
+        in_domain,
+        f,
+        reference,
+    )
 }
 
 /// Sweeps one magnitude band `lo <= |x| < hi` (both signs, `lo`/`hi`
@@ -607,7 +629,13 @@ fn band(
     if thorough {
         sweep(span * 2, pattern, in_band, f, reference)
     } else {
-        sweep(samples, move |_| pattern(rand::rng().random::<u64>()), in_band, f, reference)
+        sweep(
+            samples,
+            move |_| pattern(rand::rng().random::<u64>()),
+            in_band,
+            f,
+            reference,
+        )
     }
 }
 
@@ -637,10 +665,16 @@ fn main() {
     // iterating doesn't compete with foreground work)
     const QUICK_SAMPLES: u64 = 100_000_000;
 
-    let total_cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    let total_cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
     println!(
         "mode: {} ({} of {} cores, niced)",
-        if thorough { "thorough (exhaustive, every f32 bit pattern)" } else { "quick (fuzz, random bit patterns)" },
+        if thorough {
+            "thorough (exhaustive, every f32 bit pattern)"
+        } else {
+            "quick (fuzz, random bit patterns)"
+        },
         worker_threads(),
         total_cores,
     );
@@ -734,7 +768,8 @@ fn main() {
         // unchecked-vs-checked split: x*log2(10) must stay in exp2's own
         // [-126,128) (unchecked) or exp2_checked's wider [-151,128).
         let exp10_domain = |x: f32| (-126.0..128.0).contains(&(x * std::f32::consts::LOG2_10));
-        let exp10_checked_domain = |x: f32| (-151.0..128.0).contains(&(x * std::f32::consts::LOG2_10));
+        let exp10_checked_domain =
+            |x: f32| (-151.0..128.0).contains(&(x * std::f32::consts::LOG2_10));
         let s = measure!(exp10_domain, exp10, exp10_u35);
         report("exp10", &s, t0);
         let s = measure!(exp10_checked_domain, exp10_checked, exp10_u35);
@@ -817,10 +852,22 @@ fn main() {
         // poly, which is what keeps its rows finite all the way out.
         for (bandname, lo, hi) in TRIG_BANDS {
             let row = |fname: &str, s: &Stats| report(&format!("{fname} {bandname}"), s, t0);
-            row("sin", &band(thorough, BAND_SAMPLES, lo, hi, sin, sin_ref_exact));
-            row("sin_fast", &band(thorough, BAND_SAMPLES, lo, hi, sin_fast, sin_ref_exact));
-            row("sin_checked", &band(thorough, BAND_SAMPLES, lo, hi, sin_checked, sin_ref_exact));
-            row("sin_wide", &band(thorough, BAND_SAMPLES, lo, hi, sin_wide, sin_ref_exact));
+            row(
+                "sin",
+                &band(thorough, BAND_SAMPLES, lo, hi, sin, sin_ref_exact),
+            );
+            row(
+                "sin_fast",
+                &band(thorough, BAND_SAMPLES, lo, hi, sin_fast, sin_ref_exact),
+            );
+            row(
+                "sin_checked",
+                &band(thorough, BAND_SAMPLES, lo, hi, sin_checked, sin_ref_exact),
+            );
+            row(
+                "sin_wide",
+                &band(thorough, BAND_SAMPLES, lo, hi, sin_wide, sin_ref_exact),
+            );
         }
     }
     if run("cos") {
@@ -876,10 +923,22 @@ fn main() {
         // comment for what the NON-FINITE RESULT annotation means.
         for (bandname, lo, hi) in TRIG_BANDS {
             let row = |fname: &str, s: &Stats| report(&format!("{fname} {bandname}"), s, t0);
-            row("cos", &band(thorough, BAND_SAMPLES, lo, hi, cos, cos_ref_exact));
-            row("cos_fast", &band(thorough, BAND_SAMPLES, lo, hi, cos_fast, cos_ref_exact));
-            row("cos_checked", &band(thorough, BAND_SAMPLES, lo, hi, cos_checked, cos_ref_exact));
-            row("cos_wide", &band(thorough, BAND_SAMPLES, lo, hi, cos_wide, cos_ref_exact));
+            row(
+                "cos",
+                &band(thorough, BAND_SAMPLES, lo, hi, cos, cos_ref_exact),
+            );
+            row(
+                "cos_fast",
+                &band(thorough, BAND_SAMPLES, lo, hi, cos_fast, cos_ref_exact),
+            );
+            row(
+                "cos_checked",
+                &band(thorough, BAND_SAMPLES, lo, hi, cos_checked, cos_ref_exact),
+            );
+            row(
+                "cos_wide",
+                &band(thorough, BAND_SAMPLES, lo, hi, cos_wide, cos_ref_exact),
+            );
         }
     }
     // Own gates rather than rows inside the sin/cos groups: `run` is a
@@ -1243,9 +1302,7 @@ fn main() {
         // |x/2| exceeds ~18.7 in f64, well inside this domain), so it
         // would silently give a *wrong* reference for part of the swept
         // range instead of a merely imprecise one.
-        let sigmoid_ref = |v: F64xN| {
-            F64xN::splat(1.0) / (F64xN::splat(1.0) + exp_u10(-v))
-        };
+        let sigmoid_ref = |v: F64xN| F64xN::splat(1.0) / (F64xN::splat(1.0) + exp_u10(-v));
         let s = measure!(sigmoid_domain, sigmoid, sigmoid_ref);
         report("sigmoid", &s, t0);
         // sigmoid_grad (backlog idea #150): `sigmoid_ref(v)*(1-sigmoid_ref(v))`
@@ -1274,9 +1331,7 @@ fn main() {
         // artifact documented for sinc above).
         // |x|<80 stays comfortably clear of the seam on both sides.
         let softplus_domain = |x: f32| x.abs() < 80.0;
-        let softplus_ref = |v: F64xN| {
-            v.simd_max(F64xN::splat(0.0)) + log1p_u10(exp_u10(-v.abs()))
-        };
+        let softplus_ref = |v: F64xN| v.simd_max(F64xN::splat(0.0)) + log1p_u10(exp_u10(-v.abs()));
         let s = measure!(softplus_domain, softplus, softplus_ref);
         report("softplus (|x|<80)", &s, t0);
     }
@@ -1284,9 +1339,7 @@ fn main() {
         // No |x|<80 restriction, and that is the whole point of this tier:
         // it has no correction-term cutoff to stay clear of, so the sweep
         // gets the entire finite line including the band softplus flushes.
-        let softplus_ref = |v: F64xN| {
-            v.simd_max(F64xN::splat(0.0)) + log1p_u10(exp_u10(-v.abs()))
-        };
+        let softplus_ref = |v: F64xN| v.simd_max(F64xN::splat(0.0)) + log1p_u10(exp_u10(-v.abs()));
         let s = measure!(|x: f32| x.is_finite(), softplus_checked, softplus_ref);
         report("softplus_checked", &s, t0);
     }
@@ -1294,17 +1347,15 @@ fn main() {
         // Same |x|<80 reasoning as softplus's own doc comment (this is
         // -softplus(-x), so the identical seam sits at the same |x|=87).
         let logsigmoid_domain = |x: f32| x.abs() < 80.0;
-        let logsigmoid_ref = |v: F64xN| {
-            -((-v).simd_max(F64xN::splat(0.0)) + log1p_u10(exp_u10(-v.abs())))
-        };
+        let logsigmoid_ref =
+            |v: F64xN| -((-v).simd_max(F64xN::splat(0.0)) + log1p_u10(exp_u10(-v.abs())));
         let s = measure!(logsigmoid_domain, logsigmoid, logsigmoid_ref);
         report("logsigmoid (|x|<80)", &s, t0);
     }
     if run("logsigmoid_checked") {
         // Full finite line, same reasoning as softplus_checked's block.
-        let logsigmoid_ref = |v: F64xN| {
-            -((-v).simd_max(F64xN::splat(0.0)) + log1p_u10(exp_u10(-v.abs())))
-        };
+        let logsigmoid_ref =
+            |v: F64xN| -((-v).simd_max(F64xN::splat(0.0)) + log1p_u10(exp_u10(-v.abs())));
         let s = measure!(|x: f32| x.is_finite(), logsigmoid_checked, logsigmoid_ref);
         report("logsigmoid_checked", &s, t0);
     }
@@ -1594,8 +1645,7 @@ fn main() {
             let t = F64xN::splat(0.5) / (v * v);
             let p = F64xN::splat(1.0)
                 - t * (F64xN::splat(1.0)
-                    - t * (F64xN::splat(3.0)
-                        - t * (F64xN::splat(15.0) - t * F64xN::splat(105.0))));
+                    - t * (F64xN::splat(3.0) - t * (F64xN::splat(15.0) - t * F64xN::splat(105.0))));
             p / (v * F64xN::splat(std::f64::consts::PI.sqrt()))
         };
         let erfcx_tail = |x: f32| x >= 20.0 && x.is_finite();
@@ -1649,8 +1699,7 @@ fn main() {
             // answer as z -> 0.
             let mut zc = z0;
             for _ in 0..5 {
-                zc -= (erf_u10(zc) - xt)
-                    / (F64xN::splat(TWO_OVER_SQRT_PI) * exp_u10(-zc * zc));
+                zc -= (erf_u10(zc) - xt) / (F64xN::splat(TWO_OVER_SQRT_PI) * exp_u10(-zc * zc));
             }
             // Tail arm: Newton on *ln* erfc(z) = ln n, not on erfc itself.
             // erfc is exponentially flat above its root and exponentially
@@ -1705,8 +1754,9 @@ fn main() {
         };
         let s = measure!(everywhere, norm_cdf, norm_cdf_ref);
         report("norm_cdf", &s, t0);
-        let norm_pdf_ref =
-            |v: F64xN| exp_u10(v * v * F64xN::splat(-0.5)) * F64xN::splat(0.3989422804014326779399460599);
+        let norm_pdf_ref = |v: F64xN| {
+            exp_u10(v * v * F64xN::splat(-0.5)) * F64xN::splat(0.3989422804014326779399460599)
+        };
         let s = measure!(everywhere, norm_pdf, norm_pdf_ref);
         report("norm_pdf", &s, t0);
     }
@@ -1742,8 +1792,8 @@ fn main() {
         report("srgb_to_linear", &s, t0);
         let linear_to_srgb_ref = |v: F64xN| {
             let low = v * F64xN::splat(12.92);
-            let high = F64xN::splat(1.055) * pow_u10(v, F64xN::splat(1.0 / 2.4))
-                - F64xN::splat(0.055);
+            let high =
+                F64xN::splat(1.055) * pow_u10(v, F64xN::splat(1.0 / 2.4)) - F64xN::splat(0.055);
             v.simd_le(F64xN::splat(0.0031308)).select(low, high)
         };
         let s = measure!(unit_range, linear_to_srgb, linear_to_srgb_ref);
@@ -1758,7 +1808,12 @@ fn main() {
         report("atan2", &s, t0);
         let s = fuzz2(TWOARG_SAMPLES, |_, _| true, atan2_latency, atan2_u35);
         report("atan2_latency", &s, t0);
-        let s = fuzz2(TWOARG_SAMPLES, |_, _| true, |y: f32, x: f32| y.atan2(x), atan2_u35);
+        let s = fuzz2(
+            TWOARG_SAMPLES,
+            |_, _| true,
+            |y: f32, x: f32| y.atan2(x),
+            atan2_u35,
+        );
         report("std atan2", &s, t0);
         // atan2_unchecked's documented contract: x != 0.0, not both infinite.
         let atan2_domain = |_: f32, x: f32| x != 0.0;
@@ -1771,7 +1826,8 @@ fn main() {
         // error at the one input where the two conventions differ.
         let atan2_pos_ref = |y: F64xN, x: F64xN| {
             let r = atan2_u35(y, x);
-            y.is_sign_negative().select(r + F64xN::splat(std::f64::consts::TAU), r)
+            y.is_sign_negative()
+                .select(r + F64xN::splat(std::f64::consts::TAU), r)
         };
         let s = fuzz2(TWOARG_SAMPLES, |_, _| true, atan2_pos, atan2_pos_ref);
         report("atan2_pos", &s, t0);
@@ -1782,7 +1838,8 @@ fn main() {
         report("atan2d", &s, t0);
         // atan2pi (backlog idea #85): plain composite -- see its own doc
         // comment for why a rescaled-coefficient fold isn't attempted.
-        let atan2pi_ref = |y: F64xN, x: F64xN| atan2_u35(y, x) * F64xN::splat(1.0 / std::f64::consts::PI);
+        let atan2pi_ref =
+            |y: F64xN, x: F64xN| atan2_u35(y, x) * F64xN::splat(1.0 / std::f64::consts::PI);
         let s = fuzz2(TWOARG_SAMPLES, |_, _| true, atan2pi, atan2pi_ref);
         report("atan2pi", &s, t0);
     }
@@ -1799,7 +1856,12 @@ fn main() {
         let compound_ref = |x: F64xN, n: F64xN| exp_u10(n * log1p_u10(x));
         let s = fuzz2(TWOARG_SAMPLES, compound_domain, compound, compound_ref);
         report("compound", &s, t0);
-        let s = fuzz2(TWOARG_SAMPLES, compound_domain, compound_accurate, compound_ref);
+        let s = fuzz2(
+            TWOARG_SAMPLES,
+            compound_domain,
+            compound_accurate,
+            compound_ref,
+        );
         report("compound_accurate", &s, t0);
     }
     if run("rsqrt") {
@@ -1880,7 +1942,12 @@ fn main() {
         };
         let s = fuzz2(TWOARG_SAMPLES, hypot_domain, hypot, hypot_u35);
         report("hypot", &s, t0);
-        let s = fuzz2(TWOARG_SAMPLES, hypot_domain, |x: f32, y: f32| x.hypot(y), hypot_u35);
+        let s = fuzz2(
+            TWOARG_SAMPLES,
+            hypot_domain,
+            |x: f32, y: f32| x.hypot(y),
+            hypot_u35,
+        );
         report("std hypot", &s, t0);
         // hypot_checked has no overflow/underflow tradeoff to work around
         // (that's the whole point), so it gets the full domain -- every
@@ -2052,7 +2119,11 @@ fn main() {
         // diff_of_products' own doc comment.
         let bounded = |a: f64, b: f64, c: f64, d: f64| -> f64 {
             let ok = |p: f64| p.abs() < 1e30;
-            if ok(a * b) && ok(c * d) { a * b - c * d } else { f64::NAN }
+            if ok(a * b) && ok(c * d) {
+                a * b - c * d
+            } else {
+                f64::NAN
+            }
         };
         let s = fuzz4(QUICK_SAMPLES, diff_of_products, bounded);
         report("diff_of_products", &s, t0);
@@ -2060,7 +2131,11 @@ fn main() {
     if run("cross2") {
         let bounded = |ax: f64, ay: f64, bx: f64, by: f64| -> f64 {
             let ok = |p: f64| p.abs() < 1e30;
-            if ok(ax * by) && ok(ay * bx) { ax * by - ay * bx } else { f64::NAN }
+            if ok(ax * by) && ok(ay * bx) {
+                ax * by - ay * bx
+            } else {
+                f64::NAN
+            }
         };
         let s = fuzz4(QUICK_SAMPLES, cross2, bounded);
         report("cross2", &s, t0);
@@ -2075,10 +2150,10 @@ fn main() {
         // fuzzed.
         let n_samples = 5_000_000u64;
         let mag_domain = |x: f32| x.abs() < 80.0; // exp(re) overflows past here
-        // cexp's own im has no such bound mathematically (cos/sin are
-        // total), but sin/cos's *own* accuracy already degrades past
-        // their documented large-argument range -- not a new cexp gap,
-        // so this just avoids re-measuring an already-known limit here.
+                                                  // cexp's own im has no such bound mathematically (cos/sin are
+                                                  // total), but sin/cos's *own* accuracy already degrades past
+                                                  // their documented large-argument range -- not a new cexp gap,
+                                                  // so this just avoids re-measuring an already-known limit here.
         let im_domain = |x: f32| x.abs() < 1e4;
         let mut max_ulp_re = 0u64;
         let mut max_ulp_im = 0u64;
@@ -2170,7 +2245,8 @@ fn main() {
             let dev_re = (back_re as f64 - re as f64).abs();
             // wrap im to (-pi,pi] the same way carg's atan2 does before comparing
             let two_pi = std::f64::consts::TAU;
-            let im_wrapped = im as f64 - two_pi * ((im as f64 + std::f64::consts::PI) / two_pi).floor();
+            let im_wrapped =
+                im as f64 - two_pi * ((im as f64 + std::f64::consts::PI) / two_pi).floor();
             let dev_im = (back_im as f64 - im_wrapped).abs();
             max_dev_re = max_dev_re.max(dev_re);
             max_dev_im = max_dev_im.max(dev_im);
@@ -2199,13 +2275,39 @@ fn main() {
                 return if n_odd { mag.copysign(x) } else { mag };
             }
             if x < 0.0 {
-                return if n % 2 == 0 { f64::NAN } else { -((-x).powf(1.0 / n as f64)) };
+                return if n % 2 == 0 {
+                    f64::NAN
+                } else {
+                    -((-x).powf(1.0 / n as f64))
+                };
             }
             x.powf(1.0 / n as f64)
         };
         let ns: [i32; 24] = [
-            1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 7, -7, 8, -8, 10, -10, 31, -31, 1000, -1000,
-            1 << 24, -(1 << 24), i32::MAX, i32::MIN,
+            1,
+            -1,
+            2,
+            -2,
+            3,
+            -3,
+            4,
+            -4,
+            5,
+            -5,
+            7,
+            -7,
+            8,
+            -8,
+            10,
+            -10,
+            31,
+            -31,
+            1000,
+            -1000,
+            1 << 24,
+            -(1 << 24),
+            i32::MAX,
+            i32::MIN,
         ];
         let n_samples = 2_000_000u64;
         for &n in &ns {
@@ -2315,15 +2417,19 @@ fn main() {
             |x: f32, y: f32| x != 0.0 && (-126.0..128.0).contains(&(x.abs().log2() * y));
         let s = fuzz2(TWOARG_SAMPLES, pow_domain, powf, pow_u10);
         report("powf", &s, t0);
-        let s = fuzz2(TWOARG_SAMPLES, pow_domain, |x: f32, y: f32| x.powf(y), pow_u10);
+        let s = fuzz2(
+            TWOARG_SAMPLES,
+            pow_domain,
+            |x: f32, y: f32| x.powf(y),
+            pow_u10,
+        );
         report("std powf", &s, t0);
     }
     if run("powf_pos") {
         // powf_pos's own contract: x >= 0.0 (see its doc comment for the
         // one excluded value, x == -0.0, negligible density in a random
         // fuzz). Same exponent-range restriction as powf's own sweep.
-        let pow_domain =
-            |x: f32, y: f32| x >= 0.0 && (-126.0..128.0).contains(&(x.log2() * y));
+        let pow_domain = |x: f32, y: f32| x >= 0.0 && (-126.0..128.0).contains(&(x.log2() * y));
         let s = fuzz2(TWOARG_SAMPLES, pow_domain, powf_pos, pow_u10);
         report("powf_pos", &s, t0);
     }
@@ -2332,7 +2438,10 @@ fn main() {
         // log_2_unchecked), y != 0.0. Narrower than powf's own domain above
         // (no negative x), same exponent-range restriction.
         let pow_domain = |x: f32, y: f32| {
-            x >= f32::MIN_POSITIVE && x.is_finite() && y != 0.0 && (-126.0..128.0).contains(&(x.log2() * y))
+            x >= f32::MIN_POSITIVE
+                && x.is_finite()
+                && y != 0.0
+                && (-126.0..128.0).contains(&(x.log2() * y))
         };
         let s = fuzz2(TWOARG_SAMPLES, pow_domain, powf_unchecked, pow_u10);
         report("powf_unchecked (+)", &s, t0);
@@ -2371,9 +2480,15 @@ fn main() {
     if run("remainder_unchecked") {
         // remainder_unchecked's own contract: x != 0.0, y finite. Same
         // reliable-range/near-tie exclusions as remainder's own sweep above.
-        let remainder_domain =
-            |x: f32, y: f32| x != 0.0 && y != 0.0 && y.is_finite() && (x / y).abs() < 1000.0 && !near_tie(x, y);
-        let s = fuzz2(TWOARG_SAMPLES, remainder_domain, remainder_unchecked, remainder_ref);
+        let remainder_domain = |x: f32, y: f32| {
+            x != 0.0 && y != 0.0 && y.is_finite() && (x / y).abs() < 1000.0 && !near_tie(x, y)
+        };
+        let s = fuzz2(
+            TWOARG_SAMPLES,
+            remainder_domain,
+            remainder_unchecked,
+            remainder_ref,
+        );
         report("remainder_unchecked (+)", &s, t0);
     }
     if run("remainder_checked") {
@@ -2387,7 +2502,12 @@ fn main() {
         // ulp of error). Bound |x/y| comfortably under that 2^24 cliff.
         let remainder_domain =
             |x: f32, y: f32| y != 0.0 && (x / y).abs() < 10000000.0 && !near_tie(x, y);
-        let s = fuzz2(TWOARG_SAMPLES, remainder_domain, remainder_checked, remainder_ref);
+        let s = fuzz2(
+            TWOARG_SAMPLES,
+            remainder_domain,
+            remainder_checked,
+            remainder_ref,
+        );
         report("remainder_checked", &s, t0);
     }
     if run("remainder_wide") {
@@ -2406,7 +2526,12 @@ fn main() {
         // 52 mantissa bits, which happens well before this domain's edge).
         let remainder_domain =
             |x: f32, y: f32| y != 0.0 && (x / y).abs() < 4.0e15 && !near_tie(x, y);
-        let s = fuzz2(TWOARG_SAMPLES, remainder_domain, remainder_wide, remainder_ref);
+        let s = fuzz2(
+            TWOARG_SAMPLES,
+            remainder_domain,
+            remainder_wide,
+            remainder_ref,
+        );
         report("remainder_wide", &s, t0);
     }
     if run("remainder_ieee") {
@@ -2424,7 +2549,12 @@ fn main() {
         // rounding-mode convention.
         let remainder_domain =
             |x: f32, y: f32| y != 0.0 && (x / y).abs() < 1000.0 && !near_tie(x, y);
-        let s = fuzz2(TWOARG_SAMPLES, remainder_domain, remainder_ieee, remainder_ref);
+        let s = fuzz2(
+            TWOARG_SAMPLES,
+            remainder_domain,
+            remainder_ieee,
+            remainder_ref,
+        );
         report("remainder_ieee", &s, t0);
     }
     if run("fmod") {
@@ -2437,15 +2567,19 @@ fn main() {
             let f = (x / y).fract().abs();
             f < 1e-4 || f > 1.0 - 1e-4
         };
-        let fmod_domain =
-            |x: f32, y: f32| y != 0.0 && (x / y).abs() < 1000.0 && !near_int(x, y);
+        let fmod_domain = |x: f32, y: f32| y != 0.0 && (x / y).abs() < 1000.0 && !near_int(x, y);
         let fmod_ref = |a: F64xN, b: F64xN| a % b;
         let s = fuzz2(TWOARG_SAMPLES, fmod_domain, fmod, fmod_ref);
         report("fmod", &s, t0);
         let fmod_domain_unchecked = |x: f32, y: f32| {
             x != 0.0 && y != 0.0 && y.is_finite() && (x / y).abs() < 1000.0 && !near_int(x, y)
         };
-        let s = fuzz2(TWOARG_SAMPLES, fmod_domain_unchecked, fmod_unchecked, fmod_ref);
+        let s = fuzz2(
+            TWOARG_SAMPLES,
+            fmod_domain_unchecked,
+            fmod_unchecked,
+            fmod_ref,
+        );
         report("fmod_unchecked (+)", &s, t0);
         // fmod_checked: no near_int exclusion -- that's exactly the
         // domain it fixes (see its own doc comment), so this doubles as
@@ -2541,7 +2675,10 @@ fn main() {
         // 30M-sample sweep with no real finding -- kept as a standing
         // regression gate, not because a bug was found.
         let n_samples = 20_000_000u64;
-        let identity = |name: &str, domain: &dyn Fn(f32) -> bool, resid: &dyn Fn(f32) -> f64, tol: f64| {
+        let identity = |name: &str,
+                        domain: &dyn Fn(f32) -> bool,
+                        resid: &dyn Fn(f32) -> f64,
+                        tol: f64| {
             let mut max_dev = 0.0f64;
             let mut worst = 0.0f32;
             let mut count = 0u64;
@@ -2581,7 +2718,12 @@ fn main() {
             &|x| (tanh(x) as f64) - (sinh(x) as f64) / (cosh(x) as f64),
             1e-4,
         );
-        identity("exp(ln(x))=x", &|x| x > 0.0 && x.is_finite(), &|x| (exp(ln(x)) as f64) / (x as f64) - 1.0, 1e-4);
+        identity(
+            "exp(ln(x))=x",
+            &|x| x > 0.0 && x.is_finite(),
+            &|x| (exp(ln(x)) as f64) / (x as f64) - 1.0,
+            1e-4,
+        );
         identity(
             "ln(exp(x))=x",
             &|x| x.is_finite() && x.abs() < 80.0,
@@ -2594,8 +2736,18 @@ fn main() {
             &|x| (sigmoid(x) as f64) + (sigmoid(-x) as f64) - 1.0,
             1e-4,
         );
-        identity("erf(x)+erfc(x)=1", &|x| x.is_finite(), &|x| (erf(x) as f64) + (erfc(x) as f64) - 1.0, 1e-4);
-        identity("erf(-x)=-erf(x)", &|x| x.is_finite(), &|x| (erf(-x) as f64) + (erf(x) as f64), 1e-6);
+        identity(
+            "erf(x)+erfc(x)=1",
+            &|x| x.is_finite(),
+            &|x| (erf(x) as f64) + (erfc(x) as f64) - 1.0,
+            1e-4,
+        );
+        identity(
+            "erf(-x)=-erf(x)",
+            &|x| x.is_finite(),
+            &|x| (erf(-x) as f64) + (erf(x) as f64),
+            1e-6,
+        );
         identity(
             "atan2(sin(x),cos(x))=x [|x|<pi]",
             &|x| x.abs() < 3.0,
