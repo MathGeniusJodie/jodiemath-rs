@@ -936,33 +936,22 @@ fn reduce_pi_wide<const HALF: bool>(x: f32) -> (f32, u32) {
     let s3 = (mm * 2.0f64.powi(-58)).mul_add(w2, (mm * 2.0f64.powi(-29)).mul_add(w1, f0));
     let n1 = s3.round_ties_even();
     // Exact: |s3| <= 0.5625 and |n1| <= 1, so Sterbenz applies.
-    let fc_chain = s3 - n1;
-    // Small-exponent bypass, decided on the exponent alone so it stays a select
-    // after if-conversion: there the truncated chunks carry too few *relative*
-    // bits of beta (m*beta never wraps past an integer), while |x*(1/pi)| is
-    // the fraction to a flat relative 2^-53. Selecting fc -- before the
-    // half-grid shift and parity, both of which read fc -- lets every
-    // downstream step stay shared between the two sources.
-    let xf = f32::from_bits(b & !SIGN_MASK) as f64;
-    let fc = if e < CUT_PI_WIDE { xf * INV_PI_F64 } else { fc_chain };
-    // The half-odd-integer grid, applied to the *selected* word so the
-    // shift itself introduces nothing (|fc| <= 0.5 and half = +-0.5, so
-    // the difference is exact).
+    let fc = s3 - n1;
     let half = 0.5f64.copysign(fc);
     let tt = if HALF { fc - half } else { fc };
-    // One f64 multiply: |tt| <= 0.5, so this is the reduced residual to a
-    // relative 2^-52, well past what the f32 narrowing below keeps.
-    let r = (tt * std::f64::consts::PI) as f32;
-    // n = n0 + n1 is a small exact integer (|n| < 2^25), so the magic-round
-    // parity extraction has none of reduce_pi64's 2^51 window problem.
+    let r_chain = (tt * std::f64::consts::PI) as f32;
     let par = ((n0 + n1 + ROUND_MAGIC64).to_bits() as u32) << 31;
-    // The chain ran on |x|; both the residual and (for the half-odd grid) the
-    // extra flip are odd in x, so one xor each restores the sign -- and it is
-    // also what carries `-0.0` through, which `p0 - n0` would otherwise have
-    // turned into `+0.0`. The flip reads fc (the selected word), not tt: the
-    // half-grid parity convention is defined on the un-shifted fraction,
-    // exactly as in the old `t` here.
-    let sgn = if HALF { par ^ ((!(fc.to_bits() >> 32)) as u32 & SIGN_MASK) ^ sgnx } else { par };
+    let sgn_chain = if HALF { par ^ ((!(fc.to_bits() >> 32)) as u32 & SIGN_MASK) ^ sgnx } else { par };
+
+    let (r, sgn) = if e < CUT_PI_WIDE {
+        if HALF {
+            (-std::f32::consts::FRAC_PI_2, SIGN_MASK ^ sgnx)
+        } else {
+            (f32::from_bits(b & !SIGN_MASK), 0)
+        }
+    } else {
+        (r_chain, sgn_chain)
+    };
     (f32::from_bits(r.to_bits() ^ sgnx), sgn)
 }
 
