@@ -693,102 +693,6 @@ pub fn tanpi(x: f32) -> f32 {
     }
 }
 
-/// Computes `sin(2 * pi * x)`, argument in full turns.
-#[inline(always)]
-pub fn sin2pi(x: f32) -> f32 {
-    sinpi(2.0 * x)
-}
-
-/// Computes `cos(2 * pi * x)`, argument in full turns.
-#[inline(always)]
-pub fn cos2pi(x: f32) -> f32 {
-    cospi(2.0 * x)
-}
-
-/// Computes `tan(2 * pi * x)`, argument in full turns.
-#[inline(always)]
-pub fn tan2pi(x: f32) -> f32 {
-    tanpi(2.0 * x)
-}
-
-// 1/180: precomputed reciprocal for the magic-round trick, same idiom as
-// sin's own FRAC_1_PI.
-const INV_180: f32 = 1.0 / 180.0;
-// pi/180, applied only to the *small* (|d|<=90) reduced residual, never
-// to the original x -- same "small correction multiplied by an
-// irrational constant is fine" reasoning as exp10's own reduction.
-const DEG_TO_RAD_SMALL: f32 = std::f32::consts::PI / 180.0;
-
-// tan(w degrees) after its leading term, peeled exactly the way `tan_poly`
-// peels `tanpi`'s: with `u = w*w` and `w` in [0, 45], this is `B(u) =
-// tan(w*pi/180)/w - fl(pi/180)`, so that `tan(w deg) == fma(w,
-// DEG_TO_RAD_SMALL, w*B(u))`. Degree 6, two-group Estrin, `c[0]` pinned to
-// `pi/180 - fl(pi/180)` exactly.
-#[inline(always)]
-fn tand_poly(u: f32) -> f32 {
-    let c: [f32; 7] = [
-        1.351_996e-10,
-        1.772_182e-6,
-        2.160_294e-10,
-        2.6339457e-14,
-        3.6819033e-18,
-        1.3777568e-22,
-        1.3176453e-25,
-    ];
-    let u2 = u * u;
-    let u4 = u2 * u2;
-    let l0 = fma(c[1], u, c[0]);
-    let l1 = fma(c[3], u, c[2]);
-    let l2 = fma(c[6], u2, fma(c[5], u, c[4]));
-    fma(u4, l2, fma(u2, l1, l0))
-}
-
-// tan of an already-reduced `d` in degrees: `tand_poly` directly for `|d| <=
-// 45`, else the cotangent reflection `tan(d) = 1/tan(s)`.
-#[inline(always)]
-fn tand_core(d: f32) -> f32 {
-    let ad = d.abs();
-    let s = mulsign(90.0, d) - d;
-    let direct = fma(d, DEG_TO_RAD_SMALL, d * tand_poly(d * d));
-    let reflected = 1.0 / fma(s, DEG_TO_RAD_SMALL, s * tand_poly(s * s));
-    let normal = if ad <= 45.0 { direct } else { reflected };
-    if s == 0.0 {
-        f32::NEG_INFINITY
-    } else {
-        normal
-    }
-}
-
-/// `sind` without the safety clamp: valid for `|x| <= 4.7e7`.
-#[inline(always)]
-pub fn sind_unchecked(x: f32) -> f32 {
-    let qb = fma(x, INV_180, ROUND_MAGIC);
-    let q = qb - ROUND_MAGIC;
-    let d = fma(-q, 180.0, x);
-    let s = sinf_poly(d * DEG_TO_RAD_SMALL);
-    let parity = qb.to_bits() << 31;
-    f32::from_bits(s.to_bits() ^ parity)
-}
-
-/// `cosd` without the safety clamp: valid for `|x| <= 4.7e7`.
-#[inline(always)]
-pub fn cosd_unchecked(x: f32) -> f32 {
-    let kb = fma(x, INV_180, -0.5) + ROUND_MAGIC;
-    let q = (kb - ROUND_MAGIC) + 0.5;
-    let d = fma(-q, 180.0, x);
-    let s = sinf_poly(d * DEG_TO_RAD_SMALL);
-    let parity = !kb.to_bits() << 31;
-    f32::from_bits(s.to_bits() ^ parity)
-}
-
-/// `tand` without the safety clamp: valid for `|x| <= 4.7e7`.
-#[inline(always)]
-pub fn tand_unchecked(x: f32) -> f32 {
-    let qb = fma(x, INV_180, ROUND_MAGIC);
-    let q = qb - ROUND_MAGIC;
-    tand_core(fma(-q, 180.0, x))
-}
-
 // q = round(x/pi) must be an *exact* integer for x - q*pi to land accurately in
 // [-pi/2, pi/2]. A single-f32 q is a binary either-or: either exactly the
 // correctly-rounded integer, or (once |x| crosses q's exact-integer ceiling)
@@ -796,11 +700,6 @@ pub fn tand_unchecked(x: f32) -> f32 {
 // putting sinf_poly hopelessly outside its fitted domain -- a relocatable
 // *cliff*, not a slope, no matter how q is rounded.
 const RPI_LO: f32 = 1.284_127_65e-8;
-// 1/pi and pi, each split so the leading word has <= 26 significant bits.
-const IPI64_HI: f64 = 0.31830988079309464;
-const IPI64_LO: f64 = 5.390696036528002e-09;
-const PI64_HI: f64 = 3.1415926218032837;
-const PI64_LO: f64 = 3.178650954705639e-08;
 // 1.5 * 2^52: the f32 `ROUND_MAGIC` trick one exponent range up. Adding it to
 // an exact integer |q| < 2^51 changes no bits of q but parks q's parity in bit
 // 0 of the f64, where a 63-bit shift turns it straight into a sign mask.
@@ -830,45 +729,6 @@ pub fn two_prod(a: f32, b: f32) -> (f32, f32) {
     let p = a * b;
     let e = fma(a, b, -p);
     (p, e)
-}
-
-/// Reduces `x` modulo `pi` in f64. Returns `(r, sign)` where `r` is in `[-pi/2, pi/2]`.
-#[inline(always)]
-fn reduce_pi64<const HALF: bool>(x: f32) -> (f32, u32) {
-    let xd = x as f64;
-    // Both products are exact: x carries 24 bits, each word at most 26.
-    let t = xd * IPI64_HI;
-    let tl = xd * IPI64_LO;
-    // `t - nh` is exact (both are multiples of ulp(t)), so `fr` is `x/pi - nh`
-    // to a relative 2^-53 with no error-free transform -- this is why the f64
-    // version is *cheaper* than the double-f32 one it replaced, which needed a
-    // `two_prod` at exactly this step.
-    let nh = t.round_ties_even();
-    let fr = (t - nh) + tl;
-    let d = fr.round_ties_even();
-    // n = round(x/pi), exact for |n| < 2^53. Formed as `nh + d` rather than
-    // rounding `t + tl` directly: that add would quantize at ulp(t), which is
-    // already past 1 for the magnitudes this tier exists to serve.
-    let n = nh + d;
-    // x/pi - n, exact by Sterbenz, |fc| <= 0.5.
-    let fc = fr - d;
-    // The half-odd-integer nearest x/pi is `n + copysign(0.5, fc)` --
-    // no second rounding, the same construction the unchecked `cos`
-    // uses and for the same reason.
-    let q = if HALF { n + 0.5f64.copysign(fc) } else { n };
-    let r = f64::mul_add(-q, PI64_HI, xd);
-    let r = f64::mul_add(-q, PI64_LO, r);
-    // parity of n, straight out of bit 0 of `n + ROUND_MAGIC64`.
-    let par = ((n + ROUND_MAGIC64).to_bits() as u32) << 31;
-    // sin: (-1)^n. cos: (-1)^(k+1) for k = round(x/pi - 0.5), which is
-    // `n` when fc >= 0 and `n - 1` when fc < 0 -- so the half-turn adds
-    // one more flip exactly when fc's sign bit is clear.
-    let sgn = if HALF {
-        par ^ ((!(fc.to_bits() >> 32)) as u32 & SIGN_MASK)
-    } else {
-        par
-    };
-    (r as f32, sgn)
 }
 
 /// Highest raw biased exponent `reduce_pi_wide` serves from its chunk tables;
@@ -967,64 +827,9 @@ pub fn cos_wide(x: f32) -> f32 {
     sinf_poly(r).clamp(-1.0, 1.0)
 }
 
-/// Reduces `x` modulo `pi` in f64. Returns `(r, sign)`.
-#[inline(always)]
-pub fn reduce_pi_checked(x: f32) -> (f32, f32) {
-    let (r, flip) = reduce_pi64::<false>(x);
-    // the mask is already in the sign-bit position, so `+-1.0` is one xor
-    // away -- no compare, no select.
-    (r, f32::from_bits(1.0f32.to_bits() ^ flip))
-}
-
-/// Reduces `x` modulo `pi`, offset by half a turn. Returns `(r, sign)`.
-#[inline(always)]
-pub fn reduce_pi_half_checked(x: f32) -> (f32, f32) {
-    let (r, flip) = reduce_pi64::<true>(x);
-    (r, f32::from_bits(1.0f32.to_bits() ^ flip))
-}
-
 /// Largest magnitude [`wrap_pi`] can return: the largest `f32` whose *exact*
 /// value is below `pi`, one ulp under `f32::consts::PI`.
 pub const WRAP_PI_MAX: f32 = f32::from_bits(0x40490fda);
-
-/// Wraps `x` (radians) into `(-pi, pi]`.
-#[inline(always)]
-pub fn wrap_pi(x: f32) -> f32 {
-    let (r, sign) = reduce_pi_checked(x);
-    let normal = if sign > 0.0 {
-        r
-    } else {
-        r - std::f32::consts::PI.copysign(r)
-    };
-    // See WRAP_PI_MAX: this is what makes the documented range true, and it
-    // costs two instructions with no branch, so it vectorizes with everything
-    // above it. It also absorbs the one in-range case the `r - copysign(PI, r)`
-    // step gets wrong on its own: `PI` is `pi + 8.7e-8`, so a small positive
-    // `r` lands on exactly `-PI`, which is *outside* `(-pi, pi]` however it is
-    // rounded (16 inputs over the whole f32 line).
-    let normal = normal.clamp(-WRAP_PI_MAX, WRAP_PI_MAX);
-    // x=-0.0 needs the same guard sinpi uses, for the same reason: inside
-    // `reduce_pi_checked` the residual is formed by subtracting equal signed
-    // zeros, which IEEE754 resolves to +0.0, so `r` arrives with the sign
-    // already erased and there is nothing left downstream to recover it from.
-    if x == 0.0 {
-        x
-    } else {
-        normal
-    }
-}
-
-/// Computes `sin(r)` for `r` already reduced to `[-pi/2, pi/2]`.
-#[inline(always)]
-pub fn sin_prereduced(r: f32) -> f32 {
-    sinf_poly(r)
-}
-
-/// Computes `cos(r)` for `r` already reduced to `[-pi/2, pi/2]`.
-#[inline(always)]
-pub fn cos_prereduced(r: f32) -> f32 {
-    sinf_poly(r)
-}
 
 /// Computes `tan(x)` with no magnitude limit across all finite f32.
 #[inline(always)]
@@ -1042,7 +847,7 @@ pub fn tan_wide(x: f32) -> f32 {
 /// approximated by a minimax poly in r.
 #[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
-pub fn cbrt_normal(x: f32) -> f32 {
+fn cbrt_normal(x: f32) -> f32 {
     let ax = x.to_bits() & !SIGN_MASK;
     let a = f32::from_bits(ax);
     let rcp = 1.0 / a; // independent of the seed chain, starts immediately
