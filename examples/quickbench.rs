@@ -194,29 +194,11 @@ fn main() {
     bench!("cos_wide", cos_wide);
     bench!("tan_wide", tan_wide);
     bench!("std cos", |x: f32| x.cos());
-    // reduce_pi_checked/reduce_pi_half_checked (idea #88): (f32,f32),
-    // same tuple-adapter reasoning as cexp/clog above.
-    bench!("reduce_pi_checked", |x: f32| {
-        let (r, s) = reduce_pi_checked(x);
-        r + s
-    });
-    bench!("reduce_pi_half_checked", |x: f32| {
-        let (r, s) = reduce_pi_half_checked(x);
-        r + s
-    });
-    bench!("wrap_pi", wrap_pi);
-    bench!("sin_prereduced", sin_prereduced);
-    bench!("cos_prereduced", cos_prereduced);
+    bench!("std tan", |x: f32| x.tan());
     bench!("sinpi", sinpi);
     bench!("cospi", cospi);
     bench!("tanpi", tanpi);
-    bench!("sin2pi", sin2pi);
-    bench!("cos2pi", cos2pi);
-    bench!("tan2pi", tan2pi);
     bench!("sinc_unnormalized", sinc_unnormalized);
-    bench!("sind_unchecked", sind_unchecked);
-    bench!("cosd_unchecked", cosd_unchecked);
-    bench!("tand_unchecked", tand_unchecked);
 
     bench!("ln", ln);
     bench!("ln_unchecked", ln_unchecked);
@@ -349,7 +331,6 @@ fn main() {
     bench!("linear_to_srgb", linear_to_srgb, Band::Half);
     bench!("std powf", move |x: f32| x.powf(powf_y));
     bench!("powf_unchecked", move |x: f32| powf_unchecked(x, powf_y));
-    bench!("rootn", |x: f32| rootn(x, 3));
     // black_box'd 2nd arg, same reasoning as powf just above.
     let remainder_y = std::hint::black_box(3.0);
     bench!("fmod", move |x: f32| fmod(x, remainder_y));

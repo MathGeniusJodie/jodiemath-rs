@@ -95,6 +95,7 @@ cbrt_accurate | 22.6 ns | 23.7 ns | 1.0x
 cbrt_accurate_unchecked| 21.6 ns | 23.7 ns | 1.1x
         rcbrt | 22.4 ns |    -    |  -
           cos | 18.3 ns | 16.4 ns | 0.9x
+     cos_wide | 28.5 ns | 16.4 ns | 0.6x
          exp2 | 11.1 ns | 12.8 ns | 1.1x
  exp2_checked | 14.8 ns | 12.8 ns | 0.9x
         exp10 | 16.4 ns |    -    |  -
@@ -102,6 +103,7 @@ exp10_checked | 17.6 ns |    -    |  -
          log2 | 14.4 ns | 14.2 ns | 1.0x
 log2_unchecked| 13.4 ns |    -    |  -
           sin | 16.3 ns | 17.1 ns | 1.0x
+     sin_wide | 24.6 ns | 17.1 ns | 0.7x
            ln | 12.9 ns | 12.6 ns | 1.0x
  ln_unchecked | 11.0 ns |    -    |  -
         log10 | 12.2 ns | 14.5 ns | 1.2x
@@ -128,6 +130,7 @@ log10_unchecked|10.8 ns |    -    |  -
         atan2 | 20.6 ns | 26.7 ns | 1.3x
 atan2_unchecked |20.4 ns|    -    |  -
           tan | 19.3 ns | 22.8 ns | 1.2x
+     tan_wide | 29.9 ns | 22.8 ns | 0.8x
         sinpi | 12.8 ns |    -    |  -
         cospi | 15.5 ns |    -    |  -
         tanpi | 15.2 ns |    -    |  -
@@ -150,6 +153,7 @@ cbrt_accurate | 0.91 ns | 4.46 ns | 4.9x
 cbrt_accurate_unchecked| 0.65 ns | 4.46 ns | 6.8x
         rcbrt | 0.55 ns |    -    |  -
           cos | 0.39 ns | 3.65 ns | 9.5x
+     cos_wide | 3.73 ns | 3.65 ns | 1.0x
          exp2 | 0.26 ns | 2.95 ns | 11.4x
  exp2_checked | 0.46 ns | 2.95 ns | 6.4x
         exp10 | 0.41 ns |    -    |  -
@@ -157,6 +161,7 @@ exp10_checked | 0.53 ns |    -    |  -
       log2 (r)| 0.51 ns | 3.86 ns | 7.6x
 log2_unchecked| 0.34 ns |    -    |  -
           sin | 0.33 ns | 4.15 ns | 12.8x
+     sin_wide | 3.28 ns | 4.15 ns | 1.3x
            ln | 0.53 ns | 3.41 ns | 6.5x
  ln_unchecked | 0.31 ns |    -    |  -
         log10 | 0.45 ns | 4.88 ns | 10.9x
@@ -183,6 +188,7 @@ log10_unchecked|0.31 ns |    -    |  -
         atan2 | 0.55 ns | 11.04 ns | 20.1x
 atan2_unchecked|0.52 ns |    -    |  -
           tan | 0.60 ns | 7.21 ns | 11.9x
+      tan_wide | 3.57 ns | 7.21 ns | 2.0x
         sinpi | 0.35 ns |    -    |  -
         cospi | 0.40 ns |    -    |  -
         tanpi | 0.65 ns |    -    |  -
@@ -211,10 +217,10 @@ exp10_checked       |          55.00 |             1.657
 log2                |          38.06 |             1.583
 log2_unchecked      |          38.06 |             1.021
 sin                 |          64.00 |             1.778
-sin_wide            |          90.14 |             4.055
+sin_wide            |          54.25 |             4.309
 cos                 |          61.00 |             1.654
-cos_wide            |          91.20 |             4.237
-tan_wide            |         116.05 |             5.423
+cos_wide            |          55.20 |             5.069
+tan_wide            |          70.20 |             5.362
 sinpi               |          42.02 |             1.133
 cospi               |          47.00 |             1.226
 tanpi               |          77.05 |             2.155

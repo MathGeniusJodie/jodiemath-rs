@@ -568,34 +568,44 @@ fn reduce_pi_wide<const HALF: bool>(x: f32) -> (f32, u32) {
     let b = x.to_bits();
     let e = ((b >> 23) & 0xff) as usize;
     let sgnx = b & SIGN_MASK;
-    // Rebuild 24-bit mantissa integer m.
-    let exp_field = if e == 255 { 0x7f800000 } else { 0x4b00_0000 };
-    let m = f32::from_bits((b & 0x007f_ffff) | exp_field) as f64;
-    let w0 = pitable::REDUCE_PI_W[0][e & 0xff] as f64;
-    let mm = m * 2.0f64.powi(-28);
-    let p0 = mm * w0;
-    let n0 = p0.round_ties_even();
-    let f0 = p0 - n0;
-    let w1 = pitable::REDUCE_PI_W[1][e & 0xff] as f64;
-    let w2 = pitable::REDUCE_PI_W[2][e & 0xff] as f64;
-    let s3 = (mm * 2.0f64.powi(-58)).mul_add(w2, (mm * 2.0f64.powi(-29)).mul_add(w1, f0));
-    let n1 = s3.round_ties_even();
-    let fc = s3 - n1;
-    let half = 0.5f64.copysign(fc);
-    let tt = if HALF { fc - half } else { fc };
-    let r_chain = (tt * std::f64::consts::PI) as f32;
-    let par = ((n0 + n1 + ROUND_MAGIC64).to_bits() as u32) << 31;
-    let sgn_chain = if HALF {
-        par ^ ((!(fc.to_bits() >> 32)) as u32 & SIGN_MASK) ^ sgnx
+    let m = ((b & 0x007f_ffff) | 0x0080_0000) as u64;
+
+    let w0 = pitable::REDUCE_PI_W[0][e & 0xff] as u64;
+    let w1 = pitable::REDUCE_PI_W[1][e & 0xff] as u64;
+    let w2 = pitable::REDUCE_PI_W[2][e & 0xff] as u64;
+
+    let t2 = m * w2;
+    let t1 = m * w1;
+    let p0 = m * w0;
+    let sum57 = (p0 << 29).wrapping_add(t1).wrapping_add(t2 >> 29);
+
+    let par = (((sum57 >> 57) ^ (sum57 >> 56)) as u32 & 1) << 31;
+    let fc_int = ((sum57 << 7) as i64) >> 7;
+
+    let (tt_int, sgn_chain) = if HALF {
+        let shift63 = fc_int >> 63;
+        let half_int = (1i64 << 56) + (shift63 << 57);
+        let sgn = par ^ (!shift63 as u32 & SIGN_MASK) ^ sgnx;
+        (fc_int - half_int, sgn)
     } else {
-        par
+        (fc_int, par)
     };
+
+    let tt = (tt_int as f32) * f32::from_bits(0x2300_0000); // tt_int * 2^-57
+    let r_chain = tt * std::f32::consts::PI;
 
     let (r, sgn) = if e < CUT_PI_WIDE {
         if HALF {
             (-std::f32::consts::FRAC_PI_2, SIGN_MASK ^ sgnx)
         } else {
             (f32::from_bits(b & !SIGN_MASK), 0)
+        }
+    } else if e == 255 {
+        if HALF {
+            (-f32::NAN, sgnx)
+        } else {
+            let nan = f32::from_bits((b & 0x007f_ffff) | 0x7f80_0000) * 0.0;
+            (nan, 0)
         }
     } else {
         (r_chain, sgn_chain)
