@@ -2760,47 +2760,6 @@ pub fn powf_unchecked(x: f32, y: f32) -> f32 {
     exp2_f64_to_f32(log2_f64(x) * y as f64)
 }
 
-/// Computes `x^(1/n)` for integer `n` (C23 `rootn`). Correctly handles negative bases when `n` is odd.
-#[inline(always)]
-pub fn rootn(x: f32, n: i32) -> f32 {
-    let ax = x.abs();
-    let (xs, koff) = denormal_rescale!(ax);
-    let bits = xs.to_bits() as i32;
-    let ew = bits.wrapping_sub(0x3f35_04f3) >> 23;
-    let m = f32::from_bits(bits.wrapping_sub(ew << 23) as u32);
-    let e = ew + koff as i32;
-    let small = n.unsigned_abs() < 2;
-    let nz = if small { 2 } else { n };
-    let q = e.div_euclid(nz);
-    let rr = e.rem_euclid(nz);
-    let t = (rr as f32 + log_2_unchecked(m)) / (nz as f32);
-    let tk = t.floor();
-    let mag_normal = exp2_kf(q as f32 + tk, t - tk);
-    let degenerate = ax == 0.0 || !ax.is_finite();
-    let mag = if degenerate || small {
-        if n > 0 {
-            ax
-        } else {
-            1.0 / ax
-        }
-    } else {
-        mag_normal
-    };
-    let n_odd = n % 2 != 0;
-    let signed = if n_odd { mulsign(mag, x) } else { mag };
-    let neg_even_domain_error = x < 0.0 && !n_odd;
-    let r = if neg_even_domain_error {
-        f32::NAN
-    } else {
-        signed
-    };
-    if n == 0 {
-        f32::NAN
-    } else {
-        r
-    }
-}
-
 // Exact constants for (c + 0.055) / 1.055 in sRGB conversion.
 const SRGB_INV_1055: f32 = 0.947_867_3;
 const SRGB_OFF_1055: f32 = 0.052_132_7;
