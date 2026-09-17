@@ -1,11 +1,4 @@
-// godbolt flags -C opt-level=3 -C target_feature=+fma
-
-// This crate's entire accuracy and performance story depends on `fma` (see the
-// function just below) compiling to a single hardware instruction. Without FMA,
-// `f32::mul_add` falls back to a ~2x-slower libm call that also rounds
-// *differently* (two roundings instead of one) -- every ulp figure in this
-// crate's doc comments, readme.md, and examples/accuracy.rs assumes the
-// single-rounding hardware form.
+// Hardware FMA is required; software fallback changes rounding and performance.
 #[cfg(all(not(target_feature = "fma"), not(doctest)))]
 compile_error!(
     "jodiemath-rs requires hardware FMA (target-feature=+fma or target-cpu=native) -- \
@@ -27,10 +20,7 @@ fn fma(a: f32, b: f32, c: f32) -> f32 {
     a.mul_add(b, c)
 }
 
-// `2^k` as a bare exponent field, for an integer-valued `k` in `[-127, 128]` --
-// the range each caller's own domain contract already guarantees. `k = 128`
-// deliberately yields `+inf` (field 255, mantissa 0), which is how the
-// unchecked exp2 family overflows, and `k = -127` yields `+0.0`.
+// 2^k as bare exponent field for integer k in [-127, 128]. k=128 yields +inf, k=-127 yields +0.0.
 const EXP2INT_MAGIC: f32 = 12583039.0; // 1.5 * 2^23 + 127
 macro_rules! exp2int_field {
     ($k:expr) => {
@@ -55,10 +45,7 @@ macro_rules! denormal_rescale {
     }};
 }
 
-// exp(r) for tiny r, shared by exp/exp_checked/expm1/exp_m1_over_x/tanh/
-// sigmoid (c0/c1 pinned to exactly 1.0 -- see exp's own body comment). A macro
-// is pure textual substitution with no boundary at all -- verified equivalent
-// via a full pre/post assembly diff.
+// exp(r) for tiny r.
 macro_rules! exp_r_poly {
     ($r:expr) => {{
         let c: [f32; 4] = [4.999_93e-1, 1.6667245e-1, 4.188_381e-2, 8.300_99e-3];
@@ -71,12 +58,7 @@ macro_rules! exp_r_poly {
     }};
 }
 
-// The `k`/`r` Cody-Waite reduction, e^r poly and 2^k reconstruction that
-// `exp_checked` is, minus the input clamp -- the caller supplies an argument
-// already inside `EXP_CLAMP_LO..=EXP_CLAMP_HI`. Split out for callers that can
-// *prove* one side of that clamp is unreachable and so should not pay for it:
-// `erfc`'s argument is `-(xs*xs)`, a negated square, so the upper bound is dead
-// by construction (see its own comment).
+// Cody-Waite reduction and poly; caller must ensure x is in EXP_CLAMP_LO..=EXP_CLAMP_HI.
 macro_rules! exp_reduce {
     ($x:expr) => {{
         let x = $x;
@@ -84,12 +66,6 @@ macro_rules! exp_reduce {
         let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
         let r = fma(-k, LN2_HI, x);
         let r = fma(-k, LN2_LO, r);
-        // e^r - 1 = r + r^2*(c0 + c1 r + c2 r^2 + c3 r^3 + c4 r^4), with the
-        // top coefficient folded in at the `r^2` level rather than its own
-        // `r^4` one, so `r^4` is never formed (`exp_r_poly!`'s trick). That
-        // fold is why the extra degree costs no arithmetic; it pays for it by
-        // serialising the top pair behind the bottom one, which is one more
-        // level of fma latency.
         let c: [f32; 5] = [
             0.50000006,
             0.16666451,
@@ -108,14 +84,11 @@ macro_rules! exp_reduce {
     }};
 }
 
-/// `exp_checked`'s clamp bounds: `exp2_checked`'s own `k` boundary (`[-151,
-/// 128)`) converted into `x`'s units.
+/// Clamp bounds for `exp_checked` in `x` units.
 const EXP_CLAMP_LO: f32 = -104.665_22;
 const EXP_CLAMP_HI: f32 = 88.722_84;
 
-// Q(f) = (2^f - 1)/f, shared by exp2/exp2_checked/exp10/exp10_checked/ exp2m1.
-// Returns `q`; each caller does its own final combine (exp2/exp10's
-// single-field `fma(q, exp2int*f, exp2int)` vs.
+// Q(f) = (2^f - 1)/f for f in [0, 1).
 macro_rules! exp2_q_poly {
     ($f:expr) => {{
         let f2 = $f * $f;
@@ -127,10 +100,7 @@ macro_rules! exp2_q_poly {
     }};
 }
 
-// `exp2_q_poly!`'s centered sibling: the same `Q(f) = (2^f - 1)/f` and the same
-// 3-balanced-pair Estrin shape, refit for `f in [-0.5, 0.5]` instead of `[0,
-// 1)`. Only `exp10_checked` uses it, to keep `round`'s own residual rather than
-// paying a floor-adjust to convert it.
+// Q(f) = (2^f - 1)/f refit for f in [-0.5, 0.5].
 macro_rules! exp2_q_poly_centered {
     ($f:expr) => {{
         let f2 = $f * $f;
@@ -142,20 +112,12 @@ macro_rules! exp2_q_poly_centered {
     }};
 }
 
-// Shared by exp_pos_neg/exp_pos_neg_checked_half (sinh/cosh's unchecked/checked
-// exp(x)/exp(-x) core): one Cody-Waite reduction, an even/odd-split poly, and
-// the t1n/t2n reciprocal construction. Only each caller's optional input clamp
-// differs, so that stays at the call site.
 macro_rules! exp_pos_neg_core {
     ($x:expr) => {{
         const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
         let k = fma($x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
         let r = fma(-k, LN2_HI, $x);
         let r = fma(-k, LN2_LO, r);
-        // The fitted coefficients, each exactly halved (see this macro's own
-        // comment). Written as `* 0.5` rather than as pre-divided decimal
-        // literals so the fit's own values stay legible and the halving cannot
-        // be mistranscribed.
         let c: [f32; 5] = [
             0.49999994 * 0.5,
             0.16666521 * 0.5,
@@ -163,30 +125,19 @@ macro_rules! exp_pos_neg_core {
             8.3687045e-3 * 0.5,
             1.3814511e-3 * 0.5,
         ];
-        // Each half is Horner in `r^2`, not a leading `c*r^4` term: `r^4`
-        // is never formed, one plain multiply cheaper across both halves
-        // at the same fma critical-path depth. Same fold as exp_r_poly!.
         let r2 = r * r;
         let e = fma(fma(fma(c[4], r2, c[2]), r2, c[0]), r2, 0.5);
         let o = fma(fma(c[3], r2, c[1]), r2, 0.5);
         let p_pos = fma(r, o, e);
         let p_neg = fma(-r, o, e);
         let (t1, t2) = exp2_field_split(k);
-        // t1n = 1/t1, t2n = 1/t2: both are exact power-of-two fields, and for a
-        // power-of-two float with bit pattern b = (127+e)<<23 the reciprocal
-        // 2^-e has bit pattern (127-e)<<23 = 0x7F000000 - b. Exactly what
-        // exp2_field_split(-k) would produce (round-half-to- even is
-        // antisymmetric under negation), but built with two integer subtracts
-        // instead of a second magic-round chain.
+        // Exact reciprocal for power-of-two float: 2^-e bits are 0x7F000000 - b.
         let t1n = f32::from_bits(0x7F00_0000u32.wrapping_sub(t1.to_bits()));
         let t2n = f32::from_bits(0x7F00_0000u32.wrapping_sub(t2.to_bits()));
         (p_pos, p_neg, t1, t2, t1n, t2n)
     }};
 }
 
-// Shared by log_2/ln/log10: the denormal-rescale + special-case-select wrapper
-// around each caller's own `_normal` fn. Edge handling uses selects (no early
-// returns) so array loops auto-vectorize.
 macro_rules! log_family_edges {
     ($x:expr, $r:expr) => {{
         let r = $r;
@@ -213,27 +164,14 @@ macro_rules! log_family_wrapper {
     };
 }
 
-// `log_family_wrapper!` for callers whose argument provably can't be a positive
-// denormal, so the rescale's compare/multiply/two selects are dead code: `u =
-// 1.0 + x` is such an argument for *every* f32 `x`, since `1+x` is exact by
-// Sterbenz once `x <= -0.5` (making the smallest positive `u` exactly `2^-24`,
-// ~10^30 above `f32::MIN_POSITIVE`) and is `>= 0.5` otherwise -- verified
-// exhaustively over all 2^32 patterns, not argued from the bound alone. The
-// zero/negative/inf/NaN arms are all still reachable at those call sites (`u ==
-// 0` at `x == -1`, `u < 0` below it) and are shared verbatim.
+// log wrapper for arguments known not to be positive denormals.
 macro_rules! log_family_wrapper_no_denormal {
     ($x:expr, $normal:ident) => {
         log_family_edges!($x, $normal($x, 0.0))
     };
 }
 
-// `log_family_wrapper!` for callers whose own outer select *discards* this
-// value entirely unless the argument is positive and normal, so only
-// `log_family_edges!`'s inf/NaN arm survives -- the zero/negative selects and
-// the denormal rescale all compute results nothing can observe. Note what the
-// licence is and isn't: every arm here is still *evaluated* for every input
-// (branchless), so this is sound only when the caller's select provably drops
-// the result for zero/negative/denormal arguments.
+// log wrapper when caller discards the result unless x is positive normal.
 macro_rules! log_family_wrapper_discarded_unless_normal {
     ($x:expr, $normal:ident) => {
         if !($x < f32::INFINITY) {
@@ -252,10 +190,7 @@ pub fn log_2(x: f32) -> f32 {
     log_family_wrapper!(x, log_2_normal)
 }
 
-/// Core of log_2 for positive normal finite x only: no handling for zero,
-/// negative, denormal, inf, or nan input (those are the caller's job, see
-/// log_2). Called directly with an out-of-domain x, this returns a
-/// plausible-looking but wrong finite value rather than NaN/-inf.
+/// Core log_2 for positive normal finite x only (caller handles edge cases).
 const LOG2_Q_COEFFS: [f32; 9] = [
     -0.7213475,
     0.48089963,
@@ -271,15 +206,11 @@ const LOG2_Q_COEFFS: [f32; 9] = [
 #[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
 pub fn log_2_normal(x: f32, koff: f32) -> f32 {
-    // decompose x = 2^k * m with m in [sqrt(2)/2, sqrt(2)), so s = m - 1
-    // is exact (Sterbenz) and centered on 0: log2 stays relatively
-    // accurate near x = 1.
+    // Decompose x = 2^k * m with m in [sqrt(2)/2, sqrt(2)), centered at 1.
     let e = (x.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23;
     let m = f32::from_bits((x.to_bits() as i32).wrapping_sub(e << 23) as u32);
     let k = e as f32 + koff;
     let s = m - 1.0;
-    // log2(m) = log2(e)*s + s^2*Q(s), with the leading term kept *out* of the
-    // polynomial rather than evaluated as its constant coefficient.
     let c = LOG2_Q_COEFFS;
     let s2 = s * s;
     let s4 = s2 * s2;
@@ -292,20 +223,12 @@ pub fn log_2_normal(x: f32, koff: f32) -> f32 {
     let w1 = fma(c[8], s2, l3);
     let v = fma(w1, s4, w0);
     let sq = fma(v, s4, a);
-    // `k` joins *last*, in its own single rounding. Threading it through the
-    // peeled combine instead (`fma(s, LOG2_E, fma(s2, q, k))`) rounds twice at
-    // `k`'s scale, and for |k| >= 1 that is the whole error budget: it still
-    // reaches max 2 but costs 40x on the average (0.0031 -> 0.1249, measured
-    // exhaustively).
+    // k joins last to avoid double-rounding at k's scale.
     let lm = fma(s, std::f32::consts::LOG2_E, sq);
     lm + k
 }
 
-/// log_2 without domain checks: valid for positive normal finite x only (no
-/// handling for zero, negative, denormal, inf, or nan -- those give a
-/// plausible-looking but wrong finite value instead of NaN/-inf). Mirrors
-/// exp2/exp2_checked's fast/full-safety split; drops the denormal-rescale
-/// multiply and both post-hoc selects log_2 pays on every call.
+/// log_2 without domain checks: valid for positive normal finite x only.
 #[inline(always)]
 pub fn log_2_unchecked(x: f32) -> f32 {
     log_2_normal(x, 0.0)
@@ -317,30 +240,15 @@ pub fn log_2_unchecked(x: f32) -> f32 {
 #[inline(always)]
 #[allow(clippy::approx_constant)] // g0's constant term is a fitted minimax
 pub fn exp2(x: f32) -> f32 {
-    // exp2(floor(x)) * exp2(fract(x)) == exp2(x). exp2int must come from the
-    // same floor(x) as f: computing it from x + 383 double-counts the integer
-    // part when x + 383 rounds up across an integer (e.g.
+    // exp2int must come from the same floor(x) as f to avoid double-counting.
     let k = x.floor();
     let f = x - k;
     let exp2int = exp2int_field!(k);
-    // Q(f) = (2^f - 1)/f, degree 5, grouped into 3 balanced pairs (g0, g1, g2)
-    // instead of two degree-2 Horner halves: same 6 coefficients and the same
-    // 4-deep fma critical path, but the combine only ever needs f^2 (never
-    // exp2int*f^4), so 2 fewer plain multiplies per call. Avg ulp 0.069, max 1
-    // (dense sweep of the whole unchecked domain).
     let q = exp2_q_poly!(f);
     fma(q, exp2int * f, exp2int)
 }
 
-/// `2^(k+f)` for an already-integer-valued `k` and `f` in `[0,1)`: [`exp2`]'s
-/// own combine step, exposed directly for user custom-base kernels (and this
-/// crate's own `exp10`, though not refactored to call through here -- its
-/// existing, separately verified body is untouched) that already have their own
-/// `k`/`f` and want to skip re-deriving this exact exponent-field-plus-poly
-/// combine. No domain check: same `[-126,128)` contract as `exp2` itself
-/// (garbage out for `k` outside that range), and `f` outside `[0,1)` is simply
-/// a different (still well-defined) input to the same polynomial, not a checked
-/// contract.
+/// Computes `2^(k+f)` for integer-valued `k` in `[-126, 128)` and `f` in `[0, 1)`.
 #[inline(always)]
 #[allow(clippy::approx_constant)]
 pub fn exp2_kf(k: f32, f: f32) -> f32 {
@@ -352,28 +260,16 @@ pub fn exp2_kf(k: f32, f: f32) -> f32 {
 #[inline(always)]
 #[allow(clippy::approx_constant)] // g0's constant term is a fitted minimax
 pub fn exp2_checked(x: f32) -> f32 {
-    // fully branchless (auto-vectorizes): exp2(x) = P(f) * 2^k1 * 2^k2 with k1
-    // + k2 = k = floor(x). Splitting k keeps both power-of-two factors
-    // representable over the whole clamped range, so overflow to inf and
-    // (correctly rounded) denormal underflow fall out of the two multiplies —
-    // no pre-offset, no rescale.
+    // Splitting k = k1 + k2 keeps both powers of 2 representable across clamp range.
     let xs = x.clamp(-151.0, 128.0);
     let k = xs.floor();
     let f = xs - k;
-    // any split k = k1 + k2 with both halves in valid exponent range works,
-    // so k1 = round(xs/2) via the magic constant is fine (and cheap: it
-    // runs in parallel with the floor). k1 in [-76, 64], k2 in [-77, 65].
     const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
     let k1b = fma(xs, 0.5, ROUND_MAGIC) - (ROUND_MAGIC - 383.0); // k1 + 383
     let k2b = (k + 766.0) - k1b; // k2 + 383, exact: all integers
     let t1 = f32::from_bits((k1b.to_bits() << 8) & EXPONENT_MASK);
     let t2 = f32::from_bits((k2b.to_bits() << 8) & EXPONENT_MASK);
-    // same 3-balanced-pair Q(f) as exp2 (see there for the derivation): same
-    // coefficients/critical-path depth as the old A/B split, 2 fewer plain
-    // multiplies (never needs t1*f^4, only t1*f)
     let q = exp2_q_poly!(f);
-    // weave t1 into the fma chain (t1*f is exact: both factors normal) so
-    // only one multiply (by t2) remains after the polynomial
     let p = fma(q, t1 * f, t1);
     p * t2
 }
@@ -422,9 +318,7 @@ pub fn frexp(x: f32) -> (f32, i32) {
     )
 }
 
-/// 10^x. Naively rounding `x*LOG2_10` once before `exp2_checked` even starts
-/// loses precision that grows with `|x|` (the same flaw `exp`'s own doc comment
-/// describes for `exp2(x*LOG2_E)`).
+/// Cody-Waite reduction for `10^x`.
 macro_rules! exp10_reduction {
     ($x:expr) => {{
         const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
@@ -433,10 +327,7 @@ macro_rules! exp10_reduction {
         let d = fma(-kr, LOG10_2_HI, $x);
         let d = fma(-kr, LOG10_2_LO, d);
         let fr = d * std::f32::consts::LOG2_10; // small, precise correction in log2 units, in [-0.5, 0.5]
-        // floor-adjust (kr, fr) from round's [-0.5,0.5] convention to
-        // exp2_checked's own floor-based [0,1) convention -- both ops exact or
-        // near-exact since they only ever combine values of comparable
-        // magnitude (unlike the rejected single-combine above).
+        // Adjust from round's [-0.5, 0.5] to exp2's [0, 1) convention.
         let adjust = if fr < 0.0 { 1.0 } else { 0.0 };
         let k = kr - adjust;
         let f = fr + adjust;
@@ -447,19 +338,8 @@ macro_rules! exp10_reduction {
 #[inline(always)]
 #[allow(clippy::approx_constant)] // g0's constant term is a fitted minimax
 pub fn exp10_checked(x: f32) -> f32 {
-    // Clamped before the reduction starts (matching exp2_checked's own
-    // early-clamp pattern) so +-inf can't poison `d = x - kr*LOG10_2` with an
-    // inf-inf NaN -- NaN itself passes through unaffected (f32::clamp preserves
-    // NaN in the receiver). See this function's own doc comment for why these
-    // exact bounds make the old separate `k` clamp redundant (removed).
+    // Clamp prevents +-inf from producing an inf-inf NaN in reduction.
     let x = x.clamp(-45.154503, 38.53184);
-    // Unlike `exp10`, this keeps `round`'s own centered `f in [-0.5, 0.5]`
-    // instead of paying `exp10_reduction!`'s floor-adjust (a compare, a select
-    // and two add/subs) to reach `exp2_q_poly!`'s `[0,1)` convention. That
-    // needs its own Q refit -- see `exp2_q_poly_centered!` -- and is only safe
-    // here, not in `exp10`: `round` can put `k` at 128, which the k1/k2 split
-    // represents fine but a single exponent field cannot (the reason `exp10`'s
-    // own doc comment gives for keeping the adjust).
     const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
     let kb = fma(x, std::f32::consts::LOG2_10, ROUND_MAGIC);
     let k = kb - ROUND_MAGIC; // round(x*log2(10))
@@ -472,10 +352,7 @@ pub fn exp10_checked(x: f32) -> f32 {
     p * t2
 }
 
-/// Same reduction as [`exp10_checked`], but a single exponent-field
-/// construction (no k1/k2 split) instead of two -- faster, narrower- domain
-/// tier, same pairing as `exp2`/`exp2_checked`. Valid while `k` (see
-/// `exp10_checked`'s own doc comment) stays in `[-126,128)`.
+/// `exp10` via a single exponent field. Valid for `k` in `[-126, 128)`.
 #[inline(always)]
 #[allow(clippy::approx_constant)] // g0's constant term is a fitted minimax
 pub fn exp10(x: f32) -> f32 {
@@ -485,8 +362,7 @@ pub fn exp10(x: f32) -> f32 {
     fma(q, exp2int * f, exp2int)
 }
 
-// sin(x) ~= x + x^3*p(x^2) on [-pi/2, pi/2], degree-9 minimax (relative error
-// ~6.1e-9), fitted with lolremez. Estrin evaluation, 2 fma chains.
+// sin(x) ~= x + x^3*p(x^2) on [-pi/2, pi/2].
 #[inline(always)]
 fn sinf_poly_raw(x: f32) -> f32 {
     let c0 = -0.166_666_6_f32;
@@ -502,43 +378,27 @@ fn sinf_poly_raw(x: f32) -> f32 {
     fma(p, x3, x)
 }
 
-/// `sinf_poly_raw` plus the copysign fixup -- see `sinf_poly_raw`'s own doc
-/// comment for the full story. Used by every caller except
-/// `sin_checked`/`sinpi`, which call `sinf_poly_raw` directly since their own
-/// separate zero-handling makes this copysign provably redundant for them.
+/// `sinf_poly_raw` with copysign fixup to preserve `-0.0`.
 #[inline(always)]
 fn sinf_poly(x: f32) -> f32 {
     sinf_poly_raw(x).copysign(x)
 }
 
-// pi split four ways for Cody-Waite reduction with fma. PI_A and PI_B carry
-// only 8 and 9 significant bits: the trailing zeros keep the first two `x -
-// q*PI_x` steps exactly representable for every |q| the magic-round `q` is
-// defined over, so neither of them rounds at all.
+// Cody-Waite pi split; trailing zeros keep leading reduction steps exact.
 const PI_A: f32 = 3.140625;
 const PI_B: f32 = 0.000_967_025_76;
 const PI_C: f32 = 6.278_329_5e-7;
 const PI_D: f32 = 1.078_060_6e-14;
 const FRAC_1_PI: f32 = std::f32::consts::FRAC_1_PI;
 
-// 1.5 * 2^23; adding this to |v| < 2^22 rounds v to the nearest integer
-// in the low mantissa bits (round-to-nearest-even).
+// Magic constant for round-to-nearest-even on |v| < 2^22.
 const ROUND_MAGIC: f32 = 12582912.0;
 
-// The same trick two binades up: adding this to |v| < 2^24 lands v on the
-// multiples of 4 instead of the integers. Four times the reach for an index
-// whose parity is then known a priori (even) rather than read out of the sum --
-// which is the trade `sin` wants, since it has a cheaper place to get the one
-// parity bit back from.
+// Rounds |v| < 2^24 to multiples of 4.
 const ROUND_MAGIC_4: f32 = 50331648.0;
 
-/// sin(x) via single-f32 range reduction, accurate for `|x| < 2^24 * pi`
-/// (~5.27e7). `q = round(x/pi)` has to be an exactly-representable f32 integer
-/// for `pi_reduce_and_poly!`'s residual to mean anything, and 2^24 is the
-/// largest integer f32 counts by ones; past the limit q lands whole integers
-/// off, shifting the residual by whole multiples of pi and pushing it outside
-/// sinf_poly's fitted domain [-pi/2, pi/2] -- including returning inf for some
-/// large finite x, since nothing here clamps the residual.
+/// Computes `sin(x)` via single-f32 Cody-Waite range reduction.
+/// Accurate for `|x| < 2^24 * pi` (~5.27e7).
 macro_rules! pi_reduce_and_poly {
     ($x:expr, $q:expr) => {{
         let r = fma($q, -PI_A, $x);
@@ -549,8 +409,6 @@ macro_rules! pi_reduce_and_poly {
     }};
 }
 
-// An index `n` on the grid `$magic` implies, plus the leftover fraction `fc =
-// x/pi - n` refined to two words of 1/pi.
 macro_rules! frac_x_over_pi {
     ($x:expr, $magic:expr) => {{
         let nb = fma($x, FRAC_1_PI, $magic);
@@ -566,19 +424,12 @@ macro_rules! frac_x_over_pi {
 #[inline(always)]
 pub fn sin(x: f32) -> f32 {
     let (_, n, fc) = frac_x_over_pi!(x, ROUND_MAGIC_4);
-    // A second, *fine* magic round, of `fc` this time -- an O(1) value, so the
-    // plain integer grid has room to spare: `qb` is `ROUND_MAGIC + round(fc)`,
-    // and `q = n + round(fc)` is round(x/pi) exactly, an f32-exact integer for
-    // every `|q| <= 2^24` (which is exactly the documented domain). `n -
-    // ROUND_MAGIC` is exact (both are multiples of 4) and hangs off `n`, not
-    // off `fc`, so the whole `q` chain is no deeper than the single round it
-    // replaces -- one add wider, but the same latency.
+    // Fine round of fc to complete round(x/pi) without losing integer precision.
     let nm = n - ROUND_MAGIC;
     let qb = fc + ROUND_MAGIC;
     let q = nm + qb;
     let s = pi_reduce_and_poly!(x, q);
-    // sin(x) = (-1)^q * sin(r); n is a multiple of 4, so q's parity is
-    // round(fc)'s, sitting in qb's lowest mantissa bit.
+    // q's parity is in qb's lowest mantissa bit since n is a multiple of 4.
     let parity = qb.to_bits() << 31;
     f32::from_bits(s.to_bits() ^ parity)
 }
@@ -587,15 +438,10 @@ pub fn sin(x: f32) -> f32 {
 #[doc(alias = "cosf")]
 #[inline(always)]
 pub fn cos(x: f32) -> f32 {
-    // q = the half-odd-integer nearest x/pi, so r = x - q*pi is in [-pi/2,
-    // pi/2]. Given `n = round(x/pi)` and `fc = x/pi - n`, that is just `n +
-    // copysign(0.5, fc)` -- no second rounding.
+    // Nearest half-odd-integer is n + copysign(0.5, fc).
     let (nb, n, fc) = frac_x_over_pi!(x, ROUND_MAGIC);
     let q = n + 0.5f32.copysign(fc);
     let s = pi_reduce_and_poly!(x, q);
-    // cos(x) = (-1)^n * cos(r +- pi/2) = -+(-1)^n * sin(r), so the
-    // half-turn contributes one more sign flip, taken when `fc >= 0`
-    // (i.e. when `fc`'s sign bit is clear).
     let parity = (nb.to_bits() << 31) ^ (!fc.to_bits() & SIGN_MASK);
     f32::from_bits(s.to_bits() ^ parity)
 }
@@ -605,14 +451,7 @@ pub fn cos(x: f32) -> f32 {
 pub fn sinpi(x: f32) -> f32 {
     let q = x.round_ties_even();
     let r = x - q;
-    // At x=-0.0: q is -0.0 too, so r=(-0.0)-(-0.0), which IEEE754 always
-    // resolves to +0.0 -- the same "opposite-signed-zero op erases sign"
-    // mechanism as sinf_poly_raw's own -0.0 note, one level further out (r's
-    // lost sign means a copysign inside the poly would have nothing left to
-    // copy, which is why this guard, not sinf_poly's copysign, is what makes
-    // sinpi(-0.0) correct). Same select idiom as log1p/log_2's x==0.0 case:
-    // compute the normal path unconditionally, select x itself only at the
-    // singular zero point.
+    // Preserve -0.0: subtraction of equal zeros yields +0.0 in IEEE 754.
     let normal = sinf_poly_raw(std::f32::consts::PI * r) * fma(-2.0, parity(q), 1.0);
     if x == 0.0 {
         x
@@ -641,10 +480,7 @@ pub fn sinc_unnormalized(x: f32) -> f32 {
     }
 }
 
-// The *remainder* of tan(pi*w) after its leading term: with `u = w*w` and `w`
-// in [0, 0.25], this is `B(u) = tan(pi*w)/w - fl(pi)`, so that `tan(pi*w) ==
-// fma(w, PI, w*B(u))`. Degree 6, two-group Estrin (`lo + u^4*hi`) so no group
-// is deeper than the `u^4` it multiplies.
+// B(u) = tan(pi*w)/w - pi for w in [0, 0.25], u = w*w.
 #[inline(always)]
 fn tan_poly(u: f32) -> f32 {
     let c: [f32; 7] = [
@@ -664,8 +500,6 @@ fn tan_poly(u: f32) -> f32 {
     fma(u4, l2, fma(u2, l1, l0))
 }
 
-// tan(pi*r), `r` the exact half-turn-fraction reduction `tanpi`'s own `r`
-// already is, and `s = 0.5-|r|` the exact distance to the pole.
 #[inline(always)]
 fn tan_core(r: f32, s: f32) -> f32 {
     let ar = r.abs();
@@ -693,16 +527,9 @@ pub fn tanpi(x: f32) -> f32 {
     }
 }
 
-// q = round(x/pi) must be an *exact* integer for x - q*pi to land accurately in
-// [-pi/2, pi/2]. A single-f32 q is a binary either-or: either exactly the
-// correctly-rounded integer, or (once |x| crosses q's exact-integer ceiling)
-// off by a whole integer, shifting the residual by a whole multiple of pi and
-// putting sinf_poly hopelessly outside its fitted domain -- a relocatable
-// *cliff*, not a slope, no matter how q is rounded.
+// q = round(x/pi) must be an exact integer for x - q*pi to land in [-pi/2, pi/2].
 const RPI_LO: f32 = 1.284_127_65e-8;
-// 1.5 * 2^52: the f32 `ROUND_MAGIC` trick one exponent range up. Adding it to
-// an exact integer |q| < 2^51 changes no bits of q but parks q's parity in bit
-// 0 of the f64, where a 63-bit shift turns it straight into a sign mask.
+// 1.5 * 2^52: rounds f64 to integer; parity lands in bit 0.
 const ROUND_MAGIC64: f64 = 6755399441055744.0;
 
 /// Error-free transformation (Knuth two-sum): returns `(s, e)` such that `s + e == a + b` exactly.
@@ -731,12 +558,7 @@ pub fn two_prod(a: f32, b: f32) -> (f32, f32) {
     (p, e)
 }
 
-/// Highest raw biased exponent `reduce_pi_wide` serves from its chunk tables;
-/// below this, `m*beta < 1` never wraps past an integer, so the smallest true
-/// residual at exponent `e` is `beta(e)` itself and the table's absolute 2^-86
-/// truncation would be too coarse relative to it. Above (and at) the cut,
-/// wrapping decorrelates residuals from beta's own magnitude and the truncation
-/// bound is what matters.
+/// Cutoff exponent for chunk tables in `reduce_pi_wide`; below this, `|x|*(1/pi)` bypass is used.
 const CUT_PI_WIDE: usize = 96;
 
 /// Payne-Hanek range reduction modulo `pi` using 29-bit chunk tables.
@@ -746,37 +568,18 @@ fn reduce_pi_wide<const HALF: bool>(x: f32) -> (f32, u32) {
     let b = x.to_bits();
     let e = ((b >> 23) & 0xff) as usize;
     let sgnx = b & SIGN_MASK;
-    // Rebuild the 24-bit mantissa integer m: clear sign AND exponent field,
-    // then write biased exponent 150, i.e. value m*2^(150-150) = m.
+    // Rebuild 24-bit mantissa integer m.
     let exp_field = if e == 255 { 0x7f800000 } else { 0x4b00_0000 };
     let m = f32::from_bits((b & 0x007f_ffff) | exp_field) as f64;
-    // One flat table, one base-pointer load: planes 1/2 ride in the
-    // gathers' displacements (see pitable.rs).
     let w0 = pitable::REDUCE_PI_W[0][e & 0xff] as f64;
-    // mm scales m once; mm1/mm2 differ from it only by exact powers
-    // of two, matching where each chunk's bits live in beta (units
-    // 2^-28, 2^-57, 2^-86; see pitable.rs for the split).
     let mm = m * 2.0f64.powi(-28);
-    // Exact (24 + 29 = 53 bits), so the integer part peels off exactly.
     let p0 = mm * w0;
     let n0 = p0.round_ties_even();
     let f0 = p0 - n0;
-    // The two remaining lookups are interleaved with the chain rather than
-    // issued up front: all six gathers of an unrolled iteration sharing one
-    // issue window made llvm-mca's scheduler queue-stall (~5% on sin_wide's
-    // simulated cycles) even though every resource column improved. Same
-    // machine code shape either way -- this only spreads the long-latency
-    // gathers apart.
     let w1 = pitable::REDUCE_PI_W[1][e & 0xff] as f64;
     let w2 = pitable::REDUCE_PI_W[2][e & 0xff] as f64;
-    // Two fmas, not two mul-then-add pairs: p1/p2's scaled products are exact
-    // (24 + 29 = 53 bits), so `mul_add(acc, w, acc2)` computes acc + p_exact
-    // and rounds ONCE -- at exactly the site `(acc + p)` rounds here.
-    // Bit-identical results, two fewer 512-bit f64 pipe ops, and one add
-    // shorter on the critical path out of the gathers.
     let s3 = (mm * 2.0f64.powi(-58)).mul_add(w2, (mm * 2.0f64.powi(-29)).mul_add(w1, f0));
     let n1 = s3.round_ties_even();
-    // Exact: |s3| <= 0.5625 and |n1| <= 1, so Sterbenz applies.
     let fc = s3 - n1;
     let half = 0.5f64.copysign(fc);
     let tt = if HALF { fc - half } else { fc };
@@ -800,9 +603,7 @@ fn reduce_pi_wide<const HALF: bool>(x: f32) -> (f32, u32) {
     (f32::from_bits(r.to_bits() ^ sgnx), sgn)
 }
 
-// parity of an exact-integer float q via floor-based "mod 2" (q*0.5 and its
-// floor stay exact once q is an integer), not `q as i64`: Rust's float-to-int
-// cast is saturating, which LLVM can't lower to a single vector instruction.
+// Parity of exact-integer float q without saturating float-to-int cast.
 #[inline(always)]
 fn parity(q: f32) -> f32 {
     fma(-2.0, (q * 0.5).floor(), q)
@@ -813,8 +614,7 @@ fn parity(q: f32) -> f32 {
 pub fn sin_wide(x: f32) -> f32 {
     let (r, flip) = reduce_pi_wide::<false>(x);
     let r = f32::from_bits(r.to_bits() ^ flip);
-    // `sinf_poly`, not `sinf_poly_raw`, to carry `-0.0` through intact
-    // (raw loses it on fma(p, x3, x) with x3 = -0.0).
+    // sinf_poly preserves -0.0.
     sinf_poly(r).clamp(-1.0, 1.0)
 }
 
@@ -823,7 +623,6 @@ pub fn sin_wide(x: f32) -> f32 {
 pub fn cos_wide(x: f32) -> f32 {
     let (r, flip) = reduce_pi_wide::<true>(x);
     let r = f32::from_bits(r.to_bits() ^ flip);
-    // See `sin_wide` for why this clamp survives an exact reduction.
     sinf_poly(r).clamp(-1.0, 1.0)
 }
 
@@ -841,10 +640,7 @@ pub fn tan_wide(x: f32) -> f32 {
     f32::from_bits((num / den).to_bits() ^ (flip_s ^ flip_c))
 }
 
-/// Core of cbrt for normal finite x: bit-trick seed (~3% error), then a single
-/// degree-3 correction. d = s^3 - x is exact-ish via fma at any scale, and
-/// x/s^3 == 1/(1+r) exactly for r = d/x, so cbrt(x) = s * (1+r)^(-1/3),
-/// approximated by a minimax poly in r.
+/// Core of cbrt for normal finite x: bit-trick seed followed by degree-3 polynomial correction.
 #[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
 fn cbrt_normal(x: f32) -> f32 {
@@ -875,11 +671,7 @@ pub fn cbrt(x: f32) -> f32 {
     let tiny = ax < 0x0080_0000; // denormal or zero: rescale by 2^24 = (2^8)^3
     let xs = if tiny { x * 16777216.0 } else { x };
     let scale = if tiny { 0.00390625 } else { 1.0 };
-    // scale multiplies cbrt_normal's *return value* (see cbrt_normal's doc
-    // comment for why threading it through as a parameter instead makes
-    // LLVM duplicate the whole function per branch)
     let r = cbrt_normal(xs) * scale;
-    // +-0, +-inf, nan propagate (also kills the rcp=inf NaN for x == +-0)
     if ax == 0 || ax >= EXPONENT_MASK {
         x + x
     } else {
@@ -893,37 +685,18 @@ pub fn cbrt_unchecked(x: f32) -> f32 {
     cbrt_normal(x)
 }
 
-/// cbrt to within ~0.5 ulp: cbrt_normal (<= 1 ulp), then one Newton step
-/// carried out in double-f32 arithmetic. Only valid for x already rescaled into
-/// cbrt_accurate's safe range (roughly 2^-56 to 2^127): outside it the
-/// double-f32 residual denormalizes/misrounds, or the Newton step's cube can
-/// overflow to inf, silently breaking the ~0.5 ulp guarantee (see cbrt_accurate
-/// for the rescale).
+/// cbrt to ~0.5 ulp. Caller must ensure x is in roughly [2^-56, 2^127] to prevent underflow/overflow.
 #[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
 pub fn cbrt_accurate_normal(x: f32, scale: f32) -> f32 {
     let ax = x.to_bits() & !SIGN_MASK;
     let a = f32::from_bits(ax);
-    // Depends only on x (not y or e), so this whole expression runs fully
-    // parallel with cbrt_normal's seed chain and the double-float cube below --
-    // folding scale in here too (rather than into a separate multiply after y
-    // or e are ready) means the only work left on the critical path after e is
-    // a single fma, and the only work left after y is a single multiply
-    // (den_recip), instead of two of each. scale is an exact power of two, so
-    // this rounds identically to scaling afterwards (no intermediate hits the
-    // denormal range).
     let neg_rcp3_scale = -((1.0 / a) * (1.0 / 3.0)) * scale;
     let y = cbrt_normal(x);
     let y2 = Df32::from_mul(y, y);
     let y3 = y2 * y;
-    // e = y^3 - x, exact-ish: |e| ~ ulp(x)
     let e = (y3.0 - x) + y3.1;
-    // 1/(3y^2) without a second hardware division: y^3 ~ x (cbrt_normal is
-    // within ~2 ulp) gives 1/y^2 = y/y^3 ~ y/x = |y|/a, so |y|*rcp3
-    // approximates 1/(3y^2). Newton's quadratic convergence only needs den to a
-    // handful of accurate bits -- this substitution is bit-exact against a real
-    // division over the full accuracy sweep, and a small throughput win (the FP
-    // divider is nearly idle while FMA/mul ports are the bottleneck).
+    // Approximates 1/(3y^2) as |y|/(3a) using y^3 ~ x, avoiding a division.
     let neg_den_recip_scale = y.abs() * neg_rcp3_scale;
     fma(e, neg_den_recip_scale, y * scale)
 }
@@ -931,9 +704,7 @@ pub fn cbrt_accurate_normal(x: f32, scale: f32) -> f32 {
 #[inline(always)]
 pub fn cbrt_accurate(x: f32) -> f32 {
     let ax = x.to_bits() & !SIGN_MASK;
-    // below 2^-56 the double-f32 residual would denormalize and misround;
-    // rescale by 2^126 = (2^42)^3 (also covers denormals). Above 2^127 the
-    // Newton step's y^3 can overflow to inf (NaN out), so rescale down too.
+    // Rescale to prevent intermediate overflow (above 2^127) or underflow (below 2^-56).
     const SCALE_UP: f32 = f32::from_bits(0x7e80_0000); // 2^126
     const SCALE_UP_OUT: f32 = f32::from_bits(0x2a80_0000); // 2^-42
     const SCALE_DN: f32 = f32::from_bits(0x0080_0000); // 2^-126
@@ -955,7 +726,6 @@ pub fn cbrt_accurate(x: f32) -> f32 {
         1.0
     };
     let r = cbrt_accurate_normal(xs, scale);
-    // +-0, +-inf, nan propagate (also kills the rcp=inf NaN for x == +-0)
     if ax == 0 || ax >= EXPONENT_MASK {
         x + x
     } else {
@@ -969,13 +739,7 @@ pub fn cbrt_accurate_unchecked(x: f32) -> f32 {
     cbrt_accurate_normal(x, 1.0)
 }
 
-/// Core of rcbrt for normal finite x, the mirror of [`cbrt_normal`]: bit-trick
-/// seed, then a single degree-3 correction on the same `(1+r)^(-1/3)` shape.
-/// The seed goes *down* the exponent (`K - ax/3`, not `ax/3 + K`), so `t ~
-/// a^(-1/3)` directly and `e = a*t^3 - 1` is formed by an fma with no division
-/// anywhere -- which is the whole point, since `1.0 / cbrt(x)` pays two
-/// (`cbrt_normal`'s own `1.0/a` reciprocal for its residual, plus the final
-/// reciprocal).
+/// Core of rcbrt for normal finite x: bit-trick seed and degree-3 correction.
 #[inline(always)]
 fn rcbrt_normal(x: f32) -> f32 {
     let ax = x.to_bits() & !SIGN_MASK;
@@ -992,8 +756,6 @@ fn rcbrt_normal(x: f32) -> f32 {
     let a1 = fma(d2, e, d1);
     let b1 = fma(d4, e, d3);
     let p = fma(fma(d5, e2, b1), e2, a1);
-    // rcbrt is odd (so is cbrt); the seed was built from |x|, so put the
-    // sign back on before the correction rather than after it
     let ts = f32::from_bits(t.to_bits() | (x.to_bits() & SIGN_MASK));
     fma(ts * e, p, ts)
 }
@@ -1061,20 +823,13 @@ pub fn mulsign(x: f32, y: f32) -> f32 {
 const LN_2: f32 = std::f32::consts::LN_2;
 const LOG2_E: f32 = std::f32::consts::LOG2_E;
 
-// Low words of two-word `log2(e)` and `log10(e)`, for the one place each is not
-// merely scaling an already-small correction: `log2p1`/`log10p1`'s answer for
-// `|x| < 2^-24` *is* `x * log2(e)` (resp. `log10(e)`) and nothing else, because
-// `1+x` is then exactly `1.0` and the log kernel contributes an exact zero.
+// Low words of two-word log2(e) and log10(e) for tiny |x| < 2^-24.
 const LOG2_E_LO: f32 = f32::from_bits(0x32a5_7060);
 const LOG10_E_LO: f32 = f32::from_bits(0xb22d_91af);
 const FRAC_PI_2: f32 = std::f32::consts::FRAC_PI_2;
 const FRAC_PI_4: f32 = std::f32::consts::FRAC_PI_4;
 
-// Cody-Waite split of ln(2): LN2_HI keeps its low 9 mantissa bits zeroed, so
-// k*LN2_HI (k an exact small integer, this crate's log_2_normal decomposition
-// never produces |k| past a couple hundred) is *exact* -- no rounding at all,
-// confirmed by brute force for k in [-300, 300]. LN2_LO is the f32-rounded
-// residual (LN2 - LN2_HI as f64, then rounded).
+// Cody-Waite split of ln(2). LN2_HI has 9 trailing zero mantissa bits so k*LN2_HI is exact.
 const LN2_HI: f32 = 0.693_145_75;
 const LN2_LO: f32 = 1.428_606_8e-6;
 const LOG10_2_HI: f32 = 0.301_025_4;
@@ -1089,13 +844,7 @@ pub fn ln(x: f32) -> f32 {
     log_family_wrapper!(x, ln_normal)
 }
 
-/// Core of ln for positive normal finite x only -- see log_2_normal, same
-/// contract, same decomposition (`s = m - 1`, exact by Sterbenz) and the same
-/// *peeled* poly shape: `ln(m) = s + s^2*Q(s)`, with the leading term kept out
-/// of the polynomial rather than evaluated as its constant coefficient. `ln`'s
-/// peel is the strictly better of the two, because its leading coefficient is
-/// exactly `1.0` and `s` is exact -- so unlike `log_2`, which still has to
-/// round `s*log2(e)`, the leading term here is carried with no error at all.
+/// Core of ln for positive normal finite x only.
 #[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
 pub fn ln_normal(x: f32, koff: f32) -> f32 {
@@ -1103,14 +852,6 @@ pub fn ln_normal(x: f32, koff: f32) -> f32 {
     let m = f32::from_bits((x.to_bits() as i32).wrapping_sub(e << 23) as u32);
     let k = e as f32 + koff;
     let s = m - 1.0;
-    // `Q(s) = (ln(1+s)/s - 1)/s`, degree 7, fitted by an ulp-weighted LP
-    // against `s^2/ln(1+s)` -- the weight that makes the fit minimise the
-    // *result*'s relative error, since this poly only ever reaches the answer
-    // scaled by `s^2` -- and not by dropping a term off the older `P(s) =
-    // ln(1+s)/s`. Written that way the answer for x near 1 (k == 0) simply
-    // *was* `s*P(s)`, so all three of P's full-weight evaluation roundings
-    // landed straight on the result at ~2^-24 each; peeling demotes every one
-    // of them by `s^2/ln(1+s) <= 0.5`.
     let c: [f32; 8] = [
         -0.4999999,
         0.33333948,
@@ -1127,21 +868,10 @@ pub fn ln_normal(x: f32, koff: f32) -> f32 {
     let l1 = fma(c[3], s, c[2]);
     let l2 = fma(c[5], s, c[4]);
     let l3 = fma(c[7], s, c[6]);
-    // The `s^2` factor rides into the poly's own low group (`a = s2 * l0`)
-    // instead of multiplying the finished `Q`, the same way `log_2_normal` does
-    // it: same op count, but it keeps the whole thing three Estrin levels deep.
-    // Folding `s` in here as well (`a = fma(s2, l0, s)`) saves a further op and
-    // is not taken -- it puts a second full-weight rounding back on the result
-    // and costs max 1 -> 2.
     let a = s2 * l0;
     let u = fma(l3, s2, l2);
     let w = fma(u, s2, l1);
     let sq = fma(w, s4, a);
-    // `s` joins the `k` word rather than `sq`, so the only thing left on the
-    // polynomial's critical path is one add and one fma. `base` is exact for k
-    // == 0 and rounds at `|s| <= 0.415` otherwise, far under ulp(result) once
-    // |k| >= 1; `fma(k, LN2_HI, .)` is then the single full-weight rounding in
-    // the whole function.
     let base = fma(k, LN2_LO, s);
     fma(k, LN2_HI, base + sq)
 }
@@ -1160,13 +890,7 @@ pub fn log10(x: f32) -> f32 {
     log_family_wrapper!(x, log10_normal)
 }
 
-/// Core of log10 for positive normal finite x only -- see ln_normal, same
-/// contract, same decomposition (`s = m - 1`, exact by Sterbenz) and the same
-/// *peeled* poly shape: `log10(m) = s*LOG10_E + s^2*Q(s)`, with the leading
-/// term kept out of the polynomial rather than evaluated as its constant
-/// coefficient, so the polynomial's own evaluation roundings all reach the
-/// answer attenuated by `s^2/log10(1+s) <= 0.35` instead of landing on it at
-/// full weight.
+/// Core of log10 for positive normal finite x only.
 #[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
 pub fn log10_normal(x: f32, koff: f32) -> f32 {
@@ -1174,11 +898,6 @@ pub fn log10_normal(x: f32, koff: f32) -> f32 {
     let m = f32::from_bits((x.to_bits() as i32).wrapping_sub(e << 23) as u32);
     let k = e as f32 + koff;
     let s = m - 1.0;
-    // `Q(s) = (log10(1+s) - s*LOG10_E)/s^2`, degree 7, fitted by an
-    // ulp-weighted LP against `s^2/log10(1+s)` -- the weight that makes the fit
-    // minimise the *result*'s relative error, since this poly only ever reaches
-    // the answer scaled by `s^2`. One degree lower than the un-peeled `P` it
-    // replaces, which is what pays for the peel.
     let c: [f32; 8] = [
         -0.21714722,
         0.14476636,
@@ -1195,19 +914,11 @@ pub fn log10_normal(x: f32, koff: f32) -> f32 {
     let l1 = fma(c[3], s, c[2]);
     let l2 = fma(c[5], s, c[4]);
     let l3 = fma(c[7], s, c[6]);
-    // `k*LOG10_2_LO` rides into the poly's own low group. It depends only on
-    // `k`, so it is ready before the polynomial is, and joining it here rather
-    // than at the end keeps the tail at two fma -- everything before the
-    // closing `fma(k, LOG10_2_HI, .)` then happens at `|s*LOG10_E| <= 0.18`,
-    // far under ulp(result) once `|k| >= 1`, leaving that fma as the only
-    // full-weight rounding in the function.
     let a = fma(s2, l0, k * LOG10_2_LO);
     let u = fma(l3, s2, l2);
     let w = fma(u, s2, l1);
     let sq = fma(w, s4, a);
-    // `s*LOG10_E` must stay *inside* the closing fma. Forming it early --
-    // folding it into `a` as `fma(s2, l0, s*LOG10_E)` -- puts a second
-    // full-weight rounding back exactly where the peel removed one.
+    // s*LOG10_E must stay inside the closing fma to avoid double rounding.
     fma(k, LOG10_2_HI, fma(s, std::f32::consts::LOG10_E, sq))
 }
 
@@ -1217,12 +928,7 @@ pub fn log10_unchecked(x: f32) -> f32 {
     log10_normal(x, 0.0)
 }
 
-/// ln(1+x), accurate for small |x| (unlike the naive `ln(1.0 + x)`, which loses
-/// x's low bits forming 1.0+x -- the exact case log1p exists to handle -- and
-/// rounds to exactly 1.0, hence exactly 0, for |x| below ~6e-8, half of f32's
-/// ulp(1.0)). u = 1+x still rounds away those bits, but c = x - (u - 1)
-/// recovers the *exact* rounding error (u - 1 is exact by Sterbenz whenever u
-/// is within a factor of 2 of 1, i.e.
+/// Computes `ln(1 + x)`, accurate for small `|x|`.
 macro_rules! log1p_nonzero {
     ($x:expr) => {{
         let u = 1.0 + $x;
@@ -1253,16 +959,10 @@ pub fn log1pmx(x: f32) -> f32 {
     let c = x - (u - 1.0);
     let corr = c / u;
     let corr = if corr.is_finite() { corr } else { 0.0 };
-    // ln_normal's own reduction, done here rather than by calling it: u = 2^k *
-    // m with m in [1/sqrt2, sqrt2), so w = m - 1 is exact (Sterbenz) and lands
-    // in [-0.293, 0.415] -- inside the same |z| < 0.5 the poly below is fitted
-    // over. That is what lets one poly serve both arms.
     let e = (u.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23;
     let m = f32::from_bits((u.to_bits() as i32).wrapping_sub(e << 23) as u32);
     let k = e as f32;
     let w = m - 1.0;
-    // |x| < 0.5 evaluates the series at x itself; past that at w, whose
-    // own log1pmx the identity below turns back into log1pmx(x).
     let z = if x.abs() < 0.5 { x } else { w };
     let z2 = z * z;
     const C1: f32 = -0.666_666_5;
@@ -1277,11 +977,6 @@ pub fn log1pmx(x: f32) -> f32 {
     const C10: f32 = 0.099_456_76;
     const C11: f32 = -0.324_865_7;
     const C12: f32 = 0.320_051_94;
-    // `z` is only available after the reduction below has produced `w`, so this
-    // chain sits on the critical path and a 12-deep serial Horner would
-    // dominate it. Estrin instead -- five fma levels rather than twelve, for
-    // two extra multiplies -- but only *below* the leading term: `C1..C12` are
-    // grouped, then the `1.0` is added by a single trailing fma.
     let z4 = z2 * z2;
     let z8 = z4 * z4;
     let a0 = fma(C2, z, C1);
@@ -1297,13 +992,6 @@ pub fn log1pmx(x: f32) -> f32 {
     let g = fma(b2, z8, c0);
     let q = fma(g, z, 1.0);
     let p = -0.5 * z2 * q;
-    // ln(u) = k*ln2 + ln(m) = k*ln2 + w + log1pmx(w), so log1pmx(x) = ln(u) - x
-    // + c/u = (k*LN2_HI - x + w) + p + (k*LN2_LO + c/u) with p the same series
-    // value the |x| < 0.5 arm returns directly. Every large term is now
-    // differenced *before* anything small is added: k*LN2_HI is exact, w is
-    // exact, and over the whole band where |x/log1pmx(x)| is big (it peaks at
-    // ~5.3 just past |x| = 0.5) both partial differences are Sterbenz-exact
-    // too, so nothing is rounded at ln(u)'s scale and then amplified.
     let big = log_family_edges!(u, {
         let t = fma(k, LN2_HI, -x) + w;
         t + (p + fma(k, LN2_LO, corr))
@@ -1322,10 +1010,7 @@ pub fn log1pmx(x: f32) -> f32 {
 pub fn log2p1(x: f32) -> f32 {
     let u = 1.0 + x;
     let c = x - (u - 1.0);
-    // Two-word `log2(e)`: the big product rides inside the fma, so the whole
-    // scaled correction carries a single rounding and no constant bias. See
-    // `LOG2_E_LO` -- for `|x| < 2^-24` this product is the entire answer, and
-    // one word leaves a fixed offset in it.
+    // Two-word log2(e) avoids bias for tiny |x| < 2^-24.
     let cu = c / u;
     let corr = fma(cu, LOG2_E, cu * LOG2_E_LO);
     let corr = if corr.is_finite() { corr } else { 0.0 };
@@ -1343,9 +1028,7 @@ pub fn log2p1(x: f32) -> f32 {
 pub fn log10p1(x: f32) -> f32 {
     let u = 1.0 + x;
     let c = x - (u - 1.0);
-    // Two-word `log10(e)`, exactly as `log2p1` above -- and it matters
-    // more here: `LOG10_E`'s single-word offset is 2.33e-8 relative
-    // against `LOG2_E`'s 1.33e-8. See `LOG10_E_LO`.
+    // Two-word log10(e) avoids bias for tiny |x| < 2^-24.
     let cu = c / u;
     let corr = fma(cu, std::f32::consts::LOG10_E, cu * LOG10_E_LO);
     let corr = if corr.is_finite() { corr } else { 0.0 };
@@ -1365,11 +1048,7 @@ pub fn exp(x: f32) -> f32 {
     let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
     let r = fma(-k, LN2_HI, x);
     let r = fma(-k, LN2_LO, r);
-    // exp_r_poly!'s c0 and c1 are both pinned to exactly 1.0: exp(r) = 1 + r +
-    // r^2*P(r) for tiny r, so a c1 off from 1.0 by even ~6e-8 relative is a
-    // systematic bias right where exp(x) is most commonly called (x near 0),
-    // and l0 = r + 1.0 needs no fma. c2..c5 are an ulp-weighted Chebyshev LP
-    // fit.
+    // c0 and c1 are pinned to 1.0 to preserve correct behavior near zero.
     let p = exp_r_poly!(r);
     let (t1, t2) = exp2_field_split(k);
     p * t1 * t2
@@ -1406,11 +1085,7 @@ pub fn exp_checked(x: f32) -> f32 {
     exp_reduce!(x.clamp(EXP_CLAMP_LO, EXP_CLAMP_HI))
 }
 
-// `e^r - 1` on the Cody-Waite reduction's own `|r| <= ln2/2`, as `r +
-// r^2*P(r)`. Fitting `e^r - 1` instead of `e^r` is what removes expm1's
-// cancellation at the source: an absolute error carried on `e^r` survives the
-// combine's `-1` and comes out amplified by `e^x/(e^x - 1)`, a factor that
-// peaks at 2.541 just above `x = 0.5`.
+// Evaluates e^r - 1 as r + r^2*P(r) to avoid cancellation near zero.
 macro_rules! expm1_p_poly {
     ($r:expr, $r2:expr) => {{
         let c: [f32; 5] = [0.5, 1.6666504e-1, 4.166_678e-2, 8.370_725e-3, 1.3916677e-3];
@@ -1429,22 +1104,16 @@ macro_rules! expm1_r_poly {
     }};
 }
 
-// `expm1`'s exponent field, emitted at `k-1`: `exp2int_field!`'s magic with the
-// `+127` bias one lower. See `expm1`'s own doc comment for why the field has to
-// sit at `k-1` rather than `k`.
+// Exponent field for 2^(k-1).
 const EXPM1_HALF_MAGIC: f32 = 12583038.0;
 
-// Below this, `expm1(x)` is `x` to the last bit, and the `k-1` field's
-// halved intermediate would be denormal. See `expm1`'s doc comment.
-// 2^-125
+// Below 2^-125, expm1(x) is x and intermediate 2^(k-1) would denormalize.
 const EXPM1_LINEAR: f32 = 2.0 * f32::MIN_POSITIVE;
 
 /// Computes `e^x - 1`, avoiding cancellation near zero.
 #[doc(alias = "expm1f")]
 #[inline(always)]
 pub fn expm1(x: f32) -> f32 {
-    // Deliberately a standalone copy of exp's reduction (not routed
-    // through the public `exp` fn -- a shared-fn attempt regressed an
     const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
     let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
     let r = fma(-k, LN2_HI, x);
@@ -1514,12 +1183,6 @@ pub fn exp_m1_over_x_narrow(x: f32) -> f32 {
     }
 }
 
-// `2^f - 1` for the round-based reduction's own `|f| <= 0.5`, as `f*ln2 +
-// f^2*P(f)`. The leading `f*ln2` is peeled out into the closing fma rather than
-// left as a polynomial coefficient, so `x` is never rescaled into `e`'s units
-// at all -- the same lever that took `tanpi` from max 5 to 2, and it matters
-// more here because the old form's worst case sat exactly on the rounding of `y
-// = x*LN_2`.
 macro_rules! exp2m1_f_poly {
     ($f:expr, $f2:expr) => {{
         let c: [f32; 5] = [
@@ -1536,8 +1199,7 @@ macro_rules! exp2m1_f_poly {
     }};
 }
 
-// 2^-124. Below this the `k-1` field's halved intermediate is denormal, exactly
-// as in `expm1`.
+// Below 2^-124, intermediate 2^(k-1) would denormalize.
 const EXP2M1_LINEAR: f32 = 4.0 * f32::MIN_POSITIVE;
 
 /// Computes `2^x - 1`, avoiding cancellation near zero.
@@ -1560,11 +1222,6 @@ pub fn exp2m1(x: f32) -> f32 {
     }
 }
 
-// `(10^d - 1 - d*LN_10) / d^2` over `|d| <= 0.5*log10(2)`, degree 4,
-// ulp-weighted minimax LP. Same Estrin fold and same degree as `expm1_p_poly!`,
-// and for the same reason: the reduction lands `d` where `|d*ln10| <= ln2/2`,
-// exactly `expm1`'s own `|r|` bound, so the two approximants are the same
-// object in rescaled coordinates.
 macro_rules! exp10m1_d_poly {
     ($d:expr, $d2:expr) => {{
         let c: [f32; 5] = [2.650949, 2.0346525, 1.1712452, 0.5420898, 0.20779254];
@@ -1575,9 +1232,7 @@ macro_rules! exp10m1_d_poly {
     }};
 }
 
-// 2^-125. Below this the `k-1` field's halved intermediate `b` is denormal (`b
-// ~ x*ln10/2`, so this is only reachable for denormal `x`) and the doubling
-// cannot put back the bit rounding took.
+// Below 2^-125, intermediate 2^(k-1) would denormalize.
 const EXP10M1_LINEAR: f32 = 2.0 * f32::MIN_POSITIVE;
 
 /// Computes `10^x - 1`, avoiding cancellation near zero.
@@ -1601,9 +1256,7 @@ pub fn exp10m1(x: f32) -> f32 {
     }
 }
 
-// exp2_checked's k1/k2 exponent-field split, factored out for
-// exp/expm1/exp_pos_neg and friends. Any k1 + k2 == k works as long as both
-// halves stay inside the exponent field, so k1 = round(k/2).
+// Split k = k1 + k2 into two representable exponent fields.
 #[inline(always)]
 fn exp2_field_split(k: f32) -> (f32, f32) {
     let a = fma(k, 0.5, EXP2INT_MAGIC);
@@ -1614,34 +1267,19 @@ fn exp2_field_split(k: f32) -> (f32, f32) {
     (t1, t2)
 }
 
-// Shared exp(x)/exp(-x) for sinh/cosh: the Cody-Waite reduction only needs to
-// happen once, since -x's reduction is exactly (-k, -r). exp's e^r poly splits
-// into even/odd parts in r^2 (p(r) = e + r*o), so p(-r) = e - r*o reuses e/o at
-// the cost of one more fma instead of a whole second poly; only the final
-// exponent-field scaling (2^k vs 2^-k) is genuinely duplicated -- cheap
-// bit-trick work, not fma-port pressure.
+// Evaluates exp(x) and exp(-x) simultaneously via even/odd poly decomposition.
 #[inline(always)]
 fn exp_pos_neg_half(x: f32) -> (f32, f32) {
     let (p_pos, p_neg, t1, t2, t1n, t2n) = exp_pos_neg_core!(x);
     (p_pos * t1 * t2, p_neg * t1n * t2n)
 }
 
-// exp_pos_neg_half, single-exponent-field tier: both `+k` and `-k` must fit a
-// single field's own valid range simultaneously here (unlike exp_narrow's
-// one-sided k), which needs a domain a hair tighter than exp_narrow's own --
-// see sinh_narrow/cosh_narrow's own doc comment for the exact (symmetric)
-// boundary. Standalone copy of exp_pos_neg_core!'s poly (not routed through the
-// macro, which hardcodes the split) -- same standalone-copy precedent as
-// expm1/exp_checked's own reductions.
 #[inline(always)]
 fn exp_pos_neg_narrow_half(x: f32) -> (f32, f32) {
     const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
     let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
     let r = fma(-k, LN2_HI, x);
     let r = fma(-k, LN2_LO, r);
-    // Pre-halved, exactly as in `exp_pos_neg_core!` -- see its comment for
-    // why this is free and exact, and `sinh`'s for the premature-overflow
-    // gap it closes.
     let c: [f32; 5] = [
         0.49999994 * 0.5,
         0.16666521 * 0.5,
@@ -1655,15 +1293,12 @@ fn exp_pos_neg_narrow_half(x: f32) -> (f32, f32) {
     let p_pos = fma(r, o, e);
     let p_neg = fma(-r, o, e);
     let t = exp2int_field!(k);
-    // reciprocal via bit-subtraction, same trick exp_pos_neg_core! uses
-    // for t1n/t2n: exact for any power-of-two field.
+    // Exact power-of-two reciprocal via bit subtraction.
     let tn = f32::from_bits(0x7F00_0000u32.wrapping_sub(t.to_bits()));
     (p_pos * t, p_neg * tn)
 }
 
-// sinh(x) ~ x * P(x^2), a two-fma odd approximation on |x| < 0.5. The leading
-// coefficient is pinned to exactly 1.0 (tiny x returns x, its correctly-rounded
-// sinh).
+// sinh(x) ~ x * P(x^2) for |x| < 0.5.
 #[inline(always)]
 fn sinh_small(x: f32) -> f32 {
     let x2 = x * x;
@@ -1718,10 +1353,7 @@ pub fn cosh_narrow(x: f32) -> f32 {
     ep + en
 }
 
-/// `exp_pos_neg_half`, but with `x` clamped first so `k = round(x*log2e)` never
-/// leaves the safe range for *both* `exp2_field_split(k)` and its
-/// reciprocal-based negation, AND returning `0.5*exp(x)`/`0.5*exp(-x)` directly
-/// instead of the raw pair:
+/// `exp_pos_neg_half` with clamped input, returning `(0.5*exp(x), 0.5*exp(-x))`.
 #[inline(always)]
 fn exp_pos_neg_checked_half(x: f32) -> (f32, f32) {
     let x = x.clamp(-170.0, 170.0);
@@ -1749,9 +1381,7 @@ pub fn cosh_checked(x: f32) -> f32 {
     ep + en
 }
 
-// coshm1's own poly: `Q(u) = (cosh(sqrt(u)) - 1 - u/2) / u^2` on `u = x^2` in
-// `[0, 4]`, i.e. the series with *both* leading terms peeled off, not just the
-// constant.
+// Q(u) = (cosh(sqrt(u)) - 1 - u/2) / u^2 for u in [0, 4].
 const COSHM1_Q_COEFFS: [f32; 4] = [0.04166663, 0.0013889787, 2.4732362e-5, 2.963389e-7];
 
 /// Computes `cosh(x) - 1`, avoiding cancellation near zero.
@@ -1763,8 +1393,7 @@ pub fn coshm1(x: f32) -> f32 {
     let a = fma(c[1], u, c[0]);
     let b = fma(c[3], u, c[2]);
     let q = fma(b, u2, a);
-    // x*(0.5*x), not 0.5*(x*x): the halved factor keeps the leading term
-    // a single rounding even where x*x itself would land denormal.
+    // x*(0.5*x) prevents underflow when x*x would be denormal.
     let small = fma(u2, q, x * (0.5 * x));
     let big = cosh_checked(x) - 1.0;
     if x.abs() < 2.0 {
@@ -1800,8 +1429,7 @@ pub fn cosh_throughput(x: f32) -> f32 {
 pub fn tanh(x: f32) -> f32 {
     let xc = x.clamp(-43.5, 44.0);
 
-    // Small arm's denominator, x*coth(x) over [0, 0.8]. The numerator is
-    // `xc` itself, so it needs no instruction at all.
+    // Small arm denominator: x*coth(x) over [0, 0.8].
     const COTH1: f32 = 0.33333313;
     const COTH2: f32 = -0.02221908;
     const COTH3: f32 = 0.0021010686;
@@ -1810,12 +1438,6 @@ pub fn tanh(x: f32) -> f32 {
     let dp = fma(fma(fma(COTH4, x2, COTH3), x2, COTH2), x2, COTH1);
     let ds = fma(dp, x2, 1.0);
 
-    // Direct arm: a standalone copy of expm1 (not a call through the public
-    // `expm1` fn, same shared-helper scheduling risk as everywhere else) but
-    // with a single exponent-field construction instead of exp's k1/k2 split --
-    // the clamp bound guarantees `k = round(x*2*log2e)` stays in [-126, 127],
-    // comfortably short of the k=128 edge case the split exists for. Same
-    // fma(p, exp2int, -1.0) tail fusion as expm1.
     const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
     const LOG2_E_X2: f32 = 2.0 * LOG2_E;
     let k = fma(xc, LOG2_E_X2, ROUND_MAGIC) - ROUND_MAGIC;
@@ -1823,7 +1445,6 @@ pub fn tanh(x: f32) -> f32 {
     const LN2_LO_HALF: f32 = LN2_LO / 2.0;
     let rh = fma(-k, LN2_HI_HALF, xc);
     let rh = fma(-k, LN2_LO_HALF, rh);
-    // exp_r_poly!'s c[0..3], each rescaled by 2^(degree) for `rh = r/2`.
     const D0: f32 = 4.0 * 4.999_93e-1;
     const D1: f32 = 8.0 * 1.6667245e-1;
     const D2: f32 = 16.0 * 4.188_381e-2;
@@ -1837,9 +1458,7 @@ pub fn tanh(x: f32) -> f32 {
     let exp2int = exp2int_field!(k);
     let b = fma(p, exp2int, -1.0);
 
-    // Two selects, one division -- not one select and two divisions.
-    // Both arms are already a ratio, so the branch can be taken a step
-    // earlier and the divider visited once.
+    // Select before division to execute divide only once.
     let small = xc.abs() < 0.8;
     let n = if small { xc } else { b };
     let d = if small { ds } else { b + 2.0 };
@@ -1856,10 +1475,6 @@ pub fn tanh_grad(x: f32) -> f32 {
 /// Logistic sigmoid: `1 / (1 + exp(-x))`.
 #[inline(always)]
 pub fn sigmoid(x: f32) -> f32 {
-    // Standalone copy of exp's reduction (not routed through the public `exp`
-    // fn, same pattern as expm1); the poly itself is shared via `exp_r_poly!`.
-    // Single exponent-field construction, NOT exp2_checked's k1/k2 split
-    // (tried: it works but doubles throughput cost, an unjustified price here).
     let xc = x.clamp(-88.722_84, 87.0);
     const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
     let k = fma(xc, -LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
@@ -1887,17 +1502,7 @@ pub fn sigmoid_grad(x: f32) -> f32 {
     e / ((1.0 + e) * (1.0 + e))
 }
 
-/// `log1p(e)` specialized for callers whose own domain already guarantees `e`
-/// in `(0, 1]`)`, `something >= 0`, so `e` never leaves that range) -- `u =
-/// 1+e` then always lands in `(1, 2]`, safely away from every special case
-/// `log1p`'s own wrapper exists for (never zero, negative, denormal, inf, or
-/// nan), so this skips straight to `ln_normal` + the Sterbenz correction, no
-/// wrapper, no `corr.is_finite()` guard, no `x==0.0` select. Same domain-bypass
-/// mechanism as `asinh`/`acosh`'s own `ln_normal` calls, distinct from the
-/// already-rejected "log1p small-|x| branch" (which added a poly to *every*
-/// general `log1p` call regardless of caller) -- this is a separate callee only
-/// reachable from callers whose domain already proves the skipped checks
-/// unreachable.
+/// `log1p` specialized for callers guaranteeing `e` in `(0, 1]`, bypassing domain checks.
 #[inline(always)]
 fn log1p_unit(e: f32) -> f32 {
     let c: [f32; 10] = [
@@ -1929,13 +1534,6 @@ fn log1p_unit(e: f32) -> f32 {
 #[inline(always)]
 fn softplus_impl(x: f32) -> f32 {
     let ax = x.abs();
-    // `exp_narrow`, not `exp`: the `min(87.0)` above is already the guard its
-    // single-exponent-field domain (`x` in `[-87.68311, 88.37627]`) asks for,
-    // so the k1/k2 split is dead weight here -- `-ax.min(87.0)` lands in `[-87,
-    // 0]` for every input, NaN included (`min` follows IEEE `minNum` and
-    // returns `87.0`, and the trailing `is_nan` below restores the NaN).
-    // Bit-identical, since `t1 * t2` and the single field are the same exact
-    // power of two over this k range.
     let e = exp_narrow(-ax.min(87.0));
     let corr = if ax > 87.0 { 0.0 } else { log1p_unit(e) };
     let normal = x.max(0.0) + corr;
@@ -1946,13 +1544,7 @@ fn softplus_impl(x: f32) -> f32 {
     }
 }
 
-// `exp(-a) * 2^64` for `a` in `[0, 105]`, the reduction the `_checked` tiers of
-// the softplus family need: their correction term has to survive down into the
-// denormals, which a single 2^k exponent field cannot represent -- but `exp(-a)
-// * 2^64` is normal over the whole range, so the caller lands the denormal
-// itself with one exact `2^-64` multiply and a single rounding. Biasing the
-// field by `+64` is what keeps `k`, which runs to `-152` at `a = 105`, inside
-// the field's own `[-126, 127]`.
+// Computes exp(-a) * 2^64 to keep intermediate normal across denormal range.
 macro_rules! exp_neg_scaled64 {
     ($a:expr) => {{
         const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
@@ -1993,17 +1585,7 @@ pub fn logsigmoid_checked(x: f32) -> f32 {
 #[inline(always)]
 pub fn gelu(x: f32) -> f32 {
     let xa = x.abs();
-    // `erfcx_pos`, not `erfcx`: the argument is an absolute value, so
-    // erfcx's own x<0 arm is dead and LLVM does not prove that -- same
-    // note as `norm_cdf`'s, which shares this factor exactly.
     let r = erfcx_pos(xa * std::f32::consts::FRAC_1_SQRT_2);
-    // `NORM_CDF_XS_CLAMP` does double duty here, on the same two conditions it
-    // is asserted for: `x^2/2` stays inside `exp_reduce!`'s range, and `e^-p`
-    // is already exactly `0.0` at the clamp -- so a clamped input returns its
-    // addend untouched, which is the exactly-right answer (`x` for `x > 0`,
-    // since `x*Phi(-x)` is then ~2e-46 against a half-ulp of ~5e-7; `-0.0` for
-    // `x < 0`, since `0.5*|x|*Phi(-|x|)` is ~1e-46 against the 7.0e-46 that
-    // would round up to the smallest denormal).
     let xs = if xa > NORM_CDF_XS_CLAMP {
         NORM_CDF_XS_CLAMP
     } else {
@@ -2013,15 +1595,9 @@ pub fn gelu(x: f32) -> f32 {
     let p = h * xs;
     let pe = fma(h, xs, -p);
     let e = exp_reduce!(-p);
-    // `x` for `x >= 0`, `-0.0` for `x < 0` -- this is `0.5*x*w` with `w` the
-    // reflection addend `erfc`/`norm_cdf` build the same way, except that the
-    // sign bit is kept rather than masked off so `gelu(-0.0)` comes out of the
-    // closing `fma` as `-0.0` and not `+0.0`.
+    // Preserves sign of -0.0 in closing fma.
     let s = (x.to_bits() as i32 >> 31) as u32;
     let addend = f32::from_bits(x.to_bits() & (!s | 0x8000_0000));
-    // The two `mulsign`s this would otherwise need -- one to sign `0.5*x`
-    // and one for the reflection, off `x` and `-x` -- always disagree, so
-    // they collapse into the constant negation on `h * e`.
     fma(-(h * e), fma(-r, pe, r), addend)
 }
 
@@ -2086,14 +1662,7 @@ pub fn pow_3_2(x: f32) -> f32 {
     x * x.sqrt()
 }
 
-/// Core of `x^(2/3)` for `a` positive and normal: `cbrt_normal`'s own bit-trick
-/// seed `s` and residual `r = (s^3-a)/a`, but fitting `(1+r)^(-2/3)` instead of
-/// `(1+r)^(-1/3)` -- `s^2 * (1+r)^(-2/3) == a^(2/3)` identically, exactly as
-/// `s * (1+r)^(-1/3) == a^(1/3)`, so the two-thirds power is a *direct* fit rather
-/// than a cube root squared. `scale`/`scale3` carry the caller's denormal
-/// rescale (`scale3` is `scale/3`, see below); folding them in here rather than
-/// multiplying the return value keeps them off the tail of the dependency
-/// chain, which measures a real latency win.
+/// Core of `x^(2/3)` for positive normal `x` via direct minimax fit of `(1+r)^(-2/3)`.
 #[inline(always)]
 fn pow_2_3_normal(a: f32, scale: f32, scale3: f32) -> f32 {
     let ax = a.to_bits();
@@ -2110,16 +1679,13 @@ fn pow_2_3_normal(a: f32, scale: f32, scale3: f32) -> f32 {
     let c4 = 0.457_742_93_f32;
     let c5 = -0.440_396_8_f32;
     let p = fma(fma(fma(fma(c5, r, c4), r, c3), r, c2), r, c1);
-    // s2*r is off the poly's dependency chain, so the tail after p is one
-    // fma and one add; e2 rides in as the fma's addend for free.
     s2 + fma(s2 * r, p, e2)
 }
 
 /// Computes `x^(2/3)` for `x >= 0`.
 #[inline(always)]
 pub fn pow_2_3(x: f32) -> f32 {
-    // denormal (or zero) rescale: x by 2^24 = (2^8)^3, so the result comes
-    // back 2^16 too big. scale3 is scale/3, the kernel's tail weight.
+    // Rescale denormals: scales x by 2^24, result comes back scaled by 2^16.
     const OUT: f32 = 1.525_878_9e-5; // 2^-16
     const OUT3: f32 = OUT * (1.0 / 3.0);
     let ax = x.to_bits() & !SIGN_MASK;
@@ -2129,7 +1695,6 @@ pub fn pow_2_3(x: f32) -> f32 {
     let scale = if tiny { OUT } else { 1.0 };
     let scale3 = if tiny { OUT3 } else { 1.0 / 3.0 };
     let r = pow_2_3_normal(ascaled, scale, scale3);
-    // +-0, +-inf, nan propagate (also kills the rcp=inf NaN for x == +-0)
     if ax == 0 || ax >= EXPONENT_MASK {
         a + a
     } else {
@@ -2158,34 +1723,14 @@ pub fn smootherstep(edge0: f32, edge1: f32, x: f32) -> f32 {
 pub fn asinh(x: f32) -> f32 {
     let ax = x.abs();
     let small = ax < 2048.0;
-    // ax*ax shared across direct_sq, inv_ax2, and sm1's numerator -- both
-    // branches are always computed unconditionally, so it's shareable
-    // (unlike acosh, see its body comment).
     let ax2 = ax * ax;
     let direct_sq = (ax2 + 1.0).sqrt();
-    // sqrt(ax^2+1) = ax + 1/(2*ax) - 1/(8*ax^3) + ..., and this branch only
-    // runs for ax >= 2048, where the first dropped term is 1/(8*ax^4) <= 7e-15
-    // relative -- seven orders of magnitude under f32's own 6e-8, so the
-    // two-term form is exact here. Costs one division and one fma instead of a
-    // division, an add, a sqrt and a multiply.
+    // For ax >= 2048, sqrt(ax^2+1) ~= ax + 1/(2*ax) is exact to f32 precision.
     let inv_ax = 1.0 / ax;
     let rescaled_sq = fma(0.5, inv_ax, ax);
     let sq = if small { direct_sq } else { rescaled_sq };
     let sm1 = if small { ax2 / (sq + 1.0) } else { sq - 1.0 };
     let d = ax + sm1;
-    // `log1p_finite(d)` and the overflow fallback `ln(ax) + LN_2` each pay
-    // their own full `ln`-family poly + wrapper, unconditionally (branchless),
-    // for every call -- but `ln(2*ax) = ln(ax) + ln(2)` is exactly
-    // `ln_normal`'s own `koff` hook (it adds directly into the pre-combine
-    // exponent field `k`, not as a post-hoc add onto an already-rounded
-    // `ln(ax)`), so both branches reduce to one shared `ln_normal` call on a
-    // selected (argument, koff) pair. `u = 1+d` is always `>= 1` (finite-d
-    // branch, `d = ax+sm1 >= 0`) and `ax` is always a genuine positive value
-    // here too, so neither ever needs `log_family_wrapper!`'s
-    // zero/negative/denormal handling -- only its inf/nan handling, which the
-    // trailing overrides below restore (the raw `_normal` core doesn't
-    // propagate either, see its own doc comment: `ax` is `NaN`/`+inf` exactly
-    // when `x` is, since `d`'s own non-finiteness routes here).
     let finite_d = d.is_finite();
     let u = 1.0 + d;
     let c = d - (u - 1.0);
@@ -2194,9 +1739,6 @@ pub fn asinh(x: f32) -> f32 {
     let koff = if finite_d { 0.0 } else { 1.0 };
     let shared = ln_normal(arg, koff);
     let combined = if finite_d { shared + corr } else { shared };
-    // One select restores both non-finite cases: `ax` is already `+inf`
-    // for `x = +-inf` and `NaN` for `x = NaN`, and the trailing `mulsign`
-    // puts the infinity's sign back.
     let combined = if x.is_finite() { combined } else { ax };
     mulsign(combined, x)
 }
@@ -2205,29 +1747,13 @@ pub fn asinh(x: f32) -> f32 {
 #[doc(alias = "acoshf")]
 #[inline(always)]
 pub fn acosh(x: f32) -> f32 {
-    // NOT the same "shared x2" opportunity as asinh: `direct` needs x*x - 1.0
-    // computed as a *single* rounding (the fma) because x is near 1 at acosh's
-    // domain boundary, where it's a catastrophic- cancellation subtraction -- a
-    // rounded-then-reused x2 loses exactly the precision that cancellation
-    // needs (measured: max ulp 3 -> 700). `direct` and `inv_x2` each need their
-    // own x*x in a different rounding context.
+    // x*x - 1.0 must be a single FMA to avoid catastrophic cancellation near x=1.
     let direct = fma(x, x, -1.0).sqrt();
-    // sqrt(x^2-1) = x - 1/(2*x) - 1/(8*x^3) - ..., same two-term expansion
-    // (and same 7e-15 bound at this branch's own x >= 2048) as asinh's --
-    // see its body comment.
+    // For x >= 2048, sqrt(x^2-1) ~= x - 1/(2*x) is exact to f32 precision.
     let inv_x = 1.0 / x;
     let rescaled = fma(-0.5, inv_x, x);
     let s = if x < 2048.0 { direct } else { rescaled };
     let d = (x - 1.0) + s;
-    // Same shared-ln_normal merge as asinh (see its own doc comment for the
-    // full mechanism): `log1p_finite(d)` and the `ln(x) + LN_2` overflow
-    // fallback each paid a full ln-family poly + wrapper, unconditionally,
-    // every call. `x` itself (not `ax`: acosh's domain is `x >= 1`, no sign to
-    // strip) and `u = 1+d` are both always positive here, so only inf/nan need
-    // restoring after the raw `ln_normal` core -- `x < 1.0` (false for NaN)
-    // already runs last and independently supplies the out-of-domain NaN, so
-    // the trailing overrides only need to cover the in-domain `x >= 1` inf/nan
-    // cases.
     let finite_d = d.is_finite();
     let u = 1.0 + d;
     let c = d - (u - 1.0);
@@ -2236,9 +1762,6 @@ pub fn acosh(x: f32) -> f32 {
     let koff = if finite_d { 0.0 } else { 1.0 };
     let shared = ln_normal(arg, koff);
     let combined = if finite_d { shared + corr } else { shared };
-    // One select restores both non-finite cases, exactly as in `asinh`:
-    // `x` is already `+inf` for `x = +inf` and `NaN` for `x = NaN`, and
-    // `-inf` is discarded by the domain check below.
     let combined = if x.is_finite() { combined } else { x };
     if x < 1.0 {
         f32::NAN
@@ -2247,14 +1770,7 @@ pub fn acosh(x: f32) -> f32 {
     }
 }
 
-// atanh(x) ~ x*(1 + x^2/3 + x^4/5 + x^6/7 + ...), a degree-7 minimax refit of
-// the odd Taylor series over |x| < 0.25: the leading coefficient is pinned to
-// exactly 1.0 (same convention as asin_small/sinh_small), and only 3
-// non-leading terms are needed to stay near f32 precision over this narrow
-// domain -- a fitted LP found the next two odd terms (x^8, x^10) converge to
-// exactly 0, so this is cheaper than the idea's own "~5 odd terms" guess. Same
-// role as asin_small/sinh_small: a cheap, cancellation-free small-x numerator
-// for the branch below.
+// atanh(x) ~ x * P(x^2) on |x| < 0.25.
 #[inline(always)]
 fn atanh_small(x: f32) -> f32 {
     let x2 = x * x;
@@ -2273,7 +1789,6 @@ pub fn atanh(x: f32) -> f32 {
     let a = x.abs();
     let small = atanh_small(x);
     let v = 2.0 * a / (1.0 - a);
-    // log1p(v), minus the branches this call site can't reach.
     let u = 1.0 + v;
     let c = v - (u - 1.0);
     let corr = c / u;
@@ -2289,9 +1804,7 @@ pub fn atanh(x: f32) -> f32 {
     }
 }
 
-// `asin(sqrt(t))/sqrt(t)` on `t` in `[0, 1/4]`, degree 5, ulp-weighted minimax
-// (LP). One poly serves *both* of acos's branches -- see [`acos`] for the
-// identity that makes the two arms ask the same question.
+// asin(sqrt(t))/sqrt(t) on t in [0, 0.25].
 #[inline(always)]
 fn acos_poly(t: f32) -> f32 {
     let u = 4.2285666e-2f32;
@@ -2318,14 +1831,10 @@ fn asin_poly(x: f32) -> f32 {
 #[inline(always)]
 pub fn acos(x: f32) -> f32 {
     const PI: f32 = std::f32::consts::PI;
-    // (pi/2 - fl32(pi/2)) / fl32(pi/2). The same ratio recovers pi's own
-    // low word, because fl32(pi) is exactly 2*fl32(pi/2) -- same mantissa,
-    // exponent one higher -- so one multiply serves all three addends.
     const LO_RATIO: f32 = -2.7827534e-8;
     let na = f32::from_bits(x.to_bits() | SIGN_MASK); // -|x|
     let small = na > -0.5;
-    // t = x^2 below the crossover, (1-|x|)/2 above it. The second is
-    // exact: |x| >= 1/2 makes 1 - |x| Sterbenz-exact and halving is free.
+    // t = x^2 below crossover, (1-|x|)/2 above it.
     let t = if small { x * x } else { fma(na, 0.5, 0.5) };
     let y = t.sqrt();
     let m = mulsign(if small { na } else { y + y }, x);
@@ -2345,11 +1854,6 @@ pub fn acosd(x: f32) -> f32 {
     acos(x) * RAD_TO_DEG_HI
 }
 
-// acos(x)/pi as its own degree-6 minimax poly. Fitted as an ulp-weighted
-// minimax (LP) of `acos(a)/(pi*sqrt(1-a))` against `a`, weighted by the
-// `sqrt(1-a)*P(a)` combine's own sensitivity `sqrt(1-a)/ulp(acospi)` for
-// whichever of the two halves (`y` and `1-y`) binds harder, then
-// coordinate-descended over the f32 quantisation.
 #[inline(always)]
 fn acospi_poly(x: f32) -> f32 {
     let u = 7.541_4e-4_f32;
@@ -2369,9 +1873,7 @@ pub fn acospi(x: f32) -> f32 {
     mulsign(y, x + 0.0) + if x < 0.0 { 1.0 } else { 0.0 }
 }
 
-// Odd approximation asin(x) ~ x * P(x^2), degree 5 in x^2, on |x| < 0.5. The
-// leading coefficient is pinned to exactly 1.0 so tiny x returns x (its
-// correctly-rounded asin).
+// asin(x) ~ x * P(x^2) on |x| < 0.5.
 #[inline(always)]
 fn asin_small(x: f32) -> f32 {
     let x2 = x * x;
@@ -2403,17 +1905,11 @@ pub fn asin(x: f32) -> f32 {
     }
 }
 
-// 180/pi as a double-f32, for the radians-to-degrees composites: HI+LO
-// represents it to ~2^-49 relative, so `fma(y, HI, y*LO)` rounds once at the
-// result's own magnitude where a single-word `y * K` rounds twice and carries
-// whatever bias the f32 `K` has.
+// 180/pi split into double-f32 to prevent rounding bias in degree conversions.
 const RAD_TO_DEG_HI: f32 = 57.295_776;
 const RAD_TO_DEG_LO: f32 = 3.1458948e-6;
 
-// The same double-f32 treatment for 1/pi, for the half-turn composites. Here
-// [`FRAC_1_PI`] is *already* the low neighbour -- the correctly rounded
-// `fl(1/pi)` sits 0.43 ulp *below* the real 1/pi -- so it also serves as the HI
-// word and only this positive tail has to be named.
+// 1/pi split into double-f32 for half-turn conversions.
 const FRAC_1_PI_LO: f32 = 1.28412765e-8;
 
 /// Computes `asin(x)` in degrees for `x` in `[-1, 1]`.
@@ -2423,14 +1919,6 @@ pub fn asind(x: f32) -> f32 {
     fma(y, RAD_TO_DEG_HI, y * RAD_TO_DEG_LO)
 }
 
-// asin(x)/pi, seeded by rescaling each coefficient by 1/pi and then refit in
-// half-turn space directly: NOT assumed safe just because 's own RAD_TO_DEG
-// fold measured worse for asind -- verified separately since it's a different
-// constant, not just a relabeling. Plausible reason for the opposite verdict:
-// `1/pi` (~0.318) keeps rescaled coefficients in a similar-or-smaller magnitude
-// range, while `180/pi` (~57.3) inflates them roughly 57x, apparently
-// accumulating more absolute rounding per fma step than one final multiply
-// costs.
 #[inline(always)]
 fn asinpi_small(x: f32) -> f32 {
     let x2 = x * x;
@@ -2439,10 +1927,6 @@ fn asinpi_small(x: f32) -> f32 {
     let c3 = 0.014473671f32;
     let c4 = 0.0076965746f32;
     let c5 = 0.013421959f32;
-    // Degree 5 in `x^2`, covering `[0, 0.5]` -- see [`asinpi`] for why the
-    // crossover sits there and `asin_small` for the same sizing argument (a
-    // minimax needs degree 5 to reach 0.5, not the ~12 terms the Taylor series
-    // would).
     let t = fma(
         fma(fma(fma(fma(c5, x2, c4), x2, c3), x2, c2), x2, c1),
         x2,
@@ -2451,10 +1935,6 @@ fn asinpi_small(x: f32) -> f32 {
     fma(x, FRAC_1_PI, x * t)
 }
 
-// asin's `0.5 - sqrt(1-a)*P(a)` branch in half-turns, degree 5 over a in [0.5,
-// 1). Fitted as an ulp-weighted minimax (LP) of `acos(a)/(pi*sqrt(1-a))` --
-// weight `sqrt(1-a)/ulp(asinpi)`, the combine's own sensitivity -- and
-// coordinate-descended over the f32 quantisation.
 #[inline(always)]
 fn asinpi_poly(x: f32) -> f32 {
     let u = -0.0006497958f32;
@@ -2478,9 +1958,7 @@ pub fn asinpi(x: f32) -> f32 {
     }
 }
 
-// 3/3 Pade-style rational approximation of atan on [0,1], seeded from a
-// least-squares fit and coordinate-descent tuned. Current: atan avg/max ulp
-// 0.063/3 (exhaustive).
+// 3/3 Pade rational approximation of atan on [0, 1].
 #[inline(always)]
 fn atan_poly(x: f32) -> f32 {
     let a2 = 0.008_830_043;
@@ -2500,12 +1978,6 @@ fn atan_poly(x: f32) -> f32 {
 #[inline(always)]
 pub fn atan(x: f32) -> f32 {
     let a = x.abs();
-    // a >= 0, so min(a, 1/a) picks whichever branch the old a<1.0 select did (a
-    // itself below 1, the reciprocal at/above 1) in one vminps instead of a
-    // compare+blend; the reciprocal was already computed unconditionally either
-    // way (both branches evaluate in the branchless/vectorized style this crate
-    // uses). NaN: a=NaN -> 1/a=NaN -> min(NaN, NaN) = NaN, matching the old
-    // else-branch's 1.0/NaN.
     let y = a.min(1.0 / a);
     let y = atan_poly(y);
     let y = if a < 1.0 { y } else { FRAC_PI_2 - y };
@@ -2572,11 +2044,7 @@ pub fn atan2(y: f32, x: f32) -> f32 {
         correction
     };
     let r = if y.is_nan() { f32::NAN } else { r };
-    // atan2(+-inf, +-inf): y/x is inf/inf, which is NaN, so the general formula
-    // above can't produce an answer here at all. IEEE754/C99 define a canonical
-    // result by quadrant regardless (+-pi/4 or +-3pi/4) -- not derived from any
-    // real ratio, since there isn't one at true infinity, just a fixed
-    // convention.
+    // atan2(+-inf, +-inf): quadrant-dependent result required by IEEE 754 / C99.
     let bothinf = x.is_infinite() && y.is_infinite();
     let inf_result = mulsign(
         if x.is_sign_negative() {
@@ -2650,17 +2118,7 @@ pub fn atan2_pos(y: f32, x: f32) -> f32 {
 #[doc(alias = "tanf")]
 #[inline(always)]
 pub fn tan(x: f32) -> f32 {
-    // `nb`, `n`, `fc` and both Cody-Waite chains are `sin`'s and `cos`'s own,
-    // inlined here only so the shared reduction is visibly shared: sin's wider
-    // multiple-of-4 grid is deliberately not used, since a second, non-shared
-    // reduction costs tan ~15 instructions for byte-identical output (mca: 105
-    // -> 120 instrs, BlockRT 31 -> 36).
     let (nb, n, fc) = frac_x_over_pi!(x, ROUND_MAGIC);
-    // `fc + nb` is a second magic round, of `x/pi` this time instead of
-    // `x*FRAC_1_PI`: `nb` is already `ROUND_MAGIC + n` on the integer grid, so
-    // adding the (corrected, |fc| <= 0.67) fraction back rounds to `ROUND_MAGIC
-    // + N`. `sin` cannot reuse this shape -- its coarse grid is too wide for
-    // `nb` to sit on the integer grid at all.
     let qb = fc + nb;
     let num = pi_reduce_and_poly!(x, qb - ROUND_MAGIC);
     let den = pi_reduce_and_poly!(x, n + 0.5f32.copysign(fc));
@@ -2668,11 +2126,6 @@ pub fn tan(x: f32) -> f32 {
     f32::from_bits((num / den).to_bits() ^ sign)
 }
 
-// degree-6 minimax poly feeding erf's exp2-based tail (|x| >= 0.28), Estrin (3
-// fma's deep instead of Horner's 6, accuracy-neutral here -- fma reassociation
-// has to be checked per poly, not assumed either way). Coefficients are an
-// ulp-weighted Chebyshev LP fit, weighted by the linearized sensitivity of
-// erf's final `1 - 2^poly` combine.
 #[inline(always)]
 fn erf_poly(x: f32, x2: f32) -> f32 {
     let a6 = 2.838_853e-4_f32;
@@ -2697,22 +2150,8 @@ fn erf_poly(x: f32, x2: f32) -> f32 {
 pub fn erf(x: f32) -> f32 {
     let xa = x.abs();
     let xa_bounded = if xa > 10.0 { 10.0 } else { xa };
-    // Shared between both branches: the Pade arm's own x2 (x*x, unclamped) and
-    // erf_poly's internal x2 (xa_bounded*xa_bounded) only differ once |x| > 10,
-    // but the Pade arm's result (`a`) is only ever *selected* when `xa < 0.28`,
-    // comfortably inside the clamp -- so reusing the already-clamped x2 here
-    // changes nothing observable, just removes a redundant multiply (and bounds
-    // the discarded arm's x2 to <= 100 instead of letting it run up toward
-    // overflow for huge |x|, a minor side benefit, not the point of the
-    // change).
     let x2 = xa_bounded * xa_bounded;
-    // The Pade numerator's constant term is `erf'(0) = 2/sqrt(pi)`, pinned by
-    // the approximant rather than fitted -- and it lands almost exactly on an
-    // f32 tie, 0.49 ulp above the nearer representable value. A single-word
-    // constant therefore carries that 0.49 ulp as *bias*, not noise, into every
-    // result small enough that `A*x2` has vanished beneath it: `x *
-    // fl(2/sqrt(pi))` is systematically one ulp high over roughly half the f32
-    // domain by bit pattern.
+    // Pade constant term 2/sqrt(pi) split into two words to avoid rounding bias.
     let numer = fma(
         x,
         f32::from_bits(0x3f906ebb),
@@ -2732,25 +2171,18 @@ pub fn erf(x: f32) -> f32 {
     }
 }
 
-// The `|x|` clamps `erfc` and `erfcx` feed their `x*x` through. Both are set by
-// one rule: make the exponent they hand `exp_reduce!` provably inside its valid
-// range, so neither pays for a clamp `exp_checked` would have applied.
+// Clamps on |x| ensure exponents stay within exp_reduce!'s valid range.
 const ERFC_XS_CLAMP: f32 = 10.21;
 const _: () = assert!((ERFC_XS_CLAMP as f64) * (ERFC_XS_CLAMP as f64) <= -(EXP_CLAMP_LO as f64));
-// 150*ln2: below `e^-p` is at most half the smallest denormal, so it
-// rounds to 0 and every clamped input returns the exactly-right answer.
+// Below 150*ln2, e^-p underflows to 0.
 const _: () = assert!((ERFC_XS_CLAMP as f64) * (ERFC_XS_CLAMP as f64) > 103.97207708399179);
 
-// `erfcx`'s negative arm needs `2*e^(xs^2)` to still overflow to +inf
-// (its true value out there), so `xs^2` must stay at or below
-// `EXP_CLAMP_HI` while landing above `ln(f32::MAX/2)`.
+// Upper bound ensuring 2*e^(xs^2) overflows to +inf within f32 range.
 const ERFCX_XS_CLAMP: f32 = 9.41;
 const _: () = assert!((ERFCX_XS_CLAMP as f64) * (ERFCX_XS_CLAMP as f64) <= EXP_CLAMP_HI as f64);
-// ln(f32::MAX/2) = 88.0296...: above this, `2*e^(xs^2)` leaves f32.
 const _: () = assert!((ERFCX_XS_CLAMP as f64) * (ERFCX_XS_CLAMP as f64) > 88.02969187150839);
 
-// erfcx(xa) for xa >= 0, shared by `erfc` and `erfcx` -- the scaled
-// complementary error function, i.e. erfc(xa)*exp(xa^2).
+// erfcx(xa) = erfc(xa) * exp(xa^2) for xa >= 0.
 #[inline(always)]
 fn erfcx_pos(xa: f32) -> f32 {
     let v0 = 1.0 / (2.0 + xa);
@@ -2759,8 +2191,7 @@ fn erfcx_pos(xa: f32) -> f32 {
     } else {
         v0
     };
-    // c[0] is the *low* word of a two-word `1/sqrt(pi)`; the high word is
-    // peeled out of the polynomial and applied in the final fma below.
+    // c[0] is the low word of 1/sqrt(pi); high word is applied in the final fma.
     let c: [f32; 11] = [
         f32::from_bits(0xb2fbd649),
         1.1283773,
@@ -2784,12 +2215,6 @@ fn erfcx_pos(xa: f32) -> f32 {
     let t8 = fma(t9, v, c[8]);
     let lo = fma(p23, v2, p01);
     let hi = fma(p67, v2, p45);
-    // `erfcx(x) -> 1/(x*sqrt(pi))` as x grows, so out in the tail this whole
-    // polynomial has collapsed to its constant term and the result is `v *
-    // 1/sqrt(pi)` and nothing else. 1/sqrt(pi) sits 0.49 ulp above the nearer
-    // f32 (a near-tie: the other side is 0.51 ulp below), so *either*
-    // single-word choice leaves ~0.5 ulp of the constant as pure bias -- ~0.63
-    // ulp of it in the result, in one direction, for every x past ~10.
     fma(
         v,
         f32::from_bits(0x3f106ebb),
@@ -2801,11 +2226,7 @@ fn erfcx_pos(xa: f32) -> f32 {
 #[doc(alias = "erfcf")]
 #[inline(always)]
 pub fn erfc(x: f32) -> f32 {
-    // The x<0 reflection with no compare and no select. `w` shifts x's sign bit
-    // straight into the exponent field (0x4000_0000 is 2.0f), and `mulsign`
-    // applies the same bit to the Gaussian factor, so the two arms are `e*t +
-    // 0` and `-e*t + 2`, in integer ops on ports the polynomial's fmas are not
-    // contending for.
+    // Reflection for x < 0: erfc(-x) = 2 - erfc(x).
     let w = f32::from_bits((x.to_bits() >> 1) & 0x4000_0000);
     let xa = x.abs();
     let xs = if xa > ERFC_XS_CLAMP {
@@ -2816,18 +2237,11 @@ pub fn erfc(x: f32) -> f32 {
     let p = xs * xs;
     let pe = fma(xs, xs, -p);
     let r = erfcx_pos(xa);
-    // No clamp on the exponent at all: `ERFC_XS_CLAMP` is chosen so `-p` cannot
-    // leave `exp_reduce!`'s valid range, which the two const assertions beside
-    // it check. NaN reaches here as NaN (`NaN > c` is false), and comes back
-    // out through `r`.
     let e = exp_reduce!(-p);
     fma(mulsign(e, x), fma(-r, pe, r), w)
 }
 
-// erfinv's central branch: erfinv(x) = x*P(x^2) for |x| <= 0.7, degree 8 in
-// u=x^2 (Estrin-grouped, same idiom as erf_poly). Coefficients are a real
-// least-squares fit (scipy) of erfinv(x)/x against u over [0,0.7], not a
-// transcription of any published algorithm's constants.
+// erfinv(x) = x*P(x^2) for |x| <= 0.7.
 #[inline(always)]
 fn erfinv_central_poly_m1(u: f32) -> f32 {
     let c: [f32; 9] = [
@@ -2852,12 +2266,7 @@ fn erfinv_central_poly_m1(u: f32) -> f32 {
     fma(c[8], u4 * u4, fma(r1, u4, r0))
 }
 
-// erfinv's tail branch: `erfinv(x) = sign(x)*sqrt(w)*Q`, `w = -ln(1-x^2)`, for
-// `|x| > 0.7`. An ulp-weighted minimax (LP) fit of `erfinv(x)/sqrt(w)`,
-// weighted by the `sqrt(w)*Q` combine's own sensitivity `sqrt(w)/ulp(erfinv)`
-// and then coordinate-descended over the f32 quantisation -- a plain
-// least-squares fit left ~3.4x more idealized error than the same degree can
-// reach.
+// erfinv(x) = sign(x)*sqrt(w)*Q with w = -ln(1-x^2) for |x| > 0.7.
 #[inline(always)]
 fn erfinv_tail_poly_m1(t: f32) -> f32 {
     let c: [f32; 12] = [
@@ -2888,11 +2297,7 @@ fn erfinv_tail_poly_m1(t: f32) -> f32 {
     fma(fma(r2, t4, r1), t4, r0)
 }
 
-// erfinv's *far*-tail branch, a poly in `t = sqrt(w) - 7`. Reachable only from
-// `erfc_inv`/`probit`, which build `w = -ln(1-x^2)` out of their own argument
-// instead of out of `x`, and so reach `w` up to ~102.6 -- far past the `w <=
-// 15.9424` that any 24-bit `x` can encode, which is all `erfinv_tail_poly_m1`
-// is fitted for.
+// Far-tail polynomial in t = sqrt(w) - 7 for erfc_inv/probit.
 #[inline(always)]
 fn erfinv_far_poly_m1(t: f32) -> f32 {
     let c: [f32; 8] = [
@@ -2916,26 +2321,14 @@ fn erfinv_far_poly_m1(t: f32) -> f32 {
     fma(r1, t4, r0)
 }
 
-// Where `erfc_inv_half`'s tail hands over from `erfinv_tail_poly_m1` to
-// `erfinv_far_poly_m1`: the largest `w` a 24-bit `erfinv` argument can produce
-// is `-ln(1 - x_max^2) = 15.9424`, so the two polys split exactly where
-// `erfinv`'s own reachable range stops and `erfc_inv`/`probit`'s extra reach
-// begins. Keeping the split there is what leaves `erfinv_tail_poly_m1` -- and
-// `erfinv` itself -- untouched by this.
 const ERFC_INV_W_FAR: f32 = 16.0;
 
-// `|erfc_inv(n)|` for `n` in `(0, 1]`, the half both erfc_inv and probit reduce
-// to, and the reason neither is written as `erfinv(1-y)` any more.
+// |erfc_inv(n)| for n in (0, 1].
 #[inline(always)]
 fn erfc_inv_half(n: f32) -> f32 {
     let x = 1.0 - n;
     let central = fma(x, erfinv_central_poly_m1(x * x), x);
     let s = fma(-n, n, n + n);
-    // `denormal_rescale!` and nothing else from `log_family_wrapper!`: `s`
-    // reaches down to `2 * f32::MIN_POSITIVE_SUBNORMAL` for the smallest `n`,
-    // so the rescale is live, but the zero/negative/inf/NaN arms are all dead
-    // here -- the `n > 0.0` select below already owns every input that could
-    // reach them ("the guard is the licence").
     let (ss, koff) = denormal_rescale!(s);
     let w = -ln_normal(ss, koff);
     let v = w.sqrt();
@@ -2945,10 +2338,7 @@ fn erfc_inv_half(n: f32) -> f32 {
         erfinv_tail_poly_m1(v - 1.0)
     };
     let mag = if x <= 0.7 { central } else { fma(v, q, v) };
-    // `n == 0` is the pole and `n < 0` (with NaN) is a domain error. Both have
-    // to be pinned rather than left to fall out: `s == 0` puts `ln_normal` off
-    // its own positive-normal contract, and it returns a large finite number
-    // there instead of the `+inf` the pole needs.
+    // n == 0 is the pole (+inf); n < 0 is NaN.
     let edge = if n == 0.0 { f32::INFINITY } else { f32::NAN };
     if n > 0.0 {
         mag
@@ -2961,21 +2351,11 @@ fn erfc_inv_half(n: f32) -> f32 {
 #[inline(always)]
 pub fn erfinv(x: f32) -> f32 {
     let ax = x.abs();
-    // `1 - x^2` factored, never subtracted: `(1-|x|)(1+|x|) = n*(2-n)`, the
-    // same reduction `erfc_inv_half` uses and for the same reason. `n = 1-|x|`
-    // is Sterbenz-exact for every `|x|` the tail is selected for (`|x| > 0.7`),
-    // `n+n` is an exact scaling, and `fma` makes `2n - n^2` a single rounding
-    // of the whole product -- so `s` carries one `2^-25` *relative* error at
-    // any `n`.
+    // Evaluates 1 - x^2 as (1-|x|)*(1+|x|) to avoid cancellation.
     let n = 1.0 - ax;
     let s = fma(-n, n, n + n);
     let w = -if s > 0.0 { ln_normal(s, 0.0) } else { f32::NAN };
-    // Both arms are built on `ax` and take `x`'s sign once, on the merged
-    // select, rather than the central arm carrying a signed `x` through the
-    // poly. The peeled `fma(x, P-1, x)` form cannot reproduce `erfinv(-0.0)`:
-    // `P-1` is negative, so `-0.0 * (P-1)` is `+0.0` and `+0.0 + -0.0` is
-    // `+0.0` under round-to-nearest -- losing the sign of zero that plain `x *
-    // P` carried for free.
+    // Both arms apply sign at the end to preserve -0.0.
     let central = fma(ax, erfinv_central_poly_m1(x * x), ax);
     let v = w.sqrt();
     let tail = fma(v, erfinv_tail_poly_m1(v - 1.0), v);
@@ -2987,11 +2367,6 @@ pub fn erfinv(x: f32) -> f32 {
     }
 }
 
-// `norm_cdf`'s counterpart to `ERFC_XS_CLAMP`, in `x`'s units rather than
-// `x/sqrt(2)`'s. Same two conditions, and they are asserted the same way:
-// `x^2/2` must stay inside `exp_reduce!`'s valid range, and must already be far
-// enough below zero that `e^-x^2/2` rounds to exactly 0 -- the true `norm_cdf`
-// has reached exactly 0.0f32 by `x ~ -14.2`.
 const NORM_CDF_XS_CLAMP: f32 = 14.44;
 const _: () = assert!(
     (NORM_CDF_XS_CLAMP as f64) * (NORM_CDF_XS_CLAMP as f64) * 0.5 <= -(EXP_CLAMP_LO as f64)
@@ -3009,24 +2384,12 @@ pub fn erfc_inv(y: f32) -> f32 {
 /// Logit function: `ln(p / (1 - p))` for `p` in `(0, 1)`.
 #[inline(always)]
 pub fn logit(p: f32) -> f32 {
-    // `2p-1`, exact for every `p >= 0.25` (`2p` is an exact scaling,
-    // Sterbenz covers the subtraction), which is what lets the central
-    // arm keep full relative accuracy at the zero.
     let a = fma(2.0, p, -1.0);
-    // logit(p) = 2*atanh(2p-1), reusing `atanh`'s own small-argument polynomial
-    // on its own `|x| < 0.25` domain. No subtraction of logarithms, so nothing
-    // cancels: the result is proportional to `a`, and `a` is exact.
+    // logit(p) = 2*atanh(2p-1) near p=0.5 to avoid cancellation.
     let central = 2.0 * atanh_small(a);
-    // Outside that band the difference form has nothing left to cancel (at the
-    // seam the result is already ~0.51 against operands ~0.69) and it is what
-    // keeps `p` denormal, `0`, `1` and out-of-domain correct, so it stays
-    // exactly as it was.
     let np = -p;
     let t = 1.0 + np;
     let c = np - (t - 1.0);
-    // No `corr.is_finite()` guard: the only `p` making it non-finite are `p ==
-    // 1` (`t == 0`, which takes the `spec` arm) and `p == -inf` (where `ln(p)`
-    // is already `NaN`, so the subtraction below is `NaN` either way).
     let corr = c / t;
     let spec = if t == 0.0 {
         f32::NEG_INFINITY
@@ -3219,11 +2582,7 @@ pub fn cexp(re: f32, im: f32) -> (f32, f32) {
 /// as `(re, im)`.
 #[inline(always)]
 pub fn clog(re: f32, im: f32) -> (f32, f32) {
-    // `log1p(v)` for a `v` that is known to keep `1+v` positive, normal and
-    // finite -- see this function's doc comment. Bit-identical to `log1p` over
-    // every f32 in both call sites' licensed ranges (`|v| < 0.5` and `[0, 1]`,
-    // checked exhaustively) with exactly one exception, `v == -0.0`, where
-    // `log1p`'s signed-zero select returns `-0.0` and this returns `+0.0`.
+    // log1p for inputs where 1+v is known to be positive and normal.
     #[inline(always)]
     fn log1p_guarded(v: f32) -> f32 {
         let u = 1.0 + v;
@@ -3233,9 +2592,6 @@ pub fn clog(re: f32, im: f32) -> (f32, f32) {
     let mag = cabs(re, im);
     let log_mag = if mag.is_finite() {
         if (mag - 1.0).abs() < 0.5 {
-            // `re^2 + im^2 - 1` to full *relative* precision however hard it
-            // cancels, in three f64 operations and with no error-free transform
-            // at all.
             let are = re.abs();
             let aim = im.abs();
             let a = are.max(aim) as f64;
@@ -3258,8 +2614,6 @@ pub fn clog(re: f32, im: f32) -> (f32, f32) {
 }
 
 /// `(log2(1+s) - s*log2(e)) / s^2` over `s` in `[2^-0.5 - 1, 2^0.5 - 1]`.
-/// Degree-11 polynomial with Chebyshev minimax fit, relative error < 2^-34.8.
-/// Pinned leading term `s*log2(e)` keeps `log2(1) == 0.0` exact.
 const LOG2_Q_F64: [f64; 12] = [
     -7.213_475_205_084_016e-1,
     4.808_983_510_959_339e-1,
@@ -3280,7 +2634,7 @@ const LOG2_Q_F64: [f64; 12] = [
 #[inline(always)]
 fn log2_f64(x: f32) -> f64 {
     let (xs, koff) = denormal_rescale!(x);
-    // Same decomposition log_family_normal! does, spelled out: m in [2^-0.5, 2^0.5), k exact.
+    // Decompose x = 2^k * m with m in [2^-0.5, 2^0.5).
     let e = (xs.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23;
     let m = f32::from_bits((xs.to_bits() as i32).wrapping_sub(e << 23) as u32);
     let k = (e as f32 + koff) as f64;
@@ -3305,9 +2659,7 @@ fn log2_f64(x: f32) -> f64 {
     lm + k
 }
 
-/// `(2^f - 1)/f` over `f` in `[-0.5, 0.5]`, leading `1` pinned so `2^0` is
-/// exactly `1`. Idealized relative error `2^-28.9`, against the `2^-25` needed
-/// for an f32 result.
+/// `(2^f - 1)/f` over `f` in `[-0.5, 0.5]`.
 const EXP2_F64_E: [f64; 6] = [
     0.6931472028549269,
     0.24022647913384074,
@@ -3321,14 +2673,9 @@ const EXP2_F64_E: [f64; 6] = [
 #[inline(always)]
 fn exp2_f64_to_f32(v: f64) -> f32 {
     let vc = v.clamp(-200.0, 200.0);
-    // ROUND_MAGIC64 does double duty: `nm - MAGIC` is round-ties-even of `v`,
-    // and `nm`'s own low bits already *are* that integer, so the scale's
-    // exponent field costs an integer add and a shift rather than a
-    // float-to-int cast (which is saturating in Rust and does not vectorize --
-    // the signature `codegen_check` watches for).
+    // Uses magic round to extract exponent field without saturating float-to-int cast.
     let nm = vc + ROUND_MAGIC64;
     let n = nm - ROUND_MAGIC64;
-    // Exact: |f| <= 0.5 and both operands share an exponent range.
     let f = vc - n;
     let c = EXP2_F64_E;
     let f2 = f * f;
@@ -3338,9 +2685,6 @@ fn exp2_f64_to_f32(v: f64) -> f32 {
     let r0 = f64::mul_add(l1, f2, l0);
     let r1 = f64::mul_add(l2, f2 * f2, r0);
     let p = f64::mul_add(r1, f, 1.0);
-    // (n + 1023) << 52. `nm`'s low 52 bits hold `n + 2^51`, and 2^51 is a
-    // multiple of 4096, so the 12 bits the shift keeps are exactly
-    // `n + 1023` -- in range for every `n` the clamp above allows.
     let scale = f64::from_bits(nm.to_bits().wrapping_add(1023) << 52);
     (p * scale) as f32
 }
@@ -3360,27 +2704,14 @@ macro_rules! powf_f64_mag {
     }};
 }
 
-// Shared by powf/rootn: the negative-base/y-parity/y==0/x==+-1 special-case
-// combine, given each caller's own already-computed `mag`.
 macro_rules! powf_sign_combine {
     ($x:expr, $ax:expr, $y:expr, $mag:expr) => {{
         let x = $x;
         let y = $y;
         let ax = $ax;
         let mag = if ax == 1.0 { 1.0 } else { $mag };
-        // 0 for an even integer y, 1 for an odd one, neither otherwise --
-        // and forced to the even case for any x that isn't sign-negative,
-        // where no sign flip and no domain error can apply.
         let par = fma(-2.0, (y * 0.5).floor(), y);
         let par = if x.is_sign_negative() { par } else { 0.0 };
-        // what a negative base with a *non*-integer y gives: a domain error,
-        // except where |x| alone decides the answer -- `ax + ax == ax` picks
-        // out exactly `+0` and `+inf` (the two C99-exempt boundary magnitudes)
-        // in one compare, and infinite y is the third, independent exemption.
-        // Infinite y specifically, not `y - y != 0.0`: that spelling is two
-        // constants cheaper and looked free, because a NaN y makes `mag` NaN
-        // anyway -- except at `ax == 1`, where `mag` is *pinned* to 1 just
-        // above.
         let spec = if ax + ax == ax { 1.0 } else { f32::NAN };
         let spec = if y.abs() == f32::INFINITY { 1.0 } else { spec };
         let sm = if par == 0.0 { 1.0 } else { spec };
@@ -3433,36 +2764,18 @@ pub fn powf_unchecked(x: f32, y: f32) -> f32 {
 #[inline(always)]
 pub fn rootn(x: f32, n: i32) -> f32 {
     let ax = x.abs();
-    // |x| = m * 2^e with m in [sqrt(2)/2, sqrt(2)) -- log_2_normal's own window
-    // and its own bit trick, so log_2_unchecked(m) sees k == 0 and returns
-    // log2(m) in [-0.5, 0.5) with no exponent to add back and no `lm + k`
-    // rounding. Reaching for frexp instead costs its [0.5, 1) -> window shift
-    // and its zero/infinite selects, which the `degenerate` arm below re-does
-    // anyway.
     let (xs, koff) = denormal_rescale!(ax);
     let bits = xs.to_bits() as i32;
     let ew = bits.wrapping_sub(0x3f35_04f3) >> 23;
     let m = f32::from_bits(bits.wrapping_sub(ew << 23) as u32);
     let e = ew + koff as i32;
-    // |n| >= 2 for the general path; n in {-1, 0, 1} takes the closed-form
-    // arm below, so any stand-in works and 2 keeps both the integer
-    // division and exp2_kf's exponent range well defined.
     let small = n.unsigned_abs() < 2;
     let nz = if small { 2 } else { n };
     let q = e.div_euclid(nz);
     let rr = e.rem_euclid(nz);
     let t = (rr as f32 + log_2_unchecked(m)) / (nz as f32);
-    // t is in (-1, 1], so this only ever moves one octave; exp2_kf wants
-    // the fraction separately anyway, and folding q into the same integer
-    // is what keeps e's magnitude off the float path.
     let tk = t.floor();
     let mag_normal = exp2_kf(q as f32 + tk, t - tk);
-    // `|x|` for `n > 0` and `1/|x|` for `n < 0` is the whole answer for three
-    // separate reasons at once: it is the exact `|n| == 1` identity, and it is
-    // also the right magnitude for zero, infinite and NaN `x` (where the
-    // mantissa split reads nothing meaningful and only `n`'s sign matters). `n
-    // == 0` lands here too and is discarded by the domain-error select at the
-    // end.
     let degenerate = ax == 0.0 || !ax.is_finite();
     let mag = if degenerate || small {
         if n > 0 {
@@ -3488,12 +2801,7 @@ pub fn rootn(x: f32, n: i32) -> f32 {
     }
 }
 
-// `1/1.055` and `0.055/1.055` as the nearest `f32` to each *exact* value, so `b
-// = (c+0.055)/1.055` is one fma with one rounding instead of an add and a
-// multiply with two. Written out rather than left to the compiler: `1.0f32 /
-// 1.055f32` divides by an already-rounded `1.055` and lands 0.53 ulp above the
-// true `1/1.055`, which `^2.4` turns into a systematic 1.3 ulp of
-// `srgb_to_linear`.
+// Exact constants for (c + 0.055) / 1.055 in sRGB conversion.
 const SRGB_INV_1055: f32 = 0.947_867_3;
 const SRGB_OFF_1055: f32 = 0.052_132_7;
 
@@ -3527,24 +2835,12 @@ pub fn linear_to_srgb(l: f32) -> f32 {
     }
 }
 
-/// Straight port of jodiemath's remainderf: x - round(x/y)*y (ties away from
-/// zero, via f32::round -- not IEEE 754 remainder's ties-to-even).
-/// round(x/y)*y's absolute error scales with ulp(x), which swamps the true
-/// remainder (at most |y|/2) once |x/y| is large -- inherited from the C
-/// original's identical formula, only reliable while |x/y| stays moderate.
+/// `x - round(x/y)*y` with ties away from zero (via `f32::round`, not IEEE 754 ties-to-even).
+/// Only reliable for moderate `|x/y|`.
 macro_rules! remainder_style_combine {
     ($x:expr, $y:expr, $q:expr) => {{
         let normal = fma(-$q, $y, $x);
-        // IEEE754 defines the sign of an exact-zero remainder/fmod result to
-        // match x's sign (also fmod's own C99 "same sign as x" contract) -- but
-        // when x is a nonzero exact multiple of y, `-q*y` exactly cancels x,
-        // and IEEE754 subtraction of two equal-magnitude values always gives
-        // *positive* zero regardless of the "intended" sign, silently dropping
-        // it (same class of bug as sinf_poly's own -0.0 note, one level further
-        // out: here the cancellation is real, not a q that happens to be zero).
-        // Confirmed against libm (Python's math.remainder/math.fmod, a real C
-        // library, not a hand-derived assumption) for every exact-multiple case
-        // checked.
+        // Subtraction of equal values cancels to +0.0 in IEEE 754; restore sign of x.
         let normal = if normal == 0.0 {
             normal.copysign($x)
         } else {
@@ -3577,20 +2873,12 @@ pub fn fmod_checked(x: f32, y: f32) -> f32 {
     let q0 = (x / y).trunc();
     let r0 = fma(-q0, y, x);
     let wrong_sign = r0 != 0.0 && (r0 > 0.0) != (x > 0.0);
-    // The correction's sign depends on *both* which failure mode fired
-    // (overshoot/`wrong_sign` needs q0 nudged toward zero, undershoot needs it
-    // nudged away) *and* whether x/y have the same sign -- verified against all
-    // 4 sign combinations crossed with both failure modes by hand (8 cases)
-    // before trusting this, not derived by inspection alone (an earlier
-    // y-sign-only version passed 4 of those 8 and failed the rest).
     let same_sign = (x > 0.0) == (y > 0.0);
     let adj = if wrong_sign != same_sign { 1.0 } else { -1.0 };
     let r1 = fma(-adj, y, r0);
     let needs_fix = wrong_sign || r0.abs() >= y.abs();
     let normal = if needs_fix { r1 } else { r0 };
-    // Same exact-cancellation sign bug as remainder_style_combine! (see its own
-    // comment): a nonzero x that's an exact multiple of y exactly cancels to
-    // +0.0 regardless of x's sign, silently dropping it.
+    // Subtraction of equal values cancels to +0.0 in IEEE 754; restore sign of x.
     let normal = if normal == 0.0 {
         normal.copysign(x)
     } else {

@@ -1,50 +1,13 @@
 //! Exponent-indexed window of `1/pi`, for `reduce_pi_wide`.
 //!
 //! Entry `e` (the raw f32 biased exponent, 0..=255) holds
-//! `beta(e) = (2^(e-150) / pi) mod 2` -- parity integer bit included -- at
-//! **fixed bit positions** as three `[u32; 256]` tables of **29-bit
-//! chunks**: `W0` = bits `2^0 .. 2^-28` of `beta` (`W0`'s top bit is the
-//! parity bit), `W1` = bits `2^-29 .. 2^-57`, `W2` = bits `2^-58 .. 2^-86`,
-//! each truncated. Together they name `beta`'s low ~86 fraction bits
-//! absolutely, one bit wider per word than the previous 27x4 layout --
-//! which is what buys the third table back: three gathers per eight lanes
-//! instead of four, while every product stays exact (24 + 29 <= 53).
+//! `beta(e) = (2^(e-150) / pi) mod 2` across three `[u32; 256]` tables of
+//! 29-bit chunks:
+//! - `W0`: bits `2^0 .. 2^-28` of `beta` (top bit is parity)
+//! - `W1`: bits `2^-29 .. 2^-57`
+//! - `W2`: bits `2^-58 .. 2^-86`
 //!
-//! The narrower coverage (truncation moved from bit `-107` to `-86`) is
-//! paid for entirely by raising `CUT_PI_WIDE` from 76 to 96: below the cut
-//! those rows select the exact `|x|*(1/pi)` bypass anyway, and above it
-//! the worst measured chain error is ~`2^-28.7` relative (at the seam,
-//! mid-sized mantissas) -- two orders of magnitude under what an f32
-//! result can express. Verified against `Fraction`-exact reduction over
-//! random `(e, m)` pairs: 0 parity mismatches, and the relative-error
-//! profile above.
-//!
-//! Fixed positions are what keeps the SIMD vectorization factor at 8: the
-//! earlier `[f64; 256]` tables made LLVM drop every vector loop containing
-//! one of their gathers from `zmm` to `ymm` (see graveyard.md, "the
-//! gather: 3.2x throughput"), and a packed-qword `vpgatherdq` variant was
-//! measured (2026-08) to hit the same cliff -- element width 8 bytes is
-//! the trigger, not the gather count. Dword-element gathers keep VF = 8.
-//! (Dword gathers can't widen to qwords; that collapses VF to 4. Both
-//! widths are measured and in `sin_wide`'s own docs.)
-//! (With `.cargo/config.toml`'s `-force-vector-width=16`, the
-//! default build instead runs at 16 lanes/iteration; dword gathers still hold 8.)
-//! The price is the `|x| < 2^-54` bypass in `reduce_pi_wide`: below
-//! exponent `CUT_PI_WIDE` the absolute truncation is too coarse *relative*
-//! to `beta` itself (there `m*beta < 1` never wraps, so the smallest true
-//! residual is `beta` times a 24-bit integer, and chunk granularity
-//! dominates it), and those exponents select `fc = |x|*(1/pi)` instead --
-//! exact enough that the residual is `x` itself to well under half an ulp.
-//!
-//!
-//! One flat `[[u32; 256]; 3]` rather than three separate statics: every
-//! surrounding vector loop is load-port bound (the six gathers' lane loads
-//! dominate), so a single symbol means one GOTPCREL base-pointer reload per
-//! iteration instead of three -- the W1/W2 planes then ride in the gathers'
-//! displacement fields (`+1024`, `+2048`) for free.
-//! Generated, not hand-written: `(2^(e-150)/pi) mod 2` from a 900-bit
-//! Machin-formula `pi` in exact integer arithmetic. See
-//! `reduce_pi_wide` for the chain and the error budget it buys.
+//! Elements are `u32` (dword) to maintain SIMD vectorization factor.
 
 pub(super) static REDUCE_PI_W: [[u32; 256]; 3] = [
     [

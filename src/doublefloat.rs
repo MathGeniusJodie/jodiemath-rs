@@ -82,7 +82,7 @@ impl Df32 {
         self.0 + self.1
     }
 
-    /// Fast division returning a single f32 (the original div_ff_ff_f32).
+    /// Fast division returning a single f32.
     #[inline(always)]
     pub fn div_to_f32(self, rhs: Self) -> f32 {
         let rcp = 1.0 / rhs.0;
