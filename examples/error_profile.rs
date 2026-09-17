@@ -146,8 +146,8 @@ fn main() {
     // The three joint-worst budgeted functions (max ulp 6 each).
     profile("expm1", expm1, f64::exp_m1, 1e-3, 80.0, 0.5);
     profile(
-        "exp_m1_over_x",
-        exp_m1_over_x,
+        "exp_m1_over_x_narrow",
+        exp_m1_over_x_narrow,
         |v| if v == 0.0 { 1.0 } else { v.exp_m1() / v },
         1e-3,
         80.0,

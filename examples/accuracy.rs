@@ -41,9 +41,8 @@ use rand::RngExt;
 // bucket at all (exact-ish by construction).
 use sleef::f64x::{
     acos_u35, acosh_u10, asin_u35, asinh_u10, atan2_u35, atan_u35, atanh_u10, cbrt_u35, cos_u35,
-    cosh_u35, erf_u10, erfc_u15, exp10_u35, exp2_u35, exp_u10, expm1_u10, hypot_u35, log10_u10,
-    log1p_u10, log2_u35, log_u35, pow_u10, remainder as remainder_ref, sin_u35, sinh_u35, tan_u35,
-    tanh_u35,
+    cosh_u35, erf_u10, erfc_u15, exp10_u35, exp2_u35, exp_u10, expm1_u10, log10_u10, log1p_u10,
+    log2_u35, log_u35, pow_u10, sin_u35, sinh_u35, tan_u35, tanh_u35,
 };
 use std::simd::cmp::{SimdPartialEq, SimdPartialOrd};
 use std::simd::num::SimdFloat;
@@ -137,14 +136,6 @@ fn cospi_ref(v: F64xN) -> F64xN {
         let s = sin_u35(r * F64xN::splat(std::f64::consts::PI));
         let sign = F64xN::splat(2.0) * parity_f64(k) - F64xN::splat(1.0);
         s * sign
-    })
-}
-fn sinc_ref(v: F64xN) -> F64xN {
-    trig_safe(v, |x: F64xN| {
-        let is_zero = x.simd_eq(F64xN::splat(0.0));
-        let safe_x = is_zero.select(F64xN::splat(1.0), x);
-        let normal = sinpi_ref(x) / (F64xN::splat(std::f64::consts::PI) * safe_x);
-        is_zero.select(F64xN::splat(1.0), normal)
     })
 }
 // sinc_unnormalized(x) = sin(x)/x, radians (backlog idea #131). Unlike
@@ -335,15 +326,14 @@ fn worker_threads() -> u64 {
 
 const BATCH: usize = 4096;
 
-/// Magnitude bands shared by every sin/cos comparison row, so `sin`,
-/// `sin_fast` and `sin_checked` (and the cos trio) can be read off against
+/// Magnitude bands shared by every sin/cos comparison row, so `sin`
+/// and `sin_wide` (and the cos pair) can be read off against
 /// each other band for band instead of each family having its own rows on
 /// its own ranges. The bands deliberately straddle the unchecked
-/// family's domain limits -- 2^22*pi = 1.3176794e7 (`cos`, `sin_fast`,
-/// `cos_fast`) is a band edge, and `sin`'s own 2^24*pi = 5.2707178e7
-/// falls inside `[1.3e7,1e8)`, so that band mixes the two sides for sin
-/// on purpose. What the unchecked functions do past their limit is
-/// exactly what these rows exist to show.
+/// family's domain limits -- 2^22*pi = 1.3176794e7 (`cos`) is a band edge, and
+/// `sin`'s own 2^24*pi = 5.2707178e7 falls inside `[1.3e7,1e8)`, so that band
+/// mixes the two sides for sin on purpose. What the unchecked functions do past
+/// their limit is exactly what these rows exist to show.
 const TRIG_BANDS: [(&str, f32, f32); 7] = [
     ("[1e3,1e5)", 1e3, 1e5),
     ("[1e5,1.3e7)", 1e5, 1.3e7),
@@ -794,75 +784,28 @@ fn main() {
         }
         let s = measure!(sin_domain, sin, sin_ref);
         report("sin (in-domain)", &s, t0);
-        // sin_fast: single-word `q`, so its magic round runs out two
-        // binades before sin's own does -- its domain is 2^22*pi, not
-        // sin_domain. Its error grows with |x| (see its doc comment), so
-        // both the restricted and the full-domain rows matter for the
-        // pareto comparison.
-        let sin_fast_domain = |x: f32| x.abs() < (1u32 << 22) as f32 * std::f32::consts::PI;
-        let s = measure!(|x: f32| x.abs() <= 1e6, sin_fast, sin_ref);
-        report("sin_fast |x|<=1e6", &s, t0);
-        let s = measure!(sin_fast_domain, sin_fast, sin_ref);
-        report("sin_fast (in-domain)", &s, t0);
         let s = measure!(sin_domain, |x: f32| x.sin(), sin_ref);
         report("std sin (in-domain)", &s, t0);
         // std on the same |x|<=1e6 restriction the readme's row quotes, so
         // both columns of that row come from the same input set.
         let s = measure!(|x: f32| x.abs() <= 1e6, |x: f32| x.sin(), sin_ref);
         report("std sin |x|<=1e6", &s, t0);
-        for (name, hi) in [
-            ("sin_checked |x|<=pi/4", std::f32::consts::FRAC_PI_4),
-            ("sin_checked |x|<=10", 10.0),
-            ("sin_checked |x|<=1000", 1000.0),
-            ("sin_checked |x|<=1e6", 1e6),
-        ] {
-            let domain = move |x: f32| x.abs() <= hi;
-            let s = measure!(domain, sin_checked, sin_ref);
-            report(name, &s, t0);
-        }
-        // magnitude buckets past the 1-ulp-average guarantee: verifies the
-        // reduction degrades gradually (not a cliff) well beyond 1e6, per
-        // its doc comment.
-        for (name, lo, hi) in [
-            ("sin_checked [1e7,1e8)", 1e7, 1e8),
-            ("sin_checked [1e9,1e10)", 1e9, 1e10),
-            ("sin_checked [1e12,1e13)", 1e12, 1e13),
-            ("sin_checked [1e13,1e14)", 1e13, 1e14),
-            ("sin_checked [1e14,1e15)", 1e14, 1e15),
-            ("sin_checked [1e15,1e16)", 1e15, 1e16),
-        ] {
-            let domain = move |x: f32| x.abs() >= lo && x.abs() < hi;
-            let s = measure!(domain, sin_checked, sin_ref);
-            report(name, &s, t0);
-        }
-        let s = measure!(everywhere, sin_checked, sin_ref);
-        report("sin_checked (all f32)", &s, t0);
         let s = measure!(everywhere, |x: f32| x.sin(), sin_ref);
         report("std sin (all f32)", &s, t0);
-        // The three families on identical bands (see TRIG_BANDS). Past the
-        // domain limit `sin`/`sin_fast` are being asked for something they
-        // never promised, and the interesting part is *how* they fail: the
+        // The families on identical bands (see TRIG_BANDS). Past the
+        // domain limit `sin` is being asked for something it
+        // never promised, and the interesting part is *how* it fails: the
         // residual `pi_reduce_and_poly!` hands `sinf_poly` grows with |x|,
         // and from ~1e10 up it is far enough out that the degree-9
         // polynomial's own `x^9` term overflows -- so the answer stops
         // being merely wrong and stops being finite. That is what the
         // NON-FINITE RESULT annotation counts; an infinite result against a
         // finite reference is otherwise just another large ULP number.
-        // `sin_checked` clamps the residual to POLY_SAFE_BOUND before its
-        // poly, which is what keeps its rows finite all the way out.
         for (bandname, lo, hi) in TRIG_BANDS {
             let row = |fname: &str, s: &Stats| report(&format!("{fname} {bandname}"), s, t0);
             row(
                 "sin",
                 &band(thorough, BAND_SAMPLES, lo, hi, sin, sin_ref_exact),
-            );
-            row(
-                "sin_fast",
-                &band(thorough, BAND_SAMPLES, lo, hi, sin_fast, sin_ref_exact),
-            );
-            row(
-                "sin_checked",
-                &band(thorough, BAND_SAMPLES, lo, hi, sin_checked, sin_ref_exact),
             );
             row(
                 "sin_wide",
@@ -884,56 +827,20 @@ fn main() {
         }
         let s = measure!(cos_domain, cos, cos_ref);
         report("cos (in-domain)", &s, t0);
-        let s = measure!(|x: f32| x.abs() <= 1e6, cos_fast, cos_ref);
-        report("cos_fast |x|<=1e6", &s, t0);
-        let s = measure!(cos_domain, cos_fast, cos_ref);
-        report("cos_fast (in-domain)", &s, t0);
         let s = measure!(cos_domain, |x: f32| x.cos(), cos_ref);
         report("std cos (in-domain)", &s, t0);
         // std on the same |x|<=1e6 restriction the readme's row quotes.
         let s = measure!(|x: f32| x.abs() <= 1e6, |x: f32| x.cos(), cos_ref);
         report("std cos |x|<=1e6", &s, t0);
-        for (name, hi) in [
-            ("cos_checked |x|<=pi/4", std::f32::consts::FRAC_PI_4),
-            ("cos_checked |x|<=10", 10.0),
-            ("cos_checked |x|<=1000", 1000.0),
-            ("cos_checked |x|<=1e6", 1e6),
-        ] {
-            let domain = move |x: f32| x.abs() <= hi;
-            let s = measure!(domain, cos_checked, cos_ref);
-            report(name, &s, t0);
-        }
-        for (name, lo, hi) in [
-            ("cos_checked [1e7,1e8)", 1e7, 1e8),
-            ("cos_checked [1e9,1e10)", 1e9, 1e10),
-            ("cos_checked [1e12,1e13)", 1e12, 1e13),
-            ("cos_checked [1e13,1e14)", 1e13, 1e14),
-            ("cos_checked [1e14,1e15)", 1e14, 1e15),
-            ("cos_checked [1e15,1e16)", 1e15, 1e16),
-        ] {
-            let domain = move |x: f32| x.abs() >= lo && x.abs() < hi;
-            let s = measure!(domain, cos_checked, cos_ref);
-            report(name, &s, t0);
-        }
-        let s = measure!(everywhere, cos_checked, cos_ref);
-        report("cos_checked (all f32)", &s, t0);
         let s = measure!(everywhere, |x: f32| x.cos(), cos_ref);
         report("std cos (all f32)", &s, t0);
-        // Same bands as the sin trio above, same reading -- see that loop's
+        // Same bands as the sin pair above, same reading -- see that loop's
         // comment for what the NON-FINITE RESULT annotation means.
         for (bandname, lo, hi) in TRIG_BANDS {
             let row = |fname: &str, s: &Stats| report(&format!("{fname} {bandname}"), s, t0);
             row(
                 "cos",
                 &band(thorough, BAND_SAMPLES, lo, hi, cos, cos_ref_exact),
-            );
-            row(
-                "cos_fast",
-                &band(thorough, BAND_SAMPLES, lo, hi, cos_fast, cos_ref_exact),
-            );
-            row(
-                "cos_checked",
-                &band(thorough, BAND_SAMPLES, lo, hi, cos_checked, cos_ref_exact),
             );
             row(
                 "cos_wide",
@@ -1009,52 +916,19 @@ fn main() {
         let s = measure!(half_max, tan2pi, tan2pi_ref);
         report("tan2pi", &s, t0);
     }
-    if run("sinc") {
-        // sinc(x) = sin(pi*x)/(pi*x) via sinpi, so sinc_ref reuses
-        // sinpi_ref directly rather than a naive sin(pi*x)/(pi*x) (which
-        // would reintroduce sinpi's own large-x imprecision into the
-        // reference -- the same trap already hit once with sind_ref).
-        // Restricted to |x|<1e6: well past that, sinc(x)'s true value is
-        // already indistinguishable from 0 at f32 precision (|sinc(x)|
-        // <= 1/(pi*|x|)), so ulp comparisons there measure noise near a
-        // value too small for f32 to resolve, not real accuracy. (The
-        // true value being unresolvable is the claim; a *crossing* alone
-        // would not justify this -- see tanpi's note above.)
+    if run("sinc") || run("sinc_unnormalized") {
+        // sinc_unnormalized (backlog idea #131): restricted to |x|<1e6:
+        // well past that, true value is already indistinguishable from 0 at f32 precision.
         let sinc_domain = |x: f32| x.abs() < 1e6;
-        let s = measure!(sinc_domain, sinc, sinc_ref);
-        report("sinc (|x|<1e6)", &s, t0);
-        // sinc_unnormalized (backlog idea #131): same near-zero-crossing
-        // caveat as sinc itself, same |x|<1e6 restriction.
         let s = measure!(sinc_domain, sinc_unnormalized, sinc_unnormalized_ref);
         report("sinc_unnormalized (|x|<1e6)", &s, t0);
     }
-    if run("sind") {
-        // sind/cosd's own exact-reduction range is ~4.7e7 (see their doc
-        // comments, limited by 180.0's trailing zero bits, unlike
-        // sinpi/cospi's full-f32-range exactness) -- widened to match
-        // that documented boundary exactly (was |x|<1e6, leaving the
-        // 1e6-4.7e7 "documented accurate but never actually tested" gap
-        // unexercised -- the same shape of coverage hole that hid a real
-        // bug in sinpi/cospi; checked directly with a throwaway scratch
-        // harness using a proper reduction-based reference before
-        // trusting this domain change, and confirmed clean: max ulp 2
-        // throughout, no bug here, just closing the gap). This test's own
-        // f64-based reference (`sind_ref`/`cosd_ref` above) stays
-        // trustworthy well past this boundary too.
+    if run("sind") || run("cosd") || run("tand") {
         let sind_domain = |x: f32| x.abs() < 4.7e7;
-        let s = measure!(sind_domain, sind, sind_ref);
-        report("sind (|x|<4.7e7)", &s, t0);
         let s = measure!(sind_domain, sind_unchecked, sind_ref);
         report("sind_unchecked (+)", &s, t0);
-        let s = measure!(sind_domain, cosd, cosd_ref);
-        report("cosd (|x|<4.7e7)", &s, t0);
         let s = measure!(sind_domain, cosd_unchecked, cosd_ref);
         report("cosd_unchecked (+)", &s, t0);
-        // tand: same domain as sind/cosd (built directly on their own
-        // reduction); real poles at cosd(x)==0 give expected huge ulp
-        // there, same caveat as tanpi above.
-        let s = measure!(sind_domain, tand, tand_ref);
-        report("tand (|x|<4.7e7)", &s, t0);
         let s = measure!(sind_domain, tand_unchecked, tand_ref);
         report("tand_unchecked (+)", &s, t0);
     }
@@ -1177,17 +1051,12 @@ fn main() {
         let s = measure!(everywhere, exp_checked, exp_u10);
         report("exp_checked", &s, t0);
     }
-    if run("exp_m1_over_x") {
-        // Same inherited unchecked-exp2 domain as expm1 itself (see its
-        // own doc comment).
-        let exp_domain = |x: f32| (-126.0..128.0).contains(&(x * std::f32::consts::LOG2_E));
+    if run("exp_m1_over_x") || run("exp_m1_over_x_narrow") {
         // removable singularity at 0: (e^x-1)/x -> 1 as x -> 0.
         let exp_m1_over_x_ref = |v: F64xN| {
             let is_zero = v.simd_eq(F64xN::splat(0.0));
             is_zero.select(F64xN::splat(1.0), expm1_u10(v) / v)
         };
-        let s = measure!(exp_domain, exp_m1_over_x, exp_m1_over_x_ref);
-        report("exp_m1_over_x", &s, t0);
         // exp_m1_over_x_narrow's own documented domain (backlog idea
         // #201, same mechanism as exp_narrow/expm1_narrow).
         let exp_narrow_domain = |x: f32| (-87.68311..=88.37627).contains(&x);
@@ -1319,30 +1188,6 @@ fn main() {
         let s = measure!(sigmoid_domain, sigmoid_grad, sigmoid_grad_ref);
         report("sigmoid_grad", &s, t0);
     }
-    if run("softplus") {
-        // Restricted to |x|<80: softplus's own correction-term cutoff
-        // (see its doc comment) creates a real, deliberate discontinuity
-        // right around |x|=87 -- true value ~1.6e-38 on one side, exactly
-        // 0.0 on the other, both equally "correct" in the sense that
-        // neither is distinguishable from the other at any scale that
-        // matters, but a raw ulp comparison right at that seam reports
-        // millions of ulp for what's actually a sub-denormal-scale
-        // difference (the same "near a value too small to matter"
-        // artifact documented for sinc above).
-        // |x|<80 stays comfortably clear of the seam on both sides.
-        let softplus_domain = |x: f32| x.abs() < 80.0;
-        let softplus_ref = |v: F64xN| v.simd_max(F64xN::splat(0.0)) + log1p_u10(exp_u10(-v.abs()));
-        let s = measure!(softplus_domain, softplus, softplus_ref);
-        report("softplus (|x|<80)", &s, t0);
-    }
-    if run("softplus_checked") {
-        // No |x|<80 restriction, and that is the whole point of this tier:
-        // it has no correction-term cutoff to stay clear of, so the sweep
-        // gets the entire finite line including the band softplus flushes.
-        let softplus_ref = |v: F64xN| v.simd_max(F64xN::splat(0.0)) + log1p_u10(exp_u10(-v.abs()));
-        let s = measure!(|x: f32| x.is_finite(), softplus_checked, softplus_ref);
-        report("softplus_checked", &s, t0);
-    }
     if run("logsigmoid") {
         // Same |x|<80 reasoning as softplus's own doc comment (this is
         // -softplus(-x), so the identical seam sits at the same |x|=87).
@@ -1358,64 +1203,6 @@ fn main() {
             |v: F64xN| -((-v).simd_max(F64xN::splat(0.0)) + log1p_u10(exp_u10(-v.abs())));
         let s = measure!(|x: f32| x.is_finite(), logsigmoid_checked, logsigmoid_ref);
         report("logsigmoid_checked", &s, t0);
-    }
-    if run("logaddexp") {
-        // Same |x|<80 reasoning as softplus (its own doc comment) --
-        // logaddexp shares the identical correction-term cutoff shape,
-        // just on |a-b| instead of |x|.
-        let logaddexp_domain = |a: f32, b: f32| a.abs() < 80.0 && b.abs() < 80.0;
-        let logaddexp_ref = |a: F64xN, b: F64xN| {
-            let m = a.simd_max(b);
-            let d = (a - b).abs();
-            m + log1p_u10(exp_u10(-d))
-        };
-        let s = fuzz2(TWOARG_SAMPLES, logaddexp_domain, logaddexp, logaddexp_ref);
-        report("logaddexp (|a|,|b|<80)", &s, t0);
-    }
-    if run("logaddexp_checked") {
-        // No |a|,|b|<80 restriction, same reason as softplus_checked's
-        // block: this tier has no correction-term cutoff to stay clear
-        // of. The reference is `m + log1p(exp(-d))`, *not* the obvious
-        // `(a.exp()+b.exp()).ln()` -- that one collapses to `m` in f64
-        // too (`1 + 6e-39` is `1.0` at f64 as well), reproducing the very
-        // defect this tier fixes. A blind 2-arg fuzz essentially never
-        // lands in the restored band anyway (it needs |a-b| > 87 *and*
-        // max(a,b) near zero); edgecheck pins that band directly.
-        let logaddexp_ref = |a: F64xN, b: F64xN| {
-            let m = a.simd_max(b);
-            let d = (a - b).abs();
-            m + log1p_u10(exp_u10(-d))
-        };
-        let s = fuzz2(
-            TWOARG_SAMPLES,
-            |a: f32, b: f32| a.is_finite() && b.is_finite(),
-            logaddexp_checked,
-            logaddexp_ref,
-        );
-        report("logaddexp_checked", &s, t0);
-    }
-    if run("logaddexp_accurate") {
-        // Same reference as the other two tiers, and the caveat it always
-        // carried is load-bearing here: `m + log1p_u10(exp_u10(-d))` is
-        // itself an f64 chain, so its own ~2e-16 absolute error is the
-        // same order this tier reaches, and in the deep-cancellation
-        // region the number below is a sum of the two, not a measurement
-        // of one. What it can honestly show is that the *ordinary* domain
-        // is at the correct-rounding floor. The cancellation region is
-        // validated separately against an 80-digit `decimal` oracle and
-        // pinned in edgecheck.rs -- see logaddexp_accurate's doc comment.
-        let logaddexp_ref = |a: F64xN, b: F64xN| {
-            let m = a.simd_max(b);
-            let d = (a - b).abs();
-            m + log1p_u10(exp_u10(-d))
-        };
-        let s = fuzz2(
-            TWOARG_SAMPLES,
-            |a: f32, b: f32| a.is_finite() && b.is_finite(),
-            logaddexp_accurate,
-            logaddexp_ref,
-        );
-        report("logaddexp_accurate", &s, t0);
     }
     if run("gelu") {
         // x * Phi(x) via erfc_u15 (see gelu's own doc comment for why not
@@ -1555,12 +1342,6 @@ fn main() {
         let atand_ref = |v: F64xN| atan_u35(v) * F64xN::splat(rad_to_deg);
         let s = measure!(everywhere, atand, atand_ref);
         report("atand", &s, t0);
-        // atanpi (backlog idea #85): plain composite -- see its own doc
-        // comment for why a rescaled-coefficient fold isn't kept here.
-        let inv_pi = 1.0 / std::f64::consts::PI;
-        let atanpi_ref = |v: F64xN| atan_u35(v) * F64xN::splat(inv_pi);
-        let s = measure!(everywhere, atanpi, atanpi_ref);
-        report("atanpi", &s, t0);
     }
     if run("tan") {
         let tan_domain = |x: f32| x.abs() < (1u32 << 22) as f32 * std::f32::consts::PI;
@@ -1569,28 +1350,11 @@ fn main() {
         let s = measure!(tan_domain, |x: f32| x.tan(), tan_ref);
         report("std tan (in-domain)", &s, t0);
     }
-    if run("tan_checked") {
-        // Full range gradual degradation, like sin_checked/cos_checked
-        // themselves (idea #48) -- no domain restriction *for validity*,
-        // but expect the reported avg/max ulp to look alarming: tan has
-        // a genuine pole every pi, and at large |x| those poles sit
-        // closer together than the local float spacing, so *any*
-        // correctly-behaving tan implementation shows unbounded relative
-        // error near them (e.g. x=-4.4230258e15 sits at x/pi ==
-        // -1407892830220377.5, essentially exactly a pole -- verified
-        // cos_checked(x)=-7.88e-6, correctly near zero, not a bug). Same
-        // "ulp isn't meaningful near a true zero/pole" class of artifact
-        // as cosh's own near-zero case elsewhere in this crate, just at
-        // infinity instead of zero -- and here, unlike `cospi`'s former
-        // version of this excuse, the reduction genuinely has run out of
-        // bits by that magnitude, which is what makes it an excuse.
-        let s = measure!(everywhere, tan_checked, tan_ref);
-        report("tan_checked", &s, t0);
-    }
-    // `tan_wide` keeps the pole artifact the comment above describes --
-    // that one is real -- but not the excuse attached to it: its reduction
-    // does *not* run out of bits at any magnitude, so what is left is only
-    // the genuine `1/cos` amplification near a true pole.
+    // `tan_wide`: tan has a genuine pole every pi, and at large |x| those
+    // poles sit closer together than the local float spacing, so any
+    // correctly-behaving tan implementation shows unbounded relative error
+    // near them. Its reduction does not run out of bits at any magnitude,
+    // so what is left is only the genuine `1/cos` amplification near a true pole.
     if run("tan_wide") {
         let s = measure!(everywhere, tan_wide, tan_ref);
         report("tan_wide", &s, t0);
@@ -1612,45 +1376,6 @@ fn main() {
         let erfc_domain = |x: f32| x.abs() <= 10.0;
         let s = measure!(erfc_domain, erfc, erfc_u15);
         report("erfc", &s, t0);
-        // erfcx_ref: no sleef erfcx bucket, so compose exp(x^2)*erfc_u15(x)
-        // directly in f64 -- safe over this domain (x^2 <= 400 is nowhere
-        // near f64's own ~709 exp overflow point) and multiplication
-        // doesn't lose relative precision the way addition/subtraction
-        // would, so a tiny erfc(x) times a huge exp(x^2) is still an
-        // accurate f64 product.
-        let erfcx_ref = |v: F64xN| exp_u10(v * v) * erfc_u15(v);
-        let s = measure!(erfc_domain, erfcx, erfcx_ref);
-        report("erfcx", &s, t0);
-        // erfcx's own wider domain: past |x|=10 the old rational froze,
-        // so this range used to belong to a separate `erfcx_checked` tier;
-        // the reciprocal-variable fit covers it directly now.
-        let erfcx_wide = |x: f32| x.abs() <= 20.0;
-        let s = measure!(erfcx_wide, erfcx, erfcx_ref);
-        report("erfcx (|x|<=20)", &s, t0);
-        // The rest of the domain, all the way to f32::MAX. `exp(x^2)` is
-        // unusable as a reference here (it overflows f64 past x~26.6), but
-        // that is exactly where the standard asymptotic series becomes an
-        // excellent reference in its own right:
-        //   erfcx(x) ~ 1/(x*sqrt(pi)) * sum (-1)^n (2n-1)!! / (2x^2)^n
-        // Truncating after the t^4 term leaves a relative error bounded by
-        // the first dropped term, 945*t^5 with t = 1/(2x^2): at the x=20
-        // left edge that is ~2.9e-12, ~5 orders of magnitude under f32's
-        // own ~6e-8 resolution, and it only shrinks as x grows. So this row
-        // measures this crate's error, not the reference's. Positive side
-        // only -- the negative side is `2*e^(x^2) - erfcx(|x|)`, which has
-        // genuinely overflowed to +inf for every x < -9.382 (pinned on
-        // both sides of that boundary in edgecheck) and carries no
-        // accuracy information out here.
-        let erfcx_tail_ref = |v: F64xN| {
-            let t = F64xN::splat(0.5) / (v * v);
-            let p = F64xN::splat(1.0)
-                - t * (F64xN::splat(1.0)
-                    - t * (F64xN::splat(3.0) - t * (F64xN::splat(15.0) - t * F64xN::splat(105.0))));
-            p / (v * F64xN::splat(std::f64::consts::PI.sqrt()))
-        };
-        let erfcx_tail = |x: f32| x >= 20.0 && x.is_finite();
-        let s = measure!(erfcx_tail, erfcx, erfcx_tail_ref);
-        report("erfcx (x>=20)", &s, t0);
     }
     if run("erfinv") {
         // Direct ulp rows against a real reference. These three used to be
@@ -1734,31 +1459,6 @@ fn main() {
         let erfc_inv_domain = |y: f32| y > 0.0 && y < 2.0;
         let s = measure!(erfc_inv_domain, erfc_inv, erfc_inv_ref);
         report("erfc_inv", &s, t0);
-        let probit_ref = |p: F64xN| {
-            let one = F64xN::splat(1.0);
-            let half = F64xN::splat(0.5);
-            let m = p.simd_lt(half).select(p, one - p);
-            let n = m + m;
-            (erfc_inv_half_ref(n, one - n) * F64xN::splat(std::f64::consts::SQRT_2))
-                .copysign(p - half)
-        };
-        let probit_domain = |p: f32| p > 0.0 && p < 1.0;
-        let s = measure!(probit_domain, probit, probit_ref);
-        report("probit", &s, t0);
-    }
-    if run("norm_cdf") {
-        // Both compose already-full-range primitives (erfc/exp_checked),
-        // so no domain restriction needed (backlog idea #67).
-        let norm_cdf_ref = |v: F64xN| {
-            F64xN::splat(0.5) * erfc_u15(-v * F64xN::splat(std::f64::consts::FRAC_1_SQRT_2))
-        };
-        let s = measure!(everywhere, norm_cdf, norm_cdf_ref);
-        report("norm_cdf", &s, t0);
-        let norm_pdf_ref = |v: F64xN| {
-            exp_u10(v * v * F64xN::splat(-0.5)) * F64xN::splat(0.3989422804014326779399460599)
-        };
-        let s = measure!(everywhere, norm_pdf, norm_pdf_ref);
-        report("norm_pdf", &s, t0);
     }
     if run("logit") {
         // Domain (0,1) (backlog idea #71) -- log1p_u10(-v) is
@@ -1831,38 +1531,12 @@ fn main() {
         };
         let s = fuzz2(TWOARG_SAMPLES, |_, _| true, atan2_pos, atan2_pos_ref);
         report("atan2_pos", &s, t0);
-        // atan2d (backlog idea #123): plain composite.
-        let atan2d_ref =
-            |y: F64xN, x: F64xN| atan2_u35(y, x) * F64xN::splat(180.0 / std::f64::consts::PI);
-        let s = fuzz2(TWOARG_SAMPLES, |_, _| true, atan2d, atan2d_ref);
-        report("atan2d", &s, t0);
-        // atan2pi (backlog idea #85): plain composite -- see its own doc
-        // comment for why a rescaled-coefficient fold isn't attempted.
-        let atan2pi_ref =
-            |y: F64xN, x: F64xN| atan2_u35(y, x) * F64xN::splat(1.0 / std::f64::consts::PI);
-        let s = fuzz2(TWOARG_SAMPLES, |_, _| true, atan2pi, atan2pi_ref);
-        report("atan2pi", &s, t0);
     }
     if run("xlogy") {
         let s = fuzz2(TWOARG_SAMPLES, |_, _| true, xlogy, xlogy_ref);
         report("xlogy", &s, t0);
         let s = fuzz2(TWOARG_SAMPLES, |_, _| true, xlog1py, xlog1py_ref);
         report("xlog1py", &s, t0);
-    }
-    if run("compound") {
-        // Domain x > -1 (backlog idea #72), log1p's own real-domain
-        // limit; exp_checked handles any resulting exponent magnitude.
-        let compound_domain = |x: f32, _: f32| x > -1.0;
-        let compound_ref = |x: F64xN, n: F64xN| exp_u10(n * log1p_u10(x));
-        let s = fuzz2(TWOARG_SAMPLES, compound_domain, compound, compound_ref);
-        report("compound", &s, t0);
-        let s = fuzz2(
-            TWOARG_SAMPLES,
-            compound_domain,
-            compound_accurate,
-            compound_ref,
-        );
-        report("compound_accurate", &s, t0);
     }
     if run("rsqrt") {
         // x > 0.0 only (0/negative/nan/inf are all correct "for free" via
@@ -1895,7 +1569,7 @@ fn main() {
         // Restricted to |x| <= 1e4 on purpose: wrap_pi rides
         // reduce_pi_checked's double-float reduction, which stays accurate
         // far past what a single f64 word can reference. Beyond this range
-        // edgecheck's sin(wrap_pi(x)) == sin_checked(x) invariant is what
+        // edgecheck's sin(wrap_pi(x)) == sin_wide(x) invariant is what
         // covers the reduction (out to 1e9).
         //
         // TAU is Cody-Waite split into *three* words, and carrying more
@@ -1928,44 +1602,11 @@ fn main() {
         });
         report("wrap_pi", &s, t0);
     }
-    if run("hypot") {
-        // naive x*x+y*y overflows f32 once |x| or |y| exceeds ~sqrt(f32::MAX)
-        // (~1.8e19), and underflows (or flushes clean to 0, losing the
-        // input's magnitude entirely) once |x|,|y| drop below ~sqrt of the
-        // smallest denormal (~3.7e-23) -- hypot's doc comment calls both out
-        // as the accepted tradeoff for avoiding std::hypot's anti-overflow
-        // rescaling, so (like exp2/erf/erfc above) restrict to a range
-        // clear of both, for a meaningful ulp number.
+    if run("normalize2") {
         let hypot_domain = |x: f32, y: f32| {
             let ok = |v: f32| v == 0.0 || (v.abs() > 1e-15 && v.abs() < 1e18);
             ok(x) && ok(y)
         };
-        let s = fuzz2(TWOARG_SAMPLES, hypot_domain, hypot, hypot_u35);
-        report("hypot", &s, t0);
-        let s = fuzz2(
-            TWOARG_SAMPLES,
-            hypot_domain,
-            |x: f32, y: f32| x.hypot(y),
-            hypot_u35,
-        );
-        report("std hypot", &s, t0);
-        // hypot_checked has no overflow/underflow tradeoff to work around
-        // (that's the whole point), so it gets the full domain -- every
-        // finite magnitude, zero, inf, and nan.
-        let s = fuzz2(TWOARG_SAMPLES, |_, _| true, hypot_checked, hypot_u35);
-        report("hypot_checked", &s, t0);
-    }
-    if run("rhypot") {
-        // Same overflow/underflow tradeoff as hypot (see its own domain
-        // comment above) -- rhypot shares the identical
-        // fma(x,x,y*y) core.
-        let hypot_domain = |x: f32, y: f32| {
-            let ok = |v: f32| v == 0.0 || (v.abs() > 1e-15 && v.abs() < 1e18);
-            ok(x) && ok(y)
-        };
-        let rhypot_ref = |v: F64xN, w: F64xN| F64xN::splat(1.0) / hypot_u35(v, w);
-        let s = fuzz2(TWOARG_SAMPLES, hypot_domain, rhypot, rhypot_ref);
-        report("rhypot", &s, t0);
         // normalize2 (backlog idea #136): check the result actually has
         // unit magnitude, not a ulp comparison against a single reference.
         let mut max_dev = 0.0f64;
@@ -1976,7 +1617,7 @@ fn main() {
                 continue;
             }
             let (nx, ny) = normalize2(x, y);
-            let mag = hypot(nx, ny) as f64;
+            let mag = nx.hypot(ny) as f64;
             max_dev = max_dev.max((mag - 1.0).abs());
         }
         println!("{:24} max |magnitude-1| {:>10.6e}", "normalize2", max_dev);
@@ -2446,117 +2087,6 @@ fn main() {
         let s = fuzz2(TWOARG_SAMPLES, pow_domain, powf_unchecked, pow_u10);
         report("powf_unchecked (+)", &s, t0);
     }
-    // Both remainder variants use *ties-away-from-zero* rounding for q (see
-    // remainder's own doc comment) but sleef's `remainder_ref` implements
-    // true IEEE754 remainder, which is ties-to-*even* -- a different, also
-    // "correct," convention that disagrees with ties-away by a full `y`
-    // whenever x/y lands acceptably close to an exact half-integer tie.
-    // That's not a bug in either implementation, just two valid conventions
-    // disagreeing at their boundary, but it shows up in this fuzz sweep as
-    // an occasional spurious billions-of-ulp reading unrelated to either
-    // function's real accuracy (confirmed by hand: sleef's remainder(2.5,
-    // 1.0) = 0.5, ties-to-even, vs jodiemath's ties-away q=3 giving -0.5).
-    // Excluded here so the sweep measures real accuracy, not convention
-    // disagreement.
-    let near_tie = |x: f32, y: f32| ((x / y).abs().fract() - 0.5).abs() < 1e-4;
-    if run("remainder") {
-        // x - round(x/y)*y loses precision to cancellation once |x/y| is
-        // large: round(x/y)*y's absolute error scales with ulp(x), which
-        // swamps the true remainder (at most |y|/2) once x/y is big enough
-        // -- an inherited property of the naive formula (same in the C
-        // original), not specific to this port. Bound |x/y| to stay in the
-        // formula's reliable range. Also: even well inside that range, a
-        // low-probability but real bug exists (see remainder's own doc
-        // comment) where x/y's f32 division rounding crosses a tie boundary
-        // that a more precise division wouldn't have -- remainder_checked
-        // below fixes it; excluded from `remainder`'s own sweep via
-        // near_tie since it's a documented, known limitation, not something
-        // this sweep is meant to catch.
-        let remainder_domain =
-            |x: f32, y: f32| y != 0.0 && (x / y).abs() < 1000.0 && !near_tie(x, y);
-        let s = fuzz2(TWOARG_SAMPLES, remainder_domain, remainder, remainder_ref);
-        report("remainder", &s, t0);
-    }
-    if run("remainder_unchecked") {
-        // remainder_unchecked's own contract: x != 0.0, y finite. Same
-        // reliable-range/near-tie exclusions as remainder's own sweep above.
-        let remainder_domain = |x: f32, y: f32| {
-            x != 0.0 && y != 0.0 && y.is_finite() && (x / y).abs() < 1000.0 && !near_tie(x, y)
-        };
-        let s = fuzz2(
-            TWOARG_SAMPLES,
-            remainder_domain,
-            remainder_unchecked,
-            remainder_ref,
-        );
-        report("remainder_unchecked (+)", &s, t0);
-    }
-    if run("remainder_checked") {
-        // remainder_checked() self-corrects q by one when x/y's own
-        // division rounding pushed it to the wrong integer, which holds up
-        // cleanly (0 max ulp, fuzz-tested) all the way up to where q itself
-        // stops being an exactly-representable f32 integer (2^24) -- past
-        // that point q's own rounding is the limit, not the division, and
-        // no amount of one-integer nudging can fix it (confirmed:
-        // bounding at 2e7 instead of 1e7 immediately produces billions of
-        // ulp of error). Bound |x/y| comfortably under that 2^24 cliff.
-        let remainder_domain =
-            |x: f32, y: f32| y != 0.0 && (x / y).abs() < 10000000.0 && !near_tie(x, y);
-        let s = fuzz2(
-            TWOARG_SAMPLES,
-            remainder_domain,
-            remainder_checked,
-            remainder_ref,
-        );
-        report("remainder_checked", &s, t0);
-    }
-    if run("remainder_wide") {
-        // remainder_wide extends remainder_checked's own correction past
-        // the 2^24 cliff (see its own doc comment) by reducing in f64,
-        // verified against an exact rational reference to hold cleanly up
-        // to |x/y| ~ 2^53 (2^53 == 9.01e15) -- bound comfortably under
-        // that, matching remainder_checked's own "stay well clear of the
-        // cliff" convention. sleef's remainder_ref is a real IEEE754
-        // remainder implementation (its own internal argument reduction,
-        // not a naive single-f64-pass formula), so it stays trustworthy as
-        // a reference at this magnitude, unlike a naive `xf - q*yf` f64
-        // reference would be (confirmed by hand with an arbitrary-
-        // precision Python check during development -- plain f64
-        // arithmetic loses precision once q*y needs more than f64's own
-        // 52 mantissa bits, which happens well before this domain's edge).
-        let remainder_domain =
-            |x: f32, y: f32| y != 0.0 && (x / y).abs() < 4.0e15 && !near_tie(x, y);
-        let s = fuzz2(
-            TWOARG_SAMPLES,
-            remainder_domain,
-            remainder_wide,
-            remainder_ref,
-        );
-        report("remainder_wide", &s, t0);
-    }
-    if run("remainder_ieee") {
-        // remainder_ieee rounds q ties-to-even instead of remainder's own
-        // ties-away, matching sleef's true-IEEE754 reference exactly at
-        // ties (verified separately in edgecheck.rs with pinned exact-tie
-        // cases, e.g. remainder_ieee(5,2)==1.0 vs remainder(5,2)==-1.0).
-        // This sweep still excludes near_tie, same as remainder/
-        // remainder_checked above: that exclusion is about a different,
-        // already-known issue (x/y's own division rounding flipping which
-        // *integer* q lands on near, but not exactly at, a tie -- the
-        // problem remainder_checked exists to fix), which affects
-        // remainder_ieee identically to remainder since both share the
-        // same plain `x/y` division, only differing in the final
-        // rounding-mode convention.
-        let remainder_domain =
-            |x: f32, y: f32| y != 0.0 && (x / y).abs() < 1000.0 && !near_tie(x, y);
-        let s = fuzz2(
-            TWOARG_SAMPLES,
-            remainder_domain,
-            remainder_ieee,
-            remainder_ref,
-        );
-        report("remainder_ieee", &s, t0);
-    }
     if run("fmod") {
         // fmod's own failure mode (see its doc comment) is the
         // truncation analog of remainder's near_tie exclusion, but at
@@ -2587,77 +2117,6 @@ fn main() {
         let fmod_checked_domain = |x: f32, y: f32| y != 0.0 && (x / y).abs() < 1000.0;
         let s = fuzz2(TWOARG_SAMPLES, fmod_checked_domain, fmod_checked, fmod_ref);
         report("fmod_checked", &s, t0);
-    }
-    if run("dawson") {
-        // No sleef bucket for Dawson's function, so the reference is a real
-        // independent computation:
-        //
-        //   |x| <= 7:  D(x) = exp(-x^2) * sum_n x^(2n+1)/(n!*(2n+1))
-        //   |x| >  7:  the double-factorial asymptotic series, 20 terms
-        //
-        // The series is **all-positive**, so nothing cancels anywhere in
-        // it -- the `exp(-x^2)` that undoes its growth is applied once, at
-        // the end. Measured against scipy.special.dawsn its relative error
-        // is <= 6.2e-16 at every x from 1e-5 to 10 (under 0.006 f32 ulp,
-        // everywhere), and the asymptotic arm is 0.0 relative at x = 7, 8,
-        // 10 and 20, so the handover at 7 is clean from both sides.
-        //
-        // It replaces an 800-point Simpson quadrature of the defining
-        // integral, which was accurate to <1e-11 out to x=2 but only
-        // 1.5e-8 at x=4 and 8.8e-8 (0.74 f32 ulp) at its own x=5 handover
-        // -- i.e. it carried ~1 ulp of its own noise across exactly the
-        // band where `dawson`'s max lives, and cost 800 `exp` calls per
-        // sample, which is why this row was a 2M-sample scalar loop with
-        // no `thorough` mode at all rather than a `measure!`. Both are
-        // fixed: the sum exits as soon as every lane has converged, and
-        // adjacent bit patterns need the same number of terms, so the
-        // vector rarely waits on a straggler.
-        let dawson_ref = |v: F64xN| -> F64xN {
-            let ax = v.abs();
-            let one = F64xN::splat(1.0);
-            // Series arm. `ax` is clamped so the huge-|x| lanes -- whose
-            // value is discarded -- cannot overflow the sum to `inf` and
-            // turn `exp(-inf) * inf` into a NaN.
-            let a = ax.simd_min(F64xN::splat(7.0));
-            let a2 = a * a;
-            let mut s = F64xN::splat(0.0);
-            let mut t = a;
-            for n in 0..200 {
-                // `* (1/k)` rather than `/ k`: the reciprocal is one scalar
-                // division per *term*, not one vector division per lane per
-                // term, and it is the difference between this row costing
-                // ~8s and ~77s. Its own error is a relative 1.1e-16 per
-                // step on an all-positive accumulation, i.e. under 1e-6 f32
-                // ulp after all 200.
-                let d = t * F64xN::splat(1.0 / (2 * n + 1) as f64);
-                s += d;
-                if !d.simd_gt(s * F64xN::splat(1e-19)).any() {
-                    break;
-                }
-                t = t * a2 * F64xN::splat(1.0 / (n + 1) as f64);
-            }
-            let series = exp_u10(-a2) * s;
-            // Asymptotic arm, on a floored `ax` for the same reason.
-            let b = ax.simd_max(F64xN::splat(7.0));
-            let z = one / (b * b + b * b);
-            let mut acc = one;
-            let mut term = one;
-            for k in 1..=20 {
-                term *= F64xN::splat((2 * k - 1) as f64) * z;
-                acc += term;
-            }
-            let asym = acc / (b + b);
-            // `+-inf` gives z = 0, acc = 1 and 1/inf = 0, which is
-            // dawson(+-inf) = 0. NaN needs its own arm rather than falling
-            // out: `simd_min`/`simd_max` follow IEEE minNum/maxNum and
-            // *drop* a NaN operand, so both arms come back finite for a NaN
-            // input and the row would score every NaN pattern as a
-            // non-finite blow-up.
-            let mag = ax.simd_le(F64xN::splat(7.0)).select(series, asym);
-            v.simd_ne(v).select(v, mag.copysign(v))
-        };
-        let s = measure!(everywhere, dawson, dawson_ref);
-        report("dawson", &s, t0);
     }
 
     if run("identities") {
@@ -2703,11 +2162,11 @@ fn main() {
             );
         };
         identity(
-            "sin_checked^2+cos_checked^2=1",
-            &|x| x.is_finite() && x.abs() < 8.85e14, // sin_checked's own documented exact-reduction limit
+            "sin_wide^2+cos_wide^2=1",
+            &|x| x.is_finite(),
             &|x| {
-                let s = sin_checked(x) as f64;
-                let c = cos_checked(x) as f64;
+                let s = sin_wide(x) as f64;
+                let c = cos_wide(x) as f64;
                 s * s + c * c - 1.0
             },
             1e-4,

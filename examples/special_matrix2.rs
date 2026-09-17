@@ -73,18 +73,6 @@ fn main() {
             exempt: &[],
         },
         Case {
-            name: "hypot",
-            jodie: hypot,
-            reference: f64::hypot,
-            exempt: &[],
-        },
-        Case {
-            name: "hypot_checked",
-            jodie: hypot_checked,
-            reference: f64::hypot,
-            exempt: &[],
-        },
-        Case {
             name: "powf",
             jodie: powf,
             reference: f64::powf,
@@ -157,16 +145,8 @@ fn main() {
     // Print-only: no std counterpart to assert against.
     println!("\n=== print-only (no f64 std counterpart) ===");
     let printonly: &[(&str, fn(f32, f32) -> f32)] = &[
-        ("remainder", remainder),
-        ("remainder_checked", remainder_checked),
-        ("remainder_ieee", remainder_ieee),
-        ("rhypot", rhypot),
-        ("logaddexp", logaddexp),
-        ("logaddexp_checked", logaddexp_checked),
-        ("logaddexp_accurate", logaddexp_accurate),
         ("xlogy", xlogy),
         ("xlog1py", xlog1py),
-        ("compound", compound),
         ("signed_pow", signed_pow),
         ("mulsign", mulsign),
     ];

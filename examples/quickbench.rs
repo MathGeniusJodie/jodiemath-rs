@@ -188,10 +188,8 @@ fn main() {
     bench!("log_2_unchecked", log_2_unchecked);
     bench!("std log2", |x: f32| x.log2());
     bench!("sin", sin);
-    bench!("sin_checked", sin_checked);
     bench!("std sin", |x: f32| x.sin());
     bench!("cos", cos);
-    bench!("cos_checked", cos_checked);
     bench!("sin_wide", sin_wide);
     bench!("cos_wide", cos_wide);
     bench!("tan_wide", tan_wide);
@@ -215,13 +213,9 @@ fn main() {
     bench!("sin2pi", sin2pi);
     bench!("cos2pi", cos2pi);
     bench!("tan2pi", tan2pi);
-    bench!("sinc", sinc);
     bench!("sinc_unnormalized", sinc_unnormalized);
-    bench!("sind", sind);
     bench!("sind_unchecked", sind_unchecked);
-    bench!("cosd", cosd);
     bench!("cosd_unchecked", cosd_unchecked);
-    bench!("tand", tand);
     bench!("tand_unchecked", tand_unchecked);
 
     bench!("ln", ln);
@@ -244,7 +238,6 @@ fn main() {
     bench!("expm1", expm1);
     bench!("expm1_narrow", expm1_narrow);
     bench!("std expm1", |x: f32| x.exp_m1());
-    bench!("exp_m1_over_x", exp_m1_over_x);
     bench!("exp_m1_over_x_narrow", exp_m1_over_x_narrow);
     bench!("exp2m1", exp2m1);
     bench!("sinh", sinh);
@@ -264,10 +257,7 @@ fn main() {
     bench!("sigmoid", sigmoid);
     bench!("sigmoid_fast", sigmoid_fast);
     bench!("sigmoid_grad", sigmoid_grad);
-    bench!("softplus", softplus);
     bench!("logsigmoid", logsigmoid);
-    bench!("logaddexp", |x: f32| logaddexp(x, 0.0));
-    bench!("logaddexp_accurate", |x: f32| logaddexp_accurate(x, 0.0));
     bench!("asinh", asinh);
     bench!("std asinh", |x: f32| x.asinh());
     bench!("acosh", acosh);
@@ -287,7 +277,6 @@ fn main() {
     bench!("atan_latency", atan_latency);
     bench!("atan_bounded", atan_bounded);
     bench!("atand", atand);
-    bench!("atanpi", atanpi);
     // black_box'd 2nd arg (not a literal 1.0): a compile-time-constant 2nd
     // arg lets LLVM fold away atan2's own special-case branches entirely,
     // silently hiding their real cost -- this matters here specifically
@@ -302,17 +291,11 @@ fn main() {
         x, atan2_x2
     ));
     bench!("atan2_pos", move |x: f32| atan2_pos(x, atan2_x2));
-    bench!("atan2d", move |x: f32| atan2d(x, atan2_x2));
-    bench!("atan2pi", move |x: f32| atan2pi(x, atan2_x2));
     bench!("tan", tan);
-    bench!("tan_checked", tan_checked);
     bench!("std tan", |x: f32| x.tan());
     bench!("erf", erf);
     bench!("erfc", erfc);
-    bench!("norm_cdf", norm_cdf);
-    bench!("norm_pdf", norm_pdf);
     bench!("logit", logit, Band::Half);
-    bench!("compound", move |x: f32| compound(x, 5.0));
     bench!("xlogy", move |x: f32| xlogy(x, 2.0));
     bench!("xlog1py", move |x: f32| xlog1py(x, 1.0));
     bench!("ldexp", move |x: f32| ldexp(x, 5));
@@ -320,17 +303,10 @@ fn main() {
         let (m, e) = frexp(x);
         m + e as f32
     });
-    bench!("erfcx", erfcx);
     bench!("erfinv", erfinv, Band::Half);
     bench!("erfc_inv", erfc_inv, Band::Half);
-    bench!("probit", probit, Band::Half);
-    bench!("dawson", dawson);
     // black_box'd 2nd arg, same reasoning as atan2 above.
     let hypot_y = std::hint::black_box(1.0);
-    bench!("hypot", move |x: f32| hypot(x, hypot_y));
-    bench!("std hypot", move |x: f32| x.hypot(hypot_y));
-    bench!("hypot_checked", move |x: f32| hypot_checked(x, hypot_y));
-    bench!("rhypot", move |x: f32| rhypot(x, hypot_y));
     // Complex pack (idea #186): cabs/carg fix the 2nd arg like hypot/
     // atan2 above. cexp/clog return (f32,f32) -- bench!/mca need a
     // single f32, so this sums the pair as a cheap adapter (dominated
@@ -376,23 +352,6 @@ fn main() {
     bench!("rootn", |x: f32| rootn(x, 3));
     // black_box'd 2nd arg, same reasoning as powf just above.
     let remainder_y = std::hint::black_box(3.0);
-    bench!("remainder", move |x: f32| remainder(x, remainder_y));
-    bench!("remainder_unchecked", move |x: f32| remainder_unchecked(
-        x,
-        remainder_y
-    ));
-    bench!("remainder_checked", move |x: f32| remainder_checked(
-        x,
-        remainder_y
-    ));
-    bench!("remainder_ieee", move |x: f32| remainder_ieee(
-        x,
-        remainder_y
-    ));
-    bench!("remainder_wide", move |x: f32| remainder_wide(
-        x,
-        remainder_y
-    ));
     bench!("fmod", move |x: f32| fmod(x, remainder_y));
     bench!("fmod_unchecked", move |x: f32| fmod_unchecked(
         x,

@@ -600,28 +600,6 @@ pub fn cos(x: f32) -> f32 {
     f32::from_bits(s.to_bits() ^ parity)
 }
 
-/// Fast `sin(x)` with single-word `1/pi` reduction. Accurate for `|x| <= 1e6`.
-#[inline(always)]
-pub fn sin_fast(x: f32) -> f32 {
-    let qb = fma(x, FRAC_1_PI, ROUND_MAGIC);
-    let q = qb - ROUND_MAGIC;
-    let s = pi_reduce_and_poly!(x, q);
-    let parity = qb.to_bits() << 31;
-    f32::from_bits(s.to_bits() ^ parity)
-}
-
-/// Fast `cos(x)` with single-word `1/pi` reduction. Accurate for `|x| <= 1e6`.
-#[inline(always)]
-pub fn cos_fast(x: f32) -> f32 {
-    // k = round(x/pi - 0.5), q = k + 0.5, r = x - q*pi in [-pi/2, pi/2]
-    let kb = fma(x, FRAC_1_PI, -0.5) + ROUND_MAGIC;
-    let q = (kb - ROUND_MAGIC) + 0.5;
-    let s = pi_reduce_and_poly!(x, q);
-    // cos(x) = (-1)^(k+1) * sin(r)
-    let parity = !kb.to_bits() << 31;
-    f32::from_bits(s.to_bits() ^ parity)
-}
-
 /// Computes `sin(pi * x)`, argument in half-turns. Exact at integers and total over all finite f32.
 #[inline(always)]
 pub fn sinpi(x: f32) -> f32 {
@@ -652,21 +630,10 @@ pub fn cospi(x: f32) -> f32 {
     s * fma(-2.0, parity(k), 1.0)
 }
 
-/// Normalized sinc function: `sin(pi * x) / (pi * x)`, with `sinc(0) = 1.0`.
-#[inline(always)]
-pub fn sinc(x: f32) -> f32 {
-    let normal = sinpi(x) / (std::f32::consts::PI * x);
-    if x == 0.0 {
-        1.0
-    } else {
-        normal
-    }
-}
-
 /// Unnormalized sinc function: `sin(x) / x` in radians, with `sinc(0) = 1.0`.
 #[inline(always)]
 pub fn sinc_unnormalized(x: f32) -> f32 {
-    let normal = sin_checked(x) / x;
+    let normal = sin_wide(x) / x;
     if x == 0.0 {
         1.0
     } else {
@@ -752,28 +719,6 @@ const INV_180: f32 = 1.0 / 180.0;
 // irrational constant is fine" reasoning as exp10's own reduction.
 const DEG_TO_RAD_SMALL: f32 = std::f32::consts::PI / 180.0;
 
-/// Computes `sin(x)` for `x` in degrees. Accurate for `|x| < 4.7e7`.
-#[inline(always)]
-pub fn sind(x: f32) -> f32 {
-    let qb = fma(x, INV_180, ROUND_MAGIC);
-    let q = qb - ROUND_MAGIC;
-    let d = fma(-q, 180.0, x);
-    let s = sinf_poly((d * DEG_TO_RAD_SMALL).clamp(-POLY_SAFE_BOUND, POLY_SAFE_BOUND));
-    let parity = qb.to_bits() << 31;
-    f32::from_bits(s.to_bits() ^ parity)
-}
-
-/// Computes `cos(x)` for `x` in degrees. Accurate for `|x| < 4.7e7`.
-#[inline(always)]
-pub fn cosd(x: f32) -> f32 {
-    let kb = fma(x, INV_180, -0.5) + ROUND_MAGIC;
-    let q = (kb - ROUND_MAGIC) + 0.5;
-    let d = fma(-q, 180.0, x);
-    let s = sinf_poly((d * DEG_TO_RAD_SMALL).clamp(-POLY_SAFE_BOUND, POLY_SAFE_BOUND));
-    let parity = !kb.to_bits() << 31;
-    f32::from_bits(s.to_bits() ^ parity)
-}
-
 // tan(w degrees) after its leading term, peeled exactly the way `tan_poly`
 // peels `tanpi`'s: with `u = w*w` and `w` in [0, 45], this is `B(u) =
 // tan(w*pi/180)/w - fl(pi/180)`, so that `tan(w deg) == fma(w,
@@ -812,15 +757,6 @@ fn tand_core(d: f32) -> f32 {
     } else {
         normal
     }
-}
-
-/// Computes `tan(x)` for `x` in degrees. Accurate for `|x| < 4.7e7`.
-#[inline(always)]
-pub fn tand(x: f32) -> f32 {
-    let qb = fma(x, INV_180, ROUND_MAGIC);
-    let q = qb - ROUND_MAGIC;
-    let d = fma(-q, 180.0, x);
-    tand_core(if d.abs() > 128.0 { 0.0 } else { d })
 }
 
 /// `sind` without the safety clamp: valid for `|x| <= 4.7e7`.
@@ -1017,14 +953,6 @@ fn reduce_pi_wide<const HALF: bool>(x: f32) -> (f32, u32) {
 fn parity(q: f32) -> f32 {
     fma(-2.0, (q * 0.5).floor(), q)
 }
-
-// Bound for the reduced residual right before it enters sinf_poly, used by
-// sind/cosd (whose own reduction has no `|result| <= 1` clamp downstream to
-// fall back on). Once the reduction's precision runs out (|x| beyond the
-// gradual-degradation range), the residual can grow large -- squaring that
-// inside sinf_poly is where an earlier "returns inf for ordinary finite input"
-// bug came from.
-const POLY_SAFE_BOUND: f32 = 1000.0;
 
 // ---------------------------------------------------------------------------
 // Gather-free Payne-Hanek: register-permute window extraction (x8 prototype).
@@ -1287,48 +1215,13 @@ pub unsafe fn cos_wide_x8_slice(xs: &[f32], out: &mut [f32]) {
     }
 }
 
-#[inline(always)]
-pub fn sin_checked(x: f32) -> f32 {
-    // sin is odd, so (-1)^q * sin(r) == sin((-1)^q * r): flip r's sign bit
-    // *before* sinf_poly instead of negating its result after. Bit-exact with a
-    // `s * (1.0 - 2.0 * par)` tail (both IEEE negation and a multiply by
-    // exactly +-1 only ever flip the sign bit, never round), but the mask
-    // depends solely on q -- ready long before r exits the reduction -- so it
-    // hides in the reduction's shadow instead of costing a real fma+mul on
-    // sinf_poly's tail.
-    let (r, flip) = reduce_pi64::<false>(x);
-    let r = f32::from_bits(r.to_bits() ^ flip);
-    // `sinf_poly`, not the copysign-free `sinf_poly_raw`: the reduction does
-    // carry `-0.0` through intact (that is what the positive pi words buy), but
-    // `sinf_poly_raw` then loses it on its own -- its last step is `fma(p, x3,
-    // x)` with `p < 0` and `x3 = -0.0`, so the product is `+0.0` and `+0.0 +
-    // -0.0` is `+0.0`. Cheaper and more local than the `if x == 0.0 { x }`
-    // guard this replaced, which sat at the end of the function blaming the
-    // reduction for it.
-    sinf_poly(r).clamp(-1.0, 1.0)
-}
-#[inline(always)]
-pub fn cos_checked(x: f32) -> f32 {
-    // q = the half-odd-integer nearest x/pi, so r = x - q*pi is in [-pi/2,
-    // pi/2] and cos(x) = +-sin(r). Same sign-flip-before-the-poly trick as
-    // sin_checked above (sinf_poly is odd in r too); the half-turn's extra flip
-    // is already folded into the mask.
-    let (r, flip) = reduce_pi64::<true>(x);
-    let r = f32::from_bits(r.to_bits() ^ flip);
-    // See sin_checked's own comment for why this clamp is needed and why it is
-    // the only one needed: `q` stops being an exact integer past |x| ~ 2^53*pi,
-    // and without this clamp cos_checked could silently return values like
-    // 2.6e21 for legitimate finite input, violating `|cos(x)| <= 1`.
-    sinf_poly(r).clamp(-1.0, 1.0)
-}
-
 /// Computes `sin(x)` with no magnitude limit across all finite f32 (2 max ulp).
 #[inline(always)]
 pub fn sin_wide(x: f32) -> f32 {
     let (r, flip) = reduce_pi_wide::<false>(x);
     let r = f32::from_bits(r.to_bits() ^ flip);
-    // `sinf_poly`, not `sinf_poly_raw`, for the same `-0.0` reason
-    // `sin_checked` gives.
+    // `sinf_poly`, not `sinf_poly_raw`, to carry `-0.0` through intact
+    // (raw loses it on fma(p, x3, x) with x3 = -0.0).
     sinf_poly(r).clamp(-1.0, 1.0)
 }
 
@@ -1398,16 +1291,6 @@ pub fn sin_prereduced(r: f32) -> f32 {
 #[inline(always)]
 pub fn cos_prereduced(r: f32) -> f32 {
     sinf_poly(r)
-}
-
-/// Computes `tan(x)` with f64 range reduction (`sin_checked / cos_checked`).
-#[inline(always)]
-pub fn tan_checked(x: f32) -> f32 {
-    let (rs, flip_s) = reduce_pi64::<false>(x);
-    let (rc, flip_c) = reduce_pi64::<true>(x);
-    let num = sinf_poly(rs).clamp(-1.0, 1.0);
-    let den = sinf_poly(rc).clamp(-1.0, 1.0);
-    f32::from_bits((num / den).to_bits() ^ (flip_s ^ flip_c))
 }
 
 /// Computes `tan(x)` with no magnitude limit across all finite f32.
@@ -2072,27 +1955,6 @@ pub fn expm1_checked(x: f32) -> f32 {
     }
 }
 
-/// Computes `(e^x - 1) / x`, avoiding cancellation near zero.
-#[inline(always)]
-pub fn exp_m1_over_x(x: f32) -> f32 {
-    const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
-    let k = fma(x, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
-    let r = fma(-k, LN2_HI, x);
-    let r = fma(-k, LN2_LO, r);
-    let r2 = r * r;
-    let p = expm1_p_poly!(r, r2);
-    let q = fma(r, p, 1.0);
-    let e = fma(r2, p, r);
-    let t = f32::from_bits((k + EXPM1_HALF_MAGIC).to_bits() << 23);
-    let b = fma(e, t, t - 0.5);
-    let b = b + b;
-    if k == 0.0 {
-        q
-    } else {
-        b / x
-    }
-}
-
 /// `exp_m1_over_x` via a single exponent field. Valid for `x` in `[-87.3, 88.7]`.
 #[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
@@ -2526,9 +2388,8 @@ fn log1p_unit(e: f32) -> f32 {
     fma(e2, q, e)
 }
 
-/// Softplus: `ln(1 + exp(x))`.
 #[inline(always)]
-pub fn softplus(x: f32) -> f32 {
+fn softplus_impl(x: f32) -> f32 {
     let ax = x.abs();
     // `exp_narrow`, not `exp`: the `min(87.0)` above is already the guard its
     // single-exponent-field domain (`x` in `[-87.68311, 88.37627]`) asks for,
@@ -2566,9 +2427,8 @@ macro_rules! exp_neg_scaled64 {
     }};
 }
 
-/// Softplus across the full f32 domain.
 #[inline(always)]
-pub fn softplus_checked(x: f32) -> f32 {
+fn softplus_checked_impl(x: f32) -> f32 {
     const P64: f32 = 5.421010862427522e-20; // 2^-64, exact
     let e = exp_neg_scaled64!(x.abs().min(105.0)) * P64;
     let normal = x.max(0.0) + log1p_unit(e);
@@ -2582,171 +2442,13 @@ pub fn softplus_checked(x: f32) -> f32 {
 /// Log-sigmoid: `ln(sigmoid(x)) = -softplus(-x)`.
 #[inline(always)]
 pub fn logsigmoid(x: f32) -> f32 {
-    -softplus(-x)
+    -softplus_impl(-x)
 }
 
 /// Log-sigmoid across the full f32 domain.
 #[inline(always)]
 pub fn logsigmoid_checked(x: f32) -> f32 {
-    -softplus_checked(-x)
-}
-
-/// Numerically stable `ln(exp(a) + exp(b))`.
-#[inline(always)]
-pub fn logaddexp(a: f32, b: f32) -> f32 {
-    let m = a.max(b);
-    let d = (a - b).abs();
-    // `exp_narrow` for the same reason as `softplus`'s -- see its comment.
-    let e = exp_narrow(-d.min(87.0));
-    let corr = if d > 87.0 { 0.0 } else { log1p_unit(e) };
-    let normal = m + corr;
-    if a.is_nan() || b.is_nan() {
-        f32::NAN
-    } else {
-        normal
-    }
-}
-
-/// Numerically stable `ln(exp(a) + exp(b))` across the full f32 domain.
-#[inline(always)]
-pub fn logaddexp_checked(a: f32, b: f32) -> f32 {
-    const P64: f32 = 5.421010862427522e-20; // 2^-64, exact
-    let m = a.max(b);
-    // `min` is IEEE `minNum` and returns `105.0` for a NaN `d` -- which is also
-    // what a NaN `a`/`b` produces via `a - b`, and what `a = b = inf` produces
-    // out of `inf - inf`. Every one of those wants a dead correction term, and
-    // the trailing `is_nan` restores the NaN cases.
-    let d = (a - b).abs().min(105.0);
-    let e = exp_neg_scaled64!(d) * P64;
-    let normal = m + log1p_unit(e);
-    if a.is_nan() || b.is_nan() {
-        f32::NAN
-    } else {
-        normal
-    }
-}
-
-// `ln 2` as a two-word f64, split so that `n * LN2_HI64` is *exact* for every
-// `|n| <= 2^20`: the low 21 mantissa bits of `LN2_HI64` are zero, so the
-// product needs 32 + 21 = 53 bits at most. `LN2_LO64` is the f64 nearest the
-// remainder, leaving a residual of `1.2e-26` -- times the `|n| <= 185` this
-// file's f64 exp reduction can reach, still `2e-24`, i.e.
-const LN2_HI64: f64 = 0.6931471803691238;
-const LN2_LO64: f64 = 1.9082149292705877e-10;
-
-// `(e^f - 1)/f` on `|f| <= ln2/2`, Taylor rather than minimax: this is an
-// accurate tier, and the *rounding* of an f64 evaluation (`2^-53` times the sum
-// of absolute terms, `e^|f| = 1.41`) already sits an order of magnitude above
-// the degree-13 truncation of `4e-18`, so a minimax refit would buy nothing
-// that the evaluation does not immediately spend.
-const EXP_F64_P: [f64; 13] = [
-    1.0,
-    0.5,
-    0.16666666666666666,
-    0.041666666666666664,
-    0.008333333333333333,
-    0.001388888888888889,
-    0.0001984126984126984,
-    2.48015873015873e-05,
-    2.7557319223985893e-06,
-    2.755731922398589e-07,
-    2.505210838544172e-08,
-    2.08767569878681e-09,
-    1.6059043836821613e-10,
-];
-
-// `(atanh(s)/s - 1)/u` in `u = s^2` over `u` in `[0, 1/9]`, i.e. `1/3`, `1/5`,
-// ...
-const ATANH_B64: [f64; 15] = [
-    0.3333333333333333,
-    0.2,
-    0.14285714285714285,
-    0.1111111111111111,
-    0.09090909090909091,
-    0.07692307692307693,
-    0.06666666666666667,
-    0.058823529411764705,
-    0.05263157894736842,
-    0.047619047619047616,
-    0.043478260869565216,
-    0.04,
-    0.037037037037037035,
-    0.034482758620689655,
-    0.03225806451612903,
-];
-
-// `log1p(exp(-d))` in f64 for `d` in `[0, 128]`, the correction term of the
-// `logaddexp` family computed to an *absolute* `~2^-52` rather than the
-// `~2^-24` an f32 chain can reach. See [`logaddexp_accurate`] for why absolute
-// is the metric that matters and f32 cannot supply it.
-#[inline(always)]
-fn log1p_exp_neg_f64(d: f64) -> f64 {
-    // e^d = 2^n * e^f, n = round(d*log2e) in [0, 185], |f| <= ln2/2.
-    // `n * LN2_HI64` is exact and within a factor of two of `d`, so `t` is
-    // exact by Sterbenz and `f` carries a single rounding.
-    let nm = f64::mul_add(d, std::f64::consts::LOG2_E, ROUND_MAGIC64);
-    let n = nm - ROUND_MAGIC64;
-    let t = f64::mul_add(-n, LN2_HI64, d);
-    let f = f64::mul_add(-n, LN2_LO64, t);
-    let c = EXP_F64_P;
-    let f2 = f * f;
-    let f4 = f2 * f2;
-    let e0 = f64::mul_add(c[1], f, c[0]);
-    let e1 = f64::mul_add(c[3], f, c[2]);
-    let e2 = f64::mul_add(c[5], f, c[4]);
-    let e3 = f64::mul_add(c[7], f, c[6]);
-    let e4 = f64::mul_add(c[9], f, c[8]);
-    let e5 = f64::mul_add(c[11], f, c[10]);
-    let r0 = f64::mul_add(e1, f2, e0);
-    let r1 = f64::mul_add(e3, f2, e2);
-    let r2 = f64::mul_add(f64::mul_add(c[12], f2, e5), f2, e4);
-    let p = f64::mul_add(f64::mul_add(r2, f4, r1), f4, r0);
-    // Same exponent-field reconstruction `exp2_f64_to_f32` documents:
-    // `nm`'s low 52 bits already hold `n + 2^51`, and `2^51` is a multiple
-    // of 4096, so the 12 bits the shift keeps are exactly `n + 1023`.
-    let scale = f64::from_bits(nm.to_bits().wrapping_add(1023) << 52);
-    let x = f64::mul_add(f, p, 1.0) * scale;
-    let s = 1.0 / f64::mul_add(2.0, x, 1.0);
-    // `s` runs down to `1/(1+2*e^128) = 1.3e-56`, so `u^4` and `u^8` -- which
-    // the Estrin grouping below forms -- would leave f64's normal range from `d
-    // ~ 44` onward, well inside the useful domain, and drag a denormal assist
-    // through the whole vector when they did. The floor is far below where the
-    // tail term matters: `u <= 1e-30` makes `u*Q(u)` a relative `3e-31` of the
-    // pinned `2s`, i.e.
-    let u = (s * s).max(1e-30);
-    let b = ATANH_B64;
-    let u2 = u * u;
-    let u4 = u2 * u2;
-    let u8 = u4 * u4;
-    let a0 = f64::mul_add(b[1], u, b[0]);
-    let a1 = f64::mul_add(b[3], u, b[2]);
-    let a2 = f64::mul_add(b[5], u, b[4]);
-    let a3 = f64::mul_add(b[7], u, b[6]);
-    let a4 = f64::mul_add(b[9], u, b[8]);
-    let a5 = f64::mul_add(b[11], u, b[10]);
-    let a6 = f64::mul_add(b[13], u, b[12]);
-    let q0 = f64::mul_add(a1, u2, a0);
-    let q1 = f64::mul_add(a3, u2, a2);
-    let q2 = f64::mul_add(a5, u2, a4);
-    let q3 = f64::mul_add(b[14], u2, a6);
-    let q = f64::mul_add(f64::mul_add(q3, u4, q2), u8, f64::mul_add(q1, u4, q0));
-    let s2 = s + s;
-    f64::mul_add(s2 * u, q, s2)
-}
-
-/// Accurate `ln(exp(a) + exp(b))` using f64 intermediate correction.
-#[inline(always)]
-pub fn logaddexp_accurate(a: f32, b: f32) -> f32 {
-    let ad = a as f64;
-    let bd = b as f64;
-    let m = ad.max(bd);
-    let d = (ad - bd).abs().min(128.0);
-    let normal = (m + log1p_exp_neg_f64(d)) as f32;
-    if a.is_nan() || b.is_nan() {
-        f32::NAN
-    } else {
-        normal
-    }
+    -softplus_checked_impl(-x)
 }
 
 /// Gaussian Error Linear Unit (GELU): `x * Phi(x)`.
@@ -3279,25 +2981,6 @@ pub fn atand(x: f32) -> f32 {
     fma(y, RAD_TO_DEG_HI, y * RAD_TO_DEG_LO)
 }
 
-/// Computes `atan(x) / pi` in half-turns.
-#[inline(always)]
-pub fn atanpi(x: f32) -> f32 {
-    let a = x.abs();
-    // `a.min(1.0/a)` is already non-negative, so `atan_bounded`'s own sign
-    // handling is dead work -- but LLVM only folds it away if the value is
-    // *visibly* sign-cleared, and `.abs()` is what makes it visible. Worth two
-    // instructions in the emitted region; a bit-mask spelling of the same thing
-    // measures identically, and reaching past `atan_bounded` to the private
-    // `atan_poly` would save two more at the cost of merging `atan`'s ownership
-    // domain into this one.
-    let t = atan_bounded(a.min(1.0 / a).abs());
-    let h = fma(t, FRAC_1_PI, t * FRAC_1_PI_LO);
-    // Exactly `atan`'s `a < 1.0` branch, in half-turns. `0.5 - h` for
-    // `h <= 0.25` rounds once, at the result's own magnitude; the sign is
-    // reapplied last because both arms are computed from `|x|`.
-    mulsign(if a < 1.0 { h } else { 0.5 - h }, x)
-}
-
 /// `atan(x)` for `|x| <= 1`.
 #[doc(hidden)] // pub only so examples/mca_target.rs can benchmark it directly
 #[inline(always)]
@@ -3399,54 +3082,6 @@ pub fn atan2_latency(y: f32, x: f32) -> f32 {
         },
         y,
     );
-    if bothinf {
-        inf_result
-    } else {
-        r
-    }
-}
-
-/// Computes `atan2(y, x)` in degrees in `[-180, 180]`.
-#[inline(always)]
-pub fn atan2d(y: f32, x: f32) -> f32 {
-    let r = atan2(y, x);
-    let normal = fma(r, RAD_TO_DEG_HI, r * RAD_TO_DEG_LO);
-    // Single-word, and specifically the HI word rather than the
-    // correctly-rounded `fl(180/pi)`: the two-word form would need a second
-    // division, and swapping in the correctly-rounded single constant -- which
-    // does measure better on this branch's average -- costs a 1-ulp regression
-    // at a pinned denormal edge case that is currently correctly rounded.
-    let tiny = y * (RAD_TO_DEG_HI / x);
-    if r.abs() < f32::MIN_POSITIVE && x != 0.0 {
-        tiny
-    } else {
-        normal
-    }
-}
-
-/// Computes `atan2(y, x) / pi` in half-turns in `[-1, 1]`.
-#[inline(always)]
-pub fn atan2pi(y: f32, x: f32) -> f32 {
-    let nonzerox = x != 0.0;
-    let nonzeroy = y != 0.0;
-    let bothzero = !nonzerox && !nonzeroy;
-    // Exactly `atan2`'s shape with `FRAC_PI_2` replaced by `0.5`. Every
-    // value this can take -- `0.5 - 0.5`, `0.5 - -0.5`, `0.5 - 0.0` -- is
-    // exact, so the quadrant fold contributes no rounding of its own.
-    let hsignx = if nonzerox || bothzero {
-        mulsign(0.5, x)
-    } else {
-        0.0
-    };
-    let correction = mulsign(0.5 - hsignx, y);
-    let r = if nonzerox {
-        atanpi(y / x) + correction
-    } else {
-        correction
-    };
-    let r = if y.is_nan() { f32::NAN } else { r };
-    let bothinf = x.is_infinite() && y.is_infinite();
-    let inf_result = mulsign(if x.is_sign_negative() { 0.75 } else { 0.25 }, y);
     if bothinf {
         inf_result
     } else {
@@ -3826,146 +3461,11 @@ const _: () = assert!(
 const _: () =
     assert!((NORM_CDF_XS_CLAMP as f64) * (NORM_CDF_XS_CLAMP as f64) * 0.5 > 103.97207708399179);
 
-/// Standard normal cumulative distribution function `Phi(x) = 0.5 * erfc(-x / sqrt(2))`.
-#[inline(always)]
-pub fn norm_cdf(x: f32) -> f32 {
-    let xa = x.abs();
-    // `erfcx_pos`, not `erfcx`: the argument is an absolute value, so erfcx's
-    // own x<0 arm is dead, and LLVM does not prove that -- taking the public
-    // wrapper left a whole second `exp_reduce!` (two `exp2_field_split`s in the
-    // asm) in the region. x/sqrt(2) is formed here and nowhere else, and erfcx
-    // is well-conditioned in it.
-    let r = erfcx_pos(xa * std::f32::consts::FRAC_1_SQRT_2);
-    let xs = if xa > NORM_CDF_XS_CLAMP {
-        NORM_CDF_XS_CLAMP
-    } else {
-        xa
-    };
-    // p + pe == xs^2/2 exactly: the halving is exact, so this is just
-    // `two_prod`'s error term on a single multiply. The clamp above is
-    // what keeps `pe` from becoming `inf*inf - inf == NaN` at x = +-inf.
-    let h = 0.5 * xs;
-    let p = h * xs;
-    let pe = fma(h, xs, -p);
-    let e = exp_reduce!(-p);
-    // `-x` as a sign carrier only (Φ(x) uses erfc(-x/sqrt(2))), so the
-    // negation is a bit flip and stays exact at +-0.0: x = +0.0 takes the
-    // `1 - y/2` arm and x = -0.0 the `y/2` arm, and both are exactly 0.5.
-    let nx = -x;
-    let w = f32::from_bits((nx.to_bits() >> 1) & 0x4000_0000);
-    0.5 * fma(mulsign(e, nx), fma(-r, pe, r), w)
-}
-
 /// Inverse complementary error function for `x` in `(0, 2)`.
 #[inline(always)]
 pub fn erfc_inv(y: f32) -> f32 {
     let n = if y < 1.0 { y } else { 2.0 - y };
     mulsign(erfc_inv_half(n), 1.0 - y)
-}
-
-/// Probit (standard normal quantile function) for `p` in `(0, 1)`.
-#[inline(always)]
-pub fn probit(p: f32) -> f32 {
-    let m = if p < 0.5 { p } else { 1.0 - p };
-    mulsign(std::f32::consts::SQRT_2 * erfc_inv_half(m + m), p - 0.5)
-}
-
-/// Standard normal probability density function `phi(x) = exp(-x^2 / 2) / sqrt(2*pi)`.
-#[inline(always)]
-pub fn norm_pdf(x: f32) -> f32 {
-    // `1/sqrt(2*pi)` as a double-`f32` pair, same shape as
-    // `FRAC_1_PI`/`RPI_LO`. The single-word constant is correctly rounded and
-    // still sits 0.48 ulp above the true value, which the final multiply hands
-    // straight to the result as a 0.24-0.48 ulp bias -- there is nothing else
-    // in the chain to cancel it, unlike `sinc`, where the same constant appears
-    // on both sides of a ratio.
-    const INV_SQRT_2PI_HI: f32 = 0.3989423;
-    const INV_SQRT_2PI_LO: f32 = -1.133517e-8;
-    let xa = x.abs();
-    let xs = if xa > NORM_CDF_XS_CLAMP {
-        NORM_CDF_XS_CLAMP
-    } else {
-        xa
-    };
-    let h = 0.5 * xs;
-    let p = h * xs;
-    let pe = fma(h, xs, -p);
-    let e = exp_reduce!(-p);
-    let y = fma(-pe, e, e);
-    fma(y, INV_SQRT_2PI_HI, y * INV_SQRT_2PI_LO)
-}
-
-// dawson's central branch: `x*P(u)/Q(u)`, `u=x^2`, degree 6/5, Estrin-grouped
-// with each side's top group folded in at the `u^2` level so `u^4` is never
-// formed (exp_r_poly!'s own fold, applied to the numerator and the denominator
-// alike).
-#[inline(always)]
-fn dawson_central_ratio(u: f32) -> f32 {
-    // `ac`/`bc` are the fitted numerator and denominator with their pinned
-    // `1.0` constant terms *removed*, so `P = 1 + u*A` and `Q = 1 + u*B`. Same
-    // polynomial and same coefficient values as an unpeeled `pc`/`qc` pair;
-    // only where the `1.0` enters the evaluation changes.
-    let ac: [f32; 6] = [
-        -0.085751414,
-        0.037434783,
-        -0.0004054072,
-        0.00019858626,
-        5.6392253e-8,
-        2.8313497e-8,
-    ];
-    let bc: [f32; 6] = [
-        0.5809171,
-        0.15803601,
-        0.026255792,
-        0.002856104,
-        0.00021274923,
-        5.002549e-6,
-    ];
-    let u2 = u * u;
-    // Each side's top coefficient (degree 6 in `u` overall) rides into the
-    // existing `u^2` group rather than needing a `u^6` of its own -- the
-    // same trick `ln_normal`'s c[8] uses, one fma and no new multiply.
-    let al0 = fma(ac[1], u, ac[0]);
-    let al1 = fma(ac[3], u, ac[2]);
-    let al2 = fma(ac[5], u, ac[4]);
-    let ar0 = fma(al2, u2, al1);
-    let a = fma(ar0, u2, al0);
-    let num = fma(u, a, 1.0);
-    let bl0 = fma(bc[1], u, bc[0]);
-    let bl1 = fma(bc[3], u, bc[2]);
-    let bl2 = fma(bc[5], u, bc[4]);
-    let br0 = fma(bl2, u2, bl1);
-    let b = fma(br0, u2, bl0);
-    let den = fma(u, b, 1.0);
-    num / den
-}
-
-// dawson's tail branch: `w * R(z)` with the leading term peeled, i.e. `w +
-// w*z*T(z)`, where `w = 1/(2x)`, `z = w^2 = 1/(4x^2)` and `R(z) = 1 + z*T(z)`.
-#[inline(always)]
-fn dawson_tail(w: f32) -> f32 {
-    let c: [f32; 4] = [2.0000212, 11.969649, 131.78029, 116698.56];
-    let z = w * w;
-    let z2 = z * z;
-    let t0 = fma(c[1], z, c[0]);
-    let t1 = fma(c[3], z2, c[2]);
-    let t = fma(t1, z2, t0);
-    fma(w * z, t, w)
-}
-
-/// Dawson's integral `F(x) = exp(-x^2) * integral_0^x exp(t^2) dt`.
-#[doc(alias = "dawsn")]
-#[inline(always)]
-pub fn dawson(x: f32) -> f32 {
-    let u = x * x;
-    let central = x * dawson_central_ratio(u);
-    let w = 0.5 / x;
-    let tail = dawson_tail(w);
-    if x.abs() <= 4.0 {
-        central
-    } else {
-        tail
-    }
 }
 
 /// Logit function: `ln(p / (1 - p))` for `p` in `(0, 1)`.
@@ -4030,112 +3530,14 @@ pub fn xlog1py(x: f32, y: f32) -> f32 {
     }
 }
 
-/// Computes `(1 + x)^n`.
-#[inline(always)]
-pub fn compound(x: f32, n: f32) -> f32 {
-    // `log1p` minus its trailing signed-zero select: that select only changes
-    // `log1p(-0.0)` from `+0.0` to `-0.0`, and `exp_checked` maps both zeros to
-    // exactly `1.0`, so the sign never reaches the result.
-    exp_checked(n * log1p_nonzero!(x))
-}
-
-// log2(1+x) in f64, `compound_accurate`'s exponent, to the same ~31 bits
-// `log2_f64` has to reach and for the same reason: the result is about to be
-// multiplied by an unrestricted `n`.
-#[inline(always)]
-fn log2p1_f64(x: f32) -> f64 {
-    let xd = x as f64;
-    let d = 1.0 + xd;
-    // Same decomposition `log2_f64` does, one format wider: m in
-    // [2^-0.5, 2^0.5), k exact. No denormal rescale is needed at any
-    // width here -- `d` is either 0 (handled below) or at least 2^-24.
-    let bits = d.to_bits() as i64;
-    let ki = (bits - 0x3fe6a09e667f3bcd) >> 52;
-    let m = f64::from_bits((bits - (ki << 52)) as u64);
-    let k = ki as f64;
-    let s = if xd.abs() < 0.25 { xd } else { m - 1.0 };
-    let dd = m + 1.0;
-    let rc = LOG2_ATANH_RCP64;
-    let md2 = m * m;
-    let e0 = f64::mul_add(rc[1], m, rc[0]);
-    let e1 = f64::mul_add(rc[3], m, rc[2]);
-    let e2 = f64::mul_add(rc[5], m, rc[4]);
-    let r = f64::mul_add(e2, md2 * md2, f64::mul_add(e1, md2, e0));
-    let r = r * f64::mul_add(-dd, r, 2.0);
-    let t = s * r;
-    let u = t * t;
-    let a = LOG2_ATANH_A64;
-    let u2 = u * u;
-    let l0 = f64::mul_add(a[1], u, a[0]);
-    let l1 = f64::mul_add(a[3], u, a[2]);
-    let l2 = f64::mul_add(l1, u2, l0);
-    let q = f64::mul_add(LOG2E_2_F64 * t, f64::mul_add(l2, u, 1.0), k);
-    // Degenerate `d` routes around the bit-level decomposition, exactly as
-    // `powf_f64_mag!` does: `d == 0` is `x == -1`, exactly `0^n`; `d < 0` is `x
-    // < -1`, where the real power does not exist; `d` non-finite is `x`
-    // non-finite. `exp2_f64_to_f32`'s own clamp turns each into the right
-    // saturation.
-    let deg = if d == 0.0 { f64::NEG_INFINITY } else { d };
-    let deg = if d < 0.0 { f64::NAN } else { deg };
-    if d > 0.0 && d < f64::INFINITY {
-        q
-    } else {
-        deg
-    }
-}
-
-/// Accurate `(1 + x)^n` using f64 intermediate computation.
-#[inline(always)]
-pub fn compound_accurate(x: f32, n: f32) -> f32 {
-    exp2_f64_to_f32(log2p1_f64(x) * n as f64)
-}
-
-/// Scaled complementary error function `erfcx(x) = exp(x^2) * erfc(x)`.
-#[inline(always)]
-pub fn erfcx(x: f32) -> f32 {
-    let xa = x.abs();
-    let r = erfcx_pos(xa);
-    let xs = if xa > ERFCX_XS_CLAMP {
-        ERFCX_XS_CLAMP
-    } else {
-        xa
-    };
-    let p = xs * xs;
-    let pe = fma(xs, xs, -p);
-    let g = exp_reduce!(p);
-    if x >= 0.0 {
-        r
-    } else {
-        fma(g, fma(pe, 2.0, 2.0), -r)
-    }
-}
-
 /// Computes `1 / sqrt(x)`.
 #[inline(always)]
 pub fn rsqrt(x: f32) -> f32 {
     1.0 / x.sqrt()
 }
 
-/// Computes `sqrt(x^2 + y^2)`.
-#[doc(alias = "hypotf")]
 #[inline(always)]
-pub fn hypot(x: f32, y: f32) -> f32 {
-    let normal = fma(x, x, y * y).sqrt();
-    // hypot(+-inf, anything) and hypot(anything, +-inf) = +inf, even when the
-    // other argument is NaN -- IEEE754/C99 special-cases infinity to "win" over
-    // NaN here (unlike almost every other function). The naive formula can't
-    // reach this on its own: once either argument actually is NaN, `inf*inf +
-    // NaN*NaN` degrades to NaN instead.
-    if x.is_infinite() || y.is_infinite() {
-        f32::INFINITY
-    } else {
-        normal
-    }
-}
-
-/// `hypot` with anti-overflow/underflow scaling.
-#[inline(always)]
-pub fn hypot_checked(x: f32, y: f32) -> f32 {
+fn hypot_checked(x: f32, y: f32) -> f32 {
     let ax = x.abs();
     let ay = y.abs();
     let m = ax.max(ay);
@@ -4162,9 +3564,8 @@ pub fn hypot_checked(x: f32, y: f32) -> f32 {
     }
 }
 
-/// Computes `1 / hypot(x, y)`.
 #[inline(always)]
-pub fn rhypot(x: f32, y: f32) -> f32 {
+fn rhypot(x: f32, y: f32) -> f32 {
     let normal = 1.0 / fma(x, x, y * y).sqrt();
     if x.is_infinite() || y.is_infinite() {
         0.0
@@ -4639,106 +4040,6 @@ macro_rules! remainder_style_combine {
             r
         }
     }};
-}
-
-#[doc(alias = "remainderf")]
-#[inline(always)]
-pub fn remainder(x: f32, y: f32) -> f32 {
-    let q = (x / y).round();
-    remainder_style_combine!(x, y, q)
-}
-
-/// IEEE 754 floating-point remainder (ties to even).
-#[inline(always)]
-pub fn remainder_ieee(x: f32, y: f32) -> f32 {
-    let q = (x / y).round_ties_even();
-    remainder_style_combine!(x, y, q)
-}
-
-/// `remainder` without domain checks: valid for `x != 0` and finite `y`.
-#[inline(always)]
-pub fn remainder_unchecked(x: f32, y: f32) -> f32 {
-    let q = (x / y).round();
-    fma(-q, y, x)
-}
-
-/// Self-correcting `remainder` for `|x/y| <= 2^24`.
-#[inline(always)]
-pub fn remainder_checked(x: f32, y: f32) -> f32 {
-    let q0 = (x / y).round();
-    let r0 = fma(-q0, y, x);
-    // The correction always moves `r0` toward zero, so it is `r0 -
-    // copysign(|y|, r0)` -- no `+-1` multiplier to select and no fma. (The two
-    // forms differ only at `r0 == +-0.0`, where the guard below keeps `r0`
-    // anyway.) `ay` is shared with that guard.
-    let ay = y.abs();
-    let r1 = r0 - ay.copysign(r0);
-    let normal = if r0.abs() > ay * 0.5 { r1 } else { r0 };
-    // Same exact-cancellation sign bug as remainder_style_combine! (see its own
-    // comment): a nonzero x that's an exact multiple of y exactly cancels to
-    // +0.0 regardless of x's sign, silently dropping it.
-    let normal = if normal == 0.0 {
-        normal.copysign(x)
-    } else {
-        normal
-    };
-    let r = if x == 0.0 && !normal.is_nan() {
-        x
-    } else {
-        normal
-    };
-    if y.is_infinite() && x.is_finite() {
-        x
-    } else {
-        r
-    }
-}
-
-/// `remainder` using f64 for `|x/y| <= 2^53`.
-#[inline(always)]
-pub fn remainder_wide(x: f32, y: f32) -> f32 {
-    let xd = x as f64;
-    let yd = y as f64;
-    // Ties away from zero, matching `remainder`/`remainder_checked`'s
-    // documented divergence from IEEE754 (`remainder_ieee` is the ties-even
-    // variant). At an exact half-integer `x/y` this lands `r0` on exactly
-    // `+-|y|/2`, which the strict `>` below leaves alone.
-    let q = (xd / yd).round();
-    // Exact, and that is the whole point: `x` is a multiple of `ulp(x)` and
-    // `q*y` a multiple of `ulp(y)`, so `x - q*y` is a multiple of `min(ulp(x),
-    // ulp(y))` with magnitude `<= 1.5|y|` -- 24 significant bits, representable
-    // in an *f32*, never mind an f64. The fma forms `q*y` to full width
-    // internally, so no error-free transform is needed at this step at all.
-    let r0 = f64::mul_add(-q, yd, xd);
-    // The correction always moves `r0` toward zero, so it is `r0 -
-    // copysign(|y|, r0)` -- no `+-1` multiplier to select and no fma. (The two
-    // forms differ only at `r0 == +-0.0`, where the guard below keeps `r0`
-    // anyway.) `ay` is shared with that guard.
-    let ay = yd.abs();
-    let r1 = r0 - ay.copysign(r0);
-    let normal = if r0.abs() > ay * 0.5 { r1 } else { r0 };
-    // Exact by the same argument as `r0`, so the narrowing rounds
-    // nothing: a true IEEE remainder is always representable in its
-    // operands' own format.
-    let normal = normal as f32;
-    // Same exact-cancellation sign bug as remainder_style_combine! (see its own
-    // comment): a nonzero x that's an exact multiple of y exactly cancels to
-    // +0.0 regardless of x's sign, silently dropping it.
-    let normal = if normal == 0.0 {
-        normal.copysign(x)
-    } else {
-        normal
-    };
-    let r = if x == 0.0 && !normal.is_nan() {
-        x
-    } else {
-        normal
-    };
-    if y.is_infinite() && x.is_finite() {
-        x
-    } else {
-        r
-    }
 }
 
 /// Truncated floating-point remainder `x - trunc(x/y) * y`.

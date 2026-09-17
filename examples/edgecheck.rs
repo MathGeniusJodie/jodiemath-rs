@@ -491,30 +491,12 @@ fn real_main() {
     check("sin(-0)", sin(-0.0), -0.0);
     check("cos(-0)", cos(-0.0), 1.0);
     check("tan(-0)", tan(-0.0), -0.0);
-    // sin_checked/cos_checked: nan/+-inf must still come out nan, and every
+    // sin_wide/cos_wide: nan/+-inf must still come out nan, and every
     // other finite x (including ones far past the sub-ulp-accurate range)
-    // must come out finite *and* bounded to `[-1,1]` -- see sin_checked's
-    // doc comment for why (the residual clamp added 2026-07-06, plus the
-    // final `.clamp(-1.0,1.0)` added 2026-07-10 after finding
-    // round_x_over_pi's double-float q silently loses precision past
-    // `|x|~8.85e14`, which used to let these same inputs return values up
-    // to `2.6e21` -- `check_finite` alone never caught that, since `2.6e21`
-    // is finite; `check_bounded` closes that gap for good).
-    // `sin_wide`/`cos_wide` carry the same pins: their reduction is exact at
-    // every magnitude so they need no `.clamp(-1,1)` to satisfy the bound,
-    // which is exactly why the bound is worth asserting here rather than
-    // trusting the argument.
-    for f in [
-        sin_checked as fn(f32) -> f32,
-        cos_checked as fn(f32) -> f32,
-        sin_wide as fn(f32) -> f32,
-        cos_wide as fn(f32) -> f32,
-    ] {
-        let n = if std::ptr::fn_addr_eq(f, sin_checked as fn(f32) -> f32) {
-            "sin_checked"
-        } else if std::ptr::fn_addr_eq(f, cos_checked as fn(f32) -> f32) {
-            "cos_checked"
-        } else if std::ptr::fn_addr_eq(f, sin_wide as fn(f32) -> f32) {
+    // must come out finite *and* bounded to `[-1,1]`. Their reduction is
+    // exact at every magnitude so they satisfy the [-1, 1] bound everywhere.
+    for f in [sin_wide as fn(f32) -> f32, cos_wide as fn(f32) -> f32] {
+        let n = if std::ptr::fn_addr_eq(f, sin_wide as fn(f32) -> f32) {
             "sin_wide"
         } else {
             "cos_wide"
@@ -528,38 +510,28 @@ fn real_main() {
         check_bounded(&format!("{n}(1e16)"), f(1e16), 1.0);
         check_bounded(&format!("{n}(1e10)"), f(1e10), 1.0);
     }
-    // sin_checked(-0.0) used to lose its sign too, via a *different*
-    // mechanism than sinf_poly's own bug above: reduce_pi's multi-term
-    // two_sum/two_prod error-compensation chain loses x's sign somewhere
-    // internally (same IEEE754 rule, not traced to the exact spot), well
-    // before sinf_poly is even reached, so sinf_poly's own copysign fix
-    // can't see the original sign to restore it. Guarded at sin_checked's
-    // own output instead. cos_checked(-0.0) needs no such guard (nonzero
-    // result, and its own reduction shares no sign-losing dependency here).
-    check("sin_checked(-0)", sin_checked(-0.0), -0.0);
-    check("cos_checked(-0)", cos_checked(-0.0), 1.0);
     // reduce_pi_wide runs on |x| and xors the sign back in, precisely so
     // that `p0 - round(p0)` turning `-0.0` into `+0.0` cannot reach here.
     check("sin_wide(-0)", sin_wide(-0.0), -0.0);
     check("cos_wide(-0)", cos_wide(-0.0), 1.0);
 
     // reduce_pi_checked/reduce_pi_half_checked (backlog idea #88): the
-    // public pi-reduction primitive sin_checked/cos_checked build on.
+    // public pi-reduction primitive.
     // sign is a plain +-1.0 multiplier (see its own doc comment for why,
-    // not a bool) such that sign*sin(r) reconstructs sin_checked(x) (or
-    // cos_checked(x) for the half variant) -- checked here via std::f32
-    // sin as the reference poly, not this crate's own private sinf_poly.
+    // not a bool) such that sign*sin(r) reconstructs the sine/cosine --
+    // checked here via std::f32 sin as the reference poly, not this crate's
+    // own private sinf_poly.
     for &x in &[0.0f32, 1.0, 3.0, 100.0, -7.5, 1e6, -1e9] {
         let (r, sign) = reduce_pi_checked(x);
         check_bounded(
             &format!("reduce_pi_checked({x})"),
-            sign * r.sin() - sin_checked(x),
+            sign * r.sin() - sin_wide(x),
             1e-4,
         );
         let (rc, signc) = reduce_pi_half_checked(x);
         check_bounded(
             &format!("reduce_pi_half_checked({x})"),
-            signc * rc.sin() - cos_checked(x),
+            signc * rc.sin() - cos_wide(x),
             1e-4,
         );
     }
@@ -598,13 +570,13 @@ fn real_main() {
     for &x in &[1.0f32, 3.0, 4.0, -4.0, 100.0, -1e9, 1e6] {
         let w = wrap_pi(x);
         check_bounded(
-            &format!("sin(wrap_pi({x}))-sin_checked({x})"),
-            w.sin() - sin_checked(x),
+            &format!("sin(wrap_pi({x}))-sin_wide({x})"),
+            w.sin() - sin_wide(x),
             1e-4,
         );
         check_bounded(
-            &format!("cos(wrap_pi({x}))-cos_checked({x})"),
-            w.cos() - cos_checked(x),
+            &format!("cos(wrap_pi({x}))-cos_wide({x})"),
+            w.cos() - cos_wide(x),
             1e-4,
         );
     }
@@ -652,10 +624,8 @@ fn real_main() {
     // sin_prereduced/cos_prereduced (backlog idea #127): bit-identical
     // to each other (both are exactly sinf_poly) -- see their own doc
     // comments for why two names exist anyway. Checked by reconstructing
-    // sin_checked/cos_checked from reduce_pi_checked/
-    // reduce_pi_half_checked + these (within 1 ulp: sin_checked/
-    // cos_checked's own extra `.clamp(-1,1)` isn't part of this lower-
-    // level primitive's contract).
+    // sin_wide/cos_wide from reduce_pi_checked/
+    // reduce_pi_half_checked + these.
     check("sin_prereduced(0)", sin_prereduced(0.0), 0.0);
     check("cos_prereduced(0)", cos_prereduced(0.0), 0.0);
     check(
@@ -666,14 +636,14 @@ fn real_main() {
     for &x in &[0.3f32, -0.9, 1.5, -1.5, 100.0, -1e6] {
         let (r, sign) = reduce_pi_checked(x);
         check_bounded(
-            &format!("sin_prereduced reconstructs sin_checked({x})"),
-            sign * sin_prereduced(r) - sin_checked(x),
+            &format!("sin_prereduced reconstructs sin_wide({x})"),
+            sign * sin_prereduced(r) - sin_wide(x),
             1e-6,
         );
         let (rc, signc) = reduce_pi_half_checked(x);
         check_bounded(
-            &format!("cos_prereduced reconstructs cos_checked({x})"),
-            signc * cos_prereduced(rc) - cos_checked(x),
+            &format!("cos_prereduced reconstructs cos_wide({x})"),
+            signc * cos_prereduced(rc) - cos_wide(x),
             1e-6,
         );
     }
@@ -779,26 +749,6 @@ fn real_main() {
     // Doubling overflows past f32::MAX/2, a documented gap (see doc
     // comment) -- NaN there, not a meaningful finite answer.
     check("sin2pi(f32::MAX)", sin2pi(f32::MAX), f32::NAN);
-
-    // sinc(x) = sin(pi*x)/(pi*x), removable singularity at x=0.
-    check("sinc(0)", sinc(0.0), 1.0);
-    check("sinc(-0)", sinc(-0.0), 1.0);
-    check("sinc(1)", sinc(1.0), -0.0);
-    check("sinc(-1)", sinc(-1.0), 0.0);
-    check("sinc(2)", sinc(2.0), 0.0);
-    check("sinc(0.5)", sinc(0.5), std::f32::consts::FRAC_2_PI);
-    check("sinc(-0.5)", sinc(-0.5), std::f32::consts::FRAC_2_PI);
-    check("sinc(nan)", sinc(f32::NAN), f32::NAN);
-    check("sinc(inf)", sinc(f32::INFINITY), f32::NAN);
-    check("sinc(-inf)", sinc(f32::NEG_INFINITY), f32::NAN);
-    // |sinc(x)| = |sin(pi*x)/(pi*x)| <= 1 for all real x (a provable
-    // mathematical fact, |sin(u)| <= |u| everywhere) -- checked directly
-    // (2026-07-10), no violation found anywhere, but check_bounded locks
-    // this in as a permanent guard the same way sin_checked/cos_checked's
-    // own `[-1,1]` bound is now guarded, rather than leaving it as only an
-    // implicit consequence of sinpi's own correctness.
-    check_bounded("sinc(f32::MAX)", sinc(f32::MAX), 1.0);
-
     // sinc_unnormalized(x) = sin(x)/x, radians (backlog idea #131).
     check("sinc_unnormalized(0)", sinc_unnormalized(0.0), 1.0);
     check("sinc_unnormalized(-0)", sinc_unnormalized(-0.0), 1.0);
@@ -833,41 +783,15 @@ fn real_main() {
         1.0,
     );
 
-    // sind/cosd: argument in degrees. Exact reduction only up to ~4.7e7
-    // (180.0's own trailing-zero-bit limit, see sind's doc comment) --
-    // unlike sinpi/cospi, not the entire f32 range -- but still
-    // guaranteed finite (never inf/nan) for any finite input, via the
-    // same POLY_SAFE_BOUND clamp sin_checked/cos_checked use.
-    check("sind(0)", sind(0.0), 0.0);
-    check("sind(-0)", sind(-0.0), -0.0);
-    check("cosd(0)", cosd(0.0), 1.0);
-    check("sind(90)", sind(90.0), 1.0);
-    check("sind(180)", sind(180.0), -0.0);
-    check("cosd(180)", cosd(180.0), -1.0);
-    check("sind(-90)", sind(-90.0), -1.0);
-    check("sind(nan)", sind(f32::NAN), f32::NAN);
-    check("cosd(nan)", cosd(f32::NAN), f32::NAN);
-    check("sind(inf)", sind(f32::INFINITY), f32::NAN);
-    check("sind(-inf)", sind(f32::NEG_INFINITY), f32::NAN);
-    check("cosd(inf)", cosd(f32::INFINITY), f32::NAN);
-    check_finite("sind(f32::MAX)", sind(f32::MAX));
-    check_finite("cosd(f32::MAX)", cosd(f32::MAX));
-    check_finite("sind(1e10)", sind(1e10));
-    check_finite("cosd(1e10)", cosd(1e10));
-
-    // sind_unchecked/cosd_unchecked (backlog idea #98): same POLY_SAFE_BOUND
-    // clamp removed, valid only up to sind/cosd's own ~4.7e7 exactness
-    // limit -- no check_finite pins at f32::MAX/1e10 here, unlike sind/cosd
-    // above, since that guarantee is exactly what's given up past the
-    // documented domain (verified bit-identical to sind/cosd for all
-    // |x|<4.7e7 via a real exhaustive sweep before adopting).
+    // sind_unchecked/cosd_unchecked (backlog idea #98): valid only up to ~4.7e7 exactness
+    // limit (180.0's own trailing-zero-bit limit).
     check("sind_unchecked(0)", sind_unchecked(0.0), 0.0);
     check("sind_unchecked(-0)", sind_unchecked(-0.0), -0.0);
     check("cosd_unchecked(0)", cosd_unchecked(0.0), 1.0);
-    check("sind_unchecked(90)", sind_unchecked(90.0), sind(90.0));
-    check("sind_unchecked(180)", sind_unchecked(180.0), sind(180.0));
-    check("cosd_unchecked(180)", cosd_unchecked(180.0), cosd(180.0));
-    check("sind_unchecked(-90)", sind_unchecked(-90.0), sind(-90.0));
+    check("sind_unchecked(90)", sind_unchecked(90.0), 1.0);
+    check("sind_unchecked(180)", sind_unchecked(180.0), -0.0);
+    check("cosd_unchecked(180)", cosd_unchecked(180.0), -1.0);
+    check("sind_unchecked(-90)", sind_unchecked(-90.0), -1.0);
     check("sind_unchecked(nan)", sind_unchecked(f32::NAN), f32::NAN);
     check("cosd_unchecked(nan)", cosd_unchecked(f32::NAN), f32::NAN);
     check(
@@ -886,28 +810,12 @@ fn real_main() {
         f32::NAN,
     );
 
-    // tand(x) = sind(x)/cosd(x): new function (backlog idea #29), same
-    // "poles are real, IEEE754 division handles them for free" reasoning
-    // as tanpi above. (idea #128's direct-poly form was tried and
-    // reverted for tand specifically -- see tand's own doc comment.)
-    check("tand(0)", tand(0.0), 0.0);
-    check("tand(-0)", tand(-0.0), -0.0);
-    check("tand(45)", tand(45.0), 1.0);
-    check("tand(180)", tand(180.0), 0.0);
-    check("tand(90)", tand(90.0), f32::NEG_INFINITY);
-    check("tand(-90)", tand(-90.0), f32::NEG_INFINITY);
-    check("tand(270)", tand(270.0), f32::NEG_INFINITY);
-    check("tand(nan)", tand(f32::NAN), f32::NAN);
-    check("tand(inf)", tand(f32::INFINITY), f32::NAN);
-    check("tand(-inf)", tand(f32::NEG_INFINITY), f32::NAN);
-    check_finite("tand(1e10)", tand(1e10));
-
     // tand_unchecked: same clamp-removal contract as sind_unchecked/
     // cosd_unchecked above.
     check("tand_unchecked(0)", tand_unchecked(0.0), 0.0);
     check("tand_unchecked(-0)", tand_unchecked(-0.0), -0.0);
     check("tand_unchecked(45)", tand_unchecked(45.0), 1.0);
-    check("tand_unchecked(180)", tand_unchecked(180.0), tand(180.0));
+    check("tand_unchecked(180)", tand_unchecked(180.0), 0.0);
     check(
         "tand_unchecked(90)",
         tand_unchecked(90.0),
@@ -1139,19 +1047,6 @@ fn real_main() {
         expm1(88.37627),
     );
 
-    // exp_m1_over_x(x) = (e^x-1)/x, with the removable singularity at 0
-    // resolving to exactly 1.0 for free from the Pade branch's own
-    // algebra (N(0)/D(0)=-120/-120=1.0 exactly) -- no explicit x==0.0
-    // select needed, unlike sinc's own removable-singularity handling.
-    check("exp_m1_over_x(0)", exp_m1_over_x(0.0), 1.0);
-    check("exp_m1_over_x(-0)", exp_m1_over_x(-0.0), 1.0);
-    check_known_1ulp(
-        "exp_m1_over_x(1)",
-        exp_m1_over_x(1.0),
-        (1.0f64.exp_m1()) as f32,
-    );
-    check_finite("exp_m1_over_x(80)", exp_m1_over_x(80.0));
-
     // exp_m1_over_x_narrow (backlog idea #201): same single-field
     // mechanism/domain as exp_narrow/expm1_narrow.
     check("exp_m1_over_x_narrow(0)", exp_m1_over_x_narrow(0.0), 1.0);
@@ -1163,17 +1058,12 @@ fn real_main() {
         "exp_m1_over_x_narrow(-87.68311)",
         exp_m1_over_x_narrow(-87.68311),
     );
-    check(
-        "exp_m1_over_x_narrow(1)==exp_m1_over_x(1)",
+    check_known_1ulp(
+        "exp_m1_over_x_narrow(1)",
         exp_m1_over_x_narrow(1.0),
-        exp_m1_over_x(1.0),
+        (1.0f64.exp_m1()) as f32,
     );
-    check(
-        "exp_m1_over_x_narrow(60)==exp_m1_over_x(60)",
-        exp_m1_over_x_narrow(60.0),
-        exp_m1_over_x(60.0),
-    );
-    check("exp_m1_over_x(-80)", exp_m1_over_x(-80.0), 0.0125);
+    check_finite("exp_m1_over_x_narrow(60)", exp_m1_over_x_narrow(60.0));
 
     // exp2m1(x) = 2^x - 1. Total (inherits exp2_checked's own full
     // [-151,128) clamp, see exp2m1's doc comment) so -inf/inf both give an
@@ -1415,85 +1305,6 @@ fn real_main() {
     );
     check("sigmoid_grad(nan)", sigmoid_grad(f32::NAN), f32::NAN);
 
-    // softplus(x) = ln(1+e^x). ln(2) at 0 (ln(1+e^0)=ln(2)); saturates to
-    // x itself for large positive x, to exactly 0 for large negative x
-    // (both via the correction-term cutoff, see softplus's own doc
-    // comment for why a hard cutoff instead of a clamped exp argument).
-    check("softplus(0)", softplus(0.0), std::f32::consts::LN_2);
-    check("softplus(-0)", softplus(-0.0), std::f32::consts::LN_2);
-    check("softplus(1000)", softplus(1000.0), 1000.0);
-    check("softplus(f32::MAX)", softplus(f32::MAX), f32::MAX);
-    check("softplus(inf)", softplus(f32::INFINITY), f32::INFINITY);
-    check("softplus(-inf)", softplus(f32::NEG_INFINITY), 0.0);
-    check("softplus(-1000)", softplus(-1000.0), 0.0);
-    check("softplus(-f32::MAX)", softplus(-f32::MAX), 0.0);
-    check("softplus(nan)", softplus(f32::NAN), f32::NAN);
-
-    // softplus_checked: every softplus pin above still holds (it has no
-    // correction-term cutoff, but out at these magnitudes the correction
-    // is zero either way), plus the band softplus flushes -- pinned at
-    // both ends and one point inside, since "returns exactly 0.0 where a
-    // normal f32 is owed" is precisely the defect this tier fixes and is
-    // invisible to any pin that only looks at +-inf.
-    check(
-        "softplus_checked(0)",
-        softplus_checked(0.0),
-        std::f32::consts::LN_2,
-    );
-    check(
-        "softplus_checked(-0)",
-        softplus_checked(-0.0),
-        std::f32::consts::LN_2,
-    );
-    check("softplus_checked(1000)", softplus_checked(1000.0), 1000.0);
-    check(
-        "softplus_checked(f32::MAX)",
-        softplus_checked(f32::MAX),
-        f32::MAX,
-    );
-    check(
-        "softplus_checked(inf)",
-        softplus_checked(f32::INFINITY),
-        f32::INFINITY,
-    );
-    check(
-        "softplus_checked(-inf)",
-        softplus_checked(f32::NEG_INFINITY),
-        0.0,
-    );
-    check("softplus_checked(-1000)", softplus_checked(-1000.0), 0.0);
-    check(
-        "softplus_checked(-f32::MAX)",
-        softplus_checked(-f32::MAX),
-        0.0,
-    );
-    check(
-        "softplus_checked(nan)",
-        softplus_checked(f32::NAN),
-        f32::NAN,
-    );
-    check(
-        "softplus_checked(-87.3) normal",
-        softplus_checked(-87.3),
-        1.2192433e-38,
-    );
-    check(
-        "softplus_checked(-95) denormal",
-        softplus_checked(-95.0),
-        5.521e-42,
-    );
-    check("softplus_checked(-104) is 0", softplus_checked(-104.0), 0.0);
-    check(
-        "softplus_checked(-80)==softplus(-80)",
-        softplus_checked(-80.0),
-        softplus(-80.0),
-    );
-    check(
-        "softplus_checked(3)==softplus(3)",
-        softplus_checked(3.0),
-        softplus(3.0),
-    );
-
     // logsigmoid = -softplus(-x) (backlog idea #118): each pin here is
     // softplus's own pin above, mirrored through that identity.
     check("logsigmoid(0)", logsigmoid(0.0), -std::f32::consts::LN_2);
@@ -1546,193 +1357,6 @@ fn real_main() {
         "logsigmoid_checked(-3)==logsigmoid(-3)",
         logsigmoid_checked(-3.0),
         logsigmoid(-3.0),
-    );
-
-    // logaddexp(a,b) = ln(e^a+e^b); softplus(x) == logaddexp(x,0.0).
-    check(
-        "logaddexp(0,0)",
-        logaddexp(0.0, 0.0),
-        std::f32::consts::LN_2,
-    );
-    check(
-        "logaddexp(x,0)==softplus(x)",
-        logaddexp(3.0, 0.0),
-        softplus(3.0),
-    );
-    check("logaddexp(100,1)", logaddexp(100.0, 1.0), 100.0);
-    check(
-        "logaddexp(inf,5)",
-        logaddexp(f32::INFINITY, 5.0),
-        f32::INFINITY,
-    );
-    check(
-        "logaddexp(inf,-inf)",
-        logaddexp(f32::INFINITY, f32::NEG_INFINITY),
-        f32::INFINITY,
-    );
-    check(
-        "logaddexp(-inf,-inf)",
-        logaddexp(f32::NEG_INFINITY, f32::NEG_INFINITY),
-        f32::NEG_INFINITY,
-    );
-    check(
-        "logaddexp(inf,inf)",
-        logaddexp(f32::INFINITY, f32::INFINITY),
-        f32::INFINITY,
-    );
-    check("logaddexp(nan,1)", logaddexp(f32::NAN, 1.0), f32::NAN);
-    check("logaddexp(1,nan)", logaddexp(1.0, f32::NAN), f32::NAN);
-
-    // logaddexp_checked: every logaddexp pin above still holds (none of
-    // them is in the band the two tiers differ over), plus that band
-    // itself -- |a-b| past logaddexp's 87 cutoff with max(a,b) at zero,
-    // where the correction term *is* the whole answer. Values are
-    // softplus_checked's own, through logaddexp(x,0) == softplus(x).
-    check(
-        "logaddexp_checked(0,0)",
-        logaddexp_checked(0.0, 0.0),
-        std::f32::consts::LN_2,
-    );
-    check(
-        "logaddexp_checked(100,1)",
-        logaddexp_checked(100.0, 1.0),
-        100.0,
-    );
-    check(
-        "logaddexp_checked(inf,5)",
-        logaddexp_checked(f32::INFINITY, 5.0),
-        f32::INFINITY,
-    );
-    check(
-        "logaddexp_checked(inf,-inf)",
-        logaddexp_checked(f32::INFINITY, f32::NEG_INFINITY),
-        f32::INFINITY,
-    );
-    check(
-        "logaddexp_checked(-inf,-inf)",
-        logaddexp_checked(f32::NEG_INFINITY, f32::NEG_INFINITY),
-        f32::NEG_INFINITY,
-    );
-    check(
-        "logaddexp_checked(inf,inf)",
-        logaddexp_checked(f32::INFINITY, f32::INFINITY),
-        f32::INFINITY,
-    );
-    check(
-        "logaddexp_checked(nan,1)",
-        logaddexp_checked(f32::NAN, 1.0),
-        f32::NAN,
-    );
-    check(
-        "logaddexp_checked(1,nan)",
-        logaddexp_checked(1.0, f32::NAN),
-        f32::NAN,
-    );
-    check(
-        "logaddexp_checked(x,0)==softplus_checked(x)",
-        logaddexp_checked(3.0, 0.0),
-        softplus_checked(3.0),
-    );
-    check(
-        "logaddexp_checked(-87.3,0) normal",
-        logaddexp_checked(-87.3, 0.0),
-        1.2192433e-38,
-    );
-    check(
-        "logaddexp_checked(-95,0) denormal",
-        logaddexp_checked(-95.0, 0.0),
-        5.521e-42,
-    );
-    check(
-        "logaddexp_checked(-104,0) is 0",
-        logaddexp_checked(-104.0, 0.0),
-        0.0,
-    );
-    check(
-        "logaddexp_checked(0,-88) denormal",
-        logaddexp_checked(0.0, -88.0),
-        6.054601e-39,
-    );
-    check(
-        "logaddexp_checked(-80,0)==logaddexp(-80,0)",
-        logaddexp_checked(-80.0, 0.0),
-        logaddexp(-80.0, 0.0),
-    );
-
-    // logaddexp_accurate: the same special values, plus the thing it
-    // exists for. The three cancellation pins below are the *correctly
-    // rounded* f32 of `ln(e^a+e^b)` from an 80-digit `decimal` oracle, not
-    // from an f64 composition -- an f64 reference is only ~2e-16 absolute
-    // itself, which is the same order as this tier, so it cannot pin it.
-    // Each sits where `max(a,b)` is in `[-ln2,0)` and the correction very
-    // nearly annihilates it; `logaddexp`/`logaddexp_checked` return `0.0`
-    // or the wrong power of two there (~1.5e7 ulp), which is the accepted
-    // cost their own doc comments describe. The blind 2-arg fuzz cannot
-    // gate this: it lands near the zero curve `e^a+e^b = 1` only by luck.
-    check(
-        "logaddexp_accurate(0,0)",
-        logaddexp_accurate(0.0, 0.0),
-        std::f32::consts::LN_2,
-    );
-    check(
-        "logaddexp_accurate(100,1)",
-        logaddexp_accurate(100.0, 1.0),
-        100.0,
-    );
-    check(
-        "logaddexp_accurate(inf,5)",
-        logaddexp_accurate(f32::INFINITY, 5.0),
-        f32::INFINITY,
-    );
-    check(
-        "logaddexp_accurate(inf,-inf)",
-        logaddexp_accurate(f32::INFINITY, f32::NEG_INFINITY),
-        f32::INFINITY,
-    );
-    check(
-        "logaddexp_accurate(-inf,-inf)",
-        logaddexp_accurate(f32::NEG_INFINITY, f32::NEG_INFINITY),
-        f32::NEG_INFINITY,
-    );
-    check(
-        "logaddexp_accurate(inf,inf)",
-        logaddexp_accurate(f32::INFINITY, f32::INFINITY),
-        f32::INFINITY,
-    );
-    check(
-        "logaddexp_accurate(nan,1)",
-        logaddexp_accurate(f32::NAN, 1.0),
-        f32::NAN,
-    );
-    check(
-        "logaddexp_accurate(1,nan)",
-        logaddexp_accurate(1.0, f32::NAN),
-        f32::NAN,
-    );
-    check(
-        "logaddexp_accurate(0,-88) denormal",
-        logaddexp_accurate(0.0, -88.0),
-        6.054601e-39,
-    );
-    check(
-        "logaddexp_accurate(-104,0) is 0",
-        logaddexp_accurate(-104.0, 0.0),
-        0.0,
-    );
-    check(
-        "logaddexp_accurate cancel #1",
-        logaddexp_accurate(-0.5124492, -0.91386056),
-        -1.0724729e-07,
-    );
-    check(
-        "logaddexp_accurate cancel #2",
-        logaddexp_accurate(-0.6391307, -0.7502491),
-        -1.0081724e-07,
-    );
-    check(
-        "logaddexp_accurate cancel #3",
-        logaddexp_accurate(-0.60459054, -0.7903146),
-        1.0216357e-07,
     );
 
     // gelu(x) = x*Phi(x) = x*0.5*erfc(-x/sqrt2) (backlog idea #70).
@@ -2089,17 +1713,6 @@ fn real_main() {
     check("atand(-1)", atand(-1.0), -45.0);
     check("atand(0)", atand(0.0), 0.0);
     check("atand(nan)", atand(f32::NAN), f32::NAN);
-
-    // atanpi (backlog idea #85): folded dedicated coefficients (a real
-    // win here, same verdict as asinpi/acospi -- see its own doc comment).
-    check("atanpi(0)", atanpi(0.0), 0.0);
-    check("atanpi(-0)", atanpi(-0.0), -0.0);
-    check("atanpi(1)", atanpi(1.0), 0.25);
-    check("atanpi(-1)", atanpi(-1.0), -0.25);
-    check("atanpi(inf)", atanpi(f32::INFINITY), 0.5);
-    check("atanpi(-inf)", atanpi(f32::NEG_INFINITY), -0.5);
-    check("atanpi(nan)", atanpi(f32::NAN), f32::NAN);
-
     check("atan2(1,0)", atan2(1.0, 0.0), std::f32::consts::FRAC_PI_2);
     check(
         "atan2(-1,0)",
@@ -2203,75 +1816,6 @@ fn real_main() {
         std::f32::consts::PI,
     );
 
-    // atan2d (backlog idea #123): composite plus a scaled-quotient
-    // branch for a denormal atan2 (180/pi > 1, so the plain multiply
-    // carries a denormal's missing bits into a finer binade).
-    check("atan2d(1,0)", atan2d(1.0, 0.0), 90.0);
-    check("atan2d(0,1)", atan2d(0.0, 1.0), 0.0);
-    check("atan2d(-1,0)", atan2d(-1.0, 0.0), -90.0);
-    check("atan2d(nan,1)", atan2d(f32::NAN, 1.0), f32::NAN);
-    // the `x == 0.0` exclusion, which keeps that branch's quotient form
-    // out of the 0/0 corners atan2 already answers correctly.
-    check("atan2d(0,0)", atan2d(0.0, 0.0), 0.0);
-    check("atan2d(-0,0)", atan2d(-0.0, 0.0), -0.0);
-    check("atan2d(0,-0)", atan2d(0.0, -0.0), 180.0);
-    check("atan2d(-0,1)", atan2d(-0.0, 1.0), -0.0);
-    check("atan2d(0,-1)", atan2d(0.0, -1.0), 180.0);
-    check("atan2d(1,inf)", atan2d(1.0, f32::INFINITY), 0.0);
-    // and the branch itself: both of these are 0 without it. The first
-    // expects a hair less than the second because its own `y` is already
-    // denormal (1e-40 as an f32 is 9.99994610e-41), so some of the bits
-    // were gone before atan2d ever saw them -- that part is not
-    // recoverable and is not what the branch is for.
-    check("atan2d(1e-40,1)", atan2d(1.0e-40, 1.0), 5.7295465e-39);
-    check("atan2d(1e-30,1e10)", atan2d(1.0e-30, 1.0e10), 5.7295776e-39);
-
-    // atan2pi (backlog idea #85): not a composite over atan2 -- it repeats
-    // atan2's skeleton with the quadrant constants in half-turns, where
-    // they are exact. That means it owns its own copy of both of atan2's
-    // documented edge-case fixes, so both are pinned here as well as on
-    // atan2: an edit to atan2pi alone would not be caught by atan2's pins.
-    check("atan2pi(1,0)", atan2pi(1.0, 0.0), 0.5);
-    check("atan2pi(0,1)", atan2pi(0.0, 1.0), 0.0);
-    check("atan2pi(-1,0)", atan2pi(-1.0, 0.0), -0.5);
-    check("atan2pi(nan,1)", atan2pi(f32::NAN, 1.0), f32::NAN);
-    // the -0.0 opposite-signed-zero fix: `+0.0 + -0.0` is `+0.0` in
-    // IEEE754 regardless of operand order, so the correction's sign has to
-    // skip the addition entirely rather than be added to a degenerate zero.
-    check("atan2pi(-0,0)", atan2pi(-0.0, 0.0), -0.0);
-    check("atan2pi(0,0)", atan2pi(0.0, 0.0), 0.0);
-    check("atan2pi(-0,-0)", atan2pi(-0.0, -0.0), -1.0);
-    check("atan2pi(0,-0)", atan2pi(0.0, -0.0), 1.0);
-    check("atan2pi(-0,1)", atan2pi(-0.0, 1.0), -0.0);
-    check("atan2pi(-0,-1)", atan2pi(-0.0, -1.0), -1.0);
-    // the NaN-through-mulsign fix: the x==0 path never divides, and
-    // mulsign reads only y's sign bit, so a NaN y needs the explicit
-    // trailing override or it degrades to a finite +-0.5.
-    check("atan2pi(nan,0)", atan2pi(f32::NAN, 0.0), f32::NAN);
-    check("atan2pi(nan,-0)", atan2pi(f32::NAN, -0.0), f32::NAN);
-    check("atan2pi(nan,nan)", atan2pi(f32::NAN, f32::NAN), f32::NAN);
-    check("atan2pi(1,nan)", atan2pi(1.0, f32::NAN), f32::NAN);
-    // the both-infinite quadrant convention, exact in half-turns.
-    check(
-        "atan2pi(inf,inf)",
-        atan2pi(f32::INFINITY, f32::INFINITY),
-        0.25,
-    );
-    check(
-        "atan2pi(-inf,inf)",
-        atan2pi(f32::NEG_INFINITY, f32::INFINITY),
-        -0.25,
-    );
-    check(
-        "atan2pi(inf,-inf)",
-        atan2pi(f32::INFINITY, f32::NEG_INFINITY),
-        0.75,
-    );
-    check(
-        "atan2pi(-inf,-inf)",
-        atan2pi(f32::NEG_INFINITY, f32::NEG_INFINITY),
-        -0.75,
-    );
     // atan2(NaN, 0.0)/atan2(NaN, -0.0) used to come out +-FRAC_PI_2 instead
     // of NaN (backlog idea #85, found building a systematic C99
     // special-case matrix against std): the x==0 branch bypasses
@@ -2392,18 +1936,14 @@ fn real_main() {
     );
     check("tan(0)", tan(0.0), 0.0);
 
-    // tan_checked (idea #48): plain sin_checked(x)/cos_checked(x)
+    // tan_wide: plain sin_wide(x)/cos_wide(x)
     // composition, mirroring tanpi/tand's own pattern.
-    check("tan_checked(0)", tan_checked(0.0), 0.0);
-    check("tan_checked(-0)", tan_checked(-0.0), -0.0);
-    check("tan_checked(nan)", tan_checked(f32::NAN), f32::NAN);
-    check("tan_checked(inf)", tan_checked(f32::INFINITY), f32::NAN);
-    check(
-        "tan_checked(-inf)",
-        tan_checked(f32::NEG_INFINITY),
-        f32::NAN,
-    );
-    check_finite("tan_checked(1e15)", tan_checked(1.0e15));
+    check("tan_wide(0)", tan_wide(0.0), 0.0);
+    check("tan_wide(-0)", tan_wide(-0.0), -0.0);
+    check("tan_wide(nan)", tan_wide(f32::NAN), f32::NAN);
+    check("tan_wide(inf)", tan_wide(f32::INFINITY), f32::NAN);
+    check("tan_wide(-inf)", tan_wide(f32::NEG_INFINITY), f32::NAN);
+    check_finite("tan_wide(1e15)", tan_wide(1.0e15));
 
     check("erf(0)", erf(0.0), 0.0);
     // erf_poly used to be evaluated unbounded: its own unboundedness (not
@@ -2437,18 +1977,6 @@ fn real_main() {
     check_range("erfc(10)", erfc(10.0), 0.0, 2.0);
     check_range("erfc(-9.5)", erfc(-9.5), 0.0, 2.0);
     check_range("erfc(-10)", erfc(-10.0), 0.0, 2.0);
-
-    // norm_cdf/norm_pdf (backlog idea #67): thin composites over erfc/
-    // exp_checked.
-    check("norm_cdf(0)", norm_cdf(0.0), 0.5);
-    check("norm_cdf(-0)", norm_cdf(-0.0), 0.5);
-    check("norm_cdf(inf)", norm_cdf(f32::INFINITY), 1.0);
-    check("norm_cdf(-inf)", norm_cdf(f32::NEG_INFINITY), 0.0);
-    check("norm_cdf(nan)", norm_cdf(f32::NAN), f32::NAN);
-    check("norm_pdf(0)", norm_pdf(0.0), 0.3989422804014327);
-    check("norm_pdf(inf)", norm_pdf(f32::INFINITY), 0.0);
-    check("norm_pdf(-inf)", norm_pdf(f32::NEG_INFINITY), 0.0);
-    check("norm_pdf(nan)", norm_pdf(f32::NAN), f32::NAN);
 
     // logit(p) = ln(p/(1-p)), sigmoid's inverse (backlog idea #71).
     check("logit(0.5)", logit(0.5), 0.0);
@@ -2517,104 +2045,6 @@ fn real_main() {
     check("xlog1py(1,-1)", xlog1py(1.0, -1.0), f32::NEG_INFINITY);
     check("xlog1py(nan,1)", xlog1py(f32::NAN, 1.0), f32::NAN);
 
-    // compound(x,n) = (1+x)^n (backlog idea #72).
-    check("compound(0,5)", compound(0.0, 5.0), 1.0);
-    check("compound(-1,5)", compound(-1.0, 5.0), 0.0);
-    check("compound(-2,5)", compound(-2.0, 5.0), f32::NAN);
-    check("compound(x,0)", compound(0.05, 0.0), 1.0);
-    check("compound(nan,1)", compound(f32::NAN, 1.0), f32::NAN);
-    check("compound(0,nan)", compound(0.0, f32::NAN), f32::NAN);
-    check(
-        "compound(inf,1)",
-        compound(f32::INFINITY, 1.0),
-        f32::INFINITY,
-    );
-    // (1+1/n)^n -> e as n grows; the whole point of routing through
-    // log1p is keeping this precise even for tiny x (1 ulp off the
-    // exact constant here, not a real discrepancy).
-    check_known_1ulp(
-        "compound(1e-8,1e8)",
-        compound(1.0e-8, 1.0e8),
-        std::f32::consts::E,
-    );
-    // compound_accurate: same contract at every edge, double-float exponent.
-    check("compound_accurate(0,5)", compound_accurate(0.0, 5.0), 1.0);
-    check("compound_accurate(-1,5)", compound_accurate(-1.0, 5.0), 0.0);
-    check(
-        "compound_accurate(-1,-5)",
-        compound_accurate(-1.0, -5.0),
-        f32::INFINITY,
-    );
-    check(
-        "compound_accurate(-2,5)",
-        compound_accurate(-2.0, 5.0),
-        f32::NAN,
-    );
-    check("compound_accurate(x,0)", compound_accurate(0.05, 0.0), 1.0);
-    check(
-        "compound_accurate(nan,1)",
-        compound_accurate(f32::NAN, 1.0),
-        f32::NAN,
-    );
-    check(
-        "compound_accurate(0,nan)",
-        compound_accurate(0.0, f32::NAN),
-        f32::NAN,
-    );
-    check(
-        "compound_accurate(inf,1)",
-        compound_accurate(f32::INFINITY, 1.0),
-        f32::INFINITY,
-    );
-    check("compound_accurate(1,5)", compound_accurate(1.0, 5.0), 32.0);
-    // the (1+1/n)^n -> e limit the whole family exists for: exact here,
-    // where the single-f32 exponent tier is a ulp off.
-    check(
-        "compound_accurate(1e-8,1e8)",
-        compound_accurate(1.0e-8, 1.0e8),
-        std::f32::consts::E,
-    );
-
-    // erfcx(x) = e^(x^2)*erfc(x), backlog idea #51. For x>=0 the
-    // exponentials cancel exactly (see its doc comment), so erfcx(0)
-    // reduces to the same trivial case erfc(0) does.
-    check("erfcx(0)", erfcx(0.0), 1.0);
-    check("erfcx(-0)", erfcx(-0.0), 1.0);
-    check("erfcx(nan)", erfcx(f32::NAN), f32::NAN);
-    // The positive side is `v*P(v)` with `v = 1/(2+x)` and no exponential
-    // at all (see doc comment), so it is finite for every finite input by
-    // construction, and decays like the true 1/(x*sqrt(pi)) asymptote all
-    // the way out -- pinned mainly to guard the negative side, which does
-    // route through exp_checked and genuinely diverges to +inf past the
-    // point where 2*exp(x^2) itself overflows.
-    check_finite("erfcx(-1)", erfcx(-1.0));
-    check_finite("erfcx(-9)", erfcx(-9.0));
-    check("erfcx(inf)", erfcx(f32::INFINITY), 0.0);
-    // Past the point where 2*e^(x^2) itself overflows f32 (x^2 > ~88.03,
-    // i.e. |x| > ~9.382 -- scipy bisection on the true value, not the
-    // ~13.3 this comment used to claim), erfcx correctly saturates to
-    // +inf rather than wrapping to garbage -- exp_checked's own
-    // established saturation guarantee, inherited here for free. Pinned
-    // on both sides of the boundary, not just far past it.
-    check_finite("erfcx(-9.38)", erfcx(-9.38));
-    check("erfcx(-9.39)", erfcx(-9.39), f32::INFINITY);
-    check("erfcx(-1000)", erfcx(-1000.0), f32::INFINITY);
-    // Large positive x, where the reciprocal-variable fit replaced an
-    // implementation that froze at a constant past |x|=10 (relative error
-    // growing without bound: ~99% at x=20, ~895% at x=100). Expected
-    // values are scipy.special.erfcx rounded to f32.
-    check_ulp("erfcx(11)", erfcx(11.0), 5.1080596e-2, 2);
-    check_ulp("erfcx(15)", erfcx(15.0), 3.7529606e-2, 2);
-    check_ulp("erfcx(20)", erfcx(20.0), 2.8174348e-2, 2);
-    check_ulp("erfcx(50)", erfcx(50.0), 1.1281536e-2, 2);
-    check_ulp("erfcx(100)", erfcx(100.0), 5.6416136e-3, 2);
-    check_ulp("erfcx(200)", erfcx(200.0), 2.8209127e-3, 2);
-    check_ulp("erfcx(1e6)", erfcx(1e6), 5.641896e-7, 2);
-    // Denormal output at the very top of the domain: v = 1/(2+x) itself
-    // rounds to 1/x there, and the leading (~1/sqrt(pi)) coefficient
-    // carries it down to a denormal without flushing.
-    check_ulp("erfcx(max)", erfcx(f32::MAX), 1.658004e-39, 2);
-
     // erfinv (backlog idea #66): domain (-1,1), odd function, unbounded
     // as |x|->1. Ordinary values checked via round-trip through erf
     // (tolerance, not exact -- erfinv is an approximation) rather than a
@@ -2636,8 +2066,8 @@ fn real_main() {
         check_bounded(&format!("erf(erfinv({x}))-{x}"), erf(y) - x, 1e-4);
     }
 
-    // erfc_inv/probit (backlog idea #139): both reduce on their own
-    // argument (`n = min(y, 2-y)`, `m = min(p, 1-p)`) rather than through
+    // erfc_inv (backlog idea #139): reduces on its own
+    // argument (`n = min(y, 2-y)`) rather than through
     // `erfinv(1-y)`, so the poles, the out-of-domain edges and the
     // reflection seam are all new selects and each gets an exact pin.
     check("erfc_inv(1)", erfc_inv(1.0), 0.0);
@@ -2648,170 +2078,18 @@ fn real_main() {
     check("erfc_inv(inf)", erfc_inv(f32::INFINITY), f32::NAN);
     check("erfc_inv(-inf)", erfc_inv(f32::NEG_INFINITY), f32::NAN);
     check("erfc_inv(nan)", erfc_inv(f32::NAN), f32::NAN);
-    check("probit(0.5)", probit(0.5), 0.0);
-    check("probit(0)", probit(0.0), f32::NEG_INFINITY);
-    check("probit(1)", probit(1.0), f32::INFINITY);
-    check("probit(-0.5)", probit(-0.5), f32::NAN);
-    check("probit(1.5)", probit(1.5), f32::NAN);
-    check("probit(inf)", probit(f32::INFINITY), f32::NAN);
-    check("probit(-inf)", probit(f32::NEG_INFINITY), f32::NAN);
-    check("probit(nan)", probit(f32::NAN), f32::NAN);
     // The far tail, which is the whole point of the `n`-side reduction:
-    // every one of these used to be `+-inf`, because `1-y`/`2p-1` is
+    // every one of these used to be `+-inf`, because `1-y` is
     // exactly `+-1` once the argument drops under `2^-24`. Values are
-    // scipy.special.erfcinv/ndtri, matched to 4 decimals -- a tolerance,
+    // scipy.special.erfcinv, matched to 4 decimals -- a tolerance,
     // like the round-trips below, not a bit pin.
     for &(y, want) in &[(1e-7f32, 3.766563), (1e-20, 6.601581), (1e-45, 10.019834)] {
         check_bounded(&format!("erfc_inv({y})"), erfc_inv(y) - want, 1e-4);
-    }
-    for &(p, want) in &[
-        (1e-8f32, -5.612001),
-        (1e-20, -9.262340),
-        (1e-45, -14.121427),
-    ] {
-        check_bounded(&format!("probit({p})"), probit(p) - want, 1e-4);
     }
     for &y in &[0.001f32, 0.5, 1.0, 1.5, 1.999] {
         let z = erfc_inv(y);
         check_bounded(&format!("erfc(erfc_inv({y}))-{y}"), erfc(z) - y, 1e-4);
     }
-    for &p in &[0.001f32, 0.3, 0.5, 0.7, 0.999] {
-        let x = probit(p);
-        check_bounded(&format!("norm_cdf(probit({p}))-{p}"), norm_cdf(x) - p, 1e-4);
-    }
-
-    // dawson (backlog idea #138): odd, `F(0)=0`, single interior maximum
-    // near x~0.9241389, decays like 1/(2x) for large |x|. f32::MAX/-MAX
-    // pins are a standing regression guard on the `2.0*x` overflow bug
-    // fuzzing found (fixed by halving before dividing by `x`, not after
-    // -- see dawson's own doc comment): both must stay finite, not NaN.
-    check("dawson(0)", dawson(0.0), 0.0);
-    check("dawson(-0)", dawson(-0.0), -0.0);
-    check("dawson(inf)", dawson(f32::INFINITY), 0.0);
-    check("dawson(-inf)", dawson(f32::NEG_INFINITY), -0.0);
-    check("dawson(nan)", dawson(f32::NAN), f32::NAN);
-    check_bounded(
-        "dawson(0.9241389)-0.5410442",
-        dawson(0.9241389) - 0.5410442,
-        1e-4,
-    );
-    check_bounded(
-        "dawson(-0.9241389)+0.5410442",
-        dawson(-0.9241389) + 0.5410442,
-        1e-4,
-    );
-    check_bounded("dawson(4)-0.1293480", dawson(4.0) - 0.1293480, 1e-4);
-    check_bounded("dawson(-4)+0.1293480", dawson(-4.0) + 0.1293480, 1e-4);
-    check_finite("dawson(f32::MAX)", dawson(f32::MAX));
-    check_finite("dawson(f32::MIN)", dawson(f32::MIN));
-    check_bounded(
-        "dawson(f32::MAX)-1.469e-39",
-        dawson(f32::MAX) - 1.4693680e-39,
-        1e-40,
-    );
-
-    check("hypot(0,0)", hypot(0.0, 0.0), 0.0);
-    check("hypot(3,4)", hypot(3.0, 4.0), 5.0);
-    // hypot(+-inf, anything) = +inf even with a NaN other argument --
-    // IEEE754/C99 special-cases infinity to "win" over NaN here. The
-    // naive x*x+y*y formula can't reach this alone (inf*inf + NaN*NaN
-    // degrades to NaN); distinct from this function's already-documented
-    // finite-overflow tradeoff.
-    check(
-        "hypot(inf,nan)",
-        hypot(f32::INFINITY, f32::NAN),
-        f32::INFINITY,
-    );
-    check(
-        "hypot(nan,inf)",
-        hypot(f32::NAN, f32::INFINITY),
-        f32::INFINITY,
-    );
-    // hypot_checked: no overflow/underflow tradeoff (the whole point),
-    // full IEEE754/C99 domain including the exact same NaN/inf edge
-    // cases hypot itself handles, plus graceful over/underflow hypot's
-    // own doc comment documents as *not* handling.
-    check("hypot_checked(0,0)", hypot_checked(0.0, 0.0), 0.0);
-    check("hypot_checked(-0,0)", hypot_checked(-0.0, 0.0), 0.0);
-    check("hypot_checked(3,4)", hypot_checked(3.0, 4.0), 5.0);
-    check(
-        "hypot_checked(inf,nan)",
-        hypot_checked(f32::INFINITY, f32::NAN),
-        f32::INFINITY,
-    );
-    check(
-        "hypot_checked(nan,inf)",
-        hypot_checked(f32::NAN, f32::INFINITY),
-        f32::INFINITY,
-    );
-    check(
-        "hypot_checked(nan,0)",
-        hypot_checked(f32::NAN, 0.0),
-        f32::NAN,
-    );
-    check(
-        "hypot_checked(0,nan)",
-        hypot_checked(0.0, f32::NAN),
-        f32::NAN,
-    );
-    check(
-        "hypot_checked(nan,nan)",
-        hypot_checked(f32::NAN, f32::NAN),
-        f32::NAN,
-    );
-    check(
-        "hypot_checked(inf,inf)",
-        hypot_checked(f32::INFINITY, f32::INFINITY),
-        f32::INFINITY,
-    );
-    check(
-        "hypot_checked(-inf,3)",
-        hypot_checked(f32::NEG_INFINITY, 3.0),
-        f32::INFINITY,
-    );
-    // f32::MAX,f32::MAX overflows the naive x*x+y*y (already inf before
-    // sqrt even runs); hypot_checked's whole point is getting this right.
-    check(
-        "hypot_checked(MAX,MAX)",
-        hypot_checked(f32::MAX, f32::MAX),
-        f32::INFINITY,
-    );
-    // hypot(x,y) >= max(|x|,|y|) for any finite x,y (a provable
-    // mathematical fact) -- checked directly (2026-07-10): holds for
-    // hypot_checked at both these points (unlike plain hypot, which
-    // trades this away for paired denormal inputs, an already-documented
-    // tradeoff -- see hypot's own doc comment).
-    // check_range locks this in rather than only checking finiteness.
-    check_range(
-        "hypot_checked(MAX/2,MAX/2)",
-        hypot_checked(f32::MAX / 2.0, f32::MAX / 2.0),
-        f32::MAX / 2.0,
-        f32::MAX,
-    );
-    check_range(
-        "hypot_checked(min_denorm,min_denorm)",
-        hypot_checked(f32::from_bits(1), f32::from_bits(1)),
-        f32::from_bits(1),
-        f32::MAX,
-    );
-
-    // rhypot(x,y) = 1/hypot(x,y). Every special case here falls out of the
-    // naive fma(x,x,y*y).sqrt() composition purely from IEEE754 semantics
-    // (verified by hand before writing the function) *except* the same
-    // inf-vs-NaN case hypot itself needs an override for.
-    check("rhypot(0,0)", rhypot(0.0, 0.0), f32::INFINITY);
-    check("rhypot(-0,0)", rhypot(-0.0, 0.0), f32::INFINITY);
-    check("rhypot(3,4)", rhypot(3.0, 4.0), 0.2);
-    check("rhypot(inf,1)", rhypot(f32::INFINITY, 1.0), 0.0);
-    check("rhypot(1,inf)", rhypot(1.0, f32::INFINITY), 0.0);
-    check("rhypot(-inf,1)", rhypot(f32::NEG_INFINITY, 1.0), 0.0);
-    check("rhypot(inf,inf)", rhypot(f32::INFINITY, f32::INFINITY), 0.0);
-    check("rhypot(nan,1)", rhypot(f32::NAN, 1.0), f32::NAN);
-    check("rhypot(nan,nan)", rhypot(f32::NAN, f32::NAN), f32::NAN);
-    // the actual point of the inf-vs-NaN override: matches hypot's own
-    // "infinity wins over NaN" special case, reciprocated.
-    check("rhypot(inf,nan)", rhypot(f32::INFINITY, f32::NAN), 0.0);
-    check("rhypot(nan,inf)", rhypot(f32::NAN, f32::INFINITY), 0.0);
 
     // normalize2 (backlog idea #136).
     {
@@ -3193,246 +2471,6 @@ fn real_main() {
         powf_unchecked(0.86967933, 576.48004),
         powf(0.86967933, 576.48004),
     );
-    check("remainder(5,3)", remainder(5.0, 3.0), -1.0);
-    check("remainder(4,2)", remainder(4.0, 2.0), 0.0);
-    // remainder_unchecked: contract is x != 0.0, y finite -- must match
-    // remainder inside that domain (verified more thoroughly via a
-    // 100M-sample fuzz, not preserved in-repo; permanent regression guard).
-    check(
-        "remainder_unchecked(5,3)",
-        remainder_unchecked(5.0, 3.0),
-        remainder(5.0, 3.0),
-    );
-    check(
-        "remainder_unchecked(4,2)",
-        remainder_unchecked(4.0, 2.0),
-        remainder(4.0, 2.0),
-    );
-    check(
-        "remainder_unchecked(-5,3)",
-        remainder_unchecked(-5.0, 3.0),
-        remainder(-5.0, 3.0),
-    );
-    // remainder(-0.0, y) used to lose its sign: q is +-0.0 matching x/y's
-    // sign, so `-q*y` ends up the opposite sign to x, and `fma(-q,y,x)`
-    // adds two exactly-zero values of opposite sign (same IEEE754
-    // mechanism as sinf_poly/log1p's own `-0.0` bugs). Unlike those,
-    // remainder's result sign does *not* generally track x's sign for
-    // nonzero x (e.g. remainder(2,3) == -1, an IEEE remainder property,
-    // not a bug), so a blanket copysign fix isn't valid here -- fixed
-    // with a trailing `if x == 0.0 { x } else { normal }` select instead
-    // (a no-op for every nonzero x, including remainder(+0.0, y) which
-    // was already correct).
-    check("remainder(-0,3)", remainder(-0.0, 3.0), -0.0);
-    check("remainder(0,3)", remainder(0.0, 3.0), 0.0);
-    // A second, narrower -0.0 gap survived that fix: unlike the general
-    // case above (which correctly doesn't track x's sign), IEEE754 does
-    // specifically define an *exact-zero* remainder/fmod result's sign
-    // to match x's -- and for nonzero x an exact multiple of y, `-q*y`
-    // exactly cancels x the same way, dropping the sign the same way.
-    // Not a contradiction of the "blanket copysign isn't valid" note
-    // above: this fix only fires when the *computed result* is exactly
-    // zero (`remainder_style_combine!`'s own `if normal == 0.0 {
-    // normal.copysign(x) }`), not for every nonzero x. Confirmed against
-    // libm (Python's math.remainder/math.fmod) before pinning.
-    check("remainder(-6,3)", remainder(-6.0, 3.0), -0.0);
-    check("remainder(-9,3)", remainder(-9.0, 3.0), -0.0);
-    check("remainder(6,3)", remainder(6.0, 3.0), 0.0);
-    check("remainder(6,-3)", remainder(6.0, -3.0), 0.0);
-    // remainder(0,0)/remainder(0,nan) used to come out 0 instead of NaN
-    // (backlog idea #85's own follow-up, 2026-07-09, found via the same
-    // systematic special-case matrix technique that caught atan2's NaN
-    // bug immediately before this): the `x==0.0` sign-preservation guard
-    // fired unconditionally, silently overriding a `normal` that had
-    // already correctly evaluated to NaN (via `q=(x/y).round()`, itself
-    // NaN whenever `y` is 0 or NaN) with plain `x` instead. Same root
-    // cause and same fix (guard now also requires `!normal.is_nan()`)
-    // across remainder/remainder_checked/remainder_ieee/remainder_wide/
-    // fmod -- all five share this exact `if x==0.0 {x} else {normal}`
-    // shape.
-    check("remainder(0,0)", remainder(0.0, 0.0), f32::NAN);
-    check("remainder(-0,0)", remainder(-0.0, 0.0), f32::NAN);
-    check("remainder(0,nan)", remainder(0.0, f32::NAN), f32::NAN);
-    // remainder(finite x, +-inf) = x (IEEE754/C99 special case): q rounds
-    // to exactly 0.0 for any finite x, but multiplying that zero by an
-    // *infinite* y used to give NaN (0*inf is NaN) instead of the
-    // intended "no reduction happened, answer is just x" no-op.
-    check("remainder(3,inf)", remainder(3.0, f32::INFINITY), 3.0);
-    check("remainder(-3,inf)", remainder(-3.0, f32::INFINITY), -3.0);
-    check("remainder(inf,3)", remainder(f32::INFINITY, 3.0), f32::NAN);
-    // remainder_checked shares remainder's special-case handling (same
-    // trailing selects) on top of its wider-range q correction -- same
-    // edge cases should hold identically.
-    check("remainder_checked(5,3)", remainder_checked(5.0, 3.0), -1.0);
-    check("remainder_checked(4,2)", remainder_checked(4.0, 2.0), 0.0);
-    // Exact-cancellation sign fix, same as remainder's own -- see its pin
-    // comment above for the mechanism.
-    check(
-        "remainder_checked(-6,3)",
-        remainder_checked(-6.0, 3.0),
-        -0.0,
-    );
-    check("remainder_checked(6,3)", remainder_checked(6.0, 3.0), 0.0);
-    check(
-        "remainder_checked(-0,3)",
-        remainder_checked(-0.0, 3.0),
-        -0.0,
-    );
-    check("remainder_checked(0,3)", remainder_checked(0.0, 3.0), 0.0);
-    check(
-        "remainder_checked(0,0)",
-        remainder_checked(0.0, 0.0),
-        f32::NAN,
-    );
-    check(
-        "remainder_checked(0,nan)",
-        remainder_checked(0.0, f32::NAN),
-        f32::NAN,
-    );
-    check(
-        "remainder_checked(3,inf)",
-        remainder_checked(3.0, f32::INFINITY),
-        3.0,
-    );
-    check(
-        "remainder_checked(-3,inf)",
-        remainder_checked(-3.0, f32::INFINITY),
-        -3.0,
-    );
-    check(
-        "remainder_checked(inf,3)",
-        remainder_checked(f32::INFINITY, 3.0),
-        f32::NAN,
-    );
-    // the actual point of remainder_checked: a case where q's own division
-    // rounding would land on the wrong integer for the plain formula.
-    check(
-        "remainder_checked(1e7,3)",
-        remainder_checked(1.0e7, 3.0),
-        remainder_ref_exact(1.0e7, 3.0),
-    );
-    // remainder_ieee: ties-to-even instead of remainder's own ties-away,
-    // matching true IEEE754 remainder. Away from ties it's identical to
-    // remainder; at an exact tie (x/y = 2.5, an odd/even boundary) it
-    // must disagree with remainder's own ties-away answer.
-    check("remainder_ieee(4,2)", remainder_ieee(4.0, 2.0), 0.0);
-    // Exact-cancellation sign fix, same as remainder's own -- see its pin
-    // comment above for the mechanism.
-    check("remainder_ieee(-6,3)", remainder_ieee(-6.0, 3.0), -0.0);
-    check("remainder_ieee(6,3)", remainder_ieee(6.0, 3.0), 0.0);
-    check("remainder_ieee(-0,3)", remainder_ieee(-0.0, 3.0), -0.0);
-    check("remainder_ieee(0,3)", remainder_ieee(0.0, 3.0), 0.0);
-    check("remainder_ieee(0,0)", remainder_ieee(0.0, 0.0), f32::NAN);
-    check(
-        "remainder_ieee(0,nan)",
-        remainder_ieee(0.0, f32::NAN),
-        f32::NAN,
-    );
-    check(
-        "remainder_ieee(3,inf)",
-        remainder_ieee(3.0, f32::INFINITY),
-        3.0,
-    );
-    check(
-        "remainder_ieee(inf,3)",
-        remainder_ieee(f32::INFINITY, 3.0),
-        f32::NAN,
-    );
-    // x/y=2.5: ties-away rounds q to 3 (remainder -1); ties-to-even rounds
-    // q to 2 (the even neighbor), remainder +1 -- must actually differ.
-    check(
-        "remainder_ieee(5,2) ties-even",
-        remainder_ieee(5.0, 2.0),
-        1.0,
-    );
-    check(
-        "remainder(5,2) ties-away (contrast)",
-        remainder(5.0, 2.0),
-        -1.0,
-    );
-    // x/y=1.5: ties-to-even rounds q to 2 (even), remainder -0.5; matches
-    // remainder's own ties-away answer here since ties-away *also* picks
-    // the higher magnitude 2 for a positive 1.5 (both conventions agree
-    // whenever the "away" and "even" neighbors happen to coincide).
-    check("remainder_ieee(3,2)", remainder_ieee(3.0, 2.0), -1.0);
-
-    // remainder_wide: remainder_checked's own special-case handling and
-    // near-tie behavior, still holding in its own already-correct domain.
-    check("remainder_wide(5,3)", remainder_wide(5.0, 3.0), -1.0);
-    check("remainder_wide(4,2)", remainder_wide(4.0, 2.0), 0.0);
-    // Exact-cancellation sign fix, same as remainder's own -- see its pin
-    // comment above for the mechanism.
-    check("remainder_wide(-6,3)", remainder_wide(-6.0, 3.0), -0.0);
-    check("remainder_wide(6,3)", remainder_wide(6.0, 3.0), 0.0);
-    check("remainder_wide(-0,3)", remainder_wide(-0.0, 3.0), -0.0);
-    check("remainder_wide(0,3)", remainder_wide(0.0, 3.0), 0.0);
-    check("remainder_wide(0,0)", remainder_wide(0.0, 0.0), f32::NAN);
-    check(
-        "remainder_wide(0,nan)",
-        remainder_wide(0.0, f32::NAN),
-        f32::NAN,
-    );
-    check(
-        "remainder_wide(3,inf)",
-        remainder_wide(3.0, f32::INFINITY),
-        3.0,
-    );
-    check(
-        "remainder_wide(-3,inf)",
-        remainder_wide(-3.0, f32::INFINITY),
-        -3.0,
-    );
-    check(
-        "remainder_wide(inf,3)",
-        remainder_wide(f32::INFINITY, 3.0),
-        f32::NAN,
-    );
-    check(
-        "remainder_wide(1e7,3) matches remainder_checked",
-        remainder_wide(1.0e7, 3.0),
-        remainder_checked(1.0e7, 3.0),
-    );
-    // the actual point of remainder_wide: |x/y| well past remainder_checked's
-    // own 2^24 cliff (see its doc comment) -- q0's own quantization gap at
-    // this magnitude is dozens of integers, not the single-integer nudge
-    // remainder_checked's own correction can fix.
-    check(
-        "remainder_wide(1e10,3) past remainder_checked's 2^24 cliff",
-        remainder_wide(1.0e10, 3.0),
-        remainder_ref_exact(1.0e10, 3.0),
-    );
-    check(
-        "remainder_wide(1e13,7) further past the cliff",
-        remainder_wide(1.0e13, 7.0),
-        remainder_ref_exact(1.0e13, 7.0),
-    );
-    // Regression pin for the internal-overflow bug found while implementing
-    // this function (see its own doc comment): q0*y computed as a single
-    // f32 product can exceed f32::MAX even though x, y, and the true
-    // remainder are all finite, whenever x or y individually sits close to
-    // f32::MAX -- this used to return NaN instead of a finite remainder.
-    // q0=2 here, small enough that an f64 reference stays exact.
-    check(
-        "remainder_wide near f32::MAX (overflow regression)",
-        remainder_wide(3.2603515e38, 1.8878502e38),
-        remainder_ref_exact(3.2603515e38, 1.8878502e38),
-    );
-    check(
-        "remainder_wide near -f32::MAX (overflow regression, negative)",
-        remainder_wide(-3.2603515e38, 1.8878502e38),
-        remainder_ref_exact(-3.2603515e38, 1.8878502e38),
-    );
-    check(
-        "remainder_wide(f32::MAX,f32::MAX)",
-        remainder_wide(f32::MAX, f32::MAX),
-        0.0,
-    );
-    check(
-        "remainder_wide(nan,3)",
-        remainder_wide(f32::NAN, 3.0),
-        f32::NAN,
-    );
-
     // fmod: C fmod semantics (truncated division, sign always matches x)
     // -- verified directly against Rust's own `%` operator, which already
     // implements this convention.
@@ -3647,15 +2685,4 @@ fn real_main() {
     // each other (the atanh poly is odd, the ln/log1p difference is not).
     check_seam("logit seam (upper)", logit, 0.625);
     check_seam("logit seam (lower)", logit, 0.375);
-}
-
-/// f64-computed exact reference for a single spot-check triple, used only
-/// to pin remainder_checked's wider-range behavior in edgecheck (not a
-/// general-purpose reference -- see examples/accuracy.rs for the real
-/// fuzz-tested sweep against sleef).
-fn remainder_ref_exact(x: f32, y: f32) -> f32 {
-    let xd = x as f64;
-    let yd = y as f64;
-    let q = (xd / yd).round();
-    (xd - q * yd) as f32
 }

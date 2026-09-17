@@ -150,23 +150,6 @@ fn main() {
             tol: 5.0,
             skip_denormal_out: false,
         },
-        Target {
-            name: "erfcx",
-            f: erfcx,
-            r: |x| {
-                // erfcx(x) = exp(x^2)*erfc(x); use the asymptotic form for
-                // large x where exp(x^2) overflows f64.
-                if x > 30.0 {
-                    let t = 1.0 / (x * x);
-                    1.0 / (x * std::f64::consts::PI.sqrt()) * (1.0 - 0.5 * t + 0.75 * t * t)
-                } else {
-                    f64::NAN // not asserted below 30
-                }
-            },
-            bounds: &[],
-            tol: f64::INFINITY,
-            skip_denormal_out: false,
-        },
     ];
 
     const WINDOW: i32 = 64;

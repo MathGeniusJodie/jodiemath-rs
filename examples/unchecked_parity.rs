@@ -148,18 +148,6 @@ fn main() {
         cbrt_accurate_unchecked,
     );
 
-    // sind/cosd/tand's shared contract: `|x| < 4.7e7`, the range over
-    // which their round-to-nearest-180 reduction is still exact (the same
-    // closure accuracy.rs scores them on). All three `_unchecked` cores
-    // drop a guard their own doc comment argues is *provably* a no-op in
-    // that range -- sind/cosd the `POLY_SAFE_BOUND` clamp, tand the
-    // `|d| > 128` substitution -- so "provably" is exactly the claim this
-    // gate should be holding to bits rather than taking on the argument.
-    let deg_domain = |x: f32| x.abs() < 4.7e7;
-    ok &= check1("sind / sind_unchecked", N, deg_domain, sind, sind_unchecked);
-    ok &= check1("cosd / cosd_unchecked", N, deg_domain, cosd, cosd_unchecked);
-    ok &= check1("tand / tand_unchecked", N, deg_domain, tand, tand_unchecked);
-
     let atan2_domain = |x: f32, y: f32| x != 0.0 && !(x.is_infinite() && y.is_infinite());
     ok &= check2(
         "atan2 / atan2_unchecked",
@@ -178,16 +166,9 @@ fn main() {
     // _unchecked twins skip it (same class of omission their own doc
     // comments already document for x==0.0 itself, just one case wider:
     // a nonzero x whose *result* happens to land on exactly zero).
-    let exact_multiple = |x: f32, y: f32| (-(x / y).round()).mul_add(y, x) == 0.0;
+    let exact_multiple = |x: f32, y: f32| (-(x / y).trunc()).mul_add(y, x) == 0.0;
     let rem_domain = |x: f32, y: f32| x != 0.0 && y.is_finite() && !exact_multiple(x, y);
     ok &= check2("fmod / fmod_unchecked", N, rem_domain, fmod, fmod_unchecked);
-    ok &= check2(
-        "remainder / remainder_unchecked",
-        N,
-        rem_domain,
-        remainder,
-        remainder_unchecked,
-    );
 
     let pow_domain = |x: f32, y: f32| {
         x >= f32::MIN_POSITIVE
@@ -196,31 +177,6 @@ fn main() {
             && (-126.0..128.0).contains(&(x.log2() * y))
     };
     ok &= check2("powf / powf_unchecked", N, pow_domain, powf, powf_unchecked);
-
-    // remainder_wide's own contract: bit-identical to remainder_checked
-    // (not to plain remainder) throughout remainder_checked's own
-    // |x/y|<2^24 domain -- a different pair than remainder/
-    // remainder_unchecked already above, never added to this standing
-    // test either. No near_tie exclusion needed here (unlike accuracy.rs's
-    // own remainder_checked sweep): that exclusion is about comparing
-    // against a *reference*, not about whether these two implementations
-    // agree with *each other*. Two exceptions used to be excluded here:
-    // an exact half-integer x/y tie flipping sign (found at 500M
-    // samples), and a rescale-near-f32::MAX guard pushing an
-    // already-tiny x into denormal-underflow territory (found at 30M
-    // samples, up to ~4 ulp). Both are now fixed (round_ties_even
-    // instead of round for adj; gating the rescale on |x| alone instead
-    // of max(|x|,|y|), since q0*y tracks x regardless of y's own
-    // magnitude -- see remainder_wide's own doc comment for both) and
-    // verified with no exclusion needed -- removed from here accordingly.
-    let remainder_wide_domain = |x: f32, y: f32| y != 0.0 && (x / y).abs() < 16777216.0;
-    ok &= check2(
-        "remainder_checked / remainder_wide",
-        N,
-        remainder_wide_domain,
-        remainder_checked,
-        remainder_wide,
-    );
 
     if !ok {
         std::process::exit(1);

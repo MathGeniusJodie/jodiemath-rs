@@ -656,7 +656,7 @@ fn cbrt_normal_c5(x: f32, c: &[f32]) -> f32 {
 }
 
 // sinf_poly (see src/lib.rs): sin(x) ~= x + x^3*P(x^2) on [-pi/2, pi/2],
-// the shared poly behind sin/cos/sin_checked/cos_checked.
+// the shared poly behind sin/cos/sin_wide/cos_wide.
 #[inline(always)]
 fn sinf_poly_c(x: f32, c: &[f32]) -> f32 {
     let y = x * x;

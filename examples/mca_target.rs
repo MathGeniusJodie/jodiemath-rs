@@ -224,12 +224,6 @@ throughput_fn!(
 latency_fn!(lat_sin, "sin_latency", sin);
 throughput_fn!(thr_sin, "sin_throughput", sin);
 
-latency_fn!(lat_sin_fast, "sin_fast_latency", sin_fast);
-throughput_fn!(thr_sin_fast, "sin_fast_throughput", sin_fast);
-
-latency_fn!(lat_sin_checked, "sin_checked_latency", sin_checked);
-throughput_fn!(thr_sin_checked, "sin_checked_throughput", sin_checked);
-
 latency_fn!(lat_sin_wide, "sin_wide_latency", sin_wide);
 throughput_fn!(thr_sin_wide, "sin_wide_throughput", sin_wide);
 
@@ -238,12 +232,6 @@ throughput_fn!(thr_cos_wide, "cos_wide_throughput", cos_wide);
 
 latency_fn!(lat_cos, "cos_latency", cos);
 throughput_fn!(thr_cos, "cos_throughput", cos);
-
-latency_fn!(lat_cos_fast, "cos_fast_latency", cos_fast);
-throughput_fn!(thr_cos_fast, "cos_fast_throughput", cos_fast);
-
-latency_fn!(lat_cos_checked, "cos_checked_latency", cos_checked);
-throughput_fn!(thr_cos_checked, "cos_checked_throughput", cos_checked);
 
 latency_fn!(lat_wrap_pi, "wrap_pi_latency", wrap_pi);
 throughput_fn!(thr_wrap_pi, "wrap_pi_throughput", wrap_pi);
@@ -279,9 +267,6 @@ throughput_fn!(thr_cos2pi, "cos2pi_throughput", cos2pi);
 latency_fn!(lat_tan2pi, "tan2pi_latency", tan2pi);
 throughput_fn!(thr_tan2pi, "tan2pi_throughput", tan2pi);
 
-latency_fn!(lat_sinc, "sinc_latency", sinc);
-throughput_fn!(thr_sinc, "sinc_throughput", sinc);
-
 latency_fn!(
     lat_sinc_unnormalized,
     "sinc_unnormalized_latency",
@@ -293,9 +278,6 @@ throughput_fn!(
     sinc_unnormalized
 );
 
-latency_fn!(lat_sind, "sind_latency", sind);
-throughput_fn!(thr_sind, "sind_throughput", sind);
-
 latency_fn!(lat_sind_unchecked, "sind_unchecked_latency", sind_unchecked);
 throughput_fn!(
     thr_sind_unchecked,
@@ -303,18 +285,12 @@ throughput_fn!(
     sind_unchecked
 );
 
-latency_fn!(lat_cosd, "cosd_latency", cosd);
-throughput_fn!(thr_cosd, "cosd_throughput", cosd);
-
 latency_fn!(lat_cosd_unchecked, "cosd_unchecked_latency", cosd_unchecked);
 throughput_fn!(
     thr_cosd_unchecked,
     "cosd_unchecked_throughput",
     cosd_unchecked
 );
-
-latency_fn!(lat_tand, "tand_latency", tand);
-throughput_fn!(thr_tand, "tand_throughput", tand);
 
 latency_fn!(lat_tand_unchecked, "tand_unchecked_latency", tand_unchecked);
 throughput_fn!(
@@ -381,9 +357,6 @@ throughput_fn!(thr_expm1_narrow, "expm1_narrow_throughput", expm1_narrow);
 
 latency_fn!(lat_expm1_checked, "expm1_checked_latency", expm1_checked);
 throughput_fn!(thr_expm1_checked, "expm1_checked_throughput", expm1_checked);
-
-latency_fn!(lat_exp_m1_over_x, "exp_m1_over_x_latency", exp_m1_over_x);
-throughput_fn!(thr_exp_m1_over_x, "exp_m1_over_x_throughput", exp_m1_over_x);
 
 latency_fn!(
     lat_exp_m1_over_x_narrow,
@@ -462,20 +435,6 @@ throughput_fn!(thr_sigmoid_fast, "sigmoid_fast_throughput", sigmoid_fast);
 latency_fn!(lat_sigmoid_grad, "sigmoid_grad_latency", sigmoid_grad);
 throughput_fn!(thr_sigmoid_grad, "sigmoid_grad_throughput", sigmoid_grad);
 
-latency_fn!(lat_softplus, "softplus_latency", softplus);
-throughput_fn!(thr_softplus, "softplus_throughput", softplus);
-
-latency_fn!(
-    lat_softplus_checked,
-    "softplus_checked_latency",
-    softplus_checked
-);
-throughput_fn!(
-    thr_softplus_checked,
-    "softplus_checked_throughput",
-    softplus_checked
-);
-
 latency_fn!(lat_logsigmoid, "logsigmoid_latency", logsigmoid);
 throughput_fn!(thr_logsigmoid, "logsigmoid_throughput", logsigmoid);
 
@@ -488,45 +447,6 @@ throughput_fn!(
     thr_logsigmoid_checked,
     "logsigmoid_checked_throughput",
     logsigmoid_checked
-);
-
-// Constant 2nd arg, the house convention for the 2-arg rows (atan2/hypot
-// above). It is worth stating what that specialises away here, because
-// the identity is exact rather than approximate: `logaddexp(x, 0.0)` *is*
-// `softplus(x)` -- `max(x,0)`, `|x-0|`, and a folded-away `b.is_nan()` --
-// so these two rows and the softplus pair either side of them measure the
-// same instruction stream and are expected to print identical numbers.
-latency_fn!(lat_logaddexp, "logaddexp_latency", |x: f32| logaddexp(
-    x, 0.0
-));
-throughput_fn!(thr_logaddexp, "logaddexp_throughput", |x: f32| logaddexp(
-    x, 0.0
-));
-
-latency_fn!(
-    lat_logaddexp_checked,
-    "logaddexp_checked_latency",
-    |x: f32| logaddexp_checked(x, 0.0)
-);
-throughput_fn!(
-    thr_logaddexp_checked,
-    "logaddexp_checked_throughput",
-    |x: f32| logaddexp_checked(x, 0.0)
-);
-
-// Same constant-2nd-arg convention, and the same exact identity: this is
-// `softplus` computed in f64. It is the only row in the file whose whole
-// body is f64, so its throughput carries the half-width penalty of that
-// choice as well as the extra work -- which is the point of the row.
-latency_fn!(
-    lat_logaddexp_accurate,
-    "logaddexp_accurate_latency",
-    |x: f32| logaddexp_accurate(x, 0.0)
-);
-throughput_fn!(
-    thr_logaddexp_accurate,
-    "logaddexp_accurate_throughput",
-    |x: f32| logaddexp_accurate(x, 0.0)
 );
 
 latency_fn!(lat_gelu, "gelu_latency", gelu);
@@ -583,9 +503,6 @@ throughput_fn!(thr_atan_bounded, "atan_bounded_throughput", atan_bounded);
 latency_fn!(lat_atand, "atand_latency", atand);
 throughput_fn!(thr_atand, "atand_throughput", atand);
 
-latency_fn!(lat_atanpi, "atanpi_latency", atanpi);
-throughput_fn!(thr_atanpi, "atanpi_throughput", atanpi);
-
 latency_fn!(lat_atan2, "atan2_latency", |x: f32| atan2(x, 1.0));
 throughput_fn!(thr_atan2, "atan2_throughput", |x: f32| atan2(x, 1.0));
 
@@ -612,17 +529,8 @@ throughput_fn!(thr_atan2_pos, "atan2_pos_throughput", |x: f32| atan2_pos(
     x, 1.0
 ));
 
-latency_fn!(lat_atan2d, "atan2d_latency", |x: f32| atan2d(x, 1.0));
-throughput_fn!(thr_atan2d, "atan2d_throughput", |x: f32| atan2d(x, 1.0));
-
-latency_fn!(lat_atan2pi, "atan2pi_latency", |x: f32| atan2pi(x, 1.0));
-throughput_fn!(thr_atan2pi, "atan2pi_throughput", |x: f32| atan2pi(x, 1.0));
-
 latency_fn!(lat_tan, "tan_latency", tan);
 throughput_fn!(thr_tan, "tan_throughput", tan);
-
-latency_fn!(lat_tan_checked, "tan_checked_latency", tan_checked);
-throughput_fn!(thr_tan_checked, "tan_checked_throughput", tan_checked);
 
 latency_fn!(lat_tan_wide, "tan_wide_latency", tan_wide);
 throughput_fn!(thr_tan_wide, "tan_wide_throughput", tan_wide);
@@ -633,31 +541,8 @@ throughput_fn!(thr_erf, "erf_throughput", erf);
 latency_fn!(lat_erfc, "erfc_latency", erfc);
 throughput_fn!(thr_erfc, "erfc_throughput", erfc);
 
-latency_fn!(lat_norm_cdf, "norm_cdf_latency", norm_cdf);
-throughput_fn!(thr_norm_cdf, "norm_cdf_throughput", norm_cdf);
-
-latency_fn!(lat_norm_pdf, "norm_pdf_latency", norm_pdf);
-throughput_fn!(thr_norm_pdf, "norm_pdf_throughput", norm_pdf);
-
 latency_fn!(lat_logit, "logit_latency", logit, Band::Half);
 throughput_fn!(thr_logit, "logit_throughput", logit);
-
-latency_fn!(lat_compound, "compound_latency", {
-    let n = black_box(5.0);
-    move |x: f32| compound(x, n)
-});
-throughput_fn!(thr_compound, "compound_throughput", {
-    let n = black_box(5.0);
-    move |x: f32| compound(x, n)
-});
-latency_fn!(lat_compound_accurate, "compound_accurate_latency", {
-    let n = black_box(5.0);
-    move |x: f32| compound_accurate(x, n)
-});
-throughput_fn!(thr_compound_accurate, "compound_accurate_throughput", {
-    let n = black_box(5.0);
-    move |x: f32| compound_accurate(x, n)
-});
 
 // xlogy/xlog1py must take a *varying* y, unlike atan2/hypot/powf above,
 // which are fine with a loop-invariant second argument because their own
@@ -677,22 +562,11 @@ throughput_fn!(thr_xlogy, "xlogy_throughput", |x: f32| xlogy(x, x));
 latency_fn!(lat_xlog1py, "xlog1py_latency", |x: f32| xlog1py(x, x));
 throughput_fn!(thr_xlog1py, "xlog1py_throughput", |x: f32| xlog1py(x, x));
 
-latency_fn!(lat_erfcx, "erfcx_latency", erfcx);
-throughput_fn!(thr_erfcx, "erfcx_throughput", erfcx);
-
 latency_fn!(lat_erfinv, "erfinv_latency", erfinv, Band::Half);
 throughput_fn!(thr_erfinv, "erfinv_throughput", erfinv);
 
 latency_fn!(lat_erfc_inv, "erfc_inv_latency", erfc_inv, Band::Half);
 throughput_fn!(thr_erfc_inv, "erfc_inv_throughput", erfc_inv);
-latency_fn!(lat_probit, "probit_latency", probit, Band::Half);
-throughput_fn!(thr_probit, "probit_throughput", probit);
-
-latency_fn!(lat_dawson, "dawson_latency", dawson);
-throughput_fn!(thr_dawson, "dawson_throughput", dawson);
-
-latency_fn!(lat_hypot, "hypot_latency", |x: f32| hypot(x, 1.0));
-throughput_fn!(thr_hypot, "hypot_throughput", |x: f32| hypot(x, 1.0));
 
 // cabs/carg (idea #186): exact aliases for hypot_checked/atan2, wired
 // the same way those already are. cexp/clog return (f32,f32), which
@@ -715,16 +589,6 @@ latency_fn!(lat_cabs, "cabs_latency", |x: f32| cabs(x, 1.0));
 throughput_fn!(thr_cabs, "cabs_throughput", |x: f32| cabs(x, 1.0));
 latency_fn!(lat_carg, "carg_latency", |x: f32| carg(x, 1.0));
 throughput_fn!(thr_carg, "carg_throughput", |x: f32| carg(x, 1.0));
-
-latency_fn!(lat_hypot_checked, "hypot_checked_latency", |x: f32| {
-    hypot_checked(x, 1.0)
-});
-throughput_fn!(thr_hypot_checked, "hypot_checked_throughput", |x: f32| {
-    hypot_checked(x, 1.0)
-});
-
-latency_fn!(lat_rhypot, "rhypot_latency", |x: f32| rhypot(x, 1.0));
-throughput_fn!(thr_rhypot, "rhypot_throughput", |x: f32| rhypot(x, 1.0));
 
 latency_fn!(lat_normalize2, "normalize2_latency", |x: f32| {
     let (a, b) = normalize2(x, 1.0);
@@ -877,57 +741,6 @@ throughput_fn!(thr_powf_unchecked, "powf_unchecked_throughput", {
     move |x: f32| powf_unchecked(x, y)
 });
 
-// black_box'd 2nd arg, same reasoning as powf above.
-latency_fn!(lat_remainder, "remainder_latency", {
-    let y = black_box(3.0);
-    move |x: f32| remainder(x, y)
-});
-// remainder_throughput deliberately NOT wired up here: after the
-// x==0.0 zero/nan fix
-// (backlog idea #85's own follow-up, 2026-07-09), LLVM branch-specializes
-// this short function's vectorized loop on the shared black_box'd `y`,
-// producing multiple physical return paths that each carry their own
-// copy of this macro's inline-asm END marker, corrupting llvm-mca's
-// region parser ("found an invalid region end directive"). codegen_check
-// still confirms the real function has no scalar-fallback signatures --
-// a harness limitation, not a code correctness issue. remainder_checked/
-// remainder_wide (longer, already more complex bodies) don't hit this
-// threshold and stay wired up normally. See quickbench.rs for
-// remainder's own real wall-clock numbers instead.
-
-latency_fn!(lat_remainder_unchecked, "remainder_unchecked_latency", {
-    let y = black_box(3.0);
-    move |x: f32| remainder_unchecked(x, y)
-});
-throughput_fn!(thr_remainder_unchecked, "remainder_unchecked_throughput", {
-    let y = black_box(3.0);
-    move |x: f32| remainder_unchecked(x, y)
-});
-
-latency_fn!(lat_remainder_checked, "remainder_checked_latency", {
-    let y = black_box(3.0);
-    move |x: f32| remainder_checked(x, y)
-});
-throughput_fn!(thr_remainder_checked, "remainder_checked_throughput", {
-    let y = black_box(3.0);
-    move |x: f32| remainder_checked(x, y)
-});
-latency_fn!(lat_remainder_ieee, "remainder_ieee_latency", {
-    let y = black_box(3.0);
-    move |x: f32| remainder_ieee(x, y)
-});
-// remainder_ieee_throughput deliberately NOT wired up here -- same
-// branch-specialization issue as remainder_throughput above (identical
-// short-body shape, same fix), see that comment for the full mechanism.
-latency_fn!(lat_remainder_wide, "remainder_wide_latency", {
-    let y = black_box(3.0);
-    move |x: f32| remainder_wide(x, y)
-});
-throughput_fn!(thr_remainder_wide, "remainder_wide_throughput", {
-    let y = black_box(3.0);
-    move |x: f32| remainder_wide(x, y)
-});
-
 latency_fn!(lat_fmod, "fmod_latency", {
     let y = black_box(3.0);
     move |x: f32| fmod(x, y)
@@ -1001,13 +814,9 @@ fn main() {
         lat_log2, thr_log2;
         lat_log2_unchecked, thr_log2_unchecked;
         lat_sin, thr_sin;
-        lat_sin_fast, thr_sin_fast;
-        lat_cos_fast, thr_cos_fast;
-        lat_sin_checked, thr_sin_checked;
         lat_sin_wide, thr_sin_wide;
         lat_cos_wide, thr_cos_wide;
         lat_cos, thr_cos;
-        lat_cos_checked, thr_cos_checked;
         lat_wrap_pi, thr_wrap_pi;
         lat_sin_prereduced, thr_sin_prereduced;
         lat_cos_prereduced, thr_cos_prereduced;
@@ -1017,13 +826,9 @@ fn main() {
         lat_sin2pi, thr_sin2pi;
         lat_cos2pi, thr_cos2pi;
         lat_tan2pi, thr_tan2pi;
-        lat_sinc, thr_sinc;
         lat_sinc_unnormalized, thr_sinc_unnormalized;
-        lat_sind, thr_sind;
         lat_sind_unchecked, thr_sind_unchecked;
-        lat_cosd, thr_cosd;
         lat_cosd_unchecked, thr_cosd_unchecked;
-        lat_tand, thr_tand;
         lat_tand_unchecked, thr_tand_unchecked;
         lat_ln, thr_ln;
         lat_ln_unchecked, thr_ln_unchecked;
@@ -1040,7 +845,6 @@ fn main() {
         lat_expm1, thr_expm1;
         lat_expm1_narrow, thr_expm1_narrow;
         lat_expm1_checked, thr_expm1_checked;
-        lat_exp_m1_over_x, thr_exp_m1_over_x;
         lat_exp_m1_over_x_narrow, thr_exp_m1_over_x_narrow;
         lat_exp2m1, thr_exp2m1;
         lat_exp10m1, thr_exp10m1;
@@ -1058,13 +862,8 @@ fn main() {
         lat_sigmoid, thr_sigmoid;
         lat_sigmoid_fast, thr_sigmoid_fast;
         lat_sigmoid_grad, thr_sigmoid_grad;
-        lat_softplus, thr_softplus;
-        lat_softplus_checked, thr_softplus_checked;
         lat_logsigmoid, thr_logsigmoid;
         lat_logsigmoid_checked, thr_logsigmoid_checked;
-        lat_logaddexp, thr_logaddexp;
-        lat_logaddexp_checked, thr_logaddexp_checked;
-        lat_logaddexp_accurate, thr_logaddexp_accurate;
         lat_gelu, thr_gelu;
         lat_silu, thr_silu;
         lat_silu_checked, thr_silu_checked;
@@ -1083,36 +882,22 @@ fn main() {
         lat_atan_latency, thr_atan_latency;
         lat_atan_bounded, thr_atan_bounded;
         lat_atand, thr_atand;
-        lat_atanpi, thr_atanpi;
         lat_atan2, thr_atan2;
         lat_atan2_unchecked, thr_atan2_unchecked;
         lat_atan2_latency, thr_atan2_latency;
         lat_atan2_pos, thr_atan2_pos;
-        lat_atan2d, thr_atan2d;
-        lat_atan2pi, thr_atan2pi;
         lat_tan, thr_tan;
-        lat_tan_checked, thr_tan_checked;
         lat_tan_wide, thr_tan_wide;
         lat_erf, thr_erf;
         lat_erfc, thr_erfc;
-        lat_norm_cdf, thr_norm_cdf;
-        lat_norm_pdf, thr_norm_pdf;
         lat_logit, thr_logit;
-        lat_compound, thr_compound;
-        lat_compound_accurate, thr_compound_accurate;
         lat_xlogy, thr_xlogy;
         lat_xlog1py, thr_xlog1py;
-        lat_erfcx, thr_erfcx;
         lat_erfinv, thr_erfinv;
         lat_erfc_inv, thr_erfc_inv;
-        lat_probit, thr_probit;
-        lat_dawson, thr_dawson;
-        lat_hypot, thr_hypot;
         lat_clog_re, thr_clog_re;
         lat_cabs, thr_cabs;
         lat_carg, thr_carg;
-        lat_hypot_checked, thr_hypot_checked;
-        lat_rhypot, thr_rhypot;
         lat_normalize2, thr_normalize2;
         lat_hypot3, thr_hypot3;
         lat_rnorm3, thr_rnorm3;
@@ -1129,20 +914,15 @@ fn main() {
         lat_linear_to_srgb, thr_linear_to_srgb;
         lat_signed_pow, thr_signed_pow;
         lat_powf_unchecked, thr_powf_unchecked;
-        lat_remainder_unchecked, thr_remainder_unchecked;
         lat_fmod_unchecked, thr_fmod_unchecked;
-        lat_remainder_checked, thr_remainder_checked;
-        lat_remainder_wide, thr_remainder_wide;
     );
-    // remainder/remainder_ieee/fmod: latency-only (see their own
+    // fmod: latency-only (see its own
     // throughput_fn! omission comments above for why), same standalone
     // call shape as lat_cbrt_wrapped above.
     // gather-free x8 variant: standalone (not a lat/thr pair); the wrapper
     // lives in the library so the target_feature body can inline inside the
     // region markers (LLVM won't inline these across crates).
     unsafe { thr_sin_wide_x8_region(black_box(&arr_in), black_box(&mut arr_out)) };
-    black_box(lat_remainder(black_box(1.234)));
-    black_box(lat_remainder_ieee(black_box(1.234)));
     black_box(lat_fmod(black_box(1.234)));
     black_box(lat_fmod_checked(black_box(1.234)));
     black_box(lat_rem_euclid(black_box(1.234)));

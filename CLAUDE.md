@@ -61,7 +61,7 @@ one:
 
 | f64 site | Df32/fma attempt tested | outcome |
 |---|---|---|
-| `reduce_pi64` (sin/cos/tan_checked, reduce_pi_checked, wrap_pi) | yes: double-f32 EFT reduction | Df32 ~2x slower, 3 decades less range |
+| `reduce_pi64` (reduce_pi_checked, wrap_pi) | yes: double-f32 EFT reduction | Df32 ~2x slower, 3 decades less range |
 | `powf`/`powf_pos`/`powf_unchecked` (`log2_f64`, `exp2_f64_to_f32`) | yes: `log2_df` + `Df32*f32` + `exp2_checked_df` | f64 -5..17% cyc AND max ulp 3 -> 1 |
 | `compound_accurate` (`log2p1_f64`) | yes: `log2p1_df` chain | f64 -33% cyc, -21% latency, max ulp 5 -> 1 |
 | `remainder_wide` | yes: Df32 chain | f64 ~-70% instructions ("Df32 doing f64's job") |
@@ -81,7 +81,7 @@ range would mask an overflow that the contract wants caught.
 Additional hazards measured on this machine:
 - Packed/vectorized f64 arithmetic performs **as mca predicts** (real ≈
   0.93-1.27x simulated across powf, logaddexp_accurate,
-  compound_accurate, remainder_wide, sin_checked). Do not "optimize away"
+  compound_accurate, remainder_wide). Do not "optimize away"
   f64 math on the theory that it is secretly slow -- it is not.
 - The hazards that ARE real:
   1. **f64/qword tables and f64 gathers** collapse surrounding loops from
