@@ -190,9 +190,12 @@ fn main() {
     bench!("sin", sin);
     bench!("std sin", |x: f32| x.sin());
     bench!("cos", cos);
-    bench!("sin_wide", sin_wide);
-    bench!("cos_wide", cos_wide);
-    bench!("tan_wide", tan_wide);
+    bench!("sin_wide", sin_wide, Band::Large);
+    bench!("std sin_wide", |x: f32| x.sin(), Band::Large);
+    bench!("cos_wide", cos_wide, Band::Large);
+    bench!("std cos_wide", |x: f32| x.cos(), Band::Large);
+    bench!("tan_wide", tan_wide, Band::Large);
+    bench!("std tan_wide", |x: f32| x.tan(), Band::Large);
     bench!("std cos", |x: f32| x.cos());
     bench!("std tan", |x: f32| x.tan());
     bench!("sinpi", sinpi);

@@ -43,6 +43,10 @@ pub enum Band {
     /// `|x|` in `[0.125, 0.25)`. Same domains as `Half`, but lands on the
     /// small-`|x|` branch instead (`asin_small`, `atanh_small`, ...).
     Eighth,
+    /// `|x|` in `[2^30, 2^31)`. For wide-range functions (`sin_wide`, `cos_wide`,
+    /// `tan_wide`) whose purpose is large-magnitude reduction where standard
+    /// Cody-Waite reduction breaks down and full Payne-Hanek reduction is required.
+    Large,
 }
 
 impl Band {
@@ -54,6 +58,7 @@ impl Band {
             Band::Two => 0x4000_0000,
             Band::Half => 0x3f00_0000,
             Band::Eighth => 0x3e00_0000,
+            Band::Large => 0x4e80_0000,
         }
     }
 
@@ -66,6 +71,7 @@ impl Band {
             Band::Two => (2.0, 4.0),
             Band::Half => (0.5, 1.0),
             Band::Eighth => (0.125, 0.25),
+            Band::Large => (1073741824.0, 2147483648.0),
         }
     }
 
