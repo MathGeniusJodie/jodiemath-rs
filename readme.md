@@ -130,7 +130,7 @@ log10_unchecked| 11.8 ns |    -    |  -
         atan2 | 21.7 ns | 28.6 ns | 1.3x
 atan2_unchecked| 21.7 ns |    -    |  -
           tan | 21.6 ns | 23.5 ns | 1.1x
-     tan_wide | 30.2 ns | 32.8 ns | 1.1x
+     tan_wide | 26.5 ns | 32.6 ns | 1.2x
         sinpi | 15.5 ns |    -    |  -
         cospi | 16.1 ns |    -    |  -
         tanpi | 18.5 ns |    -    |  -
@@ -188,7 +188,7 @@ log10_unchecked| 0.29 ns |    -    |  -
         atan2 | 0.56 ns | 11.85 ns | 21.4x
 atan2_unchecked| 0.55 ns |    -    |  -
           tan | 0.60 ns | 7.54 ns | 12.6x
-     tan_wide | 3.75 ns | 15.78 ns | 4.2x
+     tan_wide | 3.70 ns | 14.48 ns | 3.9x
         sinpi | 0.37 ns |    -    |  -
         cospi | 0.38 ns |    -    |  -
         tanpi | 0.79 ns |    -    |  -
@@ -217,10 +217,10 @@ exp10_checked       |          55.00 |             1.657
 log2                |          38.06 |             1.583
 log2_unchecked      |          38.06 |             1.021
 sin                 |          64.00 |             1.778
-sin_wide            |          54.25 |             4.309
+sin_wide            |          51.98 |             4.223
 cos                 |          61.00 |             1.654
-cos_wide            |          55.20 |             5.069
-tan_wide            |          70.20 |             5.362
+cos_wide            |          56.02 |             5.068
+tan_wide            |          62.03 |             5.544
 sinpi               |          42.02 |             1.133
 cospi               |          47.00 |             1.226
 tanpi               |          77.05 |             2.155

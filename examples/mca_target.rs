@@ -110,7 +110,7 @@ throughput_fn!(
 latency_fn!(lat_std_round, "std_round_latency", |x: f32| x.round());
 throughput_fn!(thr_std_round, "std_round_throughput", |x: f32| x.round());
 
-latency_fn!(lat_cbrt, "cbrt_latency", cbrt_normal);
+latency_fn!(lat_cbrt, "cbrt_latency", cbrt_unchecked);
 throughput_fn!(thr_cbrt, "cbrt_throughput", cbrt);
 
 // full public cbrt (with its tiny-input select), not just the _normal core --
@@ -233,22 +233,6 @@ throughput_fn!(thr_cos_wide, "cos_wide_throughput", cos_wide);
 latency_fn!(lat_cos, "cos_latency", cos);
 throughput_fn!(thr_cos, "cos_throughput", cos);
 
-latency_fn!(lat_wrap_pi, "wrap_pi_latency", wrap_pi);
-throughput_fn!(thr_wrap_pi, "wrap_pi_throughput", wrap_pi);
-
-latency_fn!(lat_sin_prereduced, "sin_prereduced_latency", sin_prereduced);
-throughput_fn!(
-    thr_sin_prereduced,
-    "sin_prereduced_throughput",
-    sin_prereduced
-);
-latency_fn!(lat_cos_prereduced, "cos_prereduced_latency", cos_prereduced);
-throughput_fn!(
-    thr_cos_prereduced,
-    "cos_prereduced_throughput",
-    cos_prereduced
-);
-
 latency_fn!(lat_sinpi, "sinpi_latency", sinpi);
 throughput_fn!(thr_sinpi, "sinpi_throughput", sinpi);
 
@@ -257,15 +241,6 @@ throughput_fn!(thr_cospi, "cospi_throughput", cospi);
 
 latency_fn!(lat_tanpi, "tanpi_latency", tanpi);
 throughput_fn!(thr_tanpi, "tanpi_throughput", tanpi);
-
-latency_fn!(lat_sin2pi, "sin2pi_latency", sin2pi);
-throughput_fn!(thr_sin2pi, "sin2pi_throughput", sin2pi);
-
-latency_fn!(lat_cos2pi, "cos2pi_latency", cos2pi);
-throughput_fn!(thr_cos2pi, "cos2pi_throughput", cos2pi);
-
-latency_fn!(lat_tan2pi, "tan2pi_latency", tan2pi);
-throughput_fn!(thr_tan2pi, "tan2pi_throughput", tan2pi);
 
 latency_fn!(
     lat_sinc_unnormalized,
@@ -276,27 +251,6 @@ throughput_fn!(
     thr_sinc_unnormalized,
     "sinc_unnormalized_throughput",
     sinc_unnormalized
-);
-
-latency_fn!(lat_sind_unchecked, "sind_unchecked_latency", sind_unchecked);
-throughput_fn!(
-    thr_sind_unchecked,
-    "sind_unchecked_throughput",
-    sind_unchecked
-);
-
-latency_fn!(lat_cosd_unchecked, "cosd_unchecked_latency", cosd_unchecked);
-throughput_fn!(
-    thr_cosd_unchecked,
-    "cosd_unchecked_throughput",
-    cosd_unchecked
-);
-
-latency_fn!(lat_tand_unchecked, "tand_unchecked_latency", tand_unchecked);
-throughput_fn!(
-    thr_tand_unchecked,
-    "tand_unchecked_throughput",
-    tand_unchecked
 );
 
 latency_fn!(lat_ln, "ln_latency", ln);
@@ -817,19 +771,10 @@ fn main() {
         lat_sin_wide, thr_sin_wide;
         lat_cos_wide, thr_cos_wide;
         lat_cos, thr_cos;
-        lat_wrap_pi, thr_wrap_pi;
-        lat_sin_prereduced, thr_sin_prereduced;
-        lat_cos_prereduced, thr_cos_prereduced;
         lat_sinpi, thr_sinpi;
         lat_cospi, thr_cospi;
         lat_tanpi, thr_tanpi;
-        lat_sin2pi, thr_sin2pi;
-        lat_cos2pi, thr_cos2pi;
-        lat_tan2pi, thr_tan2pi;
         lat_sinc_unnormalized, thr_sinc_unnormalized;
-        lat_sind_unchecked, thr_sind_unchecked;
-        lat_cosd_unchecked, thr_cosd_unchecked;
-        lat_tand_unchecked, thr_tand_unchecked;
         lat_ln, thr_ln;
         lat_ln_unchecked, thr_ln_unchecked;
         lat_log10, thr_log10;

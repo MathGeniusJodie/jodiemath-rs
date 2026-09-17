@@ -562,55 +562,52 @@ pub fn two_prod(a: f32, b: f32) -> (f32, f32) {
 const CUT_PI_WIDE: usize = 96;
 
 /// Payne-Hanek range reduction modulo `pi` using 29-bit chunk tables.
-/// Total over all finite f32 with no magnitude limit. Returns `(r, sign)`.
+/// Total over all finite f32 with no magnitude limit. Returns reduced argument `r`.
 #[inline(always)]
-fn reduce_pi_wide<const HALF: bool>(x: f32) -> (f32, u32) {
+fn reduce_pi_wide<const HALF: bool>(x: f32) -> f32 {
     let b = x.to_bits();
     let e = ((b >> 23) & 0xff) as usize;
     let sgnx = b & SIGN_MASK;
-    let m = ((b & 0x007f_ffff) | 0x0080_0000) as u64;
 
-    let w0 = pitable::REDUCE_PI_W[0][e & 0xff] as u64;
-    let w1 = pitable::REDUCE_PI_W[1][e & 0xff] as u64;
-    let w2 = pitable::REDUCE_PI_W[2][e & 0xff] as u64;
+    if (e.wrapping_sub(CUT_PI_WIDE)) < (255 - CUT_PI_WIDE) {
+        let m = ((b & 0x007f_ffff) | 0x0080_0000) as u64;
+        let w0 = pitable::REDUCE_PI_W[0][e & 0xff] as u64;
+        let w1 = pitable::REDUCE_PI_W[1][e & 0xff] as u64;
+        let w2 = pitable::REDUCE_PI_W[2][e & 0xff] as u64;
 
-    let t2 = m * w2;
-    let t1 = m * w1;
-    let p0 = m * w0;
-    let sum57 = (p0 << 29).wrapping_add(t1).wrapping_add(t2 >> 29);
+        let t2 = m * w2;
+        let t1 = m * w1;
+        let p0 = m * w0;
+        let sum57 = (p0 << 29).wrapping_add(t1).wrapping_add(t2 >> 29);
 
-    let par = (((sum57 >> 57) ^ (sum57 >> 56)) as u32 & 1) << 31;
-    let fc_int = ((sum57 << 7) as i64) >> 7;
+        let par = (((sum57 >> 57) ^ (sum57 >> 56)) as u32 & 1) << 31;
+        let fc_int = ((sum57 << 7) as i64) >> 7;
 
-    let (tt_int, sgn_chain) = if HALF {
-        let shift63 = fc_int >> 63;
-        let half_int = (1i64 << 56) + (shift63 << 57);
-        let sgn = par ^ (!shift63 as u32 & SIGN_MASK) ^ sgnx;
-        (fc_int - half_int, sgn)
-    } else {
-        (fc_int, par)
-    };
-
-    let tt = (tt_int as f32) * f32::from_bits(0x2300_0000); // tt_int * 2^-57
-    let r_chain = tt * std::f32::consts::PI;
-
-    let (r, sgn) = if e < CUT_PI_WIDE {
-        if HALF {
-            (-std::f32::consts::FRAC_PI_2, SIGN_MASK ^ sgnx)
+        let (tt_int, flip) = if HALF {
+            let shift63 = fc_int >> 63;
+            let half_int = (1i64 << 56) + (shift63 << 57);
+            let sgn = par ^ (!shift63 as u32 & SIGN_MASK) ^ sgnx;
+            (fc_int - half_int, sgn)
         } else {
-            (f32::from_bits(b & !SIGN_MASK), 0)
-        }
-    } else if e == 255 {
+            (fc_int, par ^ sgnx)
+        };
+
+        let r_chain = (tt_int as f32) * f32::from_bits(0x23c9_0fdb);
+        f32::from_bits(r_chain.to_bits() ^ flip)
+    } else if e < CUT_PI_WIDE {
         if HALF {
-            (-f32::NAN, sgnx)
+            std::f32::consts::FRAC_PI_2
+        } else {
+            x
+        }
+    } else {
+        if HALF {
+            -f32::NAN
         } else {
             let nan = f32::from_bits((b & 0x007f_ffff) | 0x7f80_0000) * 0.0;
-            (nan, 0)
+            f32::from_bits(nan.to_bits() ^ sgnx)
         }
-    } else {
-        (r_chain, sgn_chain)
-    };
-    (f32::from_bits(r.to_bits() ^ sgnx), sgn)
+    }
 }
 
 // Parity of exact-integer float q without saturating float-to-int cast.
@@ -622,8 +619,7 @@ fn parity(q: f32) -> f32 {
 /// Computes `sin(x)` with no magnitude limit across all finite f32 (2 max ulp).
 #[inline(always)]
 pub fn sin_wide(x: f32) -> f32 {
-    let (r, flip) = reduce_pi_wide::<false>(x);
-    let r = f32::from_bits(r.to_bits() ^ flip);
+    let r = reduce_pi_wide::<false>(x);
     // sinf_poly preserves -0.0.
     sinf_poly(r).clamp(-1.0, 1.0)
 }
@@ -631,8 +627,7 @@ pub fn sin_wide(x: f32) -> f32 {
 /// Computes `cos(x)` with no magnitude limit across all finite f32 (2 max ulp).
 #[inline(always)]
 pub fn cos_wide(x: f32) -> f32 {
-    let (r, flip) = reduce_pi_wide::<true>(x);
-    let r = f32::from_bits(r.to_bits() ^ flip);
+    let r = reduce_pi_wide::<true>(x);
     sinf_poly(r).clamp(-1.0, 1.0)
 }
 
@@ -643,11 +638,41 @@ pub const WRAP_PI_MAX: f32 = f32::from_bits(0x40490fda);
 /// Computes `tan(x)` with no magnitude limit across all finite f32.
 #[inline(always)]
 pub fn tan_wide(x: f32) -> f32 {
-    let (rs, flip_s) = reduce_pi_wide::<false>(x);
-    let (rc, flip_c) = reduce_pi_wide::<true>(x);
-    let num = sinf_poly(rs).clamp(-1.0, 1.0);
-    let den = sinf_poly(rc).clamp(-1.0, 1.0);
-    f32::from_bits((num / den).to_bits() ^ (flip_s ^ flip_c))
+    let b = x.to_bits();
+    let e = ((b >> 23) & 0xff) as usize;
+    let sgnx = b & SIGN_MASK;
+
+    if (e.wrapping_sub(CUT_PI_WIDE)) < (255 - CUT_PI_WIDE) {
+        let m = ((b & 0x007f_ffff) | 0x0080_0000) as u64;
+        let w0 = pitable::REDUCE_PI_W[0][e & 0xff] as u64;
+        let w1 = pitable::REDUCE_PI_W[1][e & 0xff] as u64;
+        let w2 = pitable::REDUCE_PI_W[2][e & 0xff] as u64;
+
+        let t2 = m * w2;
+        let t1 = m * w1;
+        let p0 = m * w0;
+        let sum57 = (p0 << 29).wrapping_add(t1).wrapping_add(t2 >> 29);
+
+        let fc_int = ((sum57 << 7) as i64) >> 7;
+        let shift63 = fc_int >> 63;
+        let half_int = (1i64 << 56) + (shift63 << 57);
+        let flip = (!shift63 as u32 & SIGN_MASK) ^ sgnx;
+
+        let tt_s = fc_int;
+        let tt_c = fc_int - half_int;
+
+        let r_s = (tt_s as f32) * f32::from_bits(0x23c9_0fdb);
+        let r_c = (tt_c as f32) * f32::from_bits(0x23c9_0fdb);
+
+        let num = sinf_poly(r_s).clamp(-1.0, 1.0);
+        let den = sinf_poly(r_c).clamp(-1.0, 1.0);
+        f32::from_bits((num / den).to_bits() ^ flip)
+    } else if e < CUT_PI_WIDE {
+        x
+    } else {
+        let nan = f32::from_bits((b & 0x007f_ffff) | 0x7f80_0000) * 0.0;
+        f32::from_bits(nan.to_bits() ^ sgnx)
+    }
 }
 
 /// Core of cbrt for normal finite x: bit-trick seed followed by degree-3 polynomial correction.
