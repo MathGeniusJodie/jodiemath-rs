@@ -98,8 +98,8 @@ fn bench_throughput(name: &str, band: Band, f: impl Fn(f32) -> f32) {
     // array was hardcoded to [2,4) too.
     let (lo, hi) = band.range();
     let mut input = [0f32; TP_ARR];
-    for i in 0..TP_ARR {
-        input[i] = lo + (i as f32) * ((hi - lo) / TP_ARR as f32);
+    for (i, slot) in input.iter_mut().enumerate() {
+        *slot = lo + (i as f32) * ((hi - lo) / TP_ARR as f32);
     }
     let input = black_box(input);
     let mut out = [0f32; TP_ARR];

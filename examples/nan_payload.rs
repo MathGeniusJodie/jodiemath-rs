@@ -14,7 +14,7 @@
 // merely *propagates* an operand (a multiply, an fma, a select), and are lost
 // wherever hardware produces a NaN from scratch -- e.g. `inf * 0`, `0/0`, or
 // a comparison-driven select that picks a computed constant instead of x.
-#![allow(clippy::approx_constant)]
+#![allow(clippy::approx_constant, clippy::type_complexity)]
 use jodiemath_rs::*;
 
 const CANON: u32 = 0x7fc0_0000; // default quiet NaN, empty payload
@@ -178,10 +178,7 @@ fn main() {
     }
 
     println!("{} public 1-arg functions\n", fns.len());
-    println!(
-        "{:<26} {:<24} {}",
-        "function", "class", "per-input verdicts"
-    );
+    println!("{:<26} {:<24} per-input verdicts", "function", "class");
     println!("{}", "-".repeat(100));
     for r in &rows {
         println!("{r}");

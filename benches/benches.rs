@@ -1,3 +1,5 @@
+#![allow(clippy::needless_range_loop, clippy::manual_memcpy)]
+
 use criterion::{criterion_group, criterion_main, Criterion};
 use jodiemath_rs::{cbrt, cbrt_accurate, cos, exp2, log_2, sin};
 use std::hint::black_box;

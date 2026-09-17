@@ -138,7 +138,7 @@ fn main() {
 
     let accurate_safe_range = |x: f32| {
         let ax = x.to_bits() & 0x7fff_ffff;
-        ax >= 0x2380_0000 && ax < 0x7f00_0000
+        (0x2380_0000..0x7f00_0000).contains(&ax)
     };
     ok &= check1(
         "cbrt_accurate / cbrt_accurate_unchecked",

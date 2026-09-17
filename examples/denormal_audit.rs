@@ -79,8 +79,8 @@ fn audit(name: &'static str, f: impl Fn(f32) -> f32, r: impl Fn(f64) -> f64, xs:
 fn report(title: &str, rows: &[Row]) {
     println!("\n=== {title} ===");
     println!(
-        "{:<16} {:>9} {:>9} {:>12} {:>14}  {}",
-        "function", "denorm", "flushed", "worst rel", "worst x", "note"
+        "{:<16} {:>9} {:>9} {:>12} {:>14}  note",
+        "function", "denorm", "flushed", "worst rel", "worst x"
     );
     for r in rows {
         if r.n_denorm == 0 {
@@ -147,7 +147,7 @@ fn main() {
             |v| 1.0 / (1.0 + (-v).exp()),
             &lin(-105.0, -87.0, 300_000),
         ),
-        audit("erfc", erfc, |v| libm_erfc(v), &lin(9.0, 10.6, 300_000)),
+        audit("erfc", erfc, libm_erfc, &lin(9.0, 10.6, 300_000)),
         audit(
             "tanh_grad",
             tanh_grad,
@@ -221,7 +221,7 @@ fn main() {
         audit("expm1", expm1, f64::exp_m1, &dn),
         audit("expm1_checked", expm1_checked, f64::exp_m1, &dn),
         audit("log1p", log1p, f64::ln_1p, &dn),
-        audit("erf", erf, |v| libm_erf(v), &dn),
+        audit("erf", erf, libm_erf, &dn),
         audit("sinpi", sinpi, |v| (v * std::f64::consts::PI).sin(), &dn),
         audit("sqrt1pm1", sqrt1pm1, |v| v / ((1.0 + v).sqrt() + 1.0), &dn),
         audit(

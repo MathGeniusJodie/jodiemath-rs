@@ -708,7 +708,7 @@ fn main() {
         // !big` domain exactly, see cbrt_accurate's own doc comment).
         let accurate_safe_range = |x: f32| {
             let ax = x.to_bits() & 0x7fff_ffff;
-            ax >= 0x2380_0000 && ax < 0x7f00_0000
+            (0x2380_0000..0x7f00_0000).contains(&ax)
         };
         let s = measure!(accurate_safe_range, cbrt_accurate_unchecked, cbrt_u35);
         report("cbrt_accurate_unchecked (+)", &s, t0);
@@ -1397,7 +1397,7 @@ fn main() {
         // 12 digits on published quantiles (probit(0.975) = 1.959963985,
         // probit(1e-5) = -4.264890794).
         const SQRT_PI_2: f64 = 0.886226925452758013649083741670572;
-        const TWO_OVER_SQRT_PI: f64 = 1.128379167095512573896158903121;
+        const TWO_OVER_SQRT_PI: f64 = std::f64::consts::FRAC_2_SQRT_PI;
         let erfc_inv_half_ref = |n: F64xN, xt: F64xN| -> F64xN {
             let tiny = F64xN::splat(1e-300);
             let w = -log_u35(n * (F64xN::splat(2.0) - n));

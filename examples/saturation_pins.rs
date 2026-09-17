@@ -13,7 +13,11 @@
 // within f32 range or overflows, and f64 has ~8 orders of headroom either
 // way, so `(ref as f32)` is the correctly-rounded answer including the
 // overflow-to-inf transition.
-#![allow(clippy::approx_constant)]
+#![allow(
+    clippy::approx_constant,
+    clippy::type_complexity,
+    clippy::excessive_precision
+)]
 use jodiemath_rs::*;
 
 fn ulps_away(x: f32, n: i32) -> f32 {

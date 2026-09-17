@@ -11,7 +11,7 @@
 // Everything else is printed as a matrix for review, since the correct
 // value at +-0/+-inf is function-specific (and for the _unchecked/_approx
 // tiers, deliberately unspecified outside their domains).
-#![allow(clippy::approx_constant)]
+#![allow(clippy::approx_constant, clippy::type_complexity)]
 use jodiemath_rs::*;
 
 // Functions whose own doc comments already promise nothing for non-finite

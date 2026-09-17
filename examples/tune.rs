@@ -6,7 +6,7 @@
 // perturbs/tunes them), so some literals are expected to land close to
 // well-known constants without actually being them -- not worth per-site
 // `#[allow]`s the way the shipped library documents each one individually.
-#![allow(clippy::approx_constant)]
+#![allow(clippy::approx_constant, clippy::excessive_precision)]
 use sleef::f64::erf_u10 as erf_ref;
 use sleef::f64::erfc_u15 as erfc_ref;
 
@@ -1602,10 +1602,10 @@ fn main() {
             let mut max = 0u64;
             for &x in &grid {
                 let got = acos_poly_c(x, c);
-                let d_acos = ulp_diff(got, x.acos() as f32);
+                let d_acos = ulp_diff(got, x.acos());
                 let d_asin = if x >= 0.25 {
                     let asin_got = std::f32::consts::FRAC_PI_2 - got;
-                    ulp_diff(asin_got, x.asin() as f32)
+                    ulp_diff(asin_got, x.asin())
                 } else {
                     0
                 };
@@ -1652,7 +1652,7 @@ fn main() {
             let mut m = 0u64;
             for &x in &grid {
                 let got = acos_poly_c(x, &init);
-                m = m.max(ulp_diff(got, x.acos() as f32));
+                m = m.max(ulp_diff(got, x.acos()));
             }
             m
         };
@@ -1662,10 +1662,10 @@ fn main() {
             let mut acos_max = 0u64;
             for &x in &grid {
                 let got = acos_poly_c(x, c);
-                acos_max = acos_max.max(ulp_diff(got, x.acos() as f32));
+                acos_max = acos_max.max(ulp_diff(got, x.acos()));
                 if x >= 0.25 {
                     let asin_got = std::f32::consts::FRAC_PI_2 - got;
-                    let d = ulp_diff(asin_got, x.asin() as f32);
+                    let d = ulp_diff(asin_got, x.asin());
                     sum += d;
                     max = max.max(d);
                 }
@@ -1735,10 +1735,10 @@ fn main() {
             let mut max = 0u64;
             for &x in &grid {
                 let got = acos_poly8_c(x, c);
-                let d_acos = ulp_diff(got, x.acos() as f32);
+                let d_acos = ulp_diff(got, x.acos());
                 let d_asin = if x >= 0.25 {
                     let asin_got = std::f32::consts::FRAC_PI_2 - got;
-                    ulp_diff(asin_got, x.asin() as f32)
+                    ulp_diff(asin_got, x.asin())
                 } else {
                     0
                 };

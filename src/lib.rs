@@ -61,7 +61,7 @@ macro_rules! denormal_rescale {
 // via a full pre/post assembly diff.
 macro_rules! exp_r_poly {
     ($r:expr) => {{
-        let c: [f32; 4] = [4.9999300e-1, 1.6667245e-1, 4.1883811e-2, 8.3009899e-3];
+        let c: [f32; 4] = [4.999_93e-1, 1.6667245e-1, 4.188_381e-2, 8.300_99e-3];
         let r2 = $r * $r;
         let l0 = $r + 1.0;
         let l1 = fma(c[1], $r, c[0]);
@@ -94,7 +94,7 @@ macro_rules! exp_reduce {
             0.50000006,
             0.16666451,
             0.041665636,
-            0.0083748708,
+            0.008_374_871,
             0.0013946877,
         ];
         let r2 = r * r;
@@ -110,8 +110,8 @@ macro_rules! exp_reduce {
 
 /// `exp_checked`'s clamp bounds: `exp2_checked`'s own `k` boundary (`[-151,
 /// 128)`) converted into `x`'s units.
-const EXP_CLAMP_LO: f32 = -104.66522426455174;
-const EXP_CLAMP_HI: f32 = 88.72283911167308;
+const EXP_CLAMP_LO: f32 = -104.665_22;
+const EXP_CLAMP_HI: f32 = 88.722_84;
 
 // Q(f) = (2^f - 1)/f, shared by exp2/exp2_checked/exp10/exp10_checked/ exp2m1.
 // Returns `q`; each caller does its own final combine (exp2/exp10's
@@ -134,8 +134,8 @@ macro_rules! exp2_q_poly {
 macro_rules! exp2_q_poly_centered {
     ($f:expr) => {{
         let f2 = $f * $f;
-        let g0 = fma(2.402265e-1, $f, 6.9314719e-1);
-        let g1 = fma(9.6182375e-3, $f, 5.5503574e-2);
+        let g0 = fma(2.402265e-1, $f, 6.931_472e-1);
+        let g1 = fma(9.618_238e-3, $f, 5.5503574e-2);
         let g2 = fma(1.5403504e-4, $f, 1.3390731e-3);
         let h = fma(g2, f2, g1);
         fma(h, f2, g0)
@@ -159,7 +159,7 @@ macro_rules! exp_pos_neg_core {
         let c: [f32; 5] = [
             0.49999994 * 0.5,
             0.16666521 * 0.5,
-            0.041668329 * 0.5,
+            0.041_668_33 * 0.5,
             8.3687045e-3 * 0.5,
             1.3814511e-3 * 0.5,
         ];
@@ -489,7 +489,7 @@ pub fn exp10(x: f32) -> f32 {
 // ~6.1e-9), fitted with lolremez. Estrin evaluation, 2 fma chains.
 #[inline(always)]
 fn sinf_poly_raw(x: f32) -> f32 {
-    let c0 = -0.16666660f32;
+    let c0 = -0.166_666_6_f32;
     let c1 = 8.3330662e-3f32;
     let c2 = -1.9809603e-4f32;
     let c3 = 2.6057806e-6f32;
@@ -516,9 +516,9 @@ fn sinf_poly(x: f32) -> f32 {
 // q*PI_x` steps exactly representable for every |q| the magic-round `q` is
 // defined over, so neither of them rounds at all.
 const PI_A: f32 = 3.140625;
-const PI_B: f32 = 0.0009670257568359375;
-const PI_C: f32 = 6.278329465203569e-7;
-const PI_D: f32 = 1.0780605906948477e-14;
+const PI_B: f32 = 0.000_967_025_76;
+const PI_C: f32 = 6.278_329_5e-7;
+const PI_D: f32 = 1.078_060_6e-14;
 const FRAC_1_PI: f32 = std::f32::consts::FRAC_1_PI;
 
 // 1.5 * 2^23; adding this to |v| < 2^22 rounds v to the nearest integer
@@ -652,8 +652,8 @@ fn tan_poly(u: f32) -> f32 {
         10.335385,
         40.82169,
         160.9828,
-        741.58649,
-        701.91418,
+        741.586_5,
+        701.914_2,
         28496.229,
     ];
     let u2 = u * u;
@@ -727,9 +727,9 @@ const DEG_TO_RAD_SMALL: f32 = std::f32::consts::PI / 180.0;
 #[inline(always)]
 fn tand_poly(u: f32) -> f32 {
     let c: [f32; 7] = [
-        1.3519960e-10,
-        1.7721820e-6,
-        2.1602940e-10,
+        1.351_996e-10,
+        1.772_182e-6,
+        2.160_294e-10,
         2.6339457e-14,
         3.6819033e-18,
         1.3777568e-22,
@@ -795,7 +795,7 @@ pub fn tand_unchecked(x: f32) -> f32 {
 // off by a whole integer, shifting the residual by a whole multiple of pi and
 // putting sinf_poly hopelessly outside its fitted domain -- a relocatable
 // *cliff*, not a slope, no matter how q is rounded.
-const RPI_LO: f32 = 1.2841276486597053e-8;
+const RPI_LO: f32 = 1.284_127_65e-8;
 // 1/pi and pi, each split so the leading word has <= 26 significant bits.
 const IPI64_HI: f64 = 0.31830988079309464;
 const IPI64_LO: f64 = 5.390696036528002e-09;
@@ -870,12 +870,6 @@ fn reduce_pi64<const HALF: bool>(x: f32) -> (f32, u32) {
     };
     (r as f32, sgn)
 }
-
-/// 1/pi in f64, the small-exponent bypass source of `reduce_pi_wide`'s
-/// fraction: for `e < CUT_PI_WIDE` the fraction of x/pi is just |x|/pi -- no
-/// wrap past an integer has happened yet -- and one f64 multiply names it to a
-/// flat relative 2^-53, which no truncated chunk table could.
-const INV_PI_F64: f64 = 0.318309886183790671537767526745028724_f64;
 
 /// Highest raw biased exponent `reduce_pi_wide` serves from its chunk tables;
 /// below this, `m*beta < 1` never wraps past an integer, so the smallest true
@@ -952,267 +946,6 @@ fn reduce_pi_wide<const HALF: bool>(x: f32) -> (f32, u32) {
 #[inline(always)]
 fn parity(q: f32) -> f32 {
     fma(-2.0, (q * 0.5).floor(), q)
-}
-
-// ---------------------------------------------------------------------------
-// Gather-free Payne-Hanek: register-permute window extraction (x8 prototype).
-
-/// The whole `pitable` collapsed into one 48-byte constant (top 2 words zero).
-/// Layout: define C = the 256-bit string whose bit j is 1/pi's bit at weight
-/// 2^(60-j) (so C covers weights 2^60 down to 2^-195 -- exactly the span the
-/// chain's exponent range 96..=254 needs), then store D with D[x] = C[297 - x]
-/// (bit-reversed, zero-padded to 384 bits).
-#[repr(align(64))]
-struct WinAlign([u64; 6]);
-static REDUCE_PI_WIN: WinAlign = WinAlign([
-    0x39041c0000000000,
-    0x4ddc0db6295993c4,
-    0x41529fc2757d1f53,
-    0x00000a2f9836e4e4,
-    0,
-    0,
-]);
-
-/// Scalar reference for the x8 prototype's differential tests.
-#[doc(hidden)]
-pub fn reduce_pi_wide_ref<const HALF: bool>(x: f32) -> (f32, u32) {
-    reduce_pi_wide::<HALF>(x)
-}
-
-/// Raw x8 reduction for differential debugging.
-#[doc(hidden)]
-pub unsafe fn reduce_pi_wide_x8_pub<const HALF: bool>(
-    x: std::arch::x86_64::__m256,
-) -> (std::arch::x86_64::__m256, std::arch::x86_64::__m256i) {
-    reduce_pi_wide_x8::<HALF>(x)
-}
-
-/// Gather-free x8 reduction: same contract as [`reduce_pi_wide`] applied
-/// lane-wise to 8 packed f32 inputs. Returns the reduced residuals (packed
-/// 8xf32, already xor'd with each lane's own sign, `-0.0` carried) and the sign
-/// masks (packed 8xu32 in `SIGN_MASK` position) for `sinf_poly`-style callers.
-#[doc(hidden)]
-#[inline]
-#[target_feature(enable = "avx512f,avx512dq,avx512bw,avx512vbmi,avx512vbmi2")]
-unsafe fn reduce_pi_wide_x8<const HALF: bool>(
-    x: std::arch::x86_64::__m256,
-) -> (std::arch::x86_64::__m256, std::arch::x86_64::__m256i) {
-    use std::arch::x86_64::*;
-
-    let xi = _mm256_castps_si256(x);
-    let sgnx = _mm256_and_si256(xi, _mm256_set1_epi32(SIGN_MASK as i32));
-    let e = _mm256_and_si256(_mm256_srli_epi32::<23>(xi), _mm256_set1_epi32(0xff));
-
-    // Window position: S = 301 - e, byte offset B = S>>3, bit rho = S&7.
-    let sv = _mm256_sub_epi32(_mm256_set1_epi32(301), e);
-    let bd = _mm256_srli_epi32::<3>(sv);
-    let rho = _mm256_and_si256(sv, _mm256_set1_epi32(7));
-
-    // Byte index vectors for the two vpermi2b: byte p of the destination qword
-    // lane l wants D byte B_l + (p&7), resp. B_l + 8 + (p&7).
-    let b64 = _mm512_cvtepu32_epi64(bd);
-    let brep = _mm512_mullo_epi64(b64, _mm512_set1_epi64(0x0101_0101_0101_0101));
-    let idx0 = _mm512_add_epi8(brep, _mm512_set1_epi64(0x0706_0504_0302_0100));
-    let idx1 = _mm512_add_epi8(brep, _mm512_set1_epi64(0x0f0e_0d0c_0b0a_0908));
-
-    let win = _mm512_load_si512(REDUCE_PI_WIN.0.as_ptr().cast());
-    let zero = _mm512_setzero_si512();
-    let q0 = _mm512_permutex2var_epi8(win, idx0, zero);
-    let q1 = _mm512_permutex2var_epi8(win, idx1, zero);
-
-    let cnt = _mm512_cvtepu32_epi64(rho);
-    let xx = _mm512_shrdv_epi64(q0, q1, cnt); // D bits [S, S+63]
-    let x2 = _mm512_shrdv_epi64(q1, zero, cnt); // D bits [S+64, S+127]
-    let m29 = _mm512_set1_epi64((1 << 29) - 1);
-    let w2i = _mm512_and_si512(xx, m29);
-    let w1i = _mm512_and_si512(_mm512_srli_epi64::<29>(xx), m29);
-    let w0i = _mm512_and_si512(_mm512_shrdi_epi64::<58>(xx, x2), m29);
-    let w0 = _mm512_cvtepu64_pd(w0i);
-    let w1 = _mm512_cvtepu64_pd(w1i);
-    let w2 = _mm512_cvtepu64_pd(w2i);
-
-    // From here the chain is reduce_pi_wide's, lane-wide.
-    let mant = _mm256_and_si256(xi, _mm256_set1_epi32(0x007f_ffff));
-    let isnn = _mm256_cmpeq_epi32_mask(e, _mm256_set1_epi32(255));
-    let expn = _mm256_or_si256(mant, _mm256_set1_epi32(0x4b00_0000));
-    let m_dwords = _mm256_mask_blend_epi32(
-        isnn,
-        expn,
-        _mm256_or_si256(mant, _mm256_set1_epi32(0x7f80_0000)),
-    );
-    // via f32 BITS so inf/NaN payloads poison exactly like the scalar
-    // rebuild -- this is a bitcast, not an int->float conversion: the dword
-    // already holds the desired f32 pattern.
-    let m = _mm512_cvtps_pd(_mm256_castsi256_ps(m_dwords));
-
-    let mm = _mm512_mul_pd(m, _mm512_set1_pd(2.0f64.powi(-28)));
-    // NB: these scale mm (not m), i.e. net m*2^-57 / m*2^-86 like the scalar
-    let mm1 = _mm512_mul_pd(mm, _mm512_set1_pd(2.0f64.powi(-29)));
-    let mm2 = _mm512_mul_pd(mm, _mm512_set1_pd(2.0f64.powi(-58)));
-    let p0 = _mm512_mul_pd(mm, w0);
-    let n0 = _mm512_roundscale_pd::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(p0);
-    let f0 = _mm512_sub_pd(p0, n0);
-    let s3 = _mm512_fmadd_pd(mm2, w2, _mm512_fmadd_pd(mm1, w1, f0));
-    let n1 = _mm512_roundscale_pd::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(s3);
-    let fc_chain = _mm512_sub_pd(s3, n1);
-
-    let xf = _mm512_cvtps_pd(_mm256_and_ps(
-        x,
-        _mm256_set1_ps(f32::from_bits(0x7fff_ffff)),
-    ));
-    let byp = _mm512_mul_pd(xf, _mm512_set1_pd(INV_PI_F64));
-    let small = _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(
-        _mm256_set1_epi32(CUT_PI_WIDE as i32),
-        e,
-    )));
-    let fc = _mm512_mask_blend_pd(small as u8, fc_chain, byp);
-
-    let tt = if HALF {
-        // copysign(0.5, fc): the AND already produces the sign-bit mask
-        let sb = _mm512_and_si512(_mm512_castpd_si512(fc), _mm512_set1_epi64(1 << 63));
-        _mm512_sub_pd(
-            fc,
-            _mm512_or_pd(_mm512_set1_pd(0.5), _mm512_castsi512_pd(sb)),
-        )
-    } else {
-        fc
-    };
-    let r = _mm512_cvtpd_ps(_mm512_mul_pd(tt, _mm512_set1_pd(std::f64::consts::PI)));
-    let par = _mm512_add_pd(_mm512_add_pd(n0, n1), _mm512_set1_pd(ROUND_MAGIC64));
-    let mut sgn = _mm512_srli_epi64::<32>(_mm512_slli_epi64::<63>(_mm512_and_si512(
-        _mm512_castpd_si512(par),
-        _mm512_set1_epi64(1),
-    )));
-    if HALF {
-        // scalar: (!(fc.to_bits() >> 32)) as u32 & SIGN_MASK -- i.e. the
-        // complement of fc's sign bit, which is just fc_high XOR SIGN_MASK.
-        let fchi = _mm512_and_si512(
-            _mm512_srli_epi64::<32>(_mm512_castpd_si512(fc)),
-            _mm512_set1_epi64(0x8000_0000),
-        );
-        sgn = _mm512_xor_si512(sgn, _mm512_xor_si512(fchi, _mm512_set1_epi64(0x8000_0000)));
-    }
-    let r_signed = {
-        let rb = _mm256_castps_si256(r);
-        _mm256_castsi256_ps(_mm256_xor_si256(rb, sgnx))
-    };
-    // scalar contract: sgnx is always folded into r; for HALF it is also
-    // folded into sgn -- the two cancel through the caller's `r ^ flip`,
-    // which is what keeps cos even in x.
-    let mut sgn = _mm512_cvtepi64_epi32(sgn);
-    if HALF {
-        sgn = _mm256_xor_si256(sgn, sgnx);
-    }
-    (r_signed, sgn)
-}
-
-/// `sinf_poly` on 8 lanes, plus the `|result| <= 1` clamp (NaN-transparent,
-/// same reasoning as the scalar `sin_wide`/`cos_wide` tails).
-#[doc(hidden)]
-#[inline]
-#[target_feature(enable = "avx512f,avx512dq,avx512bw,avx512vbmi,avx512vbmi2")]
-unsafe fn sinf_poly_x8(r: std::arch::x86_64::__m256) -> std::arch::x86_64::__m256 {
-    use std::arch::x86_64::*;
-    let y = _mm256_mul_ps(r, r);
-    let y2 = _mm256_mul_ps(y, y);
-    let x3 = _mm256_mul_ps(y, r);
-    let a = _mm256_fmadd_ps(
-        _mm256_set1_ps(8.333_066_2e-3),
-        y,
-        _mm256_set1_ps(-0.166_666_60),
-    );
-    let b = _mm256_fmadd_ps(
-        _mm256_set1_ps(2.605_780_6e-6),
-        y,
-        _mm256_set1_ps(-1.980_960_3e-4),
-    );
-    let p = _mm256_fmadd_ps(b, y2, a);
-    let s = _mm256_fmadd_ps(p, x3, r);
-    // clamp like `.clamp(-1.0, 1.0)`: compare+blend, not min/max, so NaN
-    // lanes survive unchanged (minps/maxps would swallow them)
-    let klt = _mm256_cmp_ps_mask::<{ _CMP_LT_OQ }>(s, _mm256_set1_ps(-1.0));
-    let s = _mm256_mask_blend_ps(klt, s, _mm256_set1_ps(-1.0));
-    let kgt = _mm256_cmp_ps_mask::<{ _CMP_GT_OQ }>(s, _mm256_set1_ps(1.0));
-    _mm256_mask_blend_ps(kgt, s, _mm256_set1_ps(1.0))
-}
-
-/// `sin_wide` on 8 lanes (residual sign flip folded in).
-#[doc(hidden)]
-#[inline]
-#[target_feature(enable = "avx512f,avx512dq,avx512bw,avx512vbmi,avx512vbmi2")]
-unsafe fn sin_wide_lanes_x8(x: std::arch::x86_64::__m256) -> std::arch::x86_64::__m256 {
-    use std::arch::x86_64::*;
-    let (r, flip) = reduce_pi_wide_x8::<false>(x);
-    let r = _mm256_castsi256_ps(_mm256_xor_si256(_mm256_castps_si256(r), flip));
-    sinf_poly_x8(r)
-}
-
-/// `cos_wide` on 8 lanes.
-#[doc(hidden)]
-#[inline]
-#[target_feature(enable = "avx512f,avx512dq,avx512bw,avx512vbmi,avx512vbmi2")]
-unsafe fn cos_wide_lanes_x8(x: std::arch::x86_64::__m256) -> std::arch::x86_64::__m256 {
-    use std::arch::x86_64::*;
-    let (r, flip) = reduce_pi_wide_x8::<true>(x);
-    let r = _mm256_castsi256_ps(_mm256_xor_si256(_mm256_castps_si256(r), flip));
-    sinf_poly_x8(r)
-}
-
-/// Slice driver for the x8 tier: `out[i] = sin_wide(xs[i])` (bit-identical to
-/// the autovectorized scalar path on every input, see the differential sweep in
-/// examples/wide_x8.rs). Tail elements use the scalar path.
-#[doc(hidden)]
-#[inline]
-pub unsafe fn sin_wide_x8_slice(xs: &[f32], out: &mut [f32]) {
-    let n = xs.len().min(out.len());
-    let mut i = 0;
-    while i + 8 <= n {
-        let xv = std::arch::x86_64::_mm256_loadu_ps(xs.as_ptr().add(i));
-        let s = sin_wide_lanes_x8(xv);
-        std::arch::x86_64::_mm256_storeu_ps(out.as_mut_ptr().add(i), s);
-        i += 8;
-    }
-    while i < n {
-        out[i] = sin_wide(xs[i]);
-        i += 1;
-    }
-}
-
-/// Region-marked throughput driver for llvm-mca: must live in-crate because
-/// LLVM refuses to inline `#[target_feature]` functions across crates, and the
-/// markers only capture what's inside them.
-#[doc(hidden)]
-#[inline]
-#[target_feature(enable = "avx512f,avx512dq,avx512bw,avx512vbmi,avx512vbmi2")]
-pub unsafe fn thr_sin_wide_x8_region(input: &[f32; 16], output: &mut [f32; 16]) {
-    use std::arch::x86_64::*;
-    unsafe { core::arch::asm!(concat!("# LLVM-MCA-BEGIN ", "sin_wide_x8_throughput")) };
-    let mut i = 0;
-    while i + 8 <= input.len() {
-        let xv = _mm256_loadu_ps(input.as_ptr().add(i));
-        let s = sin_wide_lanes_x8(xv);
-        _mm256_storeu_ps(output.as_mut_ptr().add(i), s);
-        i += 8;
-    }
-    unsafe { core::arch::asm!("# LLVM-MCA-END") };
-}
-
-/// [`sin_wide_x8_slice`] for the cos grid.
-#[doc(hidden)]
-#[inline]
-pub unsafe fn cos_wide_x8_slice(xs: &[f32], out: &mut [f32]) {
-    let n = xs.len().min(out.len());
-    let mut i = 0;
-    while i + 8 <= n {
-        let xv = std::arch::x86_64::_mm256_loadu_ps(xs.as_ptr().add(i));
-        let s = cos_wide_lanes_x8(xv);
-        std::arch::x86_64::_mm256_storeu_ps(out.as_mut_ptr().add(i), s);
-        i += 8;
-    }
-    while i < n {
-        out[i] = cos_wide(xs[i]);
-        i += 1;
-    }
 }
 
 /// Computes `sin(x)` with no magnitude limit across all finite f32 (2 max ulp).
@@ -1317,10 +1050,10 @@ pub fn cbrt_normal(x: f32) -> f32 {
     let s2 = s * s;
     let d = fma(s2, s, -a);
     let r = d * rcp;
-    let c1 = -0.3333314061164856f32;
-    let c2 = 0.22221335768699646f32;
-    let c3 = -0.1739402711391449f32;
-    let c4 = 0.14720453321933746f32;
+    let c1 = -0.333_331_4_f32;
+    let c2 = 0.222_213_36_f32;
+    let c3 = -0.173_940_27_f32;
+    let c4 = 0.147_204_53_f32;
     let r2 = r * r;
     let a1 = fma(c2, r, c1);
     let b1 = fma(c4, r, c3);
@@ -1445,11 +1178,11 @@ fn rcbrt_normal(x: f32) -> f32 {
     let t = f32::from_bits(0x54a20d0eu32.wrapping_sub(ax / 3));
     let t2 = t * t;
     let e = fma(a * t2, t, -1.0);
-    let d1 = -0.3333333134651184f32;
-    let d2 = 0.22221790254116058f32;
-    let d3 = -0.17284449934959412f32;
-    let d4 = 0.14551934599876404f32;
-    let d5 = -0.12521736323833466f32;
+    let d1 = -0.333_333_3_f32;
+    let d2 = 0.222_217_9_f32;
+    let d3 = -0.172_844_5_f32;
+    let d4 = 0.145_519_35_f32;
+    let d5 = -0.125_217_36_f32;
     let e2 = e * e;
     let a1 = fma(d2, e, d1);
     let b1 = fma(d4, e, d3);
@@ -1537,10 +1270,10 @@ const FRAC_PI_4: f32 = std::f32::consts::FRAC_PI_4;
 // never produces |k| past a couple hundred) is *exact* -- no rounding at all,
 // confirmed by brute force for k in [-300, 300]. LN2_LO is the f32-rounded
 // residual (LN2 - LN2_HI as f64, then rounded).
-const LN2_HI: f32 = 0.693145751953125;
-const LN2_LO: f32 = 1.428606765330187e-6;
-const LOG10_2_HI: f32 = 0.301025390625;
-const LOG10_2_LO: f32 = 4.605039066518657e-6;
+const LN2_HI: f32 = 0.693_145_75;
+const LN2_LO: f32 = 1.428_606_8e-6;
+const LOG10_2_HI: f32 = 0.301_025_4;
+const LOG10_2_LO: f32 = 4.605_039e-6;
 
 /// Computes the natural logarithm of `x`.
 #[doc(alias = "logf")]
@@ -1727,18 +1460,18 @@ pub fn log1pmx(x: f32) -> f32 {
     // own log1pmx the identity below turns back into log1pmx(x).
     let z = if x.abs() < 0.5 { x } else { w };
     let z2 = z * z;
-    const C1: f32 = -0.6666664970675296;
-    const C2: f32 = 0.4999995348856975;
-    const C3: f32 = -0.40001991139756876;
-    const C4: f32 = 0.33337041934430095;
-    const C5: f32 = -0.28505743489396185;
-    const C6: f32 = 0.24902498252380087;
-    const C7: f32 = -0.23131634089321032;
-    const C8: f32 = 0.21157552643272212;
-    const C9: f32 = -0.12265182957195057;
-    const C10: f32 = 0.09945676037713247;
-    const C11: f32 = -0.32486571239903606;
-    const C12: f32 = 0.32005194082375105;
+    const C1: f32 = -0.666_666_5;
+    const C2: f32 = 0.499_999_52;
+    const C3: f32 = -0.400_019_9;
+    const C4: f32 = 0.333_370_42;
+    const C5: f32 = -0.285_057_43;
+    const C6: f32 = 0.249_024_99;
+    const C7: f32 = -0.231_316_34;
+    const C8: f32 = 0.211_575_52;
+    const C9: f32 = -0.122_651_83;
+    const C10: f32 = 0.099_456_76;
+    const C11: f32 = -0.324_865_7;
+    const C12: f32 = 0.320_051_94;
     // `z` is only available after the reduction below has produced `w`, so this
     // chain sits on the critical path and a 12-deep serial Horner would
     // dominate it. Estrin instead -- five fma levels rather than twelve, for
@@ -1875,7 +1608,7 @@ pub fn exp_checked(x: f32) -> f32 {
 // peaks at 2.541 just above `x = 0.5`.
 macro_rules! expm1_p_poly {
     ($r:expr, $r2:expr) => {{
-        let c: [f32; 5] = [0.5, 1.6666504e-1, 4.1666778e-2, 8.3707254e-3, 1.3916677e-3];
+        let c: [f32; 5] = [0.5, 1.6666504e-1, 4.166_678e-2, 8.370_725e-3, 1.3916677e-3];
         let l1 = fma(c[1], $r, c[0]);
         let l2 = fma(c[3], $r, c[2]);
         let m = fma(c[4], $r2, l2);
@@ -1939,7 +1672,7 @@ pub fn expm1_narrow(x: f32) -> f32 {
 /// `expm1` across the full f32 domain with saturation.
 #[inline(always)]
 pub fn expm1_checked(x: f32) -> f32 {
-    let xc = x.clamp(-86.0, 88.72283911167308);
+    let xc = x.clamp(-86.0, 88.722_84);
     const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
     let k = fma(xc, LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
     let r = fma(-k, LN2_HI, xc);
@@ -2107,7 +1840,7 @@ fn exp_pos_neg_narrow_half(x: f32) -> (f32, f32) {
     let c: [f32; 5] = [
         0.49999994 * 0.5,
         0.16666521 * 0.5,
-        0.041668329 * 0.5,
+        0.041_668_33 * 0.5,
         8.3687045e-3 * 0.5,
         1.3814511e-3 * 0.5,
     ];
@@ -2130,8 +1863,8 @@ fn exp_pos_neg_narrow_half(x: f32) -> (f32, f32) {
 fn sinh_small(x: f32) -> f32 {
     let x2 = x * x;
     let c0 = 1.0f32;
-    let c1 = 0.1666623055934906f32;
-    let c2 = 0.00839646439999342f32;
+    let c1 = 0.166_662_3_f32;
+    let c2 = 0.008_396_464_f32;
     let p = fma(fma(c2, x2, c1), x2, c0);
     x * p
 }
@@ -2286,10 +2019,10 @@ pub fn tanh(x: f32) -> f32 {
     let rh = fma(-k, LN2_HI_HALF, xc);
     let rh = fma(-k, LN2_LO_HALF, rh);
     // exp_r_poly!'s c[0..3], each rescaled by 2^(degree) for `rh = r/2`.
-    const D0: f32 = 4.0 * 4.9999300e-1;
+    const D0: f32 = 4.0 * 4.999_93e-1;
     const D1: f32 = 8.0 * 1.6667245e-1;
-    const D2: f32 = 16.0 * 4.1883811e-2;
-    const D3: f32 = 32.0 * 8.3009899e-3;
+    const D2: f32 = 16.0 * 4.188_381e-2;
+    const D3: f32 = 32.0 * 8.300_99e-3;
     let rh2 = rh * rh;
     let l0 = fma(2.0, rh, 1.0);
     let l1 = fma(D1, rh, D0);
@@ -2322,7 +2055,7 @@ pub fn sigmoid(x: f32) -> f32 {
     // fn, same pattern as expm1); the poly itself is shared via `exp_r_poly!`.
     // Single exponent-field construction, NOT exp2_checked's k1/k2 split
     // (tried: it works but doubles throughput cost, an unjustified price here).
-    let xc = x.clamp(-88.722839111673, 87.0);
+    let xc = x.clamp(-88.722_84, 87.0);
     const ROUND_MAGIC: f32 = 12582912.0; // 1.5 * 2^23
     let k = fma(xc, -LOG2_E, ROUND_MAGIC) - ROUND_MAGIC;
     let t1 = fma(k, LN2_HI, xc);
@@ -2363,16 +2096,16 @@ pub fn sigmoid_grad(x: f32) -> f32 {
 #[inline(always)]
 fn log1p_unit(e: f32) -> f32 {
     let c: [f32; 10] = [
-        -0.499999881,
-        0.333326906,
-        -0.249885798,
-        0.198979303,
-        -0.161293283,
-        0.124671057,
-        -0.0830737948,
-        0.041981101,
-        -0.0136313466,
-        0.00207291939,
+        -0.499_999_88,
+        0.333_326_9,
+        -0.249_885_8,
+        0.198_979_3,
+        -0.161_293_28,
+        0.124_671_06,
+        -0.083_073_795,
+        0.041_981_1,
+        -0.013_631_347,
+        0.002_072_919_4,
     ];
     let e2 = e * e;
     let e4 = e2 * e2;
@@ -2429,7 +2162,7 @@ macro_rules! exp_neg_scaled64 {
 
 #[inline(always)]
 fn softplus_checked_impl(x: f32) -> f32 {
-    const P64: f32 = 5.421010862427522e-20; // 2^-64, exact
+    const P64: f32 = 5.421_011e-20; // 2^-64, exact
     let e = exp_neg_scaled64!(x.abs().min(105.0)) * P64;
     let normal = x.max(0.0) + log1p_unit(e);
     if x.is_nan() {
@@ -2550,8 +2283,8 @@ pub fn pow_3_2(x: f32) -> f32 {
 
 /// Core of `x^(2/3)` for `a` positive and normal: `cbrt_normal`'s own bit-trick
 /// seed `s` and residual `r = (s^3-a)/a`, but fitting `(1+r)^(-2/3)` instead of
-/// `(1+r)^(-1/3)` -- `s^2 * (1+r)^(-2/3) == a^(2/3)` identically, exactly as `s
-/// * (1+r)^(-1/3) == a^(1/3)`, so the two-thirds power is a *direct* fit rather
+/// `(1+r)^(-1/3)` -- `s^2 * (1+r)^(-2/3) == a^(2/3)` identically, exactly as
+/// `s * (1+r)^(-1/3) == a^(1/3)`, so the two-thirds power is a *direct* fit rather
 /// than a cube root squared. `scale`/`scale3` carry the caller's denormal
 /// rescale (`scale3` is `scale/3`, see below); folding them in here rather than
 /// multiplying the return value keeps them off the tail of the dependency
@@ -2566,11 +2299,11 @@ fn pow_2_3_normal(a: f32, scale: f32, scale3: f32) -> f32 {
     let d = fma(s2u, s, -a);
     let r = d * rcp;
     let s2 = s2u * scale; // exact: scale is a power of two
-    let c1 = -0.6666668057441711f32;
-    let c2 = 0.5555411577224731f32;
-    let c3 = -0.49370095133781433f32;
-    let c4 = 0.45774292945861816f32;
-    let c5 = -0.440396785736084f32;
+    let c1 = -0.666_666_8_f32;
+    let c2 = 0.555_541_16_f32;
+    let c3 = -0.493_700_95_f32;
+    let c4 = 0.457_742_93_f32;
+    let c5 = -0.440_396_8_f32;
     let p = fma(fma(fma(fma(c5, r, c4), r, c3), r, c2), r, c1);
     // s2*r is off the poly's dependency chain, so the tail after p is one
     // fma and one add; e2 rides in as the fma's addend for free.
@@ -2582,7 +2315,7 @@ fn pow_2_3_normal(a: f32, scale: f32, scale3: f32) -> f32 {
 pub fn pow_2_3(x: f32) -> f32 {
     // denormal (or zero) rescale: x by 2^24 = (2^8)^3, so the result comes
     // back 2^16 too big. scale3 is scale/3, the kernel's tail weight.
-    const OUT: f32 = 1.52587890625e-5; // 2^-16
+    const OUT: f32 = 1.525_878_9e-5; // 2^-16
     const OUT3: f32 = OUT * (1.0 / 3.0);
     let ax = x.to_bits() & !SIGN_MASK;
     let a = f32::from_bits(ax);
@@ -2757,7 +2490,7 @@ pub fn atanh(x: f32) -> f32 {
 #[inline(always)]
 fn acos_poly(t: f32) -> f32 {
     let u = 4.2285666e-2f32;
-    let u = fma(u, t, 2.4075409e-2);
+    let u = fma(u, t, 2.407_541e-2);
     let u = fma(u, t, 4.5502156e-2);
     let u = fma(u, t, 7.494872e-2);
     let u = fma(u, t, 1.6666777e-1);
@@ -2814,7 +2547,7 @@ pub fn acosd(x: f32) -> f32 {
 // coordinate-descended over the f32 quantisation.
 #[inline(always)]
 fn acospi_poly(x: f32) -> f32 {
-    let u = 7.5414003e-4f32;
+    let u = 7.541_4e-4_f32;
     let u = fma(u, x, -3.6262998e-3);
     let u = fma(u, x, 8.662372e-3);
     let u = fma(u, x, -1.55939115e-2);
@@ -2869,7 +2602,7 @@ pub fn asin(x: f32) -> f32 {
 // represents it to ~2^-49 relative, so `fma(y, HI, y*LO)` rounds once at the
 // result's own magnitude where a single-word `y * K` rounds twice and carries
 // whatever bias the f32 `K` has.
-const RAD_TO_DEG_HI: f32 = 57.2957763671875;
+const RAD_TO_DEG_HI: f32 = 57.295_776;
 const RAD_TO_DEG_LO: f32 = 3.1458948e-6;
 
 // The same double-f32 treatment for 1/pi, for the half-turn composites. Here
@@ -2945,9 +2678,9 @@ pub fn asinpi(x: f32) -> f32 {
 // 0.063/3 (exhaustive).
 #[inline(always)]
 fn atan_poly(x: f32) -> f32 {
-    let a2 = 0.008830042167832291;
-    let a1 = 0.2849778513254418;
-    let a0 = 1.1271711055988247;
+    let a2 = 0.008_830_043;
+    let a1 = 0.284_977_85;
+    let a0 = 1.127_171_2;
     let b2 = 5.0166193e-2;
     let b1 = 5.718157e-1;
     let b0 = 1.4605043e0;
@@ -3137,11 +2870,11 @@ pub fn tan(x: f32) -> f32 {
 // erf's final `1 - 2^poly` combine.
 #[inline(always)]
 fn erf_poly(x: f32, x2: f32) -> f32 {
-    let a6 = 2.8388531e-4f32;
+    let a6 = 2.838_853e-4_f32;
     let a5 = -4.4954885e-3f32;
-    let a4 = 3.2736249e-2f32;
+    let a4 = 3.273_625e-2_f32;
     let a3 = -1.5164591e-1f32;
-    let a2 = -9.1713983e-1f32;
+    let a2 = -9.171_398e-1_f32;
     let a1 = -1.6281782f32;
     let a0 = 2.2989703e-5f32;
     let x4 = x2 * x2;
@@ -3719,33 +3452,53 @@ pub fn clog(re: f32, im: f32) -> (f32, f32) {
     (log_mag, carg(re, im))
 }
 
-/// `2*log2(e)`, the atanh form's leading coefficient (see `log2_f64`).
-const LOG2E_2_F64: f64 = 2.8853900817779268;
-
-/// Minimax seed for `1/(m+1)` over `m` in `[2^-0.5, 2^0.5]`, accurate to
-/// ~`2^-20` -- only a seed, squared by the single Newton step that follows it,
-/// so it does not need to be better. Fitted in `m` rather than in `d = m + 1`
-/// (the same fit either way, an affine change of variable) so the seed does not
-/// have to wait on the `m + 1` add.
-const LOG2_ATANH_RCP64: [f64; 6] = [
-    0.9836614733399011,
-    -0.8856304007709652,
-    0.6435262038352056,
-    -0.3284692378061808,
-    0.10056909996623936,
-    -0.013656925651166552,
+/// `(log2(1+s) - s*log2(e)) / s^2` over `s` in `[2^-0.5 - 1, 2^0.5 - 1]`.
+/// Degree-11 polynomial with Chebyshev minimax fit, relative error < 2^-34.8.
+/// Pinned leading term `s*log2(e)` keeps `log2(1) == 0.0` exact.
+const LOG2_Q_F64: [f64; 12] = [
+    -7.213_475_205_084_016e-1,
+    4.808_983_510_959_339e-1,
+    -3.606_737_270_105_828e-1,
+    2.885_381_586_685_297e-1,
+    -2.404_514_367_623_340_5e-1,
+    2.061_490_767_697_333_7e-1,
+    -1.803_115_697_859_057_6e-1,
+    1.591_062_250_458_101_8e-1,
+    -1.433_471_501_632_151_1e-1,
+    1.431_704_659_215_636_6e-1,
+    -1.409_765_414_534_232_3e-1,
+    7.781_246_573_228_973e-2,
 ];
 
-/// `(atanh(t)/t - 1)/u` in `u = t^2` over `u` in `[0, (3-2*sqrt(2))^2]`, i.e.
-/// the atanh series past its own leading term, with the leading `1` pinned
-/// rather than fitted: that makes `log2(1)` come out exactly `0`, which
-/// `powf_unchecked` (which has no `x == 1` override) relies on.
-const LOG2_ATANH_A64: [f64; 4] = [
-    0.33333332824327616,
-    0.20000167265984317,
-    0.14268673572031404,
-    0.117907343543545,
-];
+/// `log2(x)` in f64, for positive finite `x` (denormals included; callers must
+/// guard zero/negative/inf/nan themselves). The `powf` family's log half.
+#[inline(always)]
+fn log2_f64(x: f32) -> f64 {
+    let (xs, koff) = denormal_rescale!(x);
+    // Same decomposition log_family_normal! does, spelled out: m in [2^-0.5, 2^0.5), k exact.
+    let e = (xs.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23;
+    let m = f32::from_bits((xs.to_bits() as i32).wrapping_sub(e << 23) as u32);
+    let k = (e as f32 + koff) as f64;
+    let s = (m as f64) - 1.0;
+    let c = LOG2_Q_F64;
+    let s2 = s * s;
+    let s4 = s2 * s2;
+    let s8 = s4 * s4;
+    let p0 = f64::mul_add(c[1], s, c[0]);
+    let p1 = f64::mul_add(c[3], s, c[2]);
+    let p2 = f64::mul_add(c[5], s, c[4]);
+    let p3 = f64::mul_add(c[7], s, c[6]);
+    let p4 = f64::mul_add(c[9], s, c[8]);
+    let p5 = f64::mul_add(c[11], s, c[10]);
+    let q0 = f64::mul_add(p1, s2, p0);
+    let q1 = f64::mul_add(p3, s2, p2);
+    let q2 = f64::mul_add(p5, s2, p4);
+    let r0 = f64::mul_add(q1, s4, q0);
+    let qs = f64::mul_add(q2, s8, r0);
+    let sq = s2 * qs;
+    let lm = f64::mul_add(s, std::f64::consts::LOG2_E, sq);
+    lm + k
+}
 
 /// `(2^f - 1)/f` over `f` in `[-0.5, 0.5]`, leading `1` pinned so `2^0` is
 /// exactly `1`. Idealized relative error `2^-28.9`, against the `2^-25` needed
@@ -3758,43 +3511,6 @@ const EXP2_F64_E: [f64; 6] = [
     0.0013398874430087457,
     0.0001535334944368378,
 ];
-
-/// `log2(x)` in f64, for positive finite `x` (denormals included; callers must
-/// guard zero/negative/inf/nan themselves). The `powf` family's log half.
-#[inline(always)]
-fn log2_f64(x: f32) -> f64 {
-    let (xs, koff) = denormal_rescale!(x);
-    // Same decomposition log_family_normal! does, spelled out (like
-    // ln_normal/log10_normal's own copies): m in [2^-0.5, 2^0.5), k exact.
-    let e = (xs.to_bits() as i32).wrapping_sub(0x3f3504f3) >> 23;
-    let m = f32::from_bits((xs.to_bits() as i32).wrapping_sub(e << 23) as u32);
-    let k = (e as f32 + koff) as f64;
-    let md = m as f64;
-    // Both exact: `md - 1` by Sterbenz, `md + 1` because 24 bits plus a
-    // leading one still fits. So the whole reduction below is exact
-    // except for the reciprocal itself.
-    let s = md - 1.0;
-    let d = md + 1.0;
-    let rc = LOG2_ATANH_RCP64;
-    let md2 = md * md;
-    // Estrin, not Horner: this sits at the head of the chain everything
-    // else waits on, so a level of depth is worth an extra multiply.
-    let e0 = f64::mul_add(rc[1], md, rc[0]);
-    let e1 = f64::mul_add(rc[3], md, rc[2]);
-    let e2 = f64::mul_add(rc[5], md, rc[4]);
-    let r = f64::mul_add(e2, md2 * md2, f64::mul_add(e1, md2, e0));
-    let r = r * f64::mul_add(-d, r, 2.0);
-    let t = s * r;
-    let u = t * t;
-    let a = LOG2_ATANH_A64;
-    let u2 = u * u;
-    let l0 = f64::mul_add(a[1], u, a[0]);
-    let l1 = f64::mul_add(a[3], u, a[2]);
-    let l2 = f64::mul_add(l1, u2, l0);
-    // `1 + u*A(u)` folded into the `t` multiply, so the pinned leading
-    // term stays exact and no separate `+1` rounding happens.
-    f64::mul_add(LOG2E_2_F64 * t, f64::mul_add(l2, u, 1.0), k)
-}
 
 /// `2^v` for an f64 `v`, narrowed to f32. The `powf` family's exp half.
 #[inline(always)]
@@ -3973,8 +3689,8 @@ pub fn rootn(x: f32, n: i32) -> f32 {
 // 1.055f32` divides by an already-rounded `1.055` and lands 0.53 ulp above the
 // true `1/1.055`, which `^2.4` turns into a systematic 1.3 ulp of
 // `srgb_to_linear`.
-const SRGB_INV_1055: f32 = 0.9478672742843628;
-const SRGB_OFF_1055: f32 = 0.05213269963860512;
+const SRGB_INV_1055: f32 = 0.947_867_3;
+const SRGB_OFF_1055: f32 = 0.052_132_7;
 
 /// Converts an sRGB color component in `[0, 1]` to linear (IEC 61966-2-1).
 #[inline(always)]

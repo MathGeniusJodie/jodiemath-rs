@@ -12,7 +12,7 @@
 //
 // Known and deliberate convention divergences are allowlisted with the
 // reason, so this exits nonzero only on something new.
-#![allow(clippy::approx_constant)]
+#![allow(clippy::approx_constant, clippy::type_complexity)]
 use jodiemath_rs::*;
 
 const VALS: &[(&str, f32)] = &[

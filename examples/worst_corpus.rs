@@ -51,7 +51,11 @@
 // a finite value (3f800000) still fails, and an ordinary entry moved by one
 // ulp still fails. Note the shipped corpus only feeds canonical NaNs in, so
 // this exemption is about what a function *returns*, not what it is given.
-#![allow(clippy::approx_constant)]
+#![allow(
+    clippy::approx_constant,
+    clippy::type_complexity,
+    clippy::excessive_precision
+)]
 use jodiemath_rs::*;
 use std::io::Write;
 

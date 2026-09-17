@@ -918,11 +918,6 @@ fn main() {
     );
     // fmod: latency-only (see its own
     // throughput_fn! omission comments above for why), same standalone
-    // call shape as lat_cbrt_wrapped above.
-    // gather-free x8 variant: standalone (not a lat/thr pair); the wrapper
-    // lives in the library so the target_feature body can inline inside the
-    // region markers (LLVM won't inline these across crates).
-    unsafe { thr_sin_wide_x8_region(black_box(&arr_in), black_box(&mut arr_out)) };
     black_box(lat_fmod(black_box(1.234)));
     black_box(lat_fmod_checked(black_box(1.234)));
     black_box(lat_rem_euclid(black_box(1.234)));

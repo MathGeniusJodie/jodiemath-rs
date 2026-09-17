@@ -1381,7 +1381,7 @@ fn real_main() {
         gelu(3.0),
         3.0 * 0.5 * erfc(-3.0 * std::f32::consts::FRAC_1_SQRT_2),
     );
-    check_ulp("gelu(-3)==-3*Phi(-3)", gelu(-3.0), -4.0496941e-3, 1);
+    check_ulp("gelu(-3)==-3*Phi(-3)", gelu(-3.0), -4.049_694e-3, 1);
     check("gelu(inf)", gelu(f32::INFINITY), f32::INFINITY);
     check("gelu(-inf)", gelu(f32::NEG_INFINITY), -0.0);
     check("gelu(-14.5) tail sign", gelu(-14.5), -0.0);
