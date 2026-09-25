@@ -570,29 +570,38 @@ fn reduce_pi_wide<const HALF: bool>(x: f32) -> f32 {
     let sgnx = b & SIGN_MASK;
 
     if (e.wrapping_sub(CUT_PI_WIDE)) < (255 - CUT_PI_WIDE) {
-        let m = ((b & 0x007f_ffff) | 0x0080_0000) as u64;
-        let w0 = pitable::REDUCE_PI_W[0][e & 0xff] as u64;
-        let w1 = pitable::REDUCE_PI_W[1][e & 0xff] as u64;
-        let w2 = pitable::REDUCE_PI_W[2][e & 0xff] as u64;
+        let m = (b & 0x007f_ffff) | 0x0080_0000;
+        let w0 = pitable::REDUCE_PI_W[0][e & 0xff];
+        let w1 = pitable::REDUCE_PI_W[1][e & 0xff];
+        let w2 = pitable::REDUCE_PI_W[2][e & 0xff];
 
-        let t2 = m * w2;
-        let t1 = m * w1;
-        let p0 = m * w0;
-        let sum57 = (p0 << 29).wrapping_add(t1).wrapping_add(t2 >> 29);
+        let p0_lo = m.wrapping_mul(w0) & 0x1fff_ffff;
+        let t1_lo = m.wrapping_mul(w1) & 0x1fff_ffff;
+        let t1_hi = ((m as u64 * w1 as u64) >> 29) as u32;
+        let t2 = ((m as u64 * w2 as u64) >> 29) as u32;
 
-        let par = (((sum57 >> 57) ^ (sum57 >> 56)) as u32 & 1) << 31;
-        let fc_int = ((sum57 << 7) as i64) >> 7;
+        let sum_lo = t1_lo.wrapping_add(t2);
+        let carry = sum_lo >> 29;
+        let lo = sum_lo & 0x1fff_ffff;
 
-        let (tt_int, flip) = if HALF {
-            let shift63 = fc_int >> 63;
-            let half_int = (1i64 << 56) + (shift63 << 57);
-            let sgn = par ^ (!shift63 as u32 & SIGN_MASK) ^ sgnx;
-            (fc_int - half_int, sgn)
+        let sum_hi = p0_lo.wrapping_add(t1_hi).wrapping_add(carry);
+
+        let (tt_hi, flip) = if HALF {
+            (
+                (((sum_hi ^ (1 << 27)) as i32) << 4) >> 4,
+                ((sum_hi << 3) & SIGN_MASK) ^ SIGN_MASK ^ sgnx,
+            )
         } else {
-            (fc_int, par ^ sgnx)
+            (
+                ((sum_hi as i32) << 4) >> 4,
+                (((sum_hi << 3) ^ (sum_hi << 4)) & SIGN_MASK) ^ sgnx,
+            )
         };
 
-        let r_chain = (tt_int as f32) * f32::from_bits(0x23c9_0fdb);
+        let r_chain = (tt_hi as f32).mul_add(
+            f32::from_bits(0x3249_0fdb),
+            (lo as f32) * f32::from_bits(0x23c9_0fdb),
+        );
         f32::from_bits(r_chain.to_bits() ^ flip)
     } else if e < CUT_PI_WIDE {
         if HALF {
@@ -643,26 +652,34 @@ pub fn tan_wide(x: f32) -> f32 {
     let sgnx = b & SIGN_MASK;
 
     if (e.wrapping_sub(CUT_PI_WIDE)) < (255 - CUT_PI_WIDE) {
-        let m = ((b & 0x007f_ffff) | 0x0080_0000) as u64;
-        let w0 = pitable::REDUCE_PI_W[0][e & 0xff] as u64;
-        let w1 = pitable::REDUCE_PI_W[1][e & 0xff] as u64;
-        let w2 = pitable::REDUCE_PI_W[2][e & 0xff] as u64;
+        let m = (b & 0x007f_ffff) | 0x0080_0000;
+        let w0 = pitable::REDUCE_PI_W[0][e & 0xff];
+        let w1 = pitable::REDUCE_PI_W[1][e & 0xff];
+        let w2 = pitable::REDUCE_PI_W[2][e & 0xff];
 
-        let t2 = m * w2;
-        let t1 = m * w1;
-        let p0 = m * w0;
-        let sum57 = (p0 << 29).wrapping_add(t1).wrapping_add(t2 >> 29);
+        let p0_lo = m.wrapping_mul(w0) & 0x1fff_ffff;
+        let t1_lo = m.wrapping_mul(w1) & 0x1fff_ffff;
+        let t1_hi = ((m as u64 * w1 as u64) >> 29) as u32;
+        let t2 = ((m as u64 * w2 as u64) >> 29) as u32;
 
-        let fc_int = ((sum57 << 7) as i64) >> 7;
-        let shift63 = fc_int >> 63;
-        let half_int = (1i64 << 56) + (shift63 << 57);
-        let flip = (!shift63 as u32 & SIGN_MASK) ^ sgnx;
+        let sum_lo = t1_lo.wrapping_add(t2);
+        let carry = sum_lo >> 29;
+        let lo = sum_lo & 0x1fff_ffff;
 
-        let tt_s = fc_int;
-        let tt_c = fc_int - half_int;
+        let sum_hi = p0_lo.wrapping_add(t1_hi).wrapping_add(carry);
 
-        let r_s = (tt_s as f32) * f32::from_bits(0x23c9_0fdb);
-        let r_c = (tt_c as f32) * f32::from_bits(0x23c9_0fdb);
+        let tt_s = ((sum_hi as i32) << 4) >> 4;
+        let tt_c = (((sum_hi ^ (1 << 27)) as i32) << 4) >> 4;
+        let flip = ((sum_hi << 4) & SIGN_MASK) ^ SIGN_MASK ^ sgnx;
+
+        let r_s = (tt_s as f32).mul_add(
+            f32::from_bits(0x3249_0fdb),
+            (lo as f32) * f32::from_bits(0x23c9_0fdb),
+        );
+        let r_c = (tt_c as f32).mul_add(
+            f32::from_bits(0x3249_0fdb),
+            (lo as f32) * f32::from_bits(0x23c9_0fdb),
+        );
 
         let num = sinf_poly(r_s).clamp(-1.0, 1.0);
         let den = sinf_poly(r_c).clamp(-1.0, 1.0);
@@ -3181,5 +3198,53 @@ mod tests {
         plot_error("cbrt_approx_error.png", 1., 128., |x| {
             cbrt_approx(x) / (x as f64).cbrt() as f32 - 1.0
         });
+    }
+
+    #[test]
+    fn wide_trig_special_values() {
+        // Zero and signed zero
+        assert_eq!(sin_wide(0.0).to_bits(), 0.0f32.to_bits());
+        assert_eq!(sin_wide(-0.0).to_bits(), (-0.0f32).to_bits());
+        assert_eq!(cos_wide(0.0), 1.0);
+        assert_eq!(cos_wide(-0.0), 1.0);
+        assert_eq!(tan_wide(0.0).to_bits(), 0.0f32.to_bits());
+        assert_eq!(tan_wide(-0.0).to_bits(), (-0.0f32).to_bits());
+
+        // Infinities and NaNs
+        assert!(sin_wide(f32::INFINITY).is_nan());
+        assert!(sin_wide(f32::NEG_INFINITY).is_nan());
+        assert!(sin_wide(f32::NAN).is_nan());
+        assert!(cos_wide(f32::INFINITY).is_nan());
+        assert!(cos_wide(f32::NEG_INFINITY).is_nan());
+        assert!(cos_wide(f32::NAN).is_nan());
+        assert!(tan_wide(f32::INFINITY).is_nan());
+        assert!(tan_wide(f32::NEG_INFINITY).is_nan());
+        assert!(tan_wide(f32::NAN).is_nan());
+
+        // Subnormals (e < CUT_PI_WIDE)
+        let subnorm = f32::from_bits(0x0000_0001); // min positive subnormal
+        assert_eq!(sin_wide(subnorm), subnorm);
+        assert_eq!(cos_wide(subnorm), 1.0);
+        assert_eq!(tan_wide(subnorm), subnorm);
+    }
+
+    #[test]
+    fn wide_trig_pythagorean_identity() {
+        let mut rng = 987654321u64;
+        for _ in 0..10_000 {
+            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let b = (rng >> 32) as u32;
+            let x = f32::from_bits(b);
+            if !x.is_finite() {
+                continue;
+            }
+            let s = sin_wide(x) as f64;
+            let c = cos_wide(x) as f64;
+            let pyth = s * s + c * c;
+            assert!(
+                (pyth - 1.0).abs() < 1e-4,
+                "Pythagorean identity failed for x={x:e}: sin={s}, cos={c}, sum={pyth}"
+            );
+        }
     }
 }

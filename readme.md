@@ -217,10 +217,10 @@ exp10_checked       |          55.00 |             1.657
 log2                |          38.06 |             1.583
 log2_unchecked      |          38.06 |             1.021
 sin                 |          64.00 |             1.778
-sin_wide            |          51.98 |             4.223
+sin_wide            |          57.83 |             3.794
 cos                 |          61.00 |             1.654
-cos_wide            |          56.02 |             5.068
-tan_wide            |          62.03 |             5.544
+cos_wide            |          60.03 |             4.041
+tan_wide            |          68.05 |             4.553
 sinpi               |          42.02 |             1.133
 cospi               |          47.00 |             1.226
 tanpi               |          77.05 |             2.155
