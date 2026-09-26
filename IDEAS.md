@@ -102,10 +102,10 @@ examples:
   lanes -- each funnel shift is 4 ops (no `vpshldvd`) and ~20 constants live
   on the stack; LLVM canonicalises every source-level trick tried so far
   back to the same code; (b) scalar latency is still ~+3 ns over the old
-  table version (window select + int->float); (c) the wide tier's average
-  error (~0.13 ulp against the narrow tier's ~0.26 over the same |x| >= 1
-  inputs, i.e. the same) is `r`'s f32 rounding plus the poly; a `r_lo`
-  correction would cost ~3 ops. Measure with `examples/trig_bench.rs`, not
+  table version (window select + int->float); (c) on |x| >= 1 both tiers
+  average ~0.25 ulp (the exhaustive 0.13 is diluted by the |x| < 1 half);
+  that is `r`'s f32 rounding plus the poly, and an `r_lo` correction would
+  cost ~3 ops. Measure with `examples/trig_bench.rs`, not
   quickbench, whose band mask constant-folds the window.
 - **mca vs reality, measured 2026-08 (perf-stat cycle counts,
   i5-1145G7):** attribution correction to the entry below: the wide
