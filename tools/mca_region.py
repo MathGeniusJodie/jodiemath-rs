@@ -3,7 +3,8 @@
 isolation.  Same numbers as running llvm-mca over the whole file (verified:
 asin_throughput 1840 cycles both ways), in seconds instead of ~20 minutes.
 
-usage: tools/mca_region.py <file.s> <region> [<region> ...]
+usage: tools/mca_region.py [<file.s>] <region> [<region> ...]
+       (without a file, the newest mca_target*.s under target/)
 prints: region, instrs, uOps, Block RThroughput, TotalCycles, cyc/unit
 
 The columns are deliberately the whole escalation ladder in one call, because
@@ -28,8 +29,24 @@ CHAIN_LEN = 64   # mca.rs: latency regions divide by iterations*CHAIN_LEN
 ARR_LEN = 16     # mca.rs: throughput regions divide by iterations*ARR_LEN
 ITERS = 100
 
-path = sys.argv[1]
-wanted = sys.argv[2:]
+def newest_asm():
+    """Newest mca_target .s: cargo puts --emit=asm output in
+    target/release/examples/ on older toolchains and under
+    target/release/build/<pkg>/<hash>/out/ on newer ones."""
+    found = []
+    for root, _, files in os.walk("target"):
+        found += [os.path.join(root, f) for f in files
+                  if f.startswith("mca_target") and f.endswith(".s")]
+    if not found:
+        sys.exit("no mca_target*.s under target/ -- run "
+                 "`cargo rustc --release --example mca_target -- --emit=asm` first")
+    return max(found, key=os.path.getmtime)
+
+
+if sys.argv[1].endswith(".s") and os.path.isfile(sys.argv[1]):
+    path, wanted = sys.argv[1], sys.argv[2:]
+else:
+    path, wanted = newest_asm(), sys.argv[1:]
 
 regions, cur, buf = {}, None, []
 for ln in open(path).read().split("\n"):

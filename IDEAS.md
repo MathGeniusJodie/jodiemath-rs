@@ -97,19 +97,16 @@ examples:
   every function it touched, including `tanh`'s max 6 -> 5 that three
   dedicated refit attempts could not reach.
 
-- **`sin_wide`/`cos_wide`/`tan_wide` at VF = 8**, worth a measured
-  ~8.05 -> ~5.5 cyc/elem on `sin_wide`. Their 3.2x throughput cost is
-  mostly *not* the three gathers (24 of 66 Block RThroughput): LLVM drops
-  the vectorization factor from 8 to 4 the moment an `f64` gather appears,
-  so every arithmetic op in the function costs twice as much per element.
-  A `[u32; 256]` probe table measured VF = 8 and **5.022** against the
-  shipped `[f64; 256]`'s 7.540 (both clamp-less). Converting for real
-  needs 29-bit chunks at *fixed* bit positions instead of the shipped
-  significant-bit split, which brings back a `|x| < 0.25` bypass, a
-  `2^(150-e)` scale rebuild and a fourth gather -- see graveyard.md for
-  the full costing and why it was not taken with the first landing.
-  Reducing the gather *count* does not help: two `f64` gathers measured
-  7.539, identical to three.
+- **Wide tier, after the two gather-free passes (graveyard 2026-09-26).**
+  Remaining levers, priced: (a) AVX2 is ~2.4x AVX-512 per element for 2x the
+  lanes -- each funnel shift is 4 ops (no `vpshldvd`) and ~20 constants live
+  on the stack; LLVM canonicalises every source-level trick tried so far
+  back to the same code; (b) scalar latency is still ~+3 ns over the old
+  table version (window select + int->float); (c) on |x| >= 1 both tiers
+  average ~0.25 ulp (the exhaustive 0.13 is diluted by the |x| < 1 half);
+  that is `r`'s f32 rounding plus the poly, and an `r_lo` correction would
+  cost ~3 ops. Measure with `examples/trig_bench.rs`, not
+  quickbench, whose band mask constant-folds the window.
 - **mca vs reality, measured 2026-08 (perf-stat cycle counts,
   i5-1145G7):** attribution correction to the entry below: the wide
   tier's ~3x understatement is **the gathers, not the f64 arithmetic**.

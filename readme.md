@@ -23,7 +23,7 @@ cbrt_accurate_unchecked |    0.000   |     1     | (bit-identical to cbrt_accura
        sin (|x|<2^24*pi) |    0.046   |     2     |  0.003  |    1
        cos (|x|<2^22*pi) |    0.083   |     2     |  0.002  |    1
       sin_wide (all f32)|    0.127   |     2     |  0.000  |    1
-      cos_wide (all f32)|    0.150   |     2     |  0.000  |    1
+      cos_wide (all f32)|    0.127   |     2     |  0.000  |    1
         sinpi (all f32) |    0.197   |     2     | (no std sinpi)
         cospi (all f32) |    0.058   |     2     | (no std cospi)
         tanpi (all f32) |    0.033   |     2     | (no std tanpi)
@@ -65,8 +65,8 @@ cosh_throughput (in-domain)| 0.049    |     3     |  0.000  |    0
                    acos |    0.002   |     2     |  0.000  |    0
                    atan |    0.063   |     3     |  0.000  |    0
            atan_latency |    0.052   |     3     |  0.000  |    0
-      tan (|x|<2^22*pi) |    0.118   |     4     |  0.000  |    0
-      tan_wide (all f32)|    0.250   |     4     |  0.000  |    0
+      tan (|x|<2^23*pi) |    0.094   |     4     |  0.000  |    0
+      tan_wide (all f32)|    0.230   |     3     |  0.000  |    0
                    erf  |    0.027   |     3     | (no std erf)
          erfc (|x|<=10) |    0.122   |     6     |
        erfinv (|x|<1)   |    0.047   |     3     | (no std erfinv; exhaustive. Almost all of the average is one number: the effective leading coefficient `1+c0` of the central poly, which is what every `|x|` under ~0.06 computes)
