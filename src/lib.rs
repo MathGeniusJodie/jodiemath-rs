@@ -558,86 +558,110 @@ pub fn two_prod(a: f32, b: f32) -> (f32, f32) {
     (p, e)
 }
 
-/// Cutoff exponent for chunk tables in `reduce_pi_wide`; below this, `|x|*(1/pi)` bypass is used.
-const CUT_PI_WIDE: usize = 96;
-
-/// Payne-Hanek range reduction modulo `pi` using 29-bit chunk tables.
-/// Total over all finite f32 with no magnitude limit. Returns reduced argument `r`.
-#[inline(always)]
-fn reduce_pi_wide<const HALF: bool>(x: f32) -> f32 {
-    let b = x.to_bits();
-    let e = ((b >> 23) & 0xff) as usize;
-    let sgnx = b & SIGN_MASK;
-
-    if (e.wrapping_sub(CUT_PI_WIDE)) < (255 - CUT_PI_WIDE) {
-        let m = (b & 0x007f_ffff) | 0x0080_0000;
-        let w0 = pitable::REDUCE_PI_W[0][e & 0xff];
-        let w1 = pitable::REDUCE_PI_W[1][e & 0xff];
-        let w2 = pitable::REDUCE_PI_W[2][e & 0xff];
-
-        let p0_lo = m.wrapping_mul(w0) & 0x1fff_ffff;
-        let t1_lo = m.wrapping_mul(w1) & 0x1fff_ffff;
-        let t1_hi = ((m as u64 * w1 as u64) >> 29) as u32;
-        let t2 = ((m as u64 * w2 as u64) >> 29) as u32;
-
-        let sum_lo = t1_lo.wrapping_add(t2);
-        let carry = sum_lo >> 29;
-        let lo = sum_lo & 0x1fff_ffff;
-
-        let sum_hi = p0_lo.wrapping_add(t1_hi).wrapping_add(carry);
-
-        let (tt_hi, flip) = if HALF {
-            (
-                (((sum_hi ^ (1 << 27)) as i32) << 4) >> 4,
-                ((sum_hi << 3) & SIGN_MASK) ^ SIGN_MASK ^ sgnx,
-            )
-        } else {
-            (
-                ((sum_hi as i32) << 4) >> 4,
-                (((sum_hi << 3) ^ (sum_hi << 4)) & SIGN_MASK) ^ sgnx,
-            )
-        };
-
-        let r_chain = (tt_hi as f32).mul_add(
-            f32::from_bits(0x3249_0fdb),
-            (lo as f32) * f32::from_bits(0x23c9_0fdb),
-        );
-        f32::from_bits(r_chain.to_bits() ^ flip)
-    } else if e < CUT_PI_WIDE {
-        if HALF {
-            std::f32::consts::FRAC_PI_2
-        } else {
-            x
-        }
-    } else {
-        if HALF {
-            -f32::NAN
-        } else {
-            let nan = f32::from_bits((b & 0x007f_ffff) | 0x7f80_0000) * 0.0;
-            f32::from_bits(nan.to_bits() ^ sgnx)
-        }
-    }
-}
-
 // Parity of exact-integer float q without saturating float-to-int cast.
 #[inline(always)]
 fn parity(q: f32) -> f32 {
     fma(-2.0, (q * 0.5).floor(), q)
 }
 
-/// Computes `sin(x)` with no magnitude limit across all finite f32 (2 max ulp).
+const PI_UNIT: f32 = std::f32::consts::PI * (1.0 / 2147483648.0);
+const PI_UNIT_LO: f32 = -8.742278e-8 * (1.0 / 2147483648.0);
+
+/// Payne-Hanek reduction of `|x|` modulo `2*pi`, in 32-bit lanes only.
+///
+/// `|x|/pi + GRID/2^32 = (h - 2^30 - 64 + rem) * 2^-31 + tail/pi (mod 2)`:
+/// `h` is exact fixed point whose wraparound is the mod 2, `|rem| <= 1`,
+/// `tail` is tiny and already in radians. `GRID = 0` is the sin grid, `2^30`
+/// (a quarter period) the cos grid. Meaningless below `pitable::CUT`;
+/// inf/NaN give a NaN `tail`.
 #[inline(always)]
-pub fn sin_wide(x: f32) -> f32 {
-    let r = reduce_pi_wide::<false>(x);
-    // sinf_poly preserves -0.0.
-    sinf_poly(r).clamp(-1.0, 1.0)
+fn reduce_pi_wide<const GRID: u32>(b: u32) -> (u32, f32, f32) {
+    // ulp 2 on [2^24, 2^25): m*g1 < 2^24 always rounds inside one binade.
+    const M: f32 = 16777216.0;
+    const K: [u32; 8] = pitable::WORDS;
+    let e = (b >> 23) & 0xff;
+    // The 96 bits of beta(e) = (2^(e-150)/pi) mod 2 start at bit e - CUT of
+    // K: pick words q..q+3 with selects (not an indexed load, which would
+    // vectorize to a gather) and funnel-shift them by s.
+    let t = e.wrapping_sub(pitable::CUT);
+    let (b0, b1, b2) = (t & 32 != 0, t & 64 != 0, t & 128 != 0);
+    // Word q+j of K by binary selection on q = t >> 5 <= 4, between
+    // immediates: an indexed load would vectorize to a gather.
+    let sel = core::hint::select_unpredictable::<u32>;
+    let u = |i: usize| sel(b0, K[i + 1], K[i]);
+    let (u0, u1, u2, u3, u4, u5) = (u(0), u(1), u(2), u(3), u(4), u(5));
+    let word = |j: usize, lo: u32, hi: u32| sel(b2, K[j + 4], sel(b1, hi, lo));
+    let s = t & 31;
+    let funnel = |hi: u32, lo: u32| (hi << s) | ((lo >> 1) >> (31 - s));
+    let (w0, w1) = (word(0, u0, u2), word(1, u1, u3));
+    let (w2, w3) = (word(2, u2, u4), word(3, u3, u5));
+    let (x0, x1, x2) = (funnel(w0, w1), funnel(w1, w2), funnel(w2, w3));
+    // x0 = floor(beta * 2^31) mod 2^32; next 24 bits exact in n1, 24 more in n2.
+    let n1 = (x1 >> 8) as f32;
+    let n2 = (((x1 << 16) & 0x00ff_0000) | (x2 >> 16)) as f32;
+    let mf = f32::from_bits((b & 0x007f_ffff) | 0x3f00_0000); // m * 2^-24
+    let m = (b & 0x007f_ffff) | 0x0080_0000;
+    let kb = fma(mf, n1, M);
+    let rem = fma(mf, n1, M - kb);
+    // The `ax * 0` term is NaN exactly for inf/NaN x, which poisons the result.
+    let ax = f32::from_bits(b & !SIGN_MASK);
+    let tail = n2 * fma(ax, 0.0, mf * (PI_UNIT * (1.0 / 16777216.0)));
+    let h = m
+        .wrapping_mul(x0)
+        .wrapping_add(GRID.wrapping_add((1 << 30) + 64).wrapping_sub(M.to_bits() << 1))
+        .wrapping_add(kb.to_bits() << 1);
+    (h, rem, tail)
 }
 
-/// Computes `cos(x)` with no magnitude limit across all finite f32 (2 max ulp).
+/// `pi` times the signed distance from a reduction word to the nearest
+/// integer, and that integer's parity as a sign mask.
+#[inline(always)]
+fn reduced_angle(h: u32, rem: f32, tail: f32) -> (f32, u32) {
+    // hi is a multiple of 128 so its conversion is exact.
+    let hi = (h & 0x7fff_ff80) as i32 - (1 << 30);
+    let lo = (h & 0x7f) as i32 - 64;
+    let f = hi as f32;
+    let d = fma(lo as f32 + rem, PI_UNIT, fma(f, PI_UNIT_LO, tail));
+    (fma(f, PI_UNIT, d), h & SIGN_MASK)
+}
+
+/// `clamp(-1, 1)` that keeps NaN.
+#[inline(always)]
+fn clamp_unit(s: f32) -> f32 {
+    let s = if s < -1.0 { -1.0 } else { s };
+    if s > 1.0 {
+        1.0
+    } else {
+        s
+    }
+}
+
+/// Computes `sin(x)` with no magnitude limit across all finite f32.
+#[inline(always)]
+pub fn sin_wide(x: f32) -> f32 {
+    let b = x.to_bits();
+    let (h, rem, tail) = reduce_pi_wide::<0>(b);
+    let (r, parity) = reduced_angle(h, rem, tail);
+    let s = clamp_unit(sinf_poly_raw(f32::from_bits(r.to_bits() ^ parity ^ (b & SIGN_MASK))));
+    if ((b >> 23) & 0xff) < pitable::CUT {
+        x
+    } else {
+        s
+    }
+}
+
+/// Computes `cos(x)` with no magnitude limit across all finite f32.
 #[inline(always)]
 pub fn cos_wide(x: f32) -> f32 {
-    let r = reduce_pi_wide::<true>(x);
-    sinf_poly(r).clamp(-1.0, 1.0)
+    let b = x.to_bits();
+    let (h, rem, tail) = reduce_pi_wide::<{ 1 << 30 }>(b);
+    let (r, parity) = reduced_angle(h, rem, tail);
+    let c = clamp_unit(sinf_poly_raw(f32::from_bits(r.to_bits() ^ parity)));
+    if ((b >> 23) & 0xff) < pitable::CUT {
+        1.0
+    } else {
+        c
+    }
 }
 
 /// Largest magnitude [`wrap_pi`] can return: the largest `f32` whose *exact*
@@ -648,47 +672,15 @@ pub const WRAP_PI_MAX: f32 = f32::from_bits(0x40490fda);
 #[inline(always)]
 pub fn tan_wide(x: f32) -> f32 {
     let b = x.to_bits();
-    let e = ((b >> 23) & 0xff) as usize;
-    let sgnx = b & SIGN_MASK;
-
-    if (e.wrapping_sub(CUT_PI_WIDE)) < (255 - CUT_PI_WIDE) {
-        let m = (b & 0x007f_ffff) | 0x0080_0000;
-        let w0 = pitable::REDUCE_PI_W[0][e & 0xff];
-        let w1 = pitable::REDUCE_PI_W[1][e & 0xff];
-        let w2 = pitable::REDUCE_PI_W[2][e & 0xff];
-
-        let p0_lo = m.wrapping_mul(w0) & 0x1fff_ffff;
-        let t1_lo = m.wrapping_mul(w1) & 0x1fff_ffff;
-        let t1_hi = ((m as u64 * w1 as u64) >> 29) as u32;
-        let t2 = ((m as u64 * w2 as u64) >> 29) as u32;
-
-        let sum_lo = t1_lo.wrapping_add(t2);
-        let carry = sum_lo >> 29;
-        let lo = sum_lo & 0x1fff_ffff;
-
-        let sum_hi = p0_lo.wrapping_add(t1_hi).wrapping_add(carry);
-
-        let tt_s = ((sum_hi as i32) << 4) >> 4;
-        let tt_c = (((sum_hi ^ (1 << 27)) as i32) << 4) >> 4;
-        let flip = ((sum_hi << 4) & SIGN_MASK) ^ SIGN_MASK ^ sgnx;
-
-        let r_s = (tt_s as f32).mul_add(
-            f32::from_bits(0x3249_0fdb),
-            (lo as f32) * f32::from_bits(0x23c9_0fdb),
-        );
-        let r_c = (tt_c as f32).mul_add(
-            f32::from_bits(0x3249_0fdb),
-            (lo as f32) * f32::from_bits(0x23c9_0fdb),
-        );
-
-        let num = sinf_poly(r_s).clamp(-1.0, 1.0);
-        let den = sinf_poly(r_c).clamp(-1.0, 1.0);
-        f32::from_bits((num / den).to_bits() ^ flip)
-    } else if e < CUT_PI_WIDE {
+    let (h, rem, tail) = reduce_pi_wide::<0>(b);
+    let (rs, ps) = reduced_angle(h, rem, tail);
+    let (rc, pc) = reduced_angle(h.wrapping_add(1 << 30), rem, tail);
+    let flip = ps ^ pc ^ (b & SIGN_MASK);
+    let t = sinf_poly_raw(f32::from_bits(rs.to_bits() ^ flip)) / sinf_poly_raw(rc);
+    if ((b >> 23) & 0xff) < pitable::CUT {
         x
     } else {
-        let nan = f32::from_bits((b & 0x007f_ffff) | 0x7f80_0000) * 0.0;
-        f32::from_bits(nan.to_bits() ^ sgnx)
+        t
     }
 }
 
@@ -3221,7 +3213,7 @@ mod tests {
         assert!(tan_wide(f32::NEG_INFINITY).is_nan());
         assert!(tan_wide(f32::NAN).is_nan());
 
-        // Subnormals (e < CUT_PI_WIDE)
+        // Subnormals (e < pitable::CUT)
         let subnorm = f32::from_bits(0x0000_0001); // min positive subnormal
         assert_eq!(sin_wide(subnorm), subnorm);
         assert_eq!(cos_wide(subnorm), 1.0);
