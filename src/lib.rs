@@ -617,12 +617,22 @@ fn reduce_pi_wide<const GRID: u32>(b: u32) -> (u32, f32, f32) {
 /// integer, and that integer's parity as a sign mask.
 #[inline(always)]
 fn reduced_angle(h: u32, rem: f32, tail: f32) -> (f32, u32) {
-    // hi is a multiple of 128 so its conversion is exact.
-    let hi = (h & 0x7fff_ff80) as i32 - (1 << 30);
+    (angle(hi_part(h), h, rem, tail), h & SIGN_MASK)
+}
+
+/// The centred part of a reduction word that is a multiple of 128, so its
+/// conversion to f32 is exact.
+#[inline(always)]
+fn hi_part(h: u32) -> i32 {
+    (h & 0x7fff_ff80) as i32 - (1 << 30)
+}
+
+#[inline(always)]
+fn angle(hi: i32, h: u32, rem: f32, tail: f32) -> f32 {
     let lo = (h & 0x7f) as i32 - 64;
     let f = hi as f32;
     let d = fma(lo as f32 + rem, PI_UNIT, fma(f, PI_UNIT_LO, tail));
-    (fma(f, PI_UNIT, d), h & SIGN_MASK)
+    fma(f, PI_UNIT, d)
 }
 
 /// `clamp(-1, 1)` that keeps NaN.
@@ -668,15 +678,34 @@ pub fn cos_wide(x: f32) -> f32 {
 /// value is below `pi`, one ulp under `f32::consts::PI`.
 pub const WRAP_PI_MAX: f32 = f32::from_bits(0x40490fda);
 
+/// `(sin r, cos r)` for `|r| <= pi/4`: relative error 2^-28 and 2^-33.
+#[inline(always)]
+fn sincos_quarter(r: f32) -> (f32, f32) {
+    let s: [f32; 3] = [-0.16666655, 0.00833216, -0.00019515282];
+    let c: [f32; 4] = [-0.5, 0.04166662, -0.0013886682, 2.4383566e-5];
+    let y = r * r;
+    let y2 = y * y;
+    let sp = fma(s[2], y2, fma(s[1], y, s[0]));
+    let cp = fma(fma(c[3], y, c[2]), y2, fma(c[1], y, c[0]));
+    (fma(sp, y * r, r), fma(cp, y, 1.0))
+}
+
 /// Computes `tan(x)` with no magnitude limit across all finite f32.
 #[inline(always)]
 pub fn tan_wide(x: f32) -> f32 {
     let b = x.to_bits();
     let (h, rem, tail) = reduce_pi_wide::<0>(b);
-    let (rs, ps) = reduced_angle(h, rem, tail);
-    let (rc, pc) = reduced_angle(h.wrapping_add(1 << 30), rem, tail);
-    let flip = ps ^ pc ^ (b & SIGN_MASK);
-    let t = sinf_poly_raw(f32::from_bits(rs.to_bits() ^ flip)) / sinf_poly_raw(rc);
+    // Beyond a quarter turn, reduce onto the cos grid instead and use
+    // tan(t) = -cos(t - pi/2) / sin(t - pi/2): |r| stays within pi/4.
+    let near = (h ^ (h << 1)) & (1 << 30) != 0;
+    // Selects, not branches: `near` is a coin flip for arbitrary inputs.
+    let sel = core::hint::select_unpredictable::<u32>;
+    let hi = sel(near, hi_part(h) as u32, hi_part(h.wrapping_add(1 << 30)) as u32);
+    let r = angle(hi as i32, h, rem, tail);
+    let flip = (b & SIGN_MASK) ^ sel(near, 0, SIGN_MASK);
+    let (s, c) = sincos_quarter(f32::from_bits(r.to_bits() ^ flip));
+    let (n, d) = core::hint::select_unpredictable(near, (s, c), (c, s));
+    let t = n / d;
     if ((b >> 23) & 0xff) < pitable::CUT {
         x
     } else {
