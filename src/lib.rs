@@ -583,12 +583,13 @@ fn reduce_pi_wide<const GRID: u32>(b: u32) -> (u32, f32, f32) {
     let t = (b >> 23).wrapping_sub(pitable::CUT);
     let (b0, b1) = (t & 32 != 0, t & 64 != 0);
     let sel = core::hint::select_unpredictable::<u32>;
-    let u = |i: usize| sel(b0, K[i + 1], K[i]);
-    let (u0, u1, u2, u3, u4, u5) = (u(0), u(1), u(2), u(3), u(4), u(5));
+    // Bit 6 first: that level needs 5 selects, bit 5's then 4 (10 the other way).
+    let v = |i: usize| sel(b1, K[i + 2], K[i]);
+    let (v0, v1, v2, v3, v4) = (v(0), v(1), v(2), v(3), v(4));
     let s = t & 31;
     let funnel = |hi: u32, lo: u32| (hi << s) | ((lo >> 1) >> (31 - s));
-    let (w0, w1) = (sel(b1, u2, u0), sel(b1, u3, u1));
-    let (w2, w3) = (sel(b1, u4, u2), sel(b1, u5, u3));
+    let (w0, w1) = (sel(b0, v1, v0), sel(b0, v2, v1));
+    let (w2, w3) = (sel(b0, v3, v2), sel(b0, v4, v3));
     let (x0, x1, x2) = (funnel(w0, w1), funnel(w1, w2), funnel(w2, w3));
     // x0 = floor(beta * 2^31) mod 2^32; next 24 bits exact in n1, 24 more in n2.
     let n1 = (x1 >> 8) as f32;
