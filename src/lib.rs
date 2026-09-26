@@ -654,8 +654,8 @@ pub fn sin_wide(x: f32) -> f32 {
     let (h, rem, tail, off) = reduce_pi_wide::<0>(b);
     let (r, parity) = reduced_angle(h, rem, tail);
     let r = f32::from_bits(r.to_bits() ^ parity ^ (b & SIGN_MASK));
-    // x - (x - x) is x, or NaN for inf.
-    let r = if off { x - (x - x) } else { r };
+    // fma(x, 0.0, x) is x, or NaN for inf.
+    let r = if off { fma(x, 0.0, x) } else { r };
     clamp_unit(sinf_poly(r))
 }
 
@@ -667,9 +667,9 @@ pub fn cos_wide(x: f32) -> f32 {
     let (r, parity) = reduced_angle(h, rem, tail);
     let c = clamp_unit(sinf_poly(f32::from_bits(r.to_bits() ^ parity)));
     // Near 1 the odd poly at pi/2 - |x| is noisy by half an ulp; 1 + y*C(y)
-    // is not. x - (x - x) is x, or NaN for inf.
+    // is not. fma(x, 0.0, x) is x, or NaN for inf.
     if off {
-        cos_unit(x - (x - x))
+        cos_unit(fma(x, 0.0, x))
     } else {
         c
     }
@@ -732,7 +732,7 @@ pub fn tan_wide(x: f32) -> f32 {
     );
     let r = angle(hi as i32, h, rem, tail);
     let r = f32::from_bits(r.to_bits() ^ (b & SIGN_MASK) ^ sel(near, 0, SIGN_MASK));
-    let r = if off { x - (x - x) } else { r };
+    let r = if off { fma(x, 0.0, x) } else { r };
     let (s, c) = sincos_unit(r);
     let (n, d) = core::hint::select_unpredictable(near, (s, c), (c, s));
     n / d
