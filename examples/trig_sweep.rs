@@ -32,6 +32,19 @@ macro_rules! case {
     };
 }
 
+/// sin(pi x) or cos(pi x) from the exact split x = n + r, |r| <= 1/2.
+fn half_turns(x: f64, cos: bool) -> f64 {
+    let n = x.round_ties_even();
+    let r = std::f64::consts::PI * (x - n);
+    // cos is exactly zero at the half-integers (tanpi's convention there is -inf).
+    let v = if cos && (x - n).abs() == 0.5 { 0.0 } else if cos { r.cos() } else { r.sin() };
+    if n.rem_euclid(2.0) == 1.0 {
+        -v
+    } else {
+        v
+    }
+}
+
 fn ulp_diff(a: f32, b: f32) -> u64 {
     fn ord(x: f32) -> i64 {
         let b = x.to_bits();
@@ -59,7 +72,18 @@ fn main() {
         case!("sin", sin, f64::sin, 16777216.0 * pi),
         case!("cos", cos, f64::cos, 4194304.0 * pi),
         case!("tan", tan, f64::tan, 4194304.0 * pi),
+        case!("sinpi", sinpi, |x: f64| half_turns(x, false), f32::INFINITY),
+        case!("cospi", cospi, |x: f64| half_turns(x, true), f32::INFINITY),
+        case!("tanpi", tanpi, |x: f64| {
+            let c = half_turns(x, true);
+            if c == 0.0 { f64::NEG_INFINITY } else { half_turns(x, false) / c }
+        }, f32::INFINITY),
     ];
+    for (name, f) in [("sin", sin as fn(f32) -> f32), ("sin_wide", sin_wide), ("tan", tan), ("tan_wide", tan_wide), ("sinpi", sinpi), ("tanpi", tanpi)] {
+        for z in [0.0f32, -0.0] {
+            assert_eq!(f(z).to_bits(), z.to_bits(), "{name}({z}) lost the sign of zero");
+        }
+    }
     let threads = std::thread::available_parallelism().map_or(8, |n| n.get());
     let total = (1u64 << 32).div_ceil(stride);
     for case in cases.iter().filter(|c| c.name.contains(&filter)) {

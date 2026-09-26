@@ -362,26 +362,21 @@ pub fn exp10(x: f32) -> f32 {
     fma(q, exp2int * f, exp2int)
 }
 
-// sin(x) ~= x + x^3*p(x^2) on [-pi/2, pi/2].
+// sin(x) ~= x + x^3*p(x^2) on [-pi/2, pi/2]; odd, and keeps the sign of zero.
 #[inline(always)]
-fn sinf_poly_raw(x: f32) -> f32 {
+fn sinf_poly(x: f32) -> f32 {
     let c0 = -0.166_666_6_f32;
     let c1 = 8.3330662e-3f32;
     let c2 = -1.9809603e-4f32;
     let c3 = 2.6057806e-6f32;
     let y = x * x;
     let y2 = y * y;
-    let x3 = y * x;
+    // `+ 0.0` turns x3 = -0 into +0, so p*x3 = -0 and x + p*x3 keeps x's zero.
+    let x3 = fma(y, x, 0.0);
     let a = fma(c1, y, c0);
     let b = fma(c3, y, c2);
     let p = fma(b, y2, a);
     fma(p, x3, x)
-}
-
-/// `sinf_poly_raw` with copysign fixup to preserve `-0.0`.
-#[inline(always)]
-fn sinf_poly(x: f32) -> f32 {
-    sinf_poly_raw(x).copysign(x)
 }
 
 // Cody-Waite pi split; trailing zeros keep leading reduction steps exact.
@@ -452,7 +447,7 @@ pub fn sinpi(x: f32) -> f32 {
     let q = x.round_ties_even();
     let r = x - q;
     // Preserve -0.0: subtraction of equal zeros yields +0.0 in IEEE 754.
-    let normal = sinf_poly_raw(std::f32::consts::PI * r) * fma(-2.0, parity(q), 1.0);
+    let normal = sinf_poly(std::f32::consts::PI * r) * fma(-2.0, parity(q), 1.0);
     if x == 0.0 {
         x
     } else {
@@ -465,7 +460,7 @@ pub fn sinpi(x: f32) -> f32 {
 pub fn cospi(x: f32) -> f32 {
     let k = x.round_ties_even();
     let r = x - k;
-    let s = sinf_poly_raw(std::f32::consts::PI * (0.5 - r.abs()));
+    let s = sinf_poly(std::f32::consts::PI * (0.5 - r.abs()));
     s * fma(-2.0, parity(k), 1.0)
 }
 
@@ -652,7 +647,7 @@ pub fn sin_wide(x: f32) -> f32 {
     let b = x.to_bits();
     let (h, rem, tail) = reduce_pi_wide::<0>(b);
     let (r, parity) = reduced_angle(h, rem, tail);
-    let s = clamp_unit(sinf_poly_raw(f32::from_bits(r.to_bits() ^ parity ^ (b & SIGN_MASK))));
+    let s = clamp_unit(sinf_poly(f32::from_bits(r.to_bits() ^ parity ^ (b & SIGN_MASK))));
     if ((b >> 23) & 0xff) < pitable::CUT {
         x
     } else {
@@ -666,7 +661,7 @@ pub fn cos_wide(x: f32) -> f32 {
     let b = x.to_bits();
     let (h, rem, tail) = reduce_pi_wide::<{ 1 << 30 }>(b);
     let (r, parity) = reduced_angle(h, rem, tail);
-    let c = clamp_unit(sinf_poly_raw(f32::from_bits(r.to_bits() ^ parity)));
+    let c = clamp_unit(sinf_poly(f32::from_bits(r.to_bits() ^ parity)));
     if ((b >> 23) & 0xff) < pitable::CUT {
         1.0
     } else {
