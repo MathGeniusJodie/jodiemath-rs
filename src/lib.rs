@@ -567,9 +567,10 @@ const PI_UNIT_LO: f32 = -8.742278e-8 * (1.0 / 2147483648.0);
 /// `|x|/pi + GRID/2^32 = (h - 2^30 - 64 + rem) * 2^-31 + tail/pi (mod 2)`:
 /// `h` is exact fixed point whose wraparound is the mod 2, `|rem| <= 1`,
 /// `tail` is tiny and already in radians. `GRID = 0` is the sin grid, `2^30`
-/// (a quarter period) the cos grid. Meaningless where [`off_window`].
+/// (a quarter period) the cos grid. `off` flags the lanes this does not
+/// cover: `|x| < 1`, inf and NaN.
 #[inline(always)]
-fn reduce_pi_wide<const GRID: u32>(b: u32) -> (u32, f32, f32) {
+fn reduce_pi_wide<const GRID: u32>(b: u32) -> (u32, f32, f32, bool) {
     // ulp 2 on [2^24, 2^25): m*g1 < 2^24 always rounds inside one binade.
     const M: f32 = 16777216.0;
     const K: [u32; 7] = pitable::WORDS;
@@ -606,15 +607,9 @@ fn reduce_pi_wide<const GRID: u32>(b: u32) -> (u32, f32, f32) {
                 .wrapping_sub(M.to_bits() << 1),
         )
         .wrapping_add(kb.to_bits() << 1);
-    (h, rem, tail)
-}
-
-/// Lanes `reduce_pi_wide` does not cover: `|x| < 1`, inf and NaN.
-#[inline(always)]
-fn off_window(b: u32) -> bool {
-    // e - CUT lands in [0, 128) exactly for the windowed exponents, for
-    // either sign (the sign bit adds 256).
-    (b >> 23).wrapping_sub(pitable::CUT) & 128 != 0
+    // t lands in [0, 128) exactly for the windowed exponents, for either sign
+    // (the sign bit adds 256).
+    (h, rem, tail, t & 128 != 0)
 }
 
 /// `pi` times the signed distance from a reduction word to the nearest
@@ -656,11 +651,11 @@ fn clamp_unit(s: f32) -> f32 {
 #[inline(always)]
 pub fn sin_wide(x: f32) -> f32 {
     let b = x.to_bits();
-    let (h, rem, tail) = reduce_pi_wide::<0>(b);
+    let (h, rem, tail, off) = reduce_pi_wide::<0>(b);
     let (r, parity) = reduced_angle(h, rem, tail);
     let r = f32::from_bits(r.to_bits() ^ parity ^ (b & SIGN_MASK));
     // x - (x - x) is x, or NaN for inf.
-    let r = if off_window(b) { x - (x - x) } else { r };
+    let r = if off { x - (x - x) } else { r };
     clamp_unit(sinf_poly(r))
 }
 
@@ -668,12 +663,12 @@ pub fn sin_wide(x: f32) -> f32 {
 #[inline(always)]
 pub fn cos_wide(x: f32) -> f32 {
     let b = x.to_bits();
-    let (h, rem, tail) = reduce_pi_wide::<{ 1 << 30 }>(b);
+    let (h, rem, tail, off) = reduce_pi_wide::<{ 1 << 30 }>(b);
     let (r, parity) = reduced_angle(h, rem, tail);
     let c = clamp_unit(sinf_poly(f32::from_bits(r.to_bits() ^ parity)));
     // Near 1 the odd poly at pi/2 - |x| is noisy by half an ulp; 1 + y*C(y)
     // is not. x - (x - x) is x, or NaN for inf.
-    if off_window(b) {
+    if off {
         cos_unit(x - (x - x))
     } else {
         c
@@ -723,8 +718,7 @@ fn sincos_unit(r: f32) -> (f32, f32) {
 #[inline(always)]
 pub fn tan_wide(x: f32) -> f32 {
     let b = x.to_bits();
-    let (h, rem, tail) = reduce_pi_wide::<0>(b);
-    let off = off_window(b);
+    let (h, rem, tail, off) = reduce_pi_wide::<0>(b);
     // Beyond a quarter turn, reduce onto the cos grid instead and use
     // tan(t) = -cos(t - pi/2) / sin(t - pi/2): |r| stays within pi/4.
     // Off the window |x| < 1 already, and r = x.
