@@ -71,7 +71,8 @@ fn main() {
         case!("tan_wide", tan_wide, f64::tan, f32::INFINITY),
         case!("sin", sin, f64::sin, 16777216.0 * pi),
         case!("cos", cos, f64::cos, 4194304.0 * pi),
-        case!("tan", tan, f64::tan, 4194304.0 * pi),
+        case!("tan", tan, f64::tan, 8388608.0 * pi),
+        case!("tan22", tan, f64::tan, 4194304.0 * pi),
         case!("sinpi", sinpi, |x: f64| half_turns(x, false), f32::INFINITY),
         case!("cospi", cospi, |x: f64| half_turns(x, true), f32::INFINITY),
         case!("tanpi", tanpi, |x: f64| {

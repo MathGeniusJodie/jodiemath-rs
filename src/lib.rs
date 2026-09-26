@@ -674,6 +674,7 @@ pub fn cos_wide(x: f32) -> f32 {
 pub const WRAP_PI_MAX: f32 = f32::from_bits(0x40490fda);
 
 /// `(sin r, cos r)` for `|r| <= pi/4`: relative error 2^-28 and 2^-33.
+/// Keeps the sign of zero like `sinf_poly`.
 #[inline(always)]
 fn sincos_quarter(r: f32) -> (f32, f32) {
     let s: [f32; 3] = [-0.16666655, 0.00833216, -0.00019515282];
@@ -682,7 +683,7 @@ fn sincos_quarter(r: f32) -> (f32, f32) {
     let y2 = y * y;
     let sp = fma(s[2], y2, fma(s[1], y, s[0]));
     let cp = fma(fma(c[3], y, c[2]), y2, fma(c[1], y, c[0]));
-    (fma(sp, y * r, r), fma(cp, y, 1.0))
+    (fma(sp, fma(y, r, 0.0), r), fma(cp, y, 1.0))
 }
 
 /// Computes `tan(x)` with no magnitude limit across all finite f32.
@@ -2182,16 +2183,28 @@ pub fn atan2_pos(y: f32, x: f32) -> f32 {
     }
 }
 
-/// Computes `tan(x)` in radians for `|x| < 2^22 * pi`.
+/// Computes `tan(x)` in radians for `|x| < 2^23 * pi`.
 #[doc(alias = "tanf")]
 #[inline(always)]
 pub fn tan(x: f32) -> f32 {
-    let (nb, n, fc) = frac_x_over_pi!(x, ROUND_MAGIC);
-    let qb = fc + nb;
-    let num = pi_reduce_and_poly!(x, qb - ROUND_MAGIC);
-    let den = pi_reduce_and_poly!(x, n + 0.5f32.copysign(fc));
-    let sign = ((qb.to_bits() ^ nb.to_bits()) << 31) ^ (!fc.to_bits() & SIGN_MASK);
-    f32::from_bits((num / den).to_bits() ^ sign)
+    // q = round(2x/pi) exactly: a coarse round to multiples of 4, then a fine
+    // one of the remainder, as in `sin`.
+    let nb = fma(x, std::f32::consts::FRAC_2_PI, ROUND_MAGIC_4);
+    let n = nb - ROUND_MAGIC_4;
+    let f = fma(x, std::f32::consts::FRAC_2_PI, -n);
+    let fc = fma(x, 2.0 * RPI_LO, f);
+    let qb = fc + ROUND_MAGIC;
+    let q = (n - ROUND_MAGIC) + qb;
+    let r = fma(q, -0.5 * PI_A, x);
+    let r = fma(q, -0.5 * PI_B, r);
+    let r = fma(q, -0.5 * PI_C, r);
+    let r = fma(q, -0.5 * PI_D, r);
+    // Odd q: tan(x) = -cos(r) / sin(r).
+    let odd = qb.to_bits() & 1 != 0;
+    let flip = core::hint::select_unpredictable(odd, SIGN_MASK, 0);
+    let (s, c) = sincos_quarter(f32::from_bits(r.to_bits() ^ flip));
+    let (n, d) = core::hint::select_unpredictable(odd, (c, s), (s, c));
+    n / d
 }
 
 #[inline(always)]
