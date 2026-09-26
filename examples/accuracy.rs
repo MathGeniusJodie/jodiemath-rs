@@ -170,42 +170,15 @@ fn xlog1py_ref(x: F64xN, y: F64xN) -> F64xN {
     let is_zero = x.simd_eq(F64xN::splat(0.0));
     is_zero.select(F64xN::splat(0.0), x * log1p_u10(y))
 }
-// tanpi/tand's own references: same ratio construction as the real
-// functions (see their doc comments) -- reuses sinpi_ref/cospi_ref
-// (resp. sind_ref/cosd_ref below) directly rather than a naive
-// tan(pi*x)/tan(x*pi/180), for the same "don't reintroduce the
+// tanpi's own reference: same ratio construction as the real
+// function (see its doc comment) -- reuses sinpi_ref/cospi_ref
+// directly rather than a naive tan(pi*x), for the same "don't reintroduce the
 // large-x reduction imprecision the real function exists to avoid"
 // reasoning as sinc_ref above. sinpi_ref/cospi_ref already each handle
 // non-finite input via their own trig_safe wrapper, so no extra
 // wrapping needed here.
 fn tanpi_ref(v: F64xN) -> F64xN {
     sinpi_ref(v) / cospi_ref(v)
-}
-// sind/cosd's own point (see their doc comments): q=round(x/180),
-// d=x-q*180 keeps the residual small and precise, so d*pi/180 is a
-// small, accurate angle -- computing x*pi/180 directly (the naive
-// reference) reintroduces the same imprecision-at-large-x problem
-// sinpi_ref's own comment describes. Mirror the reduction here too.
-fn sind_ref(v: F64xN) -> F64xN {
-    trig_safe(v, |x: F64xN| {
-        let q = (x / F64xN::splat(180.0)).round();
-        let d = x - q * F64xN::splat(180.0);
-        let s = sin_u35(d * F64xN::splat(std::f64::consts::PI / 180.0));
-        let sign = F64xN::splat(1.0) - F64xN::splat(2.0) * parity_f64(q);
-        s * sign
-    })
-}
-fn cosd_ref(v: F64xN) -> F64xN {
-    trig_safe(v, |x: F64xN| {
-        let q = (x / F64xN::splat(180.0) - F64xN::splat(0.5)).round() + F64xN::splat(0.5);
-        let d = x - q * F64xN::splat(180.0);
-        let s = sin_u35(d * F64xN::splat(std::f64::consts::PI / 180.0));
-        let sign = F64xN::splat(2.0) * parity_f64(q - F64xN::splat(0.5)) - F64xN::splat(1.0);
-        s * sign
-    })
-}
-fn tand_ref(v: F64xN) -> F64xN {
-    sind_ref(v) / cosd_ref(v)
 }
 
 /// ULP distance along the monotonic ordering of f32 bit patterns.
@@ -783,9 +756,9 @@ fn main() {
             report(name, &s, t0);
         }
         let s = measure!(sin_domain, sin, sin_ref);
-        report("sin (in-domain)", &s, t0);
+        report("sin (|x|<2^24*pi)", &s, t0);
         let s = measure!(sin_domain, |x: f32| x.sin(), sin_ref);
-        report("std sin (in-domain)", &s, t0);
+        report("std sin (|x|<2^24*pi)", &s, t0);
         // std on the same |x|<=1e6 restriction the readme's row quotes, so
         // both columns of that row come from the same input set.
         let s = measure!(|x: f32| x.abs() <= 1e6, |x: f32| x.sin(), sin_ref);
@@ -826,9 +799,9 @@ fn main() {
             report(name, &s, t0);
         }
         let s = measure!(cos_domain, cos, cos_ref);
-        report("cos (in-domain)", &s, t0);
+        report("cos (|x|<2^22*pi)", &s, t0);
         let s = measure!(cos_domain, |x: f32| x.cos(), cos_ref);
-        report("std cos (in-domain)", &s, t0);
+        report("std cos (|x|<2^22*pi)", &s, t0);
         // std on the same |x|<=1e6 restriction the readme's row quotes.
         let s = measure!(|x: f32| x.abs() <= 1e6, |x: f32| x.cos(), cos_ref);
         report("std cos |x|<=1e6", &s, t0);
@@ -897,40 +870,12 @@ fn main() {
         let s = measure!(everywhere, tanpi, tanpi_ref);
         report("tanpi (all f32)", &s, t0);
     }
-    if run("2pi") {
-        // sin2pi/cos2pi/tan2pi (backlog idea #122): 2*v is exact in f64
-        // for any f32 v (nowhere near f64's own overflow), so the
-        // reference just doubles before sinpi_ref/etc, mirroring the
-        // real function exactly. Restricted to |x|<f32::MAX/2 -- past
-        // that the real function's own `2.0*x` overflows to +-inf, a
-        // documented gap (see sin2pi's own doc comment), not something
-        // to score here.
-        let half_max = |x: f32| x.abs() < f32::MAX / 2.0;
-        let sin2pi_ref = |v: F64xN| sinpi_ref(v * F64xN::splat(2.0));
-        let s = measure!(half_max, sin2pi, sin2pi_ref);
-        report("sin2pi", &s, t0);
-        let cos2pi_ref = |v: F64xN| cospi_ref(v * F64xN::splat(2.0));
-        let s = measure!(half_max, cos2pi, cos2pi_ref);
-        report("cos2pi", &s, t0);
-        let tan2pi_ref = |v: F64xN| tanpi_ref(v * F64xN::splat(2.0));
-        let s = measure!(half_max, tan2pi, tan2pi_ref);
-        report("tan2pi", &s, t0);
-    }
     if run("sinc") || run("sinc_unnormalized") {
         // sinc_unnormalized (backlog idea #131): restricted to |x|<1e6:
         // well past that, true value is already indistinguishable from 0 at f32 precision.
         let sinc_domain = |x: f32| x.abs() < 1e6;
         let s = measure!(sinc_domain, sinc_unnormalized, sinc_unnormalized_ref);
         report("sinc_unnormalized (|x|<1e6)", &s, t0);
-    }
-    if run("sind") || run("cosd") || run("tand") {
-        let sind_domain = |x: f32| x.abs() < 4.7e7;
-        let s = measure!(sind_domain, sind_unchecked, sind_ref);
-        report("sind_unchecked (+)", &s, t0);
-        let s = measure!(sind_domain, cosd_unchecked, cosd_ref);
-        report("cosd_unchecked (+)", &s, t0);
-        let s = measure!(sind_domain, tand_unchecked, tand_ref);
-        report("tand_unchecked (+)", &s, t0);
     }
 
     if run("ln") {
@@ -1217,7 +1162,7 @@ fn main() {
             v * F64xN::splat(0.5) * erfc_u15(-v * F64xN::splat(std::f64::consts::FRAC_1_SQRT_2))
         };
         let s = measure!(gelu_domain, gelu, gelu_ref);
-        report("gelu", &s, t0);
+        report("gelu (|x|<=10*sqrt2)", &s, t0);
         // Second row over every *finite* f32, not just the band above.
         // Unlike `erfc`, `gelu` saturates to something the f64 reference
         // still gets right out there (`0` below x ~ -14.4, `x` itself
@@ -1346,9 +1291,9 @@ fn main() {
     if run("tan") {
         let tan_domain = |x: f32| x.abs() < (1u32 << 22) as f32 * std::f32::consts::PI;
         let s = measure!(tan_domain, tan, tan_ref);
-        report("tan (in-domain)", &s, t0);
+        report("tan (|x|<2^22*pi)", &s, t0);
         let s = measure!(tan_domain, |x: f32| x.tan(), tan_ref);
-        report("std tan (in-domain)", &s, t0);
+        report("std tan (|x|<2^22*pi)", &s, t0);
     }
     // `tan_wide`: tan has a genuine pole every pi, and at large |x| those
     // poles sit closer together than the local float spacing, so any
@@ -1375,7 +1320,7 @@ fn main() {
         // 0.0 (2.0 for x < 0) and this crate returns exactly that.
         let erfc_domain = |x: f32| x.abs() <= 10.0;
         let s = measure!(erfc_domain, erfc, erfc_u15);
-        report("erfc", &s, t0);
+        report("erfc (|x|<=10)", &s, t0);
     }
     if run("erfinv") {
         // Direct ulp rows against a real reference. These three used to be
@@ -1561,46 +1506,6 @@ fn main() {
             v / ((F64xN::splat(1.0) + v).sqrt() + F64xN::splat(1.0))
         });
         report("sqrt1pm1", &s, t0);
-    }
-    if run("wrap_pi") {
-        // First ulp sweep for wrap_pi too (edgecheck had the range and
-        // sin/cos-preservation invariants, but no ulp measurement).
-        //
-        // Restricted to |x| <= 1e4 on purpose: wrap_pi rides
-        // reduce_pi_checked's double-float reduction, which stays accurate
-        // far past what a single f64 word can reference. Beyond this range
-        // edgecheck's sin(wrap_pi(x)) == sin_wide(x) invariant is what
-        // covers the reduction (out to 1e9).
-        //
-        // TAU is Cody-Waite split into *three* words, and carrying more
-        // words is not the point -- zeroing their low bits is. The worst
-        // inputs sit almost exactly on a multiple of 2*pi, where a ~1e-7
-        // answer is what survives cancelling operands of ~1e4, so the
-        // reference has to form `q*tau` with no rounding at all: an
-        // ordinary two-word `q * tau_hi` still rounds at the magnitude of
-        // x (~9e-13 for |x| ~ 1e4), which is ~60 ulp of the cancelled
-        // result and swamps everything being measured. Each word here has
-        // its low mantissa bits cleared (TAU1 is a multiple of 2^-30, TAU2
-        // of 2^-58) so that `q * word` is exact in f64 for every |q| <=
-        // 1592 this domain can produce, and the reference then reproduces
-        // an exact-rational computation to ~2^-29 ulp -- verified against
-        // 60-digit decimal arithmetic at wrap_pi's four worst points.
-        let wrap_domain = |x: f32| x.abs() <= 1e4;
-        let s = measure!(wrap_domain, wrap_pi, |v: F64xN| {
-            let tau1 = F64xN::splat(f64::from_bits(0x401921fb54400000)); // 6746518852 * 2^-30
-            let tau2 = F64xN::splat(f64::from_bits(0x3df0b4611c000000)); // 70064199 * 2^-58
-            let tau3 = F64xN::splat(f64::from_bits(0xbc39d9cceba3f91f));
-            let pi = F64xN::splat(std::f64::consts::PI);
-            let tau = tau1 + tau2; // nearest f64 to 2*pi
-            let q = (v / tau).round();
-            let r = ((v - q * tau1) - q * tau2) - q * tau3;
-            // fold into (-pi, pi]: r lands in [-tau/2, tau/2] but the
-            // half-open convention needs r > pi pulled down and
-            // r <= -pi pushed up.
-            let r = r.simd_gt(pi).select(r - tau, r);
-            r.simd_le(-pi).select(r + tau, r)
-        });
-        report("wrap_pi", &s, t0);
     }
     if run("normalize2") {
         let hypot_domain = |x: f32, y: f32| {
@@ -1900,89 +1805,6 @@ fn main() {
             n_samples,
             t0.elapsed().as_secs_f64(),
         );
-    }
-    if run("rootn") {
-        // x^(1/n) (backlog idea #75): reference matches the documented
-        // C23 domain-error/sign rules (see rootn's own doc comment),
-        // not a naive x.powf(1.0/n) -- that would mishandle negative x
-        // with odd n the exact same way a naive implementation would.
-        let rootn_ref = |x: f64, n: i32| -> f64 {
-            if n == 0 {
-                return f64::NAN;
-            }
-            if x == 0.0 {
-                let n_odd = n % 2 != 0;
-                let mag = if n > 0 { 0.0 } else { f64::INFINITY };
-                return if n_odd { mag.copysign(x) } else { mag };
-            }
-            if x < 0.0 {
-                return if n % 2 == 0 {
-                    f64::NAN
-                } else {
-                    -((-x).powf(1.0 / n as f64))
-                };
-            }
-            x.powf(1.0 / n as f64)
-        };
-        let ns: [i32; 24] = [
-            1,
-            -1,
-            2,
-            -2,
-            3,
-            -3,
-            4,
-            -4,
-            5,
-            -5,
-            7,
-            -7,
-            8,
-            -8,
-            10,
-            -10,
-            31,
-            -31,
-            1000,
-            -1000,
-            1 << 24,
-            -(1 << 24),
-            i32::MAX,
-            i32::MIN,
-        ];
-        let n_samples = 2_000_000u64;
-        for &n in &ns {
-            let mut sum = 0u64;
-            let mut max = 0u64;
-            let mut worst = 0.0f32;
-            for _ in 0..n_samples {
-                let x = f32::from_bits(rand::rng().random::<u32>());
-                if !x.is_finite() {
-                    continue;
-                }
-                let want_f64 = rootn_ref(x as f64, n);
-                if !want_f64.is_finite() {
-                    continue;
-                }
-                let got = rootn(x, n);
-                let want = want_f64 as f32;
-                let d = ulp_diff(got, want);
-                sum += d;
-                if d > max {
-                    max = d;
-                    worst = x;
-                }
-            }
-            println!(
-                "{:24} avg ulp {:>10.4}  max ulp {:>10}  worst x={:e} ({:>12} samples, {:>7.2}s elapsed)",
-                format!("rootn(x,{n})"),
-                sum as f64 / n_samples as f64,
-                max,
-                worst,
-                n_samples,
-                t0.elapsed().as_secs_f64(),
-            );
-        }
     }
     if run("ldexp") {
         // ldexp/frexp (backlog idea #86): exact bit manipulations, not
