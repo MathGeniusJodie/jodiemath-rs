@@ -567,30 +567,28 @@ const PI_UNIT_LO: f32 = -8.742278e-8 * (1.0 / 2147483648.0);
 /// `|x|/pi + GRID/2^32 = (h - 2^30 - 64 + rem) * 2^-31 + tail/pi (mod 2)`:
 /// `h` is exact fixed point whose wraparound is the mod 2, `|rem| <= 1`,
 /// `tail` is tiny and already in radians. `GRID = 0` is the sin grid, `2^30`
-/// (a quarter period) the cos grid. Meaningless below `pitable::CUT`;
-/// inf/NaN give a NaN `tail`.
+/// (a quarter period) the cos grid. Meaningless where [`off_window`].
 #[inline(always)]
 fn reduce_pi_wide<const GRID: u32>(b: u32) -> (u32, f32, f32) {
     // ulp 2 on [2^24, 2^25): m*g1 < 2^24 always rounds inside one binade.
     const M: f32 = 16777216.0;
-    const K: [u32; 8] = pitable::WORDS;
-    let e = (b >> 23) & 0xff;
+    const K: [u32; 7] = pitable::WORDS;
     // The 96 bits of beta(e) = (2^(e-150)/pi) mod 2 that matter start at bit
-    // t = e - CUT of K: words q..q+3 (q = t >> 5 <= 4) funnel-shifted by
+    // t = e - CUT of K: words q..q+3 (q = t >> 5 <= 3) funnel-shifted by
     // t & 31. The words are picked by a select tree over immediates, never an
     // indexed load: that vectorizes to gathers (or scalar loads on targets
     // without them), which cost 3/4 of the old table version's time. Plain
     // `if`s get folded back into a lookup table, hence select_unpredictable.
-    let t = e.wrapping_sub(pitable::CUT);
-    let (b0, b1, b2) = (t & 32 != 0, t & 64 != 0, t & 128 != 0);
+    // Only bits 0..6 of t are read, so the sign bit above e is harmless.
+    let t = (b >> 23).wrapping_sub(pitable::CUT);
+    let (b0, b1) = (t & 32 != 0, t & 64 != 0);
     let sel = core::hint::select_unpredictable::<u32>;
     let u = |i: usize| sel(b0, K[i + 1], K[i]);
     let (u0, u1, u2, u3, u4, u5) = (u(0), u(1), u(2), u(3), u(4), u(5));
-    let word = |j: usize, lo: u32, hi: u32| sel(b2, K[j + 4], sel(b1, hi, lo));
     let s = t & 31;
     let funnel = |hi: u32, lo: u32| (hi << s) | ((lo >> 1) >> (31 - s));
-    let (w0, w1) = (word(0, u0, u2), word(1, u1, u3));
-    let (w2, w3) = (word(2, u2, u4), word(3, u3, u5));
+    let (w0, w1) = (sel(b1, u2, u0), sel(b1, u3, u1));
+    let (w2, w3) = (sel(b1, u4, u2), sel(b1, u5, u3));
     let (x0, x1, x2) = (funnel(w0, w1), funnel(w1, w2), funnel(w2, w3));
     // x0 = floor(beta * 2^31) mod 2^32; next 24 bits exact in n1, 24 more in n2.
     let n1 = (x1 >> 8) as f32;
@@ -599,9 +597,7 @@ fn reduce_pi_wide<const GRID: u32>(b: u32) -> (u32, f32, f32) {
     let m = (b & 0x007f_ffff) | 0x0080_0000;
     let kb = fma(mf, n1, M);
     let rem = fma(mf, n1, M - kb);
-    // The `ax * 0` term is NaN exactly for inf/NaN x, which poisons the result.
-    let ax = f32::from_bits(b & !SIGN_MASK);
-    let tail = n2 * fma(ax, 0.0, mf * (PI_UNIT * (1.0 / 16777216.0)));
+    let tail = n2 * (mf * (PI_UNIT * (1.0 / 16777216.0)));
     let h = m
         .wrapping_mul(x0)
         .wrapping_add(
@@ -610,6 +606,14 @@ fn reduce_pi_wide<const GRID: u32>(b: u32) -> (u32, f32, f32) {
         )
         .wrapping_add(kb.to_bits() << 1);
     (h, rem, tail)
+}
+
+/// Lanes `reduce_pi_wide` does not cover: `|x| < 1`, inf and NaN.
+#[inline(always)]
+fn off_window(b: u32) -> bool {
+    // e - CUT lands in [0, 128) exactly for the windowed exponents, for
+    // either sign (the sign bit adds 256).
+    (b >> 23).wrapping_sub(pitable::CUT) & 128 != 0
 }
 
 /// `pi` times the signed distance from a reduction word to the nearest
@@ -653,14 +657,10 @@ pub fn sin_wide(x: f32) -> f32 {
     let b = x.to_bits();
     let (h, rem, tail) = reduce_pi_wide::<0>(b);
     let (r, parity) = reduced_angle(h, rem, tail);
-    let s = clamp_unit(sinf_poly(f32::from_bits(
-        r.to_bits() ^ parity ^ (b & SIGN_MASK),
-    )));
-    if ((b >> 23) & 0xff) < pitable::CUT {
-        x
-    } else {
-        s
-    }
+    let r = f32::from_bits(r.to_bits() ^ parity ^ (b & SIGN_MASK));
+    // x - (x - x) is x, or NaN for inf.
+    let r = if off_window(b) { x - (x - x) } else { r };
+    clamp_unit(sinf_poly(r))
 }
 
 /// Computes `cos(x)` with no magnitude limit across all finite f32.
@@ -670,8 +670,10 @@ pub fn cos_wide(x: f32) -> f32 {
     let (h, rem, tail) = reduce_pi_wide::<{ 1 << 30 }>(b);
     let (r, parity) = reduced_angle(h, rem, tail);
     let c = clamp_unit(sinf_poly(f32::from_bits(r.to_bits() ^ parity)));
-    if ((b >> 23) & 0xff) < pitable::CUT {
-        1.0
+    // Near 1 the odd poly at pi/2 - |x| is noisy by half an ulp; 1 + y*C(y)
+    // is not. x - (x - x) is x, or NaN for inf.
+    if off_window(b) {
+        cos_unit(x - (x - x))
     } else {
         c
     }
@@ -695,14 +697,37 @@ fn sincos_quarter(r: f32) -> (f32, f32) {
     (fma(sp, fma(y, r, 0.0), r), fma(cp, y, 1.0))
 }
 
+/// `cos r` for `|r| <= 1`: relative error 2^-30 (weighted Remez,
+/// `tools/remez_trig.py`).
+#[inline(always)]
+fn cos_unit(r: f32) -> f32 {
+    let c: [f32; 4] = [-0.49999997, 0.04166646, -0.0013882959, 2.4118643e-5];
+    let y = r * r;
+    let cp = fma(fma(c[3], y, c[2]), y * y, fma(c[1], y, c[0]));
+    fma(cp, y, 1.0)
+}
+
+/// `(sin r, cos r)` for `|r| <= 1`: relative error 2^-34 and 2^-30.
+/// Keeps the sign of zero.
+#[inline(always)]
+fn sincos_unit(r: f32) -> (f32, f32) {
+    let s: [f32; 4] = [-0.16666667, 0.008333316, -0.00019836116, 2.69481e-6];
+    let y = r * r;
+    let y2 = y * y;
+    let sp = fma(fma(s[3], y, s[2]), y2, fma(s[1], y, s[0]));
+    (fma(sp, fma(y, r, 0.0), r), cos_unit(r))
+}
+
 /// Computes `tan(x)` with no magnitude limit across all finite f32.
 #[inline(always)]
 pub fn tan_wide(x: f32) -> f32 {
     let b = x.to_bits();
     let (h, rem, tail) = reduce_pi_wide::<0>(b);
+    let off = off_window(b);
     // Beyond a quarter turn, reduce onto the cos grid instead and use
     // tan(t) = -cos(t - pi/2) / sin(t - pi/2): |r| stays within pi/4.
-    let near = (h ^ (h << 1)) & (1 << 30) != 0;
+    // Off the window |x| < 1 already, and r = x.
+    let near = (h ^ (h << 1)) & (1 << 30) != 0 || off;
     // Selects, not branches: `near` is a coin flip for arbitrary inputs.
     let sel = core::hint::select_unpredictable::<u32>;
     let hi = sel(
@@ -711,15 +736,11 @@ pub fn tan_wide(x: f32) -> f32 {
         hi_part(h.wrapping_add(1 << 30)) as u32,
     );
     let r = angle(hi as i32, h, rem, tail);
-    let flip = (b & SIGN_MASK) ^ sel(near, 0, SIGN_MASK);
-    let (s, c) = sincos_quarter(f32::from_bits(r.to_bits() ^ flip));
+    let r = f32::from_bits(r.to_bits() ^ (b & SIGN_MASK) ^ sel(near, 0, SIGN_MASK));
+    let r = if off { x - (x - x) } else { r };
+    let (s, c) = sincos_unit(r);
     let (n, d) = core::hint::select_unpredictable(near, (s, c), (c, s));
-    let t = n / d;
-    if ((b >> 23) & 0xff) < pitable::CUT {
-        x
-    } else {
-        t
-    }
+    n / d
 }
 
 /// Core of cbrt for normal finite x: bit-trick seed followed by degree-3 polynomial correction.

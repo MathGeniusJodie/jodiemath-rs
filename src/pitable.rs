@@ -3,10 +3,11 @@
 //!
 //! `WORDS` holds the bits at positions `CUT - 150 ..` (position `p` has weight
 //! `2^-p`) big-endian, so the 96 bits of `(2^(e-150)/pi) mod 2` that matter
-//! for biased exponent `e` start at bit `e - CUT` of the string.
+//! for biased exponent `e` start at bit `e - CUT` of the string. Exponents
+//! below `CUT` (|x| < 1) and 255 (inf/NaN) are not windowed.
 
-pub(super) const CUT: u32 = 115;
+pub(super) const CUT: u32 = 127;
 
-pub(super) const WORDS: [u32; 8] = [
-    0x00000000, 0x0517cc1b, 0x727220a9, 0x4fe13abe, 0x8fa9a6ee, 0x06db14ac, 0xc9e21c82, 0x0ff28b1d,
+pub(super) const WORDS: [u32; 7] = [
+    0x00000051, 0x7cc1b727, 0x220a94fe, 0x13abe8fa, 0x9a6ee06d, 0xb14acc9e, 0x21c820ff,
 ];
