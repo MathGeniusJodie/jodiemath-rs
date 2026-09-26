@@ -17,58 +17,10 @@
 // only that these specific known failure signatures aren't present. Treat
 // a clean run as "no known regression class detected," not "codegen is
 // optimal."
-use std::path::PathBuf;
-use std::process::Command;
+include!("support/mca_asm.rs");
 
 fn main() {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-
-    let target_src = PathBuf::from(manifest_dir).join("examples/mca_target.rs");
-    std::fs::File::open(&target_src)
-        .and_then(|f| f.set_modified(std::time::SystemTime::now()))
-        .expect("couldn't touch examples/mca_target.rs to force a rebuild");
-
-    eprintln!("compiling examples/mca_target.rs to assembly...");
-    let status = Command::new("cargo")
-        .current_dir(manifest_dir)
-        .args([
-            "rustc",
-            "--release",
-            "--example",
-            "mca_target",
-            "--",
-            "--emit=asm",
-            "-C",
-            "debuginfo=0",
-        ])
-        .status()
-        .expect("failed to run `cargo rustc` -- is cargo on PATH?");
-    if !status.success() {
-        eprintln!("cargo rustc failed, aborting");
-        std::process::exit(1);
-    }
-
-    let examples_dir = PathBuf::from(manifest_dir).join("target/release/examples");
-    let asm_path = std::fs::read_dir(&examples_dir)
-        .expect("couldn't read target/release/examples")
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("mca_target-") && n.ends_with(".s"))
-        })
-        .filter_map(|p| {
-            std::fs::metadata(&p)
-                .and_then(|m| m.modified())
-                .ok()
-                .map(|t| (t, p))
-        })
-        .max_by_key(|(t, _)| *t)
-        .map(|(_, p)| p)
-        .expect("no mca_target-*.s found after `cargo rustc --emit=asm` -- did the example build?");
-
-    let text = std::fs::read_to_string(&asm_path).expect("couldn't read the generated .s file");
+    let (asm_path, text) = emit_mca_target_asm();
     let lines: Vec<&str> = text.lines().collect();
 
     // Collect (region_name, [instruction lines]) for every *_throughput

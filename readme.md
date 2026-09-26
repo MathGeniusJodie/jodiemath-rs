@@ -585,7 +585,7 @@ saturation_pins 0.3s, eft_contract_check 2.9s, denormal_audit 3.5s, approx_bound
 contracts the ulp sweeps above structurally cannot -- special values, clamp boundaries, denormal handling,
 and documented-bound drift.
 
-- `cargo run --release --example worst_corpus` - 92 public 1-arg functions x 90 historically-hard inputs
+- `cargo run --release --example worst_corpus` - every public 1-arg function (90, shared list in `examples/support/unary_fns.rs`) x 90 historically-hard inputs
   (special values, every branch seam, every clamp boundary, recorded worst-x values) checked bit-identical
   against a blessed golden file, in ~0.06s. The fast counterpart to the hours-long exhaustive sweeps.
   `-- --bless` regenerates; an intentional accuracy change is *expected* to fail this, and the diff is

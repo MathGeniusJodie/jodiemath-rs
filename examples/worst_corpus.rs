@@ -57,6 +57,8 @@
     clippy::excessive_precision
 )]
 use jodiemath_rs::*;
+
+include!("support/unary_fns.rs");
 use std::io::Write;
 
 const GOLDEN: &str = "examples/support/worst_corpus.golden";
@@ -167,110 +169,12 @@ fn corpus() -> Vec<f32> {
 
 fn main() {
     let bless = std::env::args().any(|a| a == "--bless");
-    let fns: Vec<(&str, fn(f32) -> f32)> = vec![
-        ("acos", acos as fn(f32) -> f32),
-        ("acosd", acosd as fn(f32) -> f32),
-        ("acosh", acosh as fn(f32) -> f32),
-        ("acospi", acospi as fn(f32) -> f32),
-        ("asin", asin as fn(f32) -> f32),
-        ("asind", asind as fn(f32) -> f32),
-        ("asinh", asinh as fn(f32) -> f32),
-        ("asinpi", asinpi as fn(f32) -> f32),
-        ("atan", atan as fn(f32) -> f32),
-        ("atan_bounded", atan_bounded as fn(f32) -> f32),
-        ("atand", atand as fn(f32) -> f32),
-        ("atanh", atanh as fn(f32) -> f32),
-        ("atan_latency", atan_latency as fn(f32) -> f32),
-        ("cbrt", cbrt as fn(f32) -> f32),
-        ("cbrt_accurate", cbrt_accurate as fn(f32) -> f32),
-        (
-            "cbrt_accurate_unchecked",
-            cbrt_accurate_unchecked as fn(f32) -> f32,
-        ),
-        ("cbrt_approx", cbrt_approx as fn(f32) -> f32),
-        ("cbrt_fast", cbrt_fast as fn(f32) -> f32),
-        ("cbrt_normal", cbrt_normal as fn(f32) -> f32),
-        ("cbrt_unchecked", cbrt_unchecked as fn(f32) -> f32),
-        ("cos", cos as fn(f32) -> f32),
-        ("cos2pi", cos2pi as fn(f32) -> f32),
-        ("cos_wide", cos_wide as fn(f32) -> f32),
-        ("cosd_unchecked", cosd_unchecked as fn(f32) -> f32),
-        ("cosh", cosh as fn(f32) -> f32),
-        ("cosh_checked", cosh_checked as fn(f32) -> f32),
-        ("coshm1", coshm1 as fn(f32) -> f32),
-        ("cosh_narrow", cosh_narrow as fn(f32) -> f32),
-        ("cosh_throughput", cosh_throughput as fn(f32) -> f32),
-        ("cospi", cospi as fn(f32) -> f32),
-        ("erf", erf as fn(f32) -> f32),
-        ("erfc", erfc as fn(f32) -> f32),
-        ("erfinv", erfinv as fn(f32) -> f32),
-        ("exp", exp as fn(f32) -> f32),
-        ("exp10", exp10 as fn(f32) -> f32),
-        ("exp10_checked", exp10_checked as fn(f32) -> f32),
-        ("exp10m1", exp10m1 as fn(f32) -> f32),
-        ("exp2", exp2 as fn(f32) -> f32),
-        ("exp2_approx", exp2_approx as fn(f32) -> f32),
-        ("exp2_checked", exp2_checked as fn(f32) -> f32),
-        ("exp2m1", exp2m1 as fn(f32) -> f32),
-        ("exp_checked", exp_checked as fn(f32) -> f32),
-        ("expm1", expm1 as fn(f32) -> f32),
-        ("expm1_checked", expm1_checked as fn(f32) -> f32),
-        ("expm1_narrow", expm1_narrow as fn(f32) -> f32),
-        (
-            "exp_m1_over_x_narrow",
-            exp_m1_over_x_narrow as fn(f32) -> f32,
-        ),
-        ("exp_narrow", exp_narrow as fn(f32) -> f32),
-        ("fast_round_int", fast_round_int as fn(f32) -> f32),
-        ("gelu", gelu as fn(f32) -> f32),
-        ("ln", ln as fn(f32) -> f32),
-        ("ln_unchecked", ln_unchecked as fn(f32) -> f32),
-        ("log10", log10 as fn(f32) -> f32),
-        ("log10p1", log10p1 as fn(f32) -> f32),
-        ("log10_unchecked", log10_unchecked as fn(f32) -> f32),
-        ("log1p", log1p as fn(f32) -> f32),
-        ("log1pmx", log1pmx as fn(f32) -> f32),
-        ("log_2", log_2 as fn(f32) -> f32),
-        ("log2_approx", log2_approx as fn(f32) -> f32),
-        ("log2p1", log2p1 as fn(f32) -> f32),
-        ("log_2_unchecked", log_2_unchecked as fn(f32) -> f32),
-        ("logsigmoid", logsigmoid as fn(f32) -> f32),
-        ("pow_2_3", pow_2_3 as fn(f32) -> f32),
-        ("pow_3_2", pow_3_2 as fn(f32) -> f32),
-        ("rcbrt", rcbrt as fn(f32) -> f32),
-        ("rcp_approx", rcp_approx as fn(f32) -> f32),
-        ("rsqrt", rsqrt as fn(f32) -> f32),
-        ("rsqrt_approx", rsqrt_approx as fn(f32) -> f32),
-        ("sigmoid", sigmoid as fn(f32) -> f32),
-        ("sigmoid_fast", sigmoid_fast as fn(f32) -> f32),
-        ("sigmoid_grad", sigmoid_grad as fn(f32) -> f32),
-        ("silu", silu as fn(f32) -> f32),
-        ("sin", sin as fn(f32) -> f32),
-        ("sin2pi", sin2pi as fn(f32) -> f32),
-        ("sin_wide", sin_wide as fn(f32) -> f32),
-        ("sinc_unnormalized", sinc_unnormalized as fn(f32) -> f32),
-        ("sind_unchecked", sind_unchecked as fn(f32) -> f32),
-        ("sinh", sinh as fn(f32) -> f32),
-        ("sinh_checked", sinh_checked as fn(f32) -> f32),
-        ("sinh_narrow", sinh_narrow as fn(f32) -> f32),
-        ("sinh_throughput", sinh_throughput as fn(f32) -> f32),
-        ("sinpi", sinpi as fn(f32) -> f32),
-        ("softsign", softsign as fn(f32) -> f32),
-        ("sqrt1pm1", sqrt1pm1 as fn(f32) -> f32),
-        ("sqrt_approx", sqrt_approx as fn(f32) -> f32),
-        ("tan", tan as fn(f32) -> f32),
-        ("tan2pi", tan2pi as fn(f32) -> f32),
-        ("tan_wide", tan_wide as fn(f32) -> f32),
-        ("tand_unchecked", tand_unchecked as fn(f32) -> f32),
-        ("tanh", tanh as fn(f32) -> f32),
-        ("tanh_grad", tanh_grad as fn(f32) -> f32),
-        ("tanpi", tanpi as fn(f32) -> f32),
-        ("wrap_pi", wrap_pi as fn(f32) -> f32),
-    ];
+    assert_unary_fns_complete();
+    let fns = UNARY_FNS;
 
     let xs = corpus();
     let mut lines: Vec<String> = Vec::new();
-    for (name, f) in &fns {
+    for (name, f) in fns {
         for &x in &xs {
             lines.push(format!(
                 "{} {:08x} {:08x}",
