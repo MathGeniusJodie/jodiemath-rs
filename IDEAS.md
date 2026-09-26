@@ -97,19 +97,16 @@ examples:
   every function it touched, including `tanh`'s max 6 -> 5 that three
   dedicated refit attempts could not reach.
 
-- **`sin_wide`/`cos_wide`/`tan_wide` at VF = 8**, worth a measured
-  ~8.05 -> ~5.5 cyc/elem on `sin_wide`. Their 3.2x throughput cost is
-  mostly *not* the three gathers (24 of 66 Block RThroughput): LLVM drops
-  the vectorization factor from 8 to 4 the moment an `f64` gather appears,
-  so every arithmetic op in the function costs twice as much per element.
-  A `[u32; 256]` probe table measured VF = 8 and **5.022** against the
-  shipped `[f64; 256]`'s 7.540 (both clamp-less). Converting for real
-  needs 29-bit chunks at *fixed* bit positions instead of the shipped
-  significant-bit split, which brings back a `|x| < 0.25` bypass, a
-  `2^(150-e)` scale rebuild and a fourth gather -- see graveyard.md for
-  the full costing and why it was not taken with the first landing.
-  Reducing the gather *count* does not help: two `f64` gathers measured
-  7.539, identical to three.
+- **Wide tier, after the gather-free reduction (graveyard 2026-09-26).**
+  Open levers, measured or priced: (a) the `q = 4` select level exists only
+  for |x| >= 2^116 and costs 11% of sin_wide throughput; moving `CUT` to 127
+  (t in [0, 128), two levels) needs |x| < 1 handled directly -- free for
+  sin (`r = x`, replacing the tiny-x bypass), ~5 ops for cos (exact
+  `pi/2 - |x|` via fast two-sum), so a win for sin only unless cos finds a
+  cheaper route; (b) AVX2 has 16 ymm registers and the loop re-broadcasts
+  ~31 constants and spills per iteration (0.91 ns/op vs 0.36 on AVX-512);
+  (c) scalar latency is +3 ns over the table version, all in the window
+  select + int->float conversion (`tools/scalar_lat.sh`).
 - **mca vs reality, measured 2026-08 (perf-stat cycle counts,
   i5-1145G7):** attribution correction to the entry below: the wide
   tier's ~3x understatement is **the gathers, not the f64 arithmetic**.

@@ -8,12 +8,5 @@
 pub(super) const CUT: u32 = 115;
 
 pub(super) const WORDS: [u32; 8] = [
-    0x00000000,
-    0x0517cc1b,
-    0x727220a9,
-    0x4fe13abe,
-    0x8fa9a6ee,
-    0x06db14ac,
-    0xc9e21c82,
-    0x0ff28b1d,
+    0x00000000, 0x0517cc1b, 0x727220a9, 0x4fe13abe, 0x8fa9a6ee, 0x06db14ac, 0xc9e21c82, 0x0ff28b1d,
 ];

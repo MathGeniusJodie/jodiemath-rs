@@ -39,7 +39,13 @@ fn half_turns(x: f64, cos: bool) -> f64 {
     let n = x.round_ties_even();
     let r = std::f64::consts::PI * (x - n);
     // cos is exactly zero at the half-integers (tanpi's convention there is -inf).
-    let v = if cos && (x - n).abs() == 0.5 { 0.0 } else if cos { r.cos() } else { r.sin() };
+    let v = if cos && (x - n).abs() == 0.5 {
+        0.0
+    } else if cos {
+        r.cos()
+    } else {
+        r.sin()
+    };
     if n.rem_euclid(2.0) == 1.0 {
         -v
     } else {
@@ -57,7 +63,11 @@ fn ulp_diff(a: f32, b: f32) -> u64 {
         }
     }
     if a.is_nan() || b.is_nan() {
-        return if a.is_nan() == b.is_nan() { 0 } else { u64::MAX };
+        return if a.is_nan() == b.is_nan() {
+            0
+        } else {
+            u64::MAX
+        };
     }
     (ord(a) - ord(b)).unsigned_abs()
 }
@@ -77,14 +87,34 @@ fn main() {
         case!("tan22", tan, f64::tan, 4194304.0 * pi),
         case!("sinpi", sinpi, |x: f64| half_turns(x, false), f32::INFINITY),
         case!("cospi", cospi, |x: f64| half_turns(x, true), f32::INFINITY),
-        case!("tanpi", tanpi, |x: f64| {
-            let c = half_turns(x, true);
-            if c == 0.0 { f64::NEG_INFINITY } else { half_turns(x, false) / c }
-        }, f32::INFINITY),
+        case!(
+            "tanpi",
+            tanpi,
+            |x: f64| {
+                let c = half_turns(x, true);
+                if c == 0.0 {
+                    f64::NEG_INFINITY
+                } else {
+                    half_turns(x, false) / c
+                }
+            },
+            f32::INFINITY
+        ),
     ];
-    for (name, f) in [("sin", sin as fn(f32) -> f32), ("sin_wide", sin_wide), ("tan", tan), ("tan_wide", tan_wide), ("sinpi", sinpi), ("tanpi", tanpi)] {
+    for (name, f) in [
+        ("sin", sin as fn(f32) -> f32),
+        ("sin_wide", sin_wide),
+        ("tan", tan),
+        ("tan_wide", tan_wide),
+        ("sinpi", sinpi),
+        ("tanpi", tanpi),
+    ] {
         for z in [0.0f32, -0.0] {
-            assert_eq!(f(z).to_bits(), z.to_bits(), "{name}({z}) lost the sign of zero");
+            assert_eq!(
+                f(z).to_bits(),
+                z.to_bits(),
+                "{name}({z}) lost the sign of zero"
+            );
         }
     }
     let threads = std::thread::available_parallelism().map_or(8, |n| n.get());

@@ -575,13 +575,14 @@ fn reduce_pi_wide<const GRID: u32>(b: u32) -> (u32, f32, f32) {
     const M: f32 = 16777216.0;
     const K: [u32; 8] = pitable::WORDS;
     let e = (b >> 23) & 0xff;
-    // The 96 bits of beta(e) = (2^(e-150)/pi) mod 2 start at bit e - CUT of
-    // K: pick words q..q+3 with selects (not an indexed load, which would
-    // vectorize to a gather) and funnel-shift them by s.
+    // The 96 bits of beta(e) = (2^(e-150)/pi) mod 2 that matter start at bit
+    // t = e - CUT of K: words q..q+3 (q = t >> 5 <= 4) funnel-shifted by
+    // t & 31. The words are picked by a select tree over immediates, never an
+    // indexed load: that vectorizes to gathers (or scalar loads on targets
+    // without them), which cost 3/4 of the old table version's time. Plain
+    // `if`s get folded back into a lookup table, hence select_unpredictable.
     let t = e.wrapping_sub(pitable::CUT);
     let (b0, b1, b2) = (t & 32 != 0, t & 64 != 0, t & 128 != 0);
-    // Word q+j of K by binary selection on q = t >> 5 <= 4, between
-    // immediates: an indexed load would vectorize to a gather.
     let sel = core::hint::select_unpredictable::<u32>;
     let u = |i: usize| sel(b0, K[i + 1], K[i]);
     let (u0, u1, u2, u3, u4, u5) = (u(0), u(1), u(2), u(3), u(4), u(5));
@@ -603,7 +604,10 @@ fn reduce_pi_wide<const GRID: u32>(b: u32) -> (u32, f32, f32) {
     let tail = n2 * fma(ax, 0.0, mf * (PI_UNIT * (1.0 / 16777216.0)));
     let h = m
         .wrapping_mul(x0)
-        .wrapping_add(GRID.wrapping_add((1 << 30) + 64).wrapping_sub(M.to_bits() << 1))
+        .wrapping_add(
+            GRID.wrapping_add((1 << 30) + 64)
+                .wrapping_sub(M.to_bits() << 1),
+        )
         .wrapping_add(kb.to_bits() << 1);
     (h, rem, tail)
 }
@@ -622,6 +626,8 @@ fn hi_part(h: u32) -> i32 {
     (h & 0x7fff_ff80) as i32 - (1 << 30)
 }
 
+/// `pi * (hi + lo + rem) * 2^-31 + tail`, where `lo` is the rest of `h`,
+/// rounded once. `lo + rem` is exact exactly when it cancels.
 #[inline(always)]
 fn angle(hi: i32, h: u32, rem: f32, tail: f32) -> f32 {
     let lo = (h & 0x7f) as i32 - 64;
@@ -647,7 +653,9 @@ pub fn sin_wide(x: f32) -> f32 {
     let b = x.to_bits();
     let (h, rem, tail) = reduce_pi_wide::<0>(b);
     let (r, parity) = reduced_angle(h, rem, tail);
-    let s = clamp_unit(sinf_poly(f32::from_bits(r.to_bits() ^ parity ^ (b & SIGN_MASK))));
+    let s = clamp_unit(sinf_poly(f32::from_bits(
+        r.to_bits() ^ parity ^ (b & SIGN_MASK),
+    )));
     if ((b >> 23) & 0xff) < pitable::CUT {
         x
     } else {
@@ -673,8 +681,9 @@ pub fn cos_wide(x: f32) -> f32 {
 /// value is below `pi`, one ulp under `f32::consts::PI`.
 pub const WRAP_PI_MAX: f32 = f32::from_bits(0x40490fda);
 
-/// `(sin r, cos r)` for `|r| <= pi/4`: relative error 2^-28 and 2^-33.
-/// Keeps the sign of zero like `sinf_poly`.
+/// `(sin r, cos r)` for `|r| <= pi/4`: relative error 2^-28 and 2^-33
+/// (weighted Remez, `tools/remez_trig.py`). Keeps the sign of zero like
+/// `sinf_poly`.
 #[inline(always)]
 fn sincos_quarter(r: f32) -> (f32, f32) {
     let s: [f32; 3] = [-0.16666655, 0.00833216, -0.00019515282];
@@ -696,7 +705,11 @@ pub fn tan_wide(x: f32) -> f32 {
     let near = (h ^ (h << 1)) & (1 << 30) != 0;
     // Selects, not branches: `near` is a coin flip for arbitrary inputs.
     let sel = core::hint::select_unpredictable::<u32>;
-    let hi = sel(near, hi_part(h) as u32, hi_part(h.wrapping_add(1 << 30)) as u32);
+    let hi = sel(
+        near,
+        hi_part(h) as u32,
+        hi_part(h.wrapping_add(1 << 30)) as u32,
+    );
     let r = angle(hi as i32, h, rem, tail);
     let flip = (b & SIGN_MASK) ^ sel(near, 0, SIGN_MASK);
     let (s, c) = sincos_quarter(f32::from_bits(r.to_bits() ^ flip));

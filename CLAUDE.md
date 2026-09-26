@@ -67,7 +67,6 @@ one:
 | `remainder_wide` | yes: Df32 chain | f64 ~-70% instructions ("Df32 doing f64's job") |
 | `logaddexp_accurate` | yes: Df32 sketch analyzed | f64 more accurate (2^-53 vs ~2^-47) and cheaper to write |
 | `clog` near-unit `v` | yes: f32 predecessor failed; Df32 form priced | f64 fragment kept (same throughput, fewer uops) |
-| `reduce_pi_wide` | n/a | gathers dominate; arithmetic is not the lever |
 
 Why f64 keeps winning here despite costing 2x per lane (measured directly:
 `vfmadd213pd` RT 1.0 vs `vfmadd213ps` RT 0.5, both 8 lanes -- see
@@ -118,9 +117,12 @@ machine, and llvm-mca alone cannot be trusted for the wide/gather tiers).
   ladder, which you need because mca's throughput column alone has been wrong
   in both directions here.
 
-      python3 tools/mca_region.py \
-        "$(ls -t target/release/examples/mca_target-*.s | head -1)" \
-        asin_throughput asin_latency
+      python3 tools/mca_region.py asin_throughput asin_latency
+
+  (no path: it finds the newest `mca_target*.s` itself, which newer cargo
+  writes under `target/release/build/`, not `target/release/examples/`).
+  Rebuild the asm first with `touch examples/mca_target.rs && cargo rustc
+  --release --example mca_target -- --emit=asm`.
 - **Never set `CARGO_TARGET_DIR`.** A shared target dir puts every instance's
   `--emit=asm` output at the same path and silently corrupts asm comparisons.
   `./tools/jm doctor` checks this.

@@ -12790,3 +12790,102 @@ Caveats:
   lib). Downstream crates keep their own width for their own loops.
 - Not a replacement for the x8 intrinsics path (1.56 vs 2.53 ns for
   sin_wide) but closes most of the gap with zero API/caller changes.
+
+## `reduce_pi_wide` without gathers or 64-bit lanes: the 1/pi window is 8 immediates, a select tree and a funnel shift
+
+2026-09-26. Goal: keep every lane 32 bits (the 2026-09 u32 rewrite still
+did two `m as u64 * w as u64` products, which on AVX-512 cost ~14
+widen/`vpmuludq`/narrow ops per 16 lanes and on AVX2 and NEON made LLVM give
+up and emit a *scalar* loop -- `tools/probe_targets.sh` shows it) and raise
+throughput. Measured on a Ryzen AI Max+ 395 (Zen 5, AVX-512); quickbench
+min-of-7, serialized.
+
+**Step 1, still gathered: float products instead of u64 ones.** Plane 0 as a
+full 32-bit window `floor(beta*2^31) mod 2^32` (so `m*W0` wraps mod 2 for
+free in a `vpmulld`), planes 1/2 as f32 words. The integer part of `m*G1`
+comes from one magic-add `fma(mf, g1, 2^24)` -- `m*g1 < 2^24` always rounds
+inside the `[2^24, 2^25)` binade, so `2*k = (bits(kb) - bits(2^24)) << 1`
+is exact -- and `rem = fma(mf, g1, 2^24 - kb)` is the residual. Two
+accuracy details paid for themselves: `pi` as two words (`PI_UNIT_LO`,
+sin_wide max 3 -> 2) and converting the centred word as a multiple of 128
+plus a separate low part (`hi as f32` exact; avg 0.20 -> 0.14), then
+`CUT` 96 -> 115 (below 2^-12 the answer is `x` / `1`; the window rows there
+were costing avg, 0.139 -> 0.127). Result: sin_wide 0.757 -> 0.62 ns/op --
+and a no-gather control (table index frozen) ran **0.16**: the three
+`vpgatherdd` were ~3/4 of the time (perf: load-queue stalls).
+
+**Step 2, no gathers.** Row `e` of any beta table is bits `e-150 ..` of 1/pi,
+so the table is one ~256-bit string (`pitable::WORDS`, 8 u32). With
+`t = e - CUT`, the needed 96 bits are words `q = t>>5 .. q+3` funnel-shifted
+by `t & 31`; the words come from a 3-level select tree over immediates (14
+blends), the shifts are `(hi << s) | ((lo >> 1) >> (31 - s))`, which LLVM
+matches to one `vpshldvd` (a rotate-and-merge form cost 9 ops for 3
+windows). sin_wide **0.355**, cos_wide **0.355**, tan_wide 0.468 (then
+0.44 with the tan change below). Exhaustive accuracy unchanged by this step.
+
+Traps, all hit:
+- Selects written as `if b { K[i+1] } else { K[i] }` over a const array:
+  InstCombine sinks the loads through the select (select of *pointers*)
+  and the vectorizer emits 4 gathers with 64-bit address arithmetic.
+  Passing the words as values fixes that, but plain `if`s over immediates
+  still get turned back into a lookup table (throughput 1.23 ns/op).
+  `core::hint::select_unpredictable` keeps them selects, in scalar code too.
+- `std::array::from_fn` for the select stages silently de-vectorized the
+  loop (4.7 ns/op).
+- Throughput here is **FP-scheduler bound, not port bound** (perf
+  `fp_sch_rsrc_stall` ~65% of cycles): ~100 vector uops with a ~70-cycle
+  chain fill the scheduler, so op count *and* chain latency both matter.
+  mca's BlockRT is uninformative for this function in both directions.
+- mca_target's latency regions constant-fold the whole window (the band
+  pins the exponent), so they report the gather-free latency as *better*
+  than the table's. `tools/scalar_lat.sh` measures the real scalar chain.
+
+Costs that remain: scalar latency 11.1 -> 14.2 ns (sin/cos), 14.1 -> 16.6
+(tan). In scalar code the window is test + 3 cmov levels + shld + cvtsi2ss
+(~18 cycles) where the table was one load feeding the fma (~6), and the kb
+float -> GPR crossing adds ~3. The q = 4 select level (only |x| >= 2^116
+needs it) costs 11% of sin_wide throughput (0.353 -> 0.313 with it
+removed); see IDEAS.md.
+
+Negative, measured:
+- Doubling the reduction word (`g = 2h`, sign bit = rounding direction)
+  to save one integer op on the chain: +4 instrs, slower everywhere.
+- Reordering the fma chain so `rem` enters first: `lo + rem` is the late
+  arrival, not `hi`, so it lengthened the chain (14.2 -> 14.7 ns).
+- Refitting `sinf_poly` so nothing in [0, 1.5707965] evaluates above 1
+  (c2 -1.9809385e-4, c3 2.6044818e-6, `examples/sinpoly_tune.rs`) removes
+  the wide tier's clamp (-0.7 ns latency, -2 ops) but biases the poly low
+  near pi/2, where cos of every small argument lands: cos avg 0.083 ->
+  0.102, cospi 0.058 -> 0.069, cos_wide 0.143 -> 0.151. Not shipped.
+
+Side fixes: `cos_wide(-x)` returned `-cos(x)` for every negative x (both
+2026-09 versions; the Pythagorean-identity test squares it away), and
+`sinf_poly` now keeps the sign of zero itself (`x3 = fma(y, x, 0.0)`: the
+`+ 0.0` maps `-0` to `+0`, so `p*x3 = -0`), deleting a copysign from
+sin/cos/tan.
+
+`tan_wide` and `tan`: one reduction onto a quarter period. Beyond a quarter
+turn, switch to the cos grid (integer add on the word) and use
+`tan t = -cos(t - pi/2)/sin(t - pi/2)`, so one `[-pi/4, pi/4]` sin/cos pair
+(3 + 4 coefficients, `tools/remez_trig.py`) and one divide replace two
+full-range sin polys. tan_wide avg 0.243 -> 0.230, max 4 -> 3, 0.468 ->
+0.442 ns/op. `tan` gets the same pair on `q = round(2x/pi)` via `sin`'s
+coarse+fine rounding: domain 2^22*pi -> 2^23*pi, avg 0.117 -> 0.094 (max 4,
+reduction-limited at the top), 0.254 -> 0.190 ns/op, latency 15.9 -> 15.0.
+Both need `select_unpredictable` on the quadrant: as branches, LLVM
+tail-duplicated the polys and mispredicted half the time (+1.2 ns).
+
+| (ns/op, AVX-512) | before thr | after thr | before lat | after lat |
+|---|---|---|---|---|
+| sin_wide | 0.757 | 0.357 | 11.1 | 14.2 |
+| cos_wide | 0.770 | 0.358 | 11.5 | 14.1 |
+| tan_wide | 0.919 | 0.442 | 14.1 | 16.7 |
+| sin | 0.134 | 0.127 | 12.3 | 12.1 |
+| cos | 0.140 | 0.135 | 12.9 | 12.5 |
+| tan | 0.254 | 0.190 | 15.9 | 15.0 |
+
+AVX2 (`-C target-cpu=x86-64-v3`), where the old wide tier was scalar:
+sin_wide 2.10 -> 0.91, cos_wide 2.27 -> 0.90, tan_wide 3.01 -> 1.06,
+tan 0.575 -> 0.395. Exhaustive (all 2^32): sin_wide 0.1269/2 (was
+0.1976/3), cos_wide 0.1432/2 (was broken), tan_wide 0.2303/3 (was
+0.3127/5); sin/cos bit-identical.

@@ -85,7 +85,10 @@ fn main() {
     }
     let (m, a, o) = score(c);
     let top = score_from(c, 0x3f80_0000);
-    println!("{:?}: max {m} avg {a:.5} over1 {o}  [1, pi/2]: max {} avg {:.5}", c, top.0, top.1);
+    println!(
+        "{:?}: max {m} avg {a:.5} over1 {o}  [1, pi/2]: max {} avg {:.5}",
+        c, top.0, top.1
+    );
     if args.get(1).is_some_and(|a| a == "scan") {
         // Grid over c2/c3 ulp offsets: print every point with no result above 1.
         for d3 in (-6000i32..=0).step_by(250) {
@@ -132,5 +135,8 @@ fn main() {
             }
         }
     }
-    println!("best {:?}: max {} avg {:.5} over1 {}", best.0, best.1 .0, best.1 .1, best.1 .2);
+    println!(
+        "best {:?}: max {} avg {:.5} over1 {}",
+        best.0, best.1 .0, best.1 .1, best.1 .2
+    );
 }
