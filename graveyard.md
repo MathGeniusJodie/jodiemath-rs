@@ -12947,3 +12947,16 @@ Negative, measured:
   Not tried in code.
 - tan_wide latency +0.2 ns remains: the small path's blend sits before the
   sin/cos pair, and the near/far select already did.
+
+## Wide trig, three rejected micro-changes (moved from IDEAS.md, 2026-09-26)
+
+Measured on the i5-1145G7 against the table-based `reduce_pi_wide`, not re-run since the gather-free
+rewrite:
+
+- **One shared scale for all table planes** (uniform 2^-28 units so a single multiply serves every
+  plane) is impossible with u32 chunks. The deep-bit chunks are large integers that are only small because
+  of their per-plane power-of-two scale; dropping it makes planes 1 and 2 contribute 2^29 and 2^58 times
+  too much (exhaustive sweep: avg 7e8 ulp).
+- **Selecting the small-input bypass residual in f32 plus an explicit NaN select**: -12% instructions
+  but +2% cycles on `sin_wide`. Reverted.
+- **Magic-add rounding instead of `reduce_pi64`'s two `vrndscale`**: no difference (±0.7%). Reverted.
