@@ -12889,3 +12889,61 @@ sin_wide 2.10 -> 0.91, cos_wide 2.27 -> 0.90, tan_wide 3.01 -> 1.06,
 tan 0.575 -> 0.395. Exhaustive (all 2^32): sin_wide 0.1269/2 (was
 0.1976/3), cos_wide 0.1432/2 (was broken), tan_wide 0.2303/3 (was
 0.3127/5); sin/cos bit-identical.
+
+## Wide trig, second pass: CUT 127 and a direct small path
+
+2026-09-26, same machine. Measured with `examples/trig_bench.rs` (new):
+latency chains OR a black-boxed pseudo-random exponent into every step, so
+LLVM cannot constant-fold the exponent-driven window the way quickbench's
+`Band::mix` lets it. Interleaved A/B with `tools/ab.sh`; exhaustive
+accuracy with `trig_sweep`.
+
+**Shipped: `CUT` 115 -> 127, two select levels.** With `t = e - 127`, the
+windowed exponents are exactly `t in [0, 128)` for either sign (the sign bit
+adds 256), so one bit test (`t & 128`) flags |x| < 1 *and* inf/NaN. Those
+lanes take a direct path, which also makes the NaN-poison `fma(ax, 0, ...)`
+in the tail unnecessary: inf/NaN are poisoned on the small path by
+`fma(x, 0, x)`, which is exactly `x` for finite x, `-0` included (one op;
+`x - (x - x)` was two). Per function:
+- sin: `r = x`, straight into `sinf_poly`.
+- cos: the odd poly at `pi/2 - |x|` is noisy by half an ulp near 1 --
+  `pi/2 - |x|` computed exactly via fast two-sum still left 16-48% of
+  `e in [107, 126]` one ulp low, and the old path had the same noise for
+  `e in [115, 126]` -- so the small path is a [-1, 1] even poly
+  `1 + y*C(y)` (4 coefficients, 2^-30). This *improved* cos_wide
+  avg 0.1432 -> 0.1270.
+- tan: `r = x`, with the sin/cos pair refitted to |r| <= 1. A 3-term sin on
+  [-1, 1] (2^-25) took max 3 -> 4; 4 terms (2^-34) keep max 3.
+Then the select tree was reordered to bit 6 first (5 + 4 = 9 blends, not
+6 + 4), and the off-window flag reuses the window's `t` (LLVM had rebuilt
+it with a different constant).
+
+| AVX-512 | thr before | thr after | lat before | lat after |
+|---|---|---|---|---|
+| sin_wide | 0.357 | 0.301 | 15.26 | 15.23 |
+| cos_wide | 0.358 | 0.309 | 14.76 | 14.52 |
+| tan_wide | 0.440 | 0.413 | 17.00 | 17.17 |
+
+AVX2 (x86-64-v3): sin_wide 0.91 -> 0.73, cos_wide 0.90 -> 0.79, tan_wide
+1.06 -> 0.91. Exhaustive: sin_wide 0.1269/2 (unchanged), cos_wide
+0.1270/2 (was 0.1432/2), tan_wide 0.2307/3 (was 0.2303/3).
+
+Negative, measured:
+- Low 7 bits of the word by mantissa insertion (`from_bits(lo | 0x4b000000)
+  - (2^23 + 64)`) instead of and/sub/cvt: same instruction count after
+  isel, latency noise only.
+- `(b | 0x3f000000) & 0x3f7fffff` for `mf` to get a ternlog: InstCombine
+  canonicalises it back and CSEs the `and`. Identical asm.
+- `((t << 26) as i32) < 0` to get the AVX2 blend mask from one shift instead
+  of and + `vpcmpeqd`: canonicalised back, identical asm.
+- `lo.checked_shr(32 - s)` to use `vpsrlvd`'s zero-for-32 on AVX2: LLVM
+  recognises the funnel either way and its AVX2 expansion got *worse*
+  (a select on `s == 0` appeared).
+- Dropping the tail word: the worst f32 remainder near `k*pi` is ~2^-29,
+  so beta needs ~24 bits past `n1`; not optional.
+- A 3-word full-width Cody-Waite for the narrow `sin` (`P1 = f32(pi)`, first
+  step exact by fma): the second step's rounding is at `|q*P3|`'s magnitude,
+  not the residual's, which is the near-zero blowup entry #107 describes.
+  Not tried in code.
+- tan_wide latency +0.2 ns remains: the small path's blend sits before the
+  sin/cos pair, and the near/far select already did.

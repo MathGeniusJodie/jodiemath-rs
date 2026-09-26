@@ -23,7 +23,7 @@ cbrt_accurate_unchecked |    0.000   |     1     | (bit-identical to cbrt_accura
        sin (|x|<2^24*pi) |    0.046   |     2     |  0.003  |    1
        cos (|x|<2^22*pi) |    0.083   |     2     |  0.002  |    1
       sin_wide (all f32)|    0.127   |     2     |  0.000  |    1
-      cos_wide (all f32)|    0.143   |     2     |  0.000  |    1
+      cos_wide (all f32)|    0.127   |     2     |  0.000  |    1
         sinpi (all f32) |    0.197   |     2     | (no std sinpi)
         cospi (all f32) |    0.058   |     2     | (no std cospi)
         tanpi (all f32) |    0.033   |     2     | (no std tanpi)

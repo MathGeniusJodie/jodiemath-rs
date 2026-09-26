@@ -97,16 +97,16 @@ examples:
   every function it touched, including `tanh`'s max 6 -> 5 that three
   dedicated refit attempts could not reach.
 
-- **Wide tier, after the gather-free reduction (graveyard 2026-09-26).**
-  Open levers, measured or priced: (a) the `q = 4` select level exists only
-  for |x| >= 2^116 and costs 11% of sin_wide throughput; moving `CUT` to 127
-  (t in [0, 128), two levels) needs |x| < 1 handled directly -- free for
-  sin (`r = x`, replacing the tiny-x bypass), ~5 ops for cos (exact
-  `pi/2 - |x|` via fast two-sum), so a win for sin only unless cos finds a
-  cheaper route; (b) AVX2 has 16 ymm registers and the loop re-broadcasts
-  ~31 constants and spills per iteration (0.91 ns/op vs 0.36 on AVX-512);
-  (c) scalar latency is +3 ns over the table version, all in the window
-  select + int->float conversion (`tools/scalar_lat.sh`).
+- **Wide tier, after the two gather-free passes (graveyard 2026-09-26).**
+  Remaining levers, priced: (a) AVX2 is ~2.4x AVX-512 per element for 2x the
+  lanes -- each funnel shift is 4 ops (no `vpshldvd`) and ~20 constants live
+  on the stack; LLVM canonicalises every source-level trick tried so far
+  back to the same code; (b) scalar latency is still ~+3 ns over the old
+  table version (window select + int->float); (c) the wide tier's average
+  error (~0.13 ulp against the narrow tier's ~0.26 over the same |x| >= 1
+  inputs, i.e. the same) is `r`'s f32 rounding plus the poly; a `r_lo`
+  correction would cost ~3 ops. Measure with `examples/trig_bench.rs`, not
+  quickbench, whose band mask constant-folds the window.
 - **mca vs reality, measured 2026-08 (perf-stat cycle counts,
   i5-1145G7):** attribution correction to the entry below: the wide
   tier's ~3x understatement is **the gathers, not the f64 arithmetic**.
