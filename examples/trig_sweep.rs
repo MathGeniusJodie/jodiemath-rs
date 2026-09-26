@@ -15,6 +15,7 @@ struct Case {
     f: fn(&[f32; BLOCK], &mut [f32; BLOCK]),
     reference: fn(f64) -> f64,
     limit: f32,
+    bounded: bool,
 }
 
 macro_rules! case {
@@ -28,6 +29,7 @@ macro_rules! case {
             },
             reference: $r,
             limit: $limit,
+            bounded: !$name.starts_with("tan"),
         }
     };
 }
@@ -90,11 +92,12 @@ fn main() {
     for case in cases.iter().filter(|c| c.name.contains(&filter)) {
         let start = std::time::Instant::now();
         let next = AtomicU64::new(0);
-        let results: Vec<(u64, u64, u64, u32)> = std::thread::scope(|s| {
+        let results: Vec<(u64, u64, u64, u32, u64)> = std::thread::scope(|s| {
             let handles: Vec<_> = (0..threads)
                 .map(|_| {
                     s.spawn(|| {
                         let (mut sum, mut n, mut max, mut worst) = (0u64, 0u64, 0u64, 0u32);
+                        let mut over = 0u64;
                         let mut input = [0f32; BLOCK];
                         let mut output = [0f32; BLOCK];
                         loop {
@@ -113,6 +116,7 @@ fn main() {
                                 if !(x.abs() < case.limit) && x.is_finite() {
                                     continue;
                                 }
+                                over += (output[k].abs() > 1.0 && case.bounded) as u64;
                                 let r = (case.reference)(x as f64) as f32;
                                 let d = ulp_diff(output[k], r);
                                 sum += d.min(1 << 32);
@@ -123,7 +127,7 @@ fn main() {
                                 }
                             }
                         }
-                        (sum, n, max, worst)
+                        (sum, n, max, worst, over)
                     })
                 })
                 .collect();
@@ -132,14 +136,16 @@ fn main() {
         let sum: u64 = results.iter().map(|r| r.0).sum();
         let n: u64 = results.iter().map(|r| r.1).sum();
         let (max, worst) = results.iter().map(|r| (r.2, r.3)).max().unwrap();
+        let over: u64 = results.iter().map(|r| r.4).sum();
         println!(
-            "{:<10} avg {:.4}  max {:>3}  worst x={:e} ({:#010x})  n={}  {:.1}s",
+            "{:<10} avg {:.4}  max {:>3}  worst x={:e} ({:#010x})  n={}  |f|>1: {}  {:.1}s",
             case.name,
             sum as f64 / n as f64,
             max,
             f32::from_bits(worst),
             worst,
             n,
+            over,
             start.elapsed().as_secs_f64()
         );
     }
