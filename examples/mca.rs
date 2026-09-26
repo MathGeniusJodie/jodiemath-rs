@@ -11,10 +11,10 @@
 // Requires `llvm-mca` on PATH (Debian/Arch: part of the `llvm` package).
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::process::Command;
 
 include!("support/mca_common.rs");
+include!("support/mca_asm.rs");
 const MCA_ITERATIONS: u32 = 100;
 
 /// Elements one simulated pass through each `*_throughput` region really
@@ -101,69 +101,40 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let filter = args.get(1).map(|s| s.as_str()).unwrap_or("");
 
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let (asm_path, asm_text) = emit_mca_target_asm();
 
-    // Cargo's fingerprint cache doesn't account for the `--emit=asm` passed
-    // below as a raw rustc arg, so if mca_target.rs hasn't changed since the
-    // last (non-asm) build, `cargo rustc` treats this as a no-op and never
-    // regenerates the .s file. Bumping the mtime forces a real rebuild.
-    let target_src = PathBuf::from(manifest_dir).join("examples/mca_target.rs");
-    std::fs::File::open(&target_src)
-        .and_then(|f| f.set_modified(std::time::SystemTime::now()))
-        .expect("couldn't touch examples/mca_target.rs to force a rebuild");
-
-    eprintln!("compiling examples/mca_target.rs to assembly...");
-    let status = Command::new("cargo")
-        .current_dir(manifest_dir)
-        .args([
-            "rustc",
-            "--release",
-            "--example",
-            "mca_target",
-            "--",
-            "--emit=asm",
-            "-C",
-            "debuginfo=0",
-        ])
-        .status()
-        .expect("failed to run `cargo rustc` -- is cargo on PATH?");
-    if !status.success() {
-        eprintln!("cargo rustc failed, aborting");
-        std::process::exit(1);
-    }
-
-    let examples_dir = PathBuf::from(manifest_dir).join("target/release/examples");
-    let asm_path = std::fs::read_dir(&examples_dir)
-        .expect("couldn't read target/release/examples")
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("mca_target-") && n.ends_with(".s"))
-        })
-        .filter_map(|p| {
-            std::fs::metadata(&p)
-                .and_then(|m| m.modified())
-                .ok()
-                .map(|t| (t, p))
-        })
-        .max_by_key(|(t, _)| *t)
-        .map(|(_, p)| p)
-        .expect("no mca_target-*.s found after `cargo rustc --emit=asm` -- did the example build?");
-
-    let asm_text = std::fs::read_to_string(&asm_path).expect("couldn't read the emitted asm");
+    // rustc's LLVM can be newer than the llvm-mca on PATH; `.prefalign`
+    // (function-level alignment, LLVM 23+) is the directive that older
+    // assemblers reject, and it never sits inside a measured region.
+    let mca_input: String = asm_text
+        .lines()
+        .filter(|l| !l.trim_start().starts_with(".prefalign"))
+        .flat_map(|l| [l, "\n"])
+        .collect();
 
     eprintln!("running llvm-mca on {}...", asm_path.display());
-    let output = Command::new("llvm-mca")
+    let mut child = Command::new("llvm-mca")
         .arg("-mcpu=native")
         .arg(format!("--iterations={MCA_ITERATIONS}"))
         .arg("--json")
-        .arg(&asm_path)
-        .output()
+        .arg("-")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .expect(
             "failed to run llvm-mca -- is it installed and on PATH? (Debian/Arch: `llvm` package)",
         );
+    let mut stdin = child.stdin.take().expect("llvm-mca stdin");
+    let writer = std::thread::spawn(move || {
+        use std::io::Write;
+        stdin.write_all(mca_input.as_bytes())
+    });
+    let output = child.wait_with_output().expect("llvm-mca did not run");
+    writer
+        .join()
+        .expect("llvm-mca stdin writer panicked")
+        .expect("couldn't write asm to llvm-mca");
     if !output.status.success() {
         eprintln!(
             "llvm-mca failed:\n{}",
@@ -190,6 +161,7 @@ fn main() {
     let mut latency: BTreeMap<String, f64> = BTreeMap::new();
     let mut throughput: BTreeMap<String, f64> = BTreeMap::new();
     let mut looped: Vec<String> = Vec::new();
+    let mut order: Vec<String> = Vec::new();
     for region in regions {
         let name = region["Name"].as_str().unwrap_or("");
         let summary = &region["SummaryView"];
@@ -197,6 +169,12 @@ fn main() {
             .as_f64()
             .expect("missing TotalCycles");
         let iterations = summary["Iterations"].as_f64().expect("missing Iterations");
+        let key = name
+            .strip_suffix("_latency")
+            .or_else(|| name.strip_suffix("_throughput"));
+        if let Some(key) = key.filter(|k| !order.iter().any(|o| o == k)) {
+            order.push(key.to_string());
+        }
         if let Some(key) = name.strip_suffix("_latency") {
             latency.insert(
                 key.to_string(),
@@ -217,143 +195,27 @@ fn main() {
         );
     }
 
-    let order = [
-        "nop",
-        "fast_round_int",
-        "std_round",
-        "cbrt",
-        "cbrt_unchecked",
-        "cbrt_wrapped",
-        "cbrt_accurate",
-        "cbrt_accurate_unchecked",
-        "cbrt_fast",
-        "rcbrt",
-        "pow_3_2",
-        "pow_2_3",
-        "smoothstep",
-        "smootherstep",
-        "exp2",
-        "exp2_kf",
-        "exp2_checked",
-        "exp10",
-        "exp10_checked",
-        "log2",
-        "log2_unchecked",
-        "sin",
-        "sin_wide",
-        "cos_wide",
-        "cos",
-        "wrap_pi",
-        "sin_prereduced",
-        "cos_prereduced",
-        "sinpi",
-        "cospi",
-        "tanpi",
-        "sin2pi",
-        "cos2pi",
-        "tan2pi",
-        "sinc_unnormalized",
-        "sind_unchecked",
-        "cosd_unchecked",
-        "tand_unchecked",
-        "ln",
-        "ln_unchecked",
-        "log10",
-        "log10_unchecked",
-        "log1p",
-        "log1pmx",
-        "log2p1",
-        "log10p1",
-        "exp",
-        "exp_scaled",
-        "exp_narrow",
-        "exp_checked",
-        "expm1",
-        "expm1_narrow",
-        "expm1_checked",
-        "exp_m1_over_x_narrow",
-        "exp2m1",
-        "exp10m1",
-        "sinh",
-        "sinh_narrow",
-        "cosh",
-        "cosh_narrow",
-        "sinh_throughput_fn",
-        "cosh_throughput_fn",
-        "sinh_checked",
-        "cosh_checked",
-        "coshm1",
-        "tanh",
-        "tanh_grad",
-        "sigmoid",
-        "sigmoid_fast",
-        "sigmoid_grad",
-        "logsigmoid",
-        "logsigmoid_checked",
-        "gelu",
-        "silu",
-        "silu_checked",
-        "softsign",
-        "sqrt1pm1",
-        "asinh",
-        "acosh",
-        "atanh",
-        "asin",
-        "asind",
-        "asinpi",
-        "acos",
-        "acosd",
-        "acospi",
-        "atan",
-        "atan_latency",
-        "atan_bounded",
-        "atand",
-        "atan2",
-        "atan2_unchecked",
-        "atan2_latency",
-        "atan2_pos",
-        "tan",
-        "tan_wide",
-        "erf",
-        "erfc",
-        "logit",
-        "xlogy",
-        "xlog1py",
-        "erfinv",
-        "erfc_inv",
-        "cabs",
-        "carg",
-        "normalize2",
-        "hypot3",
-        "rnorm3",
-        "normalize3",
-        "hypot4",
-        "rnorm4",
-        "normalize4",
-        "diff_of_products",
-        "cross2",
-        "rsqrt",
-        "powf",
-        "powf_pos",
-        "srgb_to_linear",
-        "linear_to_srgb",
-        "signed_pow",
-        "powf_unchecked",
-        "fmod",
-        "fmod_checked",
-        "fmod_unchecked",
-        "rem_euclid",
-        "div_euclid",
-    ];
+
+    // llvm-mca reports regions in asm layout order, which is meaningless;
+    // list them in the order mca_target.rs declares them instead.
+    let target_text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/mca_target.rs")).expect("couldn't read mca_target.rs");
+    let declared_at = |key: &str| {
+        ["latency", "throughput"]
+            .iter()
+            .filter_map(|kind| target_text.find(&format!("\"{key}_{kind}\"")))
+            .min()
+            .unwrap_or(usize::MAX)
+    };
+    order.sort_by_key(|key| declared_at(key));
 
     println!();
     println!("theoretical cost from llvm-mca (-mcpu=native, {MCA_ITERATIONS} iterations)");
     println!("latency: branchless *_normal core, 64-deep serial dependency chain, cycles/call");
-    println!("throughput: real public function, a 16-wide (two AVX2 vectors) auto-vectorized block, cycles/element");
+    println!("throughput: real public function, a 16-element auto-vectorized block, cycles/element");
     println!();
     println!("{:19} | latency (cyc) | throughput (cyc)", "");
     println!("{:-<19}-|-{:->14}-|-{:->17}", "", "", "");
-    for key in order {
+    for key in &order {
         if !filter.is_empty() && !key.contains(filter) {
             continue;
         }

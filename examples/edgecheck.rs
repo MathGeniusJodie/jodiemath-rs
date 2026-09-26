@@ -515,139 +515,6 @@ fn real_main() {
     check("sin_wide(-0)", sin_wide(-0.0), -0.0);
     check("cos_wide(-0)", cos_wide(-0.0), 1.0);
 
-    // reduce_pi_checked/reduce_pi_half_checked (backlog idea #88): the
-    // public pi-reduction primitive.
-    // sign is a plain +-1.0 multiplier (see its own doc comment for why,
-    // not a bool) such that sign*sin(r) reconstructs the sine/cosine --
-    // checked here via std::f32 sin as the reference poly, not this crate's
-    // own private sinf_poly.
-    for &x in &[0.0f32, 1.0, 3.0, 100.0, -7.5, 1e6, -1e9] {
-        let (r, sign) = reduce_pi_checked(x);
-        check_bounded(
-            &format!("reduce_pi_checked({x})"),
-            sign * r.sin() - sin_wide(x),
-            1e-4,
-        );
-        let (rc, signc) = reduce_pi_half_checked(x);
-        check_bounded(
-            &format!("reduce_pi_half_checked({x})"),
-            signc * rc.sin() - cos_wide(x),
-            1e-4,
-        );
-    }
-
-    // wrap_pi (backlog idea #126): wraps to (-pi, pi], riding
-    // reduce_pi_checked's own reduction. Checked via sin/cos preserved
-    // (wrap_pi(x) and x are the same angle mod 2*pi) plus the range
-    // invariant directly.
-    check("wrap_pi(0)", wrap_pi(0.0), 0.0);
-    // -0.0 needs its own pin, not just +0.0: reduce_pi_checked forms the
-    // residual by subtracting equal signed zeros, which IEEE754 resolves
-    // to +0.0, so without wrap_pi's own `x == 0.0` guard this returned
-    // +0.0. Found by the special-value matrix (idea #164) -- it was the
-    // single sign anomaly across 2.14e9 inputs on |x| <= pi/2, the region
-    // where wrap_pi is otherwise exactly the identity.
-    check("wrap_pi(-0)", wrap_pi(-0.0), -0.0);
-    // Identity on |x| <= pi/2 (q = 0 there, so r == x exactly). Spot pins
-    // for the property the -0.0 case is the boundary of.
-    check("wrap_pi(0.5)", wrap_pi(0.5), 0.5);
-    check("wrap_pi(-0.5)", wrap_pi(-0.5), -0.5);
-    check(
-        "wrap_pi(min_denorm)",
-        wrap_pi(f32::from_bits(1)),
-        f32::from_bits(1),
-    );
-    check(
-        "wrap_pi(-min_denorm)",
-        wrap_pi(-f32::from_bits(1)),
-        -f32::from_bits(1),
-    );
-    // x = pi wraps to pi - 2*pi, whose correctly-rounded f32 is exactly
-    // -WRAP_PI_MAX -- and *not* -f32::consts::PI, which is 8.7e-8 past
-    // the open end of the range.
-    check("wrap_pi(pi)", wrap_pi(std::f32::consts::PI), -WRAP_PI_MAX);
-    check("wrap_pi(-pi)", wrap_pi(-std::f32::consts::PI), WRAP_PI_MAX);
-    for &x in &[1.0f32, 3.0, 4.0, -4.0, 100.0, -1e9, 1e6] {
-        let w = wrap_pi(x);
-        check_bounded(
-            &format!("sin(wrap_pi({x}))-sin_wide({x})"),
-            w.sin() - sin_wide(x),
-            1e-4,
-        );
-        check_bounded(
-            &format!("cos(wrap_pi({x}))-cos_wide({x})"),
-            w.cos() - cos_wide(x),
-            1e-4,
-        );
-    }
-    // The range invariant itself, at every magnitude -- including the
-    // regime where the reduction has lost all its precision. wrap_pi rode
-    // reduce_pi_checked's deliberately unclamped `r`, so it returned
-    // 3.2e5 at 1e20 and -6.6e23 at f32::MAX: a documented `(-pi, pi]`
-    // that was false for 1.27e9 of the 4.3e9 f32 inputs, the same shape
-    // of bug as sin_checked's old 2.6e21 (fixed the same way, with a
-    // final clamp). This used to be checked only out to |x| = 1e9, with
-    // a 1e-6 slop that also let the -f32::consts::PI boundary case
-    // through, which is how it survived. Exhaustively re-verified over
-    // all 2^32 bit patterns after the fix; these pins are the cheap
-    // permanent guard.
-    for &x in &[
-        1.0f32,
-        3.0,
-        -4.0,
-        1e6,
-        -1e9,
-        1e15,
-        1e20,
-        -1e20,
-        1e30,
-        1e38,
-        f32::MAX,
-        f32::MIN,
-        // the smallest |x| that ever violated, from the exhaustive sweep
-        f32::from_bits(0x5814d039),
-        // and the input whose old result was worst, |w| = 1.1e24
-        f32::from_bits(0x7f7ff72f),
-    ] {
-        check_bounded(
-            &format!("wrap_pi({x:e}) in (-pi,pi]"),
-            wrap_pi(x),
-            WRAP_PI_MAX,
-        );
-    }
-    check("wrap_pi(nan)", wrap_pi(f32::NAN), f32::NAN);
-    // the clamp must not turn an infinite input into +-WRAP_PI_MAX: both
-    // vmaxps/vminps operand orders propagate the NaN residual through.
-    check("wrap_pi(inf)", wrap_pi(f32::INFINITY), f32::NAN);
-    check("wrap_pi(-inf)", wrap_pi(f32::NEG_INFINITY), f32::NAN);
-
-    // sin_prereduced/cos_prereduced (backlog idea #127): bit-identical
-    // to each other (both are exactly sinf_poly) -- see their own doc
-    // comments for why two names exist anyway. Checked by reconstructing
-    // sin_wide/cos_wide from reduce_pi_checked/
-    // reduce_pi_half_checked + these.
-    check("sin_prereduced(0)", sin_prereduced(0.0), 0.0);
-    check("cos_prereduced(0)", cos_prereduced(0.0), 0.0);
-    check(
-        "sin_prereduced(cos_prereduced same fn)",
-        sin_prereduced(0.7),
-        cos_prereduced(0.7),
-    );
-    for &x in &[0.3f32, -0.9, 1.5, -1.5, 100.0, -1e6] {
-        let (r, sign) = reduce_pi_checked(x);
-        check_bounded(
-            &format!("sin_prereduced reconstructs sin_wide({x})"),
-            sign * sin_prereduced(r) - sin_wide(x),
-            1e-6,
-        );
-        let (rc, signc) = reduce_pi_half_checked(x);
-        check_bounded(
-            &format!("cos_prereduced reconstructs cos_wide({x})"),
-            signc * cos_prereduced(rc) - cos_wide(x),
-            1e-6,
-        );
-    }
-
     // sinpi/cospi: argument in half-turns, q=round(x)/r=x-q both exact in
     // f32, so (unlike sin/cos) there's no accuracy cliff anywhere -- these
     // pin the full-range "always finite, exact at exact half-integers"
@@ -735,20 +602,6 @@ fn real_main() {
     check("tanpi(inf)", tanpi(f32::INFINITY), f32::NAN);
     check("tanpi(-inf)", tanpi(f32::NEG_INFINITY), f32::NAN);
 
-    // sin2pi/cos2pi/tan2pi: full-turn arguments (backlog idea #122).
-    check("sin2pi(0)", sin2pi(0.0), 0.0);
-    check("sin2pi(0.25)", sin2pi(0.25), 1.0);
-    check("sin2pi(0.5)", sin2pi(0.5), -0.0);
-    check("cos2pi(0)", cos2pi(0.0), 1.0);
-    // `+0.0`, not `-0.0`: `2*0.25` is exactly `cospi`'s own half-integer
-    // zero, and every one of those is `+0.0` (see cospi's pins above).
-    check("cos2pi(0.25)", cos2pi(0.25), 0.0);
-    check("tan2pi(0)", tan2pi(0.0), 0.0);
-    check_bounded("tan2pi(0.125)-1", tan2pi(0.125) - 1.0, 1e-5);
-    check("sin2pi(nan)", sin2pi(f32::NAN), f32::NAN);
-    // Doubling overflows past f32::MAX/2, a documented gap (see doc
-    // comment) -- NaN there, not a meaningful finite answer.
-    check("sin2pi(f32::MAX)", sin2pi(f32::MAX), f32::NAN);
     // sinc_unnormalized(x) = sin(x)/x, radians (backlog idea #131).
     check("sinc_unnormalized(0)", sinc_unnormalized(0.0), 1.0);
     check("sinc_unnormalized(-0)", sinc_unnormalized(-0.0), 1.0);
@@ -781,51 +634,6 @@ fn real_main() {
         "sinc_unnormalized(f32::MAX)",
         sinc_unnormalized(f32::MAX),
         1.0,
-    );
-
-    // sind_unchecked/cosd_unchecked (backlog idea #98): valid only up to ~4.7e7 exactness
-    // limit (180.0's own trailing-zero-bit limit).
-    check("sind_unchecked(0)", sind_unchecked(0.0), 0.0);
-    check("sind_unchecked(-0)", sind_unchecked(-0.0), -0.0);
-    check("cosd_unchecked(0)", cosd_unchecked(0.0), 1.0);
-    check("sind_unchecked(90)", sind_unchecked(90.0), 1.0);
-    check("sind_unchecked(180)", sind_unchecked(180.0), -0.0);
-    check("cosd_unchecked(180)", cosd_unchecked(180.0), -1.0);
-    check("sind_unchecked(-90)", sind_unchecked(-90.0), -1.0);
-    check("sind_unchecked(nan)", sind_unchecked(f32::NAN), f32::NAN);
-    check("cosd_unchecked(nan)", cosd_unchecked(f32::NAN), f32::NAN);
-    check(
-        "sind_unchecked(inf)",
-        sind_unchecked(f32::INFINITY),
-        f32::NAN,
-    );
-    check(
-        "sind_unchecked(-inf)",
-        sind_unchecked(f32::NEG_INFINITY),
-        f32::NAN,
-    );
-    check(
-        "cosd_unchecked(inf)",
-        cosd_unchecked(f32::INFINITY),
-        f32::NAN,
-    );
-
-    // tand_unchecked: same clamp-removal contract as sind_unchecked/
-    // cosd_unchecked above.
-    check("tand_unchecked(0)", tand_unchecked(0.0), 0.0);
-    check("tand_unchecked(-0)", tand_unchecked(-0.0), -0.0);
-    check("tand_unchecked(45)", tand_unchecked(45.0), 1.0);
-    check("tand_unchecked(180)", tand_unchecked(180.0), 0.0);
-    check(
-        "tand_unchecked(90)",
-        tand_unchecked(90.0),
-        f32::NEG_INFINITY,
-    );
-    check("tand_unchecked(nan)", tand_unchecked(f32::NAN), f32::NAN);
-    check(
-        "tand_unchecked(inf)",
-        tand_unchecked(f32::INFINITY),
-        f32::NAN,
     );
 
     // ln/log10/log1p: same zero/negative/inf edges as log_2 (they're all
@@ -1461,53 +1269,6 @@ fn real_main() {
     check("pow_2_3(inf)", pow_2_3(f32::INFINITY), f32::INFINITY);
     check("pow_2_3(-inf)", pow_2_3(f32::NEG_INFINITY), f32::INFINITY);
     check("pow_2_3(nan)", pow_2_3(f32::NAN), f32::NAN);
-
-    // rootn (backlog idea #75, C23): x^(1/n) -- domain error (NaN) for
-    // n==0 or negative x with even n, real negative result for negative
-    // x with odd n. Verified against the real glibc rootn spec, not
-    // guessed (see rootn's own doc comment).
-    check("rootn(8,3)", rootn(8.0, 3), 2.0);
-    check("rootn(-8,3)", rootn(-8.0, 3), -2.0);
-    check("rootn(16,4)", rootn(16.0, 4), 2.0);
-    check("rootn(-16,4)", rootn(-16.0, 4), f32::NAN);
-    check("rootn(4,2)", rootn(4.0, 2), 2.0);
-    check("rootn(-4,2)", rootn(-4.0, 2), f32::NAN);
-    check("rootn(x,0)", rootn(4.0, 0), f32::NAN);
-    check("rootn(nan,0)", rootn(f32::NAN, 0), f32::NAN);
-    check("rootn(5,1)", rootn(5.0, 1), 5.0);
-    check("rootn(-5,1)", rootn(-5.0, 1), -5.0);
-    check("rootn(0,3)", rootn(0.0, 3), 0.0);
-    check("rootn(-0,3)", rootn(-0.0, 3), -0.0);
-    check("rootn(0,2)", rootn(0.0, 2), 0.0);
-    check("rootn(-0,2)", rootn(-0.0, 2), 0.0);
-    check("rootn(0,-3)", rootn(0.0, -3), f32::INFINITY);
-    check("rootn(-0,-3)", rootn(-0.0, -3), f32::NEG_INFINITY);
-    check("rootn(0,-2)", rootn(0.0, -2), f32::INFINITY);
-    check("rootn(inf,3)", rootn(f32::INFINITY, 3), f32::INFINITY);
-    check("rootn(inf,-3)", rootn(f32::INFINITY, -3), 0.0);
-    check(
-        "rootn(-inf,3)",
-        rootn(f32::NEG_INFINITY, 3),
-        f32::NEG_INFINITY,
-    );
-    check("rootn(-inf,-3)", rootn(f32::NEG_INFINITY, -3), -0.0);
-    check("rootn(-inf,2)", rootn(f32::NEG_INFINITY, 2), f32::NAN);
-    check("rootn(nan,3)", rootn(f32::NAN, 3), f32::NAN);
-    // n == -1 is the reciprocal, the one n whose result can overflow or
-    // land denormal -- and the reason the general path is only ever
-    // entered with |n| >= 2 (see rootn's own doc comment).
-    check("rootn(4,-1)", rootn(4.0, -1), 0.25);
-    check("rootn(-4,-1)", rootn(-4.0, -1), -0.25);
-    check("rootn(0,-1)", rootn(0.0, -1), f32::INFINITY);
-    check("rootn(-0,-1)", rootn(-0.0, -1), f32::NEG_INFINITY);
-    check("rootn(inf,-1)", rootn(f32::INFINITY, -1), 0.0);
-    check(
-        "rootn(denormal_min,-1)",
-        rootn(f32::from_bits(1), -1),
-        f32::INFINITY,
-    );
-    check("rootn(max,-1)", rootn(f32::MAX, -1), 1.0 / f32::MAX);
-    check("rootn(nan,-1)", rootn(f32::NAN, -1), f32::NAN);
 
     // fast_round_int (backlog idea #185): the ROUND_MAGIC idiom exposed
     // standalone. Sign-of-zero pins are load-bearing, not decorative --

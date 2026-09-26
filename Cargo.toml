@@ -6,15 +6,15 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-plotters = "0.3"
-criterion = "0.7.0"
-rand = "0.10.0"
 
 [[bench]]
 name = "benches"
 harness = false
 
 [dev-dependencies]
+plotters = "0.3"
+criterion = "0.7.0"
+rand = "0.10.0"
 seq-macro = "0.3.6"
 serde_json = "1.0.150"
 # accuracy example only: vectorized f64 ground truth (needs nightly for

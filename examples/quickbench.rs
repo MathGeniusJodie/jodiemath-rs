@@ -197,7 +197,6 @@ fn main() {
     bench!("tan_wide", tan_wide, Band::Large);
     bench!("std tan_wide", |x: f32| x.tan(), Band::Large);
     bench!("std cos", |x: f32| x.cos());
-    bench!("std tan", |x: f32| x.tan());
     bench!("sinpi", sinpi);
     bench!("cospi", cospi);
     bench!("tanpi", tanpi);

@@ -138,8 +138,7 @@ examples:
   on a monomorphized tight loop (examples/quickbench-style, black_box
   the second argument ONCE outside the loop, not per element: a
   per-element black_box inflated powf 9x), interleaved old/new rounds
-  via jm stash/unstash. Hard rules distilled from this are in CLAUDE.md
-  "f64 in hot paths". Screened and rejected the same session: a shared-scale table
+  via jm stash/unstash. Screened and rejected the same session: a shared-scale table
   re-slice (uniform 2^-28 units so one `mm` serves all planes) is
   arithmetically impossible with u32 chunks -- deep-bit chunks are large
   integers whose smallness lives only in the per-plane power-of-two

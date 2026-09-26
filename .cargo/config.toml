@@ -15,3 +15,10 @@ rustflags = ["-C", "target-cpu=native", "-C", "llvm-args=-force-vector-width=16"
 # override situation (see that guard's own error message) -- it's that
 # `cargo doc` was never reading `rustflags` in the first place.
 rustdocflags = ["-C", "target-cpu=native"]
+
+[env]
+# plotters (lib tests' error plots) -> font-kit -> yeslogic-fontconfig-sys,
+# whose build script otherwise demands fontconfig via pkg-config, i.e. every
+# example build outside `nix-shell` failed. dlopen mode needs nothing at
+# build time; libfontconfig is only loaded when a plot actually renders text.
+RUST_FONTCONFIG_DLOPEN = "1"

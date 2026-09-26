@@ -238,7 +238,6 @@ fn main() {
             &dn,
         ),
         audit("softsign", softsign, |v| v / (1.0 + v.abs()), &dn),
-        audit("wrap_pi", wrap_pi, |v| v, &dn),
     ];
     report("(B) denormal input -> denormal output", &b_rows);
 
