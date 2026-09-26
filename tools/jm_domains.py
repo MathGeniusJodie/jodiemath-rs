@@ -120,7 +120,7 @@ def parse_units(lines):
             # line that did -- swallowing whatever public function came
             # next, which then belonged to no domain at all and could not
             # be claimed. That is how `exp2int_field` went missing from the
-            # core list CLAUDE.md documents it in.
+            # core list (`jm core`).
             name = cm.group("name")
             depth = 0
             end = i
